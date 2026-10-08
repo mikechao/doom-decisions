@@ -1,8 +1,10 @@
-# Stage A0 preflight plan — IN PROGRESS
+# Stage A0 preflight plan — FINAL REVIEW PENDING
 
 ## 1. Purpose and non-goals
 
 **Overall A0 remains incomplete; A1 is not authorized.** On 2026-10-08, the owner separately authorized and completed the bounded local WP3 toolchain preflight recorded below, and this task authorized WP2 Freedoom Phase 1 asset admission. WP2 and WP3 passed within their own scopes. The Chrome Worker check (WP4) passed with owner-supplied runtime JSON and manual responsiveness evidence; final A0 consolidation/review remains separate and incomplete. This document plans [Issue #2](https://github.com/mikechao/doom-decisons/issues/2) using the owner's supplied scope; no issue was fetched. A successful A0 establishes readiness to **request A1 authorization**, not permission to begin A1.
+
+**Consolidation, 2026-10-08:** [A0 preflight results](doom-a0-preflight-results.md) records the current root baseline, four prerequisite outcomes, verified identities and evidence limitations. **Technical checks complete; independent final A0 review pending.** This is not final A0 acceptance. Preserve `.a0-preflight/`, both Chrome profiles and all raw evidence through independent reviewer sign-off; cleanup requires separate owner authorization. Keep reusable ignored `tools/` and `assets/` for later authorized work. Scratch evidence is disposable storage, not a project dependency. Historical observations and prior-run dispositions below remain unchanged.
 
 Architecture and stage boundaries remain in the [feasibility investigation](doom-wasm-feasibility-investigation.md), [committed control design](doom-control-contract-design.md), and [Stage A plan](doom-stage-a-plan.md#5-bounded-experiment-sequence-and-gates). A0 resolves three execution prerequisites: asset admission, native tool usability, and local-file Worker feasibility. Durable source ownership is already settled by the completed root-tracked vendor import below. A0 does not compile/run Doom, prove asset compatibility, exact stepping, neutral-first, initialization/render isolation, or any compiled Doom invariant. No Decisions calls, application, production harness, CI, or public distribution belong to A0.
 
@@ -223,6 +225,8 @@ Both launches record owner `OFFLINE` confirmation; network isolation was **not i
 ### WP5 — reconcile evidence and request review
 
 **Prerequisites:** all four prerequisites have positive evidence and required approvals. Pseudocommands: complete §6 manifest; rehash retained assets/tools; record actual resource totals and all Git/status changes versus baseline; run nonmutating document/manifest checks. **Effects:** evidence/disposition only. **PASS:** §7 satisfied; **BLOCKED:** missing approval/provenance/persistence decision; **FAIL:** attempted check contradicted its positive criterion. Never label static source inspection a runtime pass. Preserve failure evidence and narrow next decision; no automatic repair/expansion. Cleanup is confined to this run's reviewed generated paths, with no `git clean`, reset, bulk removal of prior runs or upstream `make clean`.
+
+**WP5 documentation consolidation complete; final review pending:** see the [results summary](doom-a0-preflight-results.md). Its read-only reconciliation does not rerun experiments or accept overall A0. Independent review must address the recorded evidence/compliance limitations and actionable corrections before owner commit/push and separately authorized cleanup. An approved A0 permits proposing A1; A1 execution remains separately unauthorized.
 
 ## 5. Allowlist and safety envelope
 
