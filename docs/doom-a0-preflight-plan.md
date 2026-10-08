@@ -4,32 +4,34 @@
 
 **All execution approvals are PENDING. A0 preflight was NOT executed.** This document plans [Issue #2](https://github.com/mikechao/doom-decisons/issues/2) using the owner's supplied scope; no issue was fetched. A successful, separately authorized A0 establishes readiness to **request A1 authorization**, not permission to begin A1.
 
-Architecture and stage boundaries remain in the [feasibility investigation](doom-wasm-feasibility-investigation.md), [committed control design](doom-control-contract-design.md), and [Stage A plan](doom-stage-a-plan.md#5-bounded-experiment-sequence-and-gates). A0 resolves four independent prerequisites: asset admission, native tool usability, local-file Worker feasibility, and durable source ownership. It does not compile/run Doom, prove asset compatibility, exact stepping, neutral-first, initialization/render isolation, or any compiled Doom invariant. No Decisions calls, application, production harness, CI, or public distribution belong to A0.
+Architecture and stage boundaries remain in the [feasibility investigation](doom-wasm-feasibility-investigation.md), [committed control design](doom-control-contract-design.md), and [Stage A plan](doom-stage-a-plan.md#5-bounded-experiment-sequence-and-gates). A0 resolves three execution prerequisites: asset admission, native tool usability, and local-file Worker feasibility. Durable source ownership is already settled by the completed root-tracked vendor import below. A0 does not compile/run Doom, prove asset compatibility, exact stepping, neutral-first, initialization/render isolation, or any compiled Doom invariant. No Decisions calls, application, production harness, CI, or public distribution belong to A0.
 
 ## 2. Verified baseline vs assumptions
 
-**OBSERVED, local read-only inspection on 2026-10-08:**
+**OBSERVED pre-vendoring baseline, local read-only inspection on 2026-10-08:**
 
 | Item | Value |
 | --- | --- |
-| Root | `/Users/mike/projects/doom-decisons`; branch `main`; HEAD `f7abef8a8d1ff1836d563b42e7d15171845e277f` |
+| Root | `/Users/mike/projects/doom-decisons`; branch `main`; HEAD `a1928c5731d0def4532691b216b604fd442c6a1d` |
 | Initial worktrees | Root and submodule `git status --short` both empty; no pre-existing changes |
 | HEAD gitlink / index stage-0 gitlink / submodule HEAD | All **`31cc1af9656a8184830090c4e9f268383f5d7e15`**; submodule branch `master` |
 | Root origin, fetch and push | `https://github.com/mikechao/doom-decisons.git` |
 | `.gitmodules`, root configured submodule URL, submodule origin fetch/push | `https://github.com/jacobenget/doom.wasm.git`; no project remote configured |
 | Engine tree | Ordinary tracked `doomgeneric/`, tree `20a2f2cb40e7892af506897fe1efec7ecef71350` |
-| Documents | Three prerequisite docs tracked; control design worktree equals HEAD; target A0 file absent before creation; only root `AGENTS.md` found |
+| Documents | Root `AGENTS.md` and planning documents inspected; no issue contents inferred beyond the supplied scope |
 | Local Issue #2 contents | No copy found in the root file inventory/text search; use supplied scope, not inferred issue wording |
 | Host/tools | Darwin arm64; installed Python 3.14.4 at `/opt/homebrew/bin/python3`, Node v22.20.0 at `/Users/mike/.nvm/versions/node/v22.20.0/bin/node`; Git, Make, curl, Apple clang found on PATH |
 | Tool/browser gaps | `wasm-as`, `wasm-merge`, `wasm-metadce`, `wasm-dis`, `gpg` not found on PATH. Chrome plist exists at `/Applications/Google Chrome.app/Contents/Info.plist`, version `154.0.8037.98`; not launched |
-| Absent output/setup | Root `package.json`, `node_modules`, `experiments`, `.a0-preflight`; submodule `build`, `.binaryen`, Python/Rust virtual environments, browser `assets/doom.wasm` |
+| Absent output/setup | Root `package.json`, `node_modules`, `experiments`, `.a0-preflight`; vendored tree `build`, `.binaryen`, Python/Rust virtual environments, browser `assets/doom.wasm` |
 | Checked-in Freedoom2 | 28,787,748 bytes; header `IWAD`, 3,610 directory entries, directory offset 28,729,988; SHA-256 `a8772e088847032510d97ba2312406a6998f21cbab44d4ff10696faa9c0ecd4b`. **NOT APPROVED**; release/notices and compatibility unresolved |
 
 **OBSERVED source only:** pinned `Makefile` names WASI SDK 24/Binaryen 119. `all -> doom` invokes Docker; missing Binaryen triggers SSH clone/native build; embedded generation creates a Python environment and pip installs. `Makefile:174,258–269` downloads/embeds `DOOM1.WAD`; `src/doom_wasm.c:7,79–116` includes/copies the fallback. The browser example supplies no external WAD and starts an HTTP server through its Makefile. Pre-commit hooks can regenerate requirements/interface and trigger setup/builds. These are reasons to bypass those entry points, not runtime evidence.
 
-**PROPOSED:** external official Freedoom 0.13.0 Phase 1; workspace-local SDK 24.0/Binaryen 119 arm64 macOS; installed Chrome and one local HTML file; project fork with `stage-a-exact-stepping` rooted at the verified pin.
+**PROPOSED:** external official Freedoom 0.13.0 Phase 1; workspace-local SDK 24.0/Binaryen 119 arm64 macOS; installed Chrome and one local HTML file.
 
-**UNVERIFIED:** current release endpoints/redirects, package sizes/content/hashes, signer trust, full release source commits, native package usability, file-origin Worker behavior, and existence/access/control of `mikechao/doom.wasm`. Historical root SHAs/environment records in earlier docs are not this baseline. No external claim was revalidated over the network.
+**UNVERIFIED:** current release endpoints/redirects, package sizes/content/hashes, signer trust, full release source commits, native package usability, and file-origin Worker behavior. No external claim was revalidated over the network.
+
+**Vendor layout, locally verified and staged on 2026-10-08:** `references/doom.wasm/` is represented by ordinary root index entries. Its staged subtree has tree ID `18ad13ab35135c607015fb645dd8bbdc4f69f473`, equal to the pinned source commit's tree; all 229 paths, modes, object types, and blob IDs match. There is no `160000` entry or nested `.git` pointer, and `.gitmodules` was removed. This import is staged for owner review and is not committed or published. A0 remains unexecuted.
 
 ## 3. Owner decisions and authorization matrix
 
@@ -38,14 +40,13 @@ No approval is inferred from this plan or the documentation task. Each later app
 | Batch / status | Specific owner decision and permission required |
 | --- | --- |
 | P0 — **PENDING** | Accept A0-only readiness scope, external Phase 1/local-only asset policy, prospective A1 no-embedded-shareware profile, and ceilings in §5. No public asset/WASM delivery, embedding, or proprietary shareware acquisition |
-| W0 — **PENDING** | Create fresh root `.a0-preflight/<approved-run-id>/` only, containing downloads, assets/notices, tools, smoke, browser/profile/results, Git replay area and evidence. Approve generated files, subprocess temporary/cache paths confined there where configurable, cleanup and hash-checked reuse; no overwrite of prior runs or tracked files |
+| W0 — **PENDING** | Create fresh root `.a0-preflight/<approved-run-id>/` only, containing downloads, assets/notices, tools, smoke, browser/profile/results and evidence. Approve generated files, subprocess temporary/cache paths confined there where configurable, cleanup and hash-checked reuse; no overwrite of prior runs or tracked files. The source tree is read-only during A0; no Git replay area or source checkout is needed |
 | N1 — **PENDING** | Retrieve only §5 official asset/tool URLs and bounded publisher metadata, including release/tag full source identity and license/credits. Approve per-file destinations/byte limits, TLS redirect policy and logs; no credential-bearing URLs or arbitrary redirects |
 | AS1 — **PENDING** | Choose asset assurance: authenticated publisher signature with independently trusted fingerprint and an already installed verifier, or explicit acceptance of publisher HTTPS + matching CHECKSUM with signature authentication unresolved. Approve inspected ZIP extraction/static IWAD checks and notice retention. No signature tooling installation |
 | T1 — **PENDING** | Accept SDK provenance assurance if no publisher checksum/signature is available; Binaryen publisher SHA-256 must match. Approve inspected archive extraction only after hashes/inventory pass; local hashes alone do not authenticate publishers |
 | X1 — **PENDING** | Execute exact extracted SDK `clang`, `wasm-ld`, `llvm-ar` and Binaryen `wasm-as`, `wasm-merge`, `wasm-metadce`, `wasm-dis` paths after archive/inventory/hash review; check versions before §4's tiny compile/assemble/merge/metadce/inspection. Approve installed Node to validate/instantiate that tiny module. No quarantine removal, global install, or Doom compilation |
 | B1 — **PENDING** | Launch installed Chrome with a dedicated disposable workspace profile, load only the generated local HTML/Blob Worker, approve profile/OS launch side effects and local JSON/screenshot downloads. No browser navigation/network allowance follows; use an owner-approved offline arrangement if background network cannot otherwise be excluded |
-| G1 — **PENDING** | Choose fork destination (suggested `mikechao/doom.wasm`, existence unconfirmed), visibility, ownership/access and publication policy. Authorize bounded repository metadata/reachability inquiries at that exact destination; choose whether owner supplies the fork or explicitly permits creation |
-| G2 — **PENDING** | If needed, separately authorize exact fork creation, additive `project` remote and named experimental branch from the verified pin. No upstream refresh/repointing. A0 needs no source commits or pushes; later A1 commit/push and root URL/gitlink changes each require scoped authorization |
+| V0 — **COMPLETE, local** | The pinned source tree is root-tracked and its staged tree matches the pinned Git tree exactly. At a later A0 run, recheck the committed root subtree and ordinary file entries using WP1. This layout decision grants no A0/A1 execution permission; the owner reviews and handles any root commit or push |
 
 ## 4. Ordered A0 work packages
 
@@ -61,32 +62,31 @@ git -C "$ROOT" rev-parse HEAD
 git -C "$ROOT" status --short
 git -C "$ROOT" ls-tree HEAD references/doom.wasm
 git -C "$ROOT" ls-files --stage references/doom.wasm
-git -C "$ROOT/references/doom.wasm" rev-parse HEAD
-git -C "$ROOT/references/doom.wasm" status --short
 git -C "$ROOT" remote -v
-git -C "$ROOT/references/doom.wasm" remote -v
+git -C "$ROOT" rev-parse HEAD:references/doom.wasm
+test ! -e "$ROOT/references/doom.wasm/.git"
+test ! -e "$ROOT/.gitmodules"
 ```
 
-Pseudocommands: compare identities with §2; inspect `.gitmodules` and configured URL; confirm run path absent/non-symlink; create run directory exclusively, then its named subdirectories; record approval references and resource ledger. Set subprocess `TMPDIR` to an existing directory inside the run area; inspect/configure any other cache writes before execution.
+Pseudocommands: compare root identity and the vendored subtree with §2 and the provenance record; confirm there is no gitlink, nested .git pointer, or submodule declaration; confirm run path absent/non-symlink; create run directory exclusively, then its named subdirectories; record approval references and resource ledger. Set subprocess TMPDIR to an existing directory inside the run area; inspect/configure any other cache writes before execution.
 
-**Effects/evidence:** workspace directories and baseline/approval ledger only. **PASS:** unchanged pin, explained root identity (a later commit of this plan is expected only when recorded), safe worktrees and exclusive run location. **STOP:** unexplained identity/pin change, unrelated dirty paths or unsafe output location; preserve existing work. **Recovery:** retain ledger; remove only this run's empty directories or resume with explicit reconciliation, never reset/clean the repository.
+**Effects/evidence:** workspace directories and baseline/approval ledger only. **PASS:** root identity is explained, the committed vendor subtree equals the recorded pin tree, ordinary tracked files are present, and the run location is exclusive. **STOP:** unexplained root identity/tree change, unrelated dirty paths or unsafe output location; preserve existing work. **Recovery:** retain ledger; remove only this run's empty directories or resume with explicit reconciliation, never reset/clean the repository.
 
-### WP1 — settle durable Git ownership before large downloads
+### WP1 — verify root-tracked source reproducibility
 
-**Prerequisites:** WP0, G1; G2 only for mutations. Pseudocommands: inspect exact approved fork metadata and permissions; determine whether it exists, retains upstream ancestry, and can preserve `$PIN`. If absent, STOP until owner supplies it or expressly approves creating that fork. Establish the approved branch at `$PIN`, without touching the existing `master` branch or changing upstream origin:
+**Prerequisites:** WP0. The vendor layout is complete; this package is a read-only acceptance check before asset/tool transfers. The root commit used for A0 must contain ordinary tracked files at the recorded pin tree:
 
 ```sh
-# G2 only; first confirm remote/branch names do not already conflict.
-git -C "$ROOT/references/doom.wasm" remote add project "$APPROVED_FORK_URL"
-git -C "$ROOT/references/doom.wasm" -c core.hooksPath=/dev/null switch -c stage-a-exact-stepping "$PIN"
-git -C "$ROOT/references/doom.wasm" rev-parse HEAD
+git -C "$ROOT" ls-tree HEAD references/doom.wasm
+git -C "$ROOT" rev-parse HEAD:references/doom.wasm
+git -C "$ROOT" ls-files --stage references/doom.wasm
+test ! -e "$ROOT/references/doom.wasm/.git"
+test ! -e "$ROOT/.gitmodules"
 ```
 
-**Effects/evidence:** approved fork service state, additive Git config/branch/worktree selection only; checkout hooks disabled for this command so no hook setup/build can run. Record before/after URLs, branch root and owner access. No commits/pushes/gitlink change in A0. **PASS:** project-controlled destination verified, branch root equals pin, and future publication/replay policy agreed. A proposed destination or local branch without agreed durable storage is BLOCKED. **STOP:** unknown ownership, missing base object/access, name conflict, forced history rewrite or unapproved network/mutation requirement. **Recovery:** preserve config/branch evidence; do not delete a fork or undo pre-existing refs automatically; source tree and root gitlink stay at the pin.
+Compare the resulting tree ID with `18ad13ab35135c607015fb645dd8bbdc4f69f473`. Also compare the recursive path/mode/object/blob manifest with the pinned tree; this confirms no tracked paths were added or omitted. **Effects/evidence:** read-only Git/tree checks only. **PASS:** the root commit contains the exact vendor tree, every source path is an ordinary tracked file, and no submodule metadata or nested Git pointer remains. **STOP:** any tree mismatch, gitlink, missing file, or unexplained source change. Do not repair by refreshing upstream or excluding files.
 
-For later authorized A1 changes: commit in the submodule first; review full diff from `$PIN`; publish only to the approved fork/branch; then verify remote reachability and replay in a fresh isolated checkout before proposing any root gitlink/`.gitmodules` commit. Future pseudocommands are `git ls-remote <approved-fork> refs/heads/stage-a-exact-stepping`, clone that destination into the approved replay area, checkout the exact experimental commit, verify `$PIN` ancestry, source/tree/driver hashes and clean status, and reproduce the approved build/evidence without hidden local objects. Advertisement alone is insufficient: the checkout must obtain the exact commit. Fetchability and required credentials must match the chosen publication policy.
-
-**Fallback decision only:** if fork publication is rejected, propose at most one ordered patch series for each authorized A1/A2/A3 step, with full base SHA, patch order/hashes and license/source identity. Replay into a fresh separate checkout must fail on dirty/base/hash mismatch and create reviewable engine commits there; leave the upstream gitlink pristine. Owner must approve this alternative before implementing it. A0 creates no patch runner/series, and does not pursue both workflows.
+Subsequent Doom source, adapter, and build changes are ordinary root-repository changes under `references/doom.wasm/`. The owner reviews and commits/pushes them through the root repository. No fork, engine branch, patch-series replay, submodule commit, or gitlink update is part of this workflow.
 
 ### WP2 — publisher evidence and Phase 1 static admission
 
@@ -226,11 +226,11 @@ Page algorithm:
 
 Permitted publisher metadata after N1: matching release/tag/expanded-assets pages and release/tag/source-commit metadata in those three repositories; Freedoom `v0.13.0` COPYING/CREDITS/manual notices; SDK `wasi-sdk-24` README/license/version and Binaryen `version_119` license/version. Pin full commits after resolution; record mutable metadata retrieval times/hashes. Associated GitHub API/raw.githubusercontent.com routes must stay within these exact repositories/tags/files. Signature-key provenance needs its exact trusted source approved; no arbitrary keyserver.
 
-Permit HTTPS release-asset redirects only to GitHub's release delivery endpoints (`release-assets.githubusercontent.com` or `objects.githubusercontent.com`) after hop review; record Location/effective URL and stop on other destinations, TLS downgrade or changed package. Git metadata/fork/push traffic is a **separate G1/G2/later publication allowlist** naming the approved repository; N1 grants none of it. No alternate package, download mirror or automatic fallback.
+Permit HTTPS release-asset redirects only to GitHub's release delivery endpoints (release-assets.githubusercontent.com or objects.githubusercontent.com) after hop review; record Location/effective URL and stop on other destinations, TLS downgrade or changed package. No Git remote, fork, branch, or publication traffic is part of A0's download scope. No alternate package, download mirror or automatic fallback.
 
-All ceilings require owner approval and remain at or below Stage A bounds: **≤300 MiB total initial downloads** (packages, metadata and any A0 Git transfers), **≤3 GiB total workspace storage**, **≤2 compiler jobs**, **≤15 min per individual build**, **≤60 min aggregate setup/build**. For A0 tighten to one compiler job, one tiny compile pipeline, ≤60 s per tool command, ≤5 min smoke pipeline, ≤30 min aggregate setup/build, ≤5 min browser check with 2 s watchdog. Stop before a projected cap breach; count actual bytes, expansion, elapsed setup/build and disk use. No Doom build is permitted within any allowance. Record tool/archive memory/storage estimates before extraction; unknown sizes or inability to enforce a cap blocks transfer/extraction.
+All ceilings require owner approval and remain at or below Stage A bounds: **≤300 MiB total initial downloads** (packages and metadata), **≤3 GiB total workspace storage**, **≤2 compiler jobs**, **≤15 min per individual build**, **≤60 min aggregate setup/build**. For A0 tighten to one compiler job, one tiny compile pipeline, ≤60 s per tool command, ≤5 min smoke pipeline, ≤30 min aggregate setup/build, ≤5 min browser check with 2 s watchdog. Stop before a projected cap breach; count actual bytes, expansion, elapsed setup/build and disk use. No Doom build is permitted within any allowance. Record tool/archive memory/storage estimates before extraction; unknown sizes or inability to enforce a cap blocks transfer/extraction.
 
-Forbidden in A0: `make all`, `dev-init`, `run-example_browser`, any Doom build/run, Docker pulls/runs, pip/npm installs, global installs, source-built toolchains, extra browsers, Playwright, interface/pre-commit regenerators, unapproved servers/network, security-setting/quarantine changes, proprietary shareware download/embedding, and treating tracked Freedoom2 as admitted. Existing repository files/gitlink remain unchanged except specifically approved future Git operations. **For this documentation task even those approvals are absent: only this new document may be written.**
+Forbidden in A0: make all, dev-init, run-example_browser, any Doom build/run, Docker pulls/runs, pip/npm installs, global installs, source-built toolchains, extra browsers, Playwright, interface/pre-commit regenerators, unapproved servers/network, security-setting/quarantine changes, proprietary shareware download/embedding, and treating tracked Freedoom2 as admitted. The vendored source and root Git state remain unchanged during A0; generated A0 files stay in the specifically approved run directory. The vendor import is complete, but this plan authorizes none of the A0 execution steps.
 
 ## 6. Evidence manifest template
 
@@ -239,10 +239,10 @@ Future `$A0/evidence/manifest.json`; empty fields are missing evidence, never de
 ```text
 run: id, date/time/timezone, operator, plan/root revision, host/architecture
 approvals: batch -> owner reference, exact scope, assurance choice, ceilings
-git: root branch/HEAD/status; HEAD/index gitlink; submodule branch/HEAD/status;
-     .gitmodules/config/remote fetch+push URLs before/after; base/tree SHA;
-     fork existence/control/visibility, branch root, future publication policy;
-     later experimental commits, advertised refs, fresh-checkout/replay evidence
+git: root branch/HEAD/status and origin; root vendor subtree tree SHA;
+     ordinary path/mode/blob manifest; absence of gitlink, .gitmodules entry,
+     and nested .git pointer; pinned source commit and import tree SHA;
+     later root commits containing source changes and reproducibility evidence
 inputs[]: publisher/release/tag/full source commit, requested/effective URLs,
           redirect hops, retrieval time, sizes, publisher algorithm/value,
           computed archive SHA256, signature result/trusted fingerprint/source,
@@ -273,8 +273,8 @@ Keep asset/tool bytes and browser profiles out of source commits/public uploads;
 
 ## 7. A0 exit gate and A1 handoff
 
-Overall PASS requires **all four** independent prerequisite passes, recorded approvals and resource compliance: admitted official Phase 1 bytes with accepted provenance/notice/static evidence; actual native SDK/sysroot/Binaryen tiny-pipeline results; actual installed-Chrome file/Blob Worker transfer/containment evidence; confirmed controlled fork/branch and an agreed publication/reachability/replay gate. Missing decisions remain BLOCKED; attempted technical failures remain FAIL. Present a bounded failure report instead of starting A1.
+Overall PASS requires a successful root-tracked vendor baseline check plus **all three** A0 execution prerequisite passes, recorded approvals and resource compliance: admitted official Phase 1 bytes with accepted provenance/notice/static evidence; actual native SDK/sysroot/Binaryen tiny-pipeline results; and actual installed-Chrome file/Blob Worker transfer/containment evidence. The vendor tree must match the pinned import tree as ordinary root files. Missing decisions remain BLOCKED; attempted technical failures remain FAIL. Present a bounded failure report instead of starting A1.
 
-Handoff supplies the completed manifest, retained/rehashed asset/tool paths, branch/base/fork identity, browser evidence and the specific A1-only request linked to [Stage A A1](doom-stage-a-plan.md#a1--final-wasm-and-observable-controlled-initialization). The request must separately cover source/build-profile/adapter/WAT/export changes, final Doom builds, initialization/render/missing-asset experiments, and any commits/publication/root revision changes. A0 records the no-shareware profile requirement; **A1 implements and proves it**.
+Handoff supplies the completed manifest, retained/rehashed asset/tool paths, root commit and vendor tree identity, browser evidence and the specific A1-only request linked to [Stage A A1](doom-stage-a-plan.md#a1--final-wasm-and-observable-controlled-initialization). The request must separately cover source/build-profile/adapter/WAT/export changes, final Doom builds, initialization/render/missing-asset experiments, and any root-repository changes. A0 records the no-shareware profile requirement; **A1 implements and proves it**.
 
 Still unproven: compiled Doom imports/exports and embedded-data absence; title/init/graphics safety; selected-map/DeHackEd/save compatibility; exact tic/native consumption and wait isolation; lifecycle cleanup/PENDING/neutral-first; production control ABI and complete acceptance suite. Signature authentication remains unresolved if the owner accepted lower assurance. Distribution, extra assets/fixtures, alternate tools/servers, A1 execution, A2/A3 and B–D, Decisions integration and production delivery remain unapproved. **A0 PASS authorizes none of them.**
