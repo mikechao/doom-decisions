@@ -1,0 +1,3 @@
+[submodule "references/doom.wasm"]
+	path = references/doom.wasm
+	url = https://github.com/jacobenget/doom.wasm.git
