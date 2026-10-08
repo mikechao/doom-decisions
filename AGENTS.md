@@ -5,6 +5,8 @@
 Explore running Doom in the browser and using OpenAI's decisions API to control gameplay.
 The decisions API is documented here: https://developers.openai.com/api/docs/guides/decisions
 
+The goal is to let users watch Doom running in the browser while OpenAI’s decisions API controls gameplay.
+
 ## Project Structure & Module Organization
 
 This repository currently contains `LICENSE`, `.gitmodules`, and the upstream `references/doom.wasm/` Git submodule. There is no root application, build configuration, or test suite yet.
