@@ -2,11 +2,11 @@
 
 ## 1. Purpose and Baseline
 
-**Recommendation:** add an atomic, synchronous `stepOneTic(controlEpoch, commandSequence, heldMask)` for single-player controlled mode. Synchronize private engine input, retain `G_BuildTiccmd`, remove the scheduler's command backlog from this mode, and acknowledge at `P_PlayerThink` entry. A separate bounded phase operation handles menus, death/rebirth, and intermission without silently executing a playable tic. Rendering is separate. This is a proposal for review, not implementation authorization.
+**Recommendation:** add an atomic, synchronous `stepOneTic(controlEpoch, commandSequence, heldMask)` for single-player controlled mode. Synchronize private engine input, retain `G_BuildTiccmd`, remove the scheduler's command backlog from this mode, and acknowledge at `P_PlayerThink` entry. Lifecycle preparation belongs to `advancePhase`; stepping refuses non-ready state. Keep five distinct operations but a 12-word production record, use sequence high-water only on admission, and return resumable `PENDING` for unfinished valid lifecycle work. Rendering is separate. This is a proposal for review, not implementation authorization.
 
-Starting point: the committed [feasibility investigation](doom-wasm-feasibility-investigation.md), read in full. On 2026-10-08, root HEAD is `a48a26c68d4be445973256d59b223cc48c212888`; HEAD gitlink, index gitlink, and submodule HEAD all equal **`31cc1af9656a8184830090c4e9f268383f5d7e15`**. Root and submodule status were clean before this document. No gitlink change is proposed in this task.
+Starting point: the committed [feasibility investigation](doom-wasm-feasibility-investigation.md), read in full. On 2026-10-08, root branch/HEAD is `main` / `75a52c7285738a4aa8f1767e2a779b684bddbf44`; HEAD gitlink, index gitlink, and submodule HEAD all equal **`31cc1af9656a8184830090c4e9f268383f5d7e15`**. Root `git status --short` and submodule `git status --short` both produced no output at revision start. This revises an already tracked document; historical provenance in the investigation remains unchanged. No gitlink change is proposed in this task.
 
-**Evidence convention:** statements describing existing functions below are source-verified against that local pinned checkout. Proposed behavior, pseudocode, signatures, assertions, and statuses are design requirements; their feasibility is not runtime-proven. There is still no `references/doom.wasm/build/` directory or browser WASM artifact. No build, installation, gameplay execution, or Decisions request was performed. The only repository change is this document.
+**Evidence convention:** **SV** means existing source inspected in the actual pinned checkout; **INF** means a design inference or proposed requirement; **RH** means a runtime hypothesis requiring compiled evidence. Source citations never establish a repaired runtime contract. Proposed behavior, pseudocode, signatures, assertions, and statuses below are INF unless explicitly marked otherwise. There is still no `references/doom.wasm/build/` directory or browser WASM artifact. No build, installation, gameplay execution, or Decisions request was performed. The only repository change is this document.
 
 The earlier verdict, **SUITABLE WITH SMALL EXTENSIONS, subject to runtime validation**, remains reasonable. “Small” must include a localized change to command/lifecycle ordering, not just setters and getters. If that ordering cannot be isolated as described, revise the verdict before expanding implementation scope. Decisions integration is out of scope.
 
@@ -51,7 +51,7 @@ Primary pinned sources: [adapter](https://github.com/jacobenget/doom.wasm/blob/3
 4. `G_Ticker` can install commands in a menu, intermission, or finale. `P_Ticker` can return without consuming one. `gametic` advancement alone is not playable simulation proof; dead-player world tics also advance `leveltime`.
 5. Equal held masks do not determine equal commands without builder history/configuration and exclusive input ownership. Mouse/joystick state, `next_weapon`, double-click use, autorun configuration, special pause/save buttons, chat, and demo overwrite are other sources. The controlled mode must exclude these contributors and retain normal keyboard history within an uninterrupted gameplay interval.
 
-An additional detail matters for acknowledgment: `P_PlayerThink:201–207` edits angle/forward/side for `MF_JUSTATTACKED` (chainsaw lunge). At lines 230–231 it can clear special buttons. Therefore “consumed command” means **the exact command delivered at player-think entry**, with a separately recorded command after the initial chainsaw adjustment, before movement. It does not promise that every command field stays unchanged for the entire thinker. Do not remove this game rule to make an equality assertion pass. [Player consumption source](https://github.com/jacobenget/doom.wasm/blob/31cc1af9656a8184830090c4e9f268383f5d7e15/doomgeneric/src/p_user.c).
+An additional detail matters for acknowledgment: `P_PlayerThink:201–207` edits angle/forward/side for `MF_JUSTATTACKED` (chainsaw lunge). At lines 230–231 it can clear special buttons. Therefore “consumed command” means **the exact command delivered at player-think entry**, with the post-chainsaw command recorded only in test traces, before movement. It does not promise that every command field stays unchanged for the entire thinker. Do not remove this game rule to make an equality assertion pass. [Player consumption source](https://github.com/jacobenget/doom.wasm/blob/31cc1af9656a8184830090c4e9f268383f5d7e15/doomgeneric/src/p_user.c).
 
 ### Other build/processing paths
 
@@ -63,220 +63,287 @@ An additional detail matters for acknowledgment: `P_PlayerThink:201–207` edits
 - `G_DoReborn:1091–1125`, `G_DoNewGame:1454–1465`, `G_DoWorldDone:1320–1325`, and `G_DoLoadGame:1344–1385` reach load/new-player work. Save loading restores players after base-level load; the barrier must cover the **whole** load action, not just base-map setup.
 - Intermission and finale read `players[].cmd` directly (`E/src/wi_stuff.c:WI_checkForAccelerate:1252–1273`, `E/src/f_finale.c:F_Ticker:156–175`). They require deliberate phase controls; old fire/use must not continue them accidentally.
 
-## 3. Proposed Invariants
+## 3. Guarantees and Internal Proof Obligations
 
-### Eligibility and a successful tic
+### Readiness and one successful playable tic
 
-P0 supports one local player, no netgame/drone/demo playback/demo recording, `ticdup == 1`, keyboard controls only. Eligible means initialized, `GS_LEVEL`, `usergame`, valid local player/actor, `PST_LIVE`, no menu/pause/advancedemo, `gameaction == ga_nothing`, and no unfinished transition barrier. Enforce this predicate even though stock `P_Ticker` allows an initial-view exception to its menu pause check.
+P0 supports one local player, no netgame/drone/demo playback/demo recording, `ticdup == 1`, and keyboard controls only. Ready means initialized, `GS_LEVEL`, `usergame`, valid local player/actor, `PST_LIVE`, no menu/pause/advancedemo, `gameaction == ga_nothing`, and no unfinished preparation. `neutralRequired` constrains the mask but does not make an otherwise ready player non-ready. Enforce the predicate even though stock `P_Ticker` permits a menu tic when `viewz == 1` (`E/src/p_tick.c:98–110`, SV).
 
-For an operation with request `(e, s, M)`, let `T` and `L` be `gametic` and `leveltime` at the eligible boundary, `K` the controlled engine key mask, and `B` the one freshly built `ticcmd`. A successful playable step requires:
+For request `(expectedEpoch=e, sequence=s, heldMask=M)`, let `T/L` be `gametic/leveltime` at the ready boundary, `K` the controlled effective keys, and `B` the native command:
 
 ```text
-at acceptance:       currentEpoch == e; sequence s is fresh; M is valid
-immediately prebuild: K == M; no unowned input contributor is active
-build:                exactly one G_BuildTiccmd(B, T) in this operation
-at player entry:      still eligible; epoch == e; tag == (e, s, T); K == M
-                      players[consoleplayer].cmd == B, field by field
-simulation:           exactly one local P_PlayerThink entry, initially live
-                      exactly one completed P_Ticker world tick
-completion:           gametic == T + 1; same-map leveltime == L + 1
-                      no second command or new-map simulation in the call
+admission:            e == currentEpoch; s > admittedHighWater; valid M; ready
+                      neutralRequired implies M == 0
+prebuild:             K == M; excluded builder contributors inactive
+build:                exactly one fresh G_BuildTiccmd(B, T)
+pre-simulation:       epoch/readiness/player identity unchanged; no pending action
+player entry:         one initially-live local P_PlayerThink; K == M
+                      private tag == (e, s, T); actual installed command == B
+completion:           one completed P_Ticker; gametic == T + 1; leveltime == L + 1
+                      no load, second build, or second playable tic in this call
 ```
 
-Equality is over named fields, not C padding or a checksum. `ticcmd_t` includes `forwardmove`, `sidemove`, `angleturn`, `buttons`, `chatchar`, `consistancy` (a **byte** in this port), `buttons2`, `inventory`, `lookfly`, and `arti` (`E/include/d_ticcmd.h:30–49`). Copy them to the public record as integer scalars. Gameplay controls use the first four; retain native consistency bookkeeping, ensure chat/other-game fields are zero, and report all fields so an unexplained contributor cannot hide. Exclusive controlled initialization and restricted menu taps prevent chat enqueue; a nonzero dequeued chat character is an invariant fault, not silently accepted extra input.
+A pending exit or death during simulation may change the current epoch. It does not revoke the command already consumed in the old epoch. Finish the existing tick and its native continuation, then invalidate future input. Do not clear `players[].cmd` midway through the consuming thinker. A transition detected before simulation invalidates the build and returns zero engine/world/playable tics; lifecycle dispatch waits for `advancePhase`. A genuine mismatch at consumer entry is `FAULT`, not a recoverable transition.
 
-**Enforced by construction:** complete-state overwrite, single owner, one build/dispatch without a scheduler queue, generation barriers, and no simulation from rendering. **Independently checked in C:** read back `K` before build and at entry; compare actual player command to the saved build; validate its tag/current epoch; count player entries/world-ticker completions; verify tic deltas. The debug proof harness adds an independent expected keyboard-command oracle for simple movements/buttons and turn acceleration. A field copy from the request is not an effective-input acknowledgment.
+**Production C checks remain mandatory**, independent of trace compilation: read back controlled keys prebuild and at entry; check exclusive builder contributors, saved command fields, private identity tag, actor/local-player validity and initial live state; count builds, player entries and completed world ticks; verify exact engine/level tic deltas before publishing `APPLIED`. Stop before the player body on a failed entry check. Check `P_Ticker` completed its actual body, rather than counting entry into a function that can early-return. `ST_Ticker`, `AM_Ticker`, `HU_Ticker` and outer increment also complete before success (`G_Ticker:865–885`).
 
-Place acknowledgment at the beginning of `P_PlayerThink`, before command edits or death/live branching, after `P_Ticker` passed its gates. A live entry records delivery, not successful completion; mark the operation successful only when the world ticker finishes and the outer single-step increments `gametic`. Record `cmdAfterInitialRules` and a `CHAINSAW_OVERRIDE` bit before `P_MovePlayer`/death dispatch. Keep the original entry record immutable. No externally supplied command may contain `BT_SPECIAL`.
+Field equality covers all named `ticcmd_t` fields, not padding/checksums: `forwardmove`, `sidemove`, `angleturn`, `buttons`, `chatchar`, byte `consistancy`, `buttons2`, `inventory`, `lookfly`, `arti` (`E/include/d_ticcmd.h:30–49`, SV). Retain native consistency bookkeeping; unexpected chat/other-game fields or `BT_SPECIAL` are faults. These fields stay private. Tests additionally expose build/entry copies, contributor values, and post-chainsaw movement. Production entry comparison occurs before `MF_JUSTATTACKED` changes the command (`p_user.c:201–207`); later native changes are permitted, not foreign input.
 
-The invariant does not claim movement through walls, zero momentum after release, a fired shot without ammunition, immediate weapon readiness, or successful use of a nonexistent target. Live `usedown`/weapon state remain Doom-owned.
+Complete overwrite, no scheduler backlog, exclusive synchronous ownership, and guarded continuation enforce the ordering. Independent C boundary checks enforce delivery/completion. The assertion harness must independently validate expected native keyboard values and actual ticker hooks; an echo of the mask, a JS call count, or a post-call snapshot cannot substitute. Native momentum, collision, fire/use/weapon availability and `usedown` remain Doom-owned.
 
-### Outcomes must distinguish transition timing
+## 4. Lifecycle, Sequence Identity, and Rejection
 
-| Result | Accepted / consumed request? | Engine / world / playable tics | Meaning |
-| --- | --- | --- | --- |
-| `APPLIED` | Yes / yes | 1 / 1 / 1 | One eligible command delivered and one world tic completed. |
-| `APPLIED_TRANSITION` | Yes / yes | 1 / 1 / 1 | Death or pending exit arose during that tic. Entry identity remains the old epoch; result reports the new epoch and reason. No new-map tic occurs. |
-| `TRANSITION` | No / no | 0 / 0 / 0 | Lifecycle preparation changed epoch/phase before build or consumption. It may load a map/reset `leveltime`, without simulation. |
-| `INELIGIBLE` | No / no | 0 / 0 / 0 | Menu, pause, title/demo, dead/reborn, intermission/finale, or missing player. No automatic phase advance. |
-| `NEUTRAL_REQUIRED` | No / no | 0 / 0 / 0 | First playable command after a load must be `M == 0`. |
-| `STALE_EPOCH`, `BAD_SEQUENCE`, `BAD_MASK`, `NOT_INITIALIZED` | No / no | 0 / 0 / 0 | Rejected before gameplay mutation. |
-| `FAULT` | Never claim successful completion | Actual counters reported if returnable | Internal invariant failure; poison controlled mode and discard the instance. A trap/hang can produce no C result; Worker containment applies. |
+### Identities and recommendation
 
-`TRANSITION` cannot be inferred from a zero `leveltime` delta: load may reset/restore `leveltime`. Report actual before/after counters plus explicit engine/world/playable counts and before/after identity. “Playable tic” is an initially-live controlled player entry plus completed world tick, not every `GS_LEVEL`/dead/demo tick. Phase calls can advance a dead world by one, reporting world=1, playable=0.
-
-A death/exit after entry invalidates **future** commands. It does not retroactively revoke the consumed command or undo the current world tic. Finish that tic with its original command, latch the transition, then clear controls. Clearing `players[].cmd` midway through an already-consuming thinker would change game semantics. A transition before entry invalidates any built command and aborts before `P_Ticker`, with zero gameplay and no tic increment. Prebuild validation only provisionally admits the request; `accepted=true` in a returned result commits at verified live player entry. Thus a built-but-invalidated request returns `TRANSITION`, `accepted=false`, `builtValid=true`, and `consumedValid=false`. A later completion failure is `FAULT`, with delivery evidence retained.
-
-## 4. Lifecycle and Command Identity
-
-Use three identities; do not collapse them into map number or one sequence counter.
-
-| Identity | Owner / rules | Invariant protected |
+| Identity | Owner and rule | Concrete protection |
 | --- | --- | --- |
-| `runId` | TS opaque unique token for each Worker/WASM instance. Never reuse after termination; init only once per instance. C is bound to its instance and need not receive this token. | An old Worker result or remote response cannot target a new instance that happens to have the same epoch/sequence. |
-| `controlEpoch` | C uint32, starts at 1. Changes on every load, same-map reload, player rebirth boundary, death, pending level exit, and control eligibility interruption/resumption such as menu/pause. | Old input cannot cross a lifecycle/control boundary, including boundaries that preserve map identity. |
-| `commandSequence` | TS issues nonzero uint32 values, strictly increasing for the whole run; C tracks a high-water mark. | Identifies a complete input request and prevents duplicate/out-of-order replay. |
+| `runId` | Worker wrapper: unique opaque token per instance, never reused; initialize once. C is inherently instance-bound. | Reject late messages/results from a terminated Worker even if epoch/sequence match a new one. |
+| `controlEpoch` | C uint32, starts at 1; monotone across load, same-map replacement, death/rebirth, pending exit, phase and menu/pause control edges. | Intent cannot cross a lifecycle interruption or later return to an eligible state with its old epoch. |
+| `commandSequence` | Worker allocates nonzero uint32 in increasing run order for each attempted live step. C keeps a private admission high-water. | At most one admission for any sequence; no replay of an admitted build, whether consumed or aborted. |
 
-Choose the name **controlEpoch**, rather than `loadEpoch`: death, menu interruption, and exit must invalidate intent even before a load happens. One such epoch is sufficient for P0; no separate load counter is needed. Map/episode are diagnostic values, not freshness tokens. A logical transition may increment the epoch several times (death, rebirth, load); require monotonicity and documented reasons, not “exactly +1 per restart.” Wrap of epoch/sequence/tic counters requires retiring the instance before overflow; do not silently wrap.
+**Choose B: high-water on admission, before input overwrite/build.** Every zero-work rejection leaves C high-water unchanged. Consumption-only high-water is insufficient: a built-but-aborted request has already changed native builder history and must not be admitted again. Admission is a private point after epoch/mask/readiness/neutral checks; it is not public proof of consumption. Consume identity is recorded only at verified initially-live player entry.
 
-**Consumed sequence is a recorded identity, not a fourth independent counter.** The step result contains a validity flag and the actual consumed `(epoch, sequence, gametic, playerIndex)`. The last-consumed record may lag the request high-water mark; stale/rejected requests must never update it. Within one atomic single-player operation, a separate acknowledgment counter protects nothing further. Phase commands use source=`PHASE`, sequence=0, and cannot impersonate host gameplay consumption.
+For C: `s == 0` or `s <= admittedHighWater` is `BAD_SEQUENCE`; a fresh valid sequence becomes high-water only after every admission check passes. For the Worker: allocate at invocation, retire attempted identities on every returned result (including rejection), never retry an ambiguous call, and never rewrite an old request's epoch. C does not retain rejected requests or later execute them. TS validates integer/range before i32 conversion; C checks bit patterns too. A stale request using UINT32_MAX cannot exhaust C's counter. Worker numbering is owned locally, never taken from a remote response.
 
-For every initialized, structurally valid gameplay request with `s > highWater`, record `highWater=s` before epoch/phase checks; rejected attempts also spend their sequence. Bad masks and `s==0` do not spend it. Resubmission always uses a new sequence. This avoids a previously rejected command later becoming acceptable after menu dismissal. High-water bookkeeping is the only allowed change on a stale-epoch rejection; no events, time advance, input change, or lifecycle processing. TS validates integer/range before the WASM i32 conversion, and C validates bit patterns and sequence/epoch rules again.
+The safety invariant is **at most one admission per sequence plus no admitted command crossing its epoch**, not permanent blacklisting of every rejected spelling. A stale-epoch rejection can never become eligible because epochs do not return. A menu/pending rejection cannot become eligible after dismissal/preparation because those control boundaries change epoch. A same-epoch neutral rejection can become mask-eligible after a neutral tic, but the compliant Worker has retired it and that later tic has a higher sequence, so C rejects replay. A corrected bad mask with an otherwise fresh sequence is not an execution of previously rejected work: it is a new submission requiring all checks. C deliberately does not promise to blacklist arbitrary unadmitted input. If that stronger requirement becomes necessary, reconsider scope instead of quietly restoring spent-rejection policy.
 
-### Where invalidation occurs
+### Alternatives and specific execution histories
 
-- **Actual load entry:** hook `G_DoLoadLevel` before replacing the map/player; increment epoch and mark neutral-required even if map/episode are unchanged. Clear all future-command validity. The outer lifecycle action barrier remains active through save-game unarchive. Failure is a fault, not a successful loaded state.
-- **Death:** hook the local player's `PST_DEAD` assignment in `P_KillMobj` (`E/src/p_inter.c:617`). Latch reason/epoch immediately, defer clearing the active consumed command until that world tick finishes.
-- **Rebirth:** recognize local `PST_REBORN` before `G_DoReborn`; in P0 single player it requests `ga_loadlevel`. Recognize a dead phase operation setting reborn after its tick. No multiplayer respawn support is promised.
-- **Exit:** hook `G_ExitLevel` and `G_SecretExitLevel` when `ga_completed` is requested, not only when intermission begins. `G_DoCompleted`/`G_WorldDone`/finale dispatch keep the phase barrier active. End-of-operation checks catch other pending actions and phase changes.
-- **Menu/pause eligibility changes:** compare flags before/after bounded event processing and every operation. Increment epoch and neutralize on each eligibility edge; a menu close in a phase call stops before playable simulation. Opening a menu cancels prior gameplay intent. Menu closure without a load clears builder history but need not force an extra neutral playable tic; the next accepted full set is fresh.
-- **Fresh restart:** dispose the Worker/WASM and obtain a new `runId`; never call the old initializer again. Menu new-game in the same instance still goes through load invalidation.
+Here `H` is C high-water; `e` is current epoch. C options include both epoch-scoped high-water and no C sequence.
 
-Invalidation resets adapter `isKeyPressed` and a promoted resettable `statePreviouslyCommunicated`, drains pending events, zeros engine keyboard/mouse/joystick controls, `next_weapon`, turn/double-click accumulators, mouse deltas, and pause/save sends. Reset input translation's shift state as part of input reset (`i_input.c:shiftdown`). Clear `ticdata`, align `maketic`/`recvtic` to current `gametic`, invalidate the active command tag, clear borrowed `netcmds`, and zero installed player commands **outside an executing world tick**. Even though controlled mode bypasses the ring, make the dormant backlog invalid and forbid switching back to the legacy scheduler in this instance.
+| History | A: spend fresh structural rejection | B: spend admission (chosen) | C: epoch-scoped / no C sequence |
+| --- | --- | --- | --- |
+| Step `(e,7)` completes, identical call arrives again | Reject `7 <= H`. | Same; one admitted execution. | Epoch-scoped H also rejects; no sequence accepts another tic in the same epoch. Single ownership alone does not prevent a duplicated caller invocation. |
+| `9` arrives before `8` in the same ready epoch | Admission of 9 makes 8 stale. | Same. Neither policy proves 9's observation is current; TS must reject obsolete context before invoking C. | Epoch-scoped H same; no sequence admits both. No option reorders messages or needs a queue. |
+| Current epoch 4, stale `(3,UINT32_MAX)` arrives while H=6 | Spends maximum, forcing retirement despite no engine work. | `STALE_EPOCH`; H remains 6; `(4,7)` can proceed. Rejected epoch 3 never returns. | Epoch check rejects without needing sequencing. |
+| Menu opens e=5→6; `(6,10)` rejected in menu; dismissal e=6→7 | A spends 10 unnecessarily. | H unchanged; exact rejected request remains stale at e=7; Worker uses a new sequence. | Epoch-scoped H safe if reset only on a real epoch change; no sequence still fails duplicate ready calls. |
+| Same-map reload requested e=7→8; load e=8→9 | Map number cannot protect any option. | Step refuses pending work; phase loads; old `(7,s)`/`(8,s)` never admitted at e=9; neutral first is explicit. | Epoch-scoped is equally safe across load, but adds reset rules without shrinking the request/receipt. |
+| Admissible `(9,12)` built; test hook requests load before entry, epoch→10 | 12 already spent. | Admission already set H=12; return `TRANSITION`, consumedValid=0. Replay 12 fails even if supplied with e=10. Phase owns subsequent load. | Epoch-scoped may reuse 12 only with the new epoch; must forbid retagging old intent in TS. No sequence relies entirely on caller retirement. |
+| `(e,13)` finishes but response is missing/malformed | Replay blocked, but no proof that retry would recover the lost result. | Same. Compact ABI has no replay/cache recovery: dispose the uncertain instance. A snapshot is not a missing receipt. | Epoch-scoped blocks duplicates; no sequence may run twice if retried. All still need an ambiguity policy. |
+| New Worker starts epoch=1/sequence=1 | C counters restart in a new instance. | Same; wrapper rejects old runId before C. | Same. No C counter can authenticate a previous Worker run. |
+| Obsolete remote answer from an earlier same-epoch observation | High-water cannot reject it if TS assigns a fresh sequence. | Same; wrapper matches run/epoch/observation/request and retires superseded context. | Same; TS staleness defense is distinct from engine replay defense. |
 
-After a load, leave controls neutral, with **no hidden first-player tic**. Return the load/phase result. The next gameplay request must use the new epoch, a new sequence, and mask 0; consume and acknowledge that one neutral tic, then lift neutral-required. This naturally lets Doom clear new-player `usedown/attackdown` (`G_PlayerReborn:947`). Do not manually reset those live player flags on each input request or override flags restored from a save before normal consumption.
+Epoch-scoped sequencing is viable under strict run/epoch validation; it is not required here because run-global H is one scalar with no reset protocol. Removing C sequence could work only with a stronger non-replay caller guarantee; it makes the durable one-request/one-tic boundary dependent on every wrapper call site. Retaining one private scalar and two receipt identity words is a proportionate, specific replay defense. Phase calls remain explicitly serialized host operations with TS message deduplication; no generalized C sequence protocol is added for them.
 
-TS owns rejection of stale remote responses using run identity, epoch, and the observation/request context it already owns. A same-epoch response to an obsolete observation is a TS policy failure that a load epoch alone cannot detect. C owns engine-side command invalidation, including transitions inside synchronous calls; cancellation in JS cannot substitute for it.
+No epoch or sequence wrap. At sequence exhaustion, retire the instance before another request; stale/malformed external numbers cannot force it. Before an operation could overflow epoch or signed engine tic/time counters, return `LIMIT_REACHED` with zero work and retire. Admission of the final permitted sequence may complete, then requires retirement. Do not claim counter exhaustion corrupts the engine; actual invariants failing are a separate `FAULT`. A conservative run tic ceiling must also keep derived timer milliseconds and retained engine arithmetic in range (§7); no permanent extra public counter is needed.
 
-## 5. Chosen Minimal API
+### Invalidation and neutral-first
 
-### Illustrative exports and wire representation
+- **Load:** invalidate at `G_DoLoadLevel` entry (`522–578`), before map/player replacement; mark neutral-required even for the same map. Keep the preparation barrier through the entire enclosing `G_DoNewGame`, `G_DoWorldDone`, or `G_DoLoadGame`. The last restores leveltime and unarchives players/world/thinkers/specials after base-map creation (`1344–1385`); there is no safe return at the base-map hook. Stock missing-reader/header rejection returns without a load (`1351–1359`), not automatically an invariant fault; P0 does not expose save/load UI operations.
+- **Death:** hook local `PST_DEAD` assignment (`p_inter.c:617`), latch epoch/reason immediately, defer input/installed-command clearing until current simulation completes.
+- **Rebirth:** recognize `PST_REBORN` set by dead phase consumption (`p_user.c:183–184`); phase preparation then calls the stock single-player `G_DoReborn` (`g_game.c:1094–1096`), which requests load. No phase call ticks its new live player.
+- **Exit:** latch at `G_ExitLevel/G_SecretExitLevel` setting `ga_completed` (`1150–1163`), and reconcile pending actions/phase changes at the return boundary. Keep preparation isolated through completion/worlddone/finale actions; a pending exit is not yet intermission.
+- **Menu/pause and other control edges:** epoch and reset on interruption/resumption, even without load. Observe responder changes inside `advancePhase`, plus end-of-operation state changes; ordinary read-only snapshots do not mutate epochs. A newly pending lifecycle action closes readiness immediately. Continuing an already pending chain is not itself an epoch increment unless it crosses another control boundary.
+- **Restart:** dispose/recreate with new runId; never reinitialize this instance. Same-instance menu new-game uses the load barrier.
+
+Reset future effective keys and excluded contributors (`next_weapon`, turn/double-click history, device buttons/deltas, pause/save sends); drain owned event work and clear borrowed `netcmds`/installed commands outside an executing world tick. Preserve `turnheld` across uninterrupted accepted live tics. Controlled mode never pumps `DG_GetKey`: gated legacy setters cannot populate adapter caches, so promoting/resetting its function-local cache is unnecessary for P0. The dormant scheduler ring is never read again; per-load ring reindexing is unnecessary in immutable controlled mode. Prove its exclusion rather than introducing a second command-lifetime protocol.
+
+After every actual load, publish neutral input with no hidden first-player tic. First `stepOneTic(newEpoch,newSequence,0)` must itself build, consume and complete once; only successful `APPLIED` lifts neutral-required. If it dies/exits during that tic, preserve transition isolation and stop the batch. `G_PlayerReborn:947–949` initializes `usedown/attackdown=true`; a native neutral consumption clears interaction history. Do not force those flags false on input submission or overwrite flags restored by save load. Menu dismissal alone resets builder history without adding another mandatory neutral tic; an existing load-neutral requirement persists through menus.
+
+## 5. Chosen Production API and Record
+
+### Keep five operations; shrink their results
 
 ```c
-// Proposed signatures, not patches. Pointer results are wasm32 i32 values.
-void initControlledGame(void); // WAT: WASI _initialize, then controlled C init
+// Proposed, not implemented. Pointer results are wasm32 i32 values.
+const uint32_t *initControlledGame(void); // WAT: WASI init, controlled C init
 const uint32_t *stepOneTic(uint32_t expectedEpoch,
-                           uint32_t sequence, uint32_t heldMask);
+                         uint32_t sequence, uint32_t heldMask);
 const uint32_t *advancePhase(uint32_t expectedEpoch, uint32_t operation);
 const uint32_t *getControlSnapshot(void);
 void renderControlledFrame(void);
 ```
 
-Five exports, no input queue, callbacks for acknowledgment, allocator protocol, JSON, or private engine offsets. Keep legacy exports for legacy hosts, but `tickGame`/key setters must be gated against use after controlled initialization. Mode is immutable and established **before** engine initialization, not by toggling a runtime flag after buffered work exists. Imported callbacks may copy/log frames/assets; reentrant engine operations are prohibited and checked by a busy guard.
+Initialization must establish immutable mode before engine setup and remove both implicit init ticker calls. Init returns a zero-tic record; first title-page setup may run `D_DoAdvanceDemo` without player/world execution. Step owns one ready playable tic. Phase owns preparation and at most one non-playable tic. Snapshot supports read-only inspection after init/waits; forcing a phase operation merely to read state would blur mutation ownership. Render is separately scheduled, using the existing frame import/dimensions. These responsibilities justify all five; fewer names would not simplify engine ordering.
 
-Results and snapshots use an adapter-owned, explicitly indexed **uint32 word record**, little-endian, headed by `abiVersion` and `byteLength`. Signed fields are encoded as two's-complement i32 words. This is a public ABI schema, not `player_t`/`ticcmd_t` memory exposure. Assign indices and numeric enums in the implementation header/wrapper together, with compile-time size checks. All fields below are required; avoid optional heap objects:
+Legacy hosts retain their path, but legacy init/tick/key calls are prohibited once controlled mode is selected. A busy guard covers all operations, including snapshots/render from imports. Reentry or mixed scheduling poisons controlled mode; abort the outer operation or trap, never let it later publish success. Callbacks may copy/log only. No acknowledgment callbacks, queue, allocator protocol, JSON, private player pointers, or raw engine offsets.
 
-- Status, source (`HOST`/`PHASE`/`NONE`), acceptance/build/consumption validity flags; transition reason bits; `neutralRequired` and sequence high-water mark.
-- Expected epoch, epoch before/after, requested sequence/mask, actual prebuild mask, entry mask, built tag, and consumed tag. A rejected call reports absent build/consumption via flags, not fabricated zeros interpreted as a valid command.
-- `gametic` and `leveltime` before/after; explicit counts of engine tics, world-ticker completions, playable tics, builds, and local player entries in this operation.
-- Phase/flags before/after, pending `gameaction`, player validity/state/index, mission/episode/map before/after. Include menu, pause, usergame, demo flags so normalized phase is inspectable.
-- Named built command fields, named player-entry command fields, `cmdAfterInitialRules` movement/button fields and override flag; last consumed identity with its own validity flag; invalidated-command count/reason for this operation.
+**Proposed ABI v1: 12 uint32 words (48 bytes), fixed indices, little-endian.** Enums get explicit stable numeric assignments in the future header/wrapper; C bool/enums/padding are never wire layout. All values are adapter copies.
 
-The scratch record lives until the next bridge operation. TS immediately copies/decodes it before invoking another export, verifies version/length/pointer bounds, and recreates its view if `memory.buffer` changed. `getControlSnapshot` is read-only with respect to engine/input/time and reports zero operation counts; its last-consumed identity remains available. Render does not replace acknowledgment. No raw player/actor pointers escape. `runId` is attached by the Worker wrapper, not stored in C memory.
+| Word / type | Meaning and validity | Worker consumer / invariant |
+| --- | --- | --- |
+| 0 `abiVersion: u32` | 1 | Reject incompatible decoding. |
+| 1 `byteLength: u32` | 48 for v1 | Bounds/layout check. Version/length are distinct compatibility and memory checks. |
+| 2 `status: Status` | Per-operation outcome below | Completion vs rejection/preparation/fault; only APPLIED is successful live completion. |
+| 3 `controlEpoch: u32` | Current epoch at return; 0 before init | Freshness for the next operation; may differ from consumed epoch. |
+| 4 `phase: Phase` | Normalized current state below | Whether step is allowed or phase management is needed. No redundant eligible flag. |
+| 5 `neutralRequired: 0\|1` | Current load-neutral obligation; persists while non-ready | Ready host chooses mask 0 until explicitly completed. |
+| 6 `transitionReasons: bitset` | Reasons in this operation: LOAD, DEATH, REBIRTH, EXIT, CONTROL_EDGE, PHASE_CHANGE; 0 on pure rejection/snapshot | Explain epoch changes and stop an action batch; multiple intra-call edges may be coalesced. Not an event history. |
+| 7 `consumedValid: 0\|1` | Verified initially-live host command entry in this operation only | Real delivery evidence; may be 1 on a later FAULT without completion. Always 0 on phase/init/snapshot. |
+| 8 `consumedEpoch: u32` | Original entry epoch if word 7=1; otherwise 0/invalid | Join consumption to request even after death/exit changes current epoch. |
+| 9 `consumedSequence: u32` | Actual private tag sequence at entry if word 7=1; otherwise 0/invalid | Match exactly the synchronous requested identity, never echo merely admitted input. |
+| 10 `engineTics: u32` | Actual completed outer tic increments in this operation, normally 0 or 1 | Explicit phase/step work accounting; load does not count as a tic. |
+| 11 `worldTics: u32` | Completed P_Ticker bodies in this operation, normally 0 or 1 | Distinguish dead-world work from menu/intermission/finale tics. |
 
-Minimal normalized phases: `UNINITIALIZED`, `TITLE_OR_DEMO`, `MENU`, `PAUSED`, `PLAYABLE`, `DEAD`, `REBORN_OR_ACTION_PENDING`, `INTERMISSION`, `FINALE`, `FAULT`. Overlays and pending-action flags accompany the phase; phase alone is not eligibility proof. Health is unnecessary: local player state/actor validity and the latched death reason suffice for P0. This avoids a general observation SDK.
+`APPLIED` entails consumedValid=1, matching `(epoch,sequence)`, and engineTics=worldTics=1, checked in C before publication. No separate accepted/completed/playable flags or `APPLIED_TRANSITION`: compare current epoch to the supplied epoch and inspect reasons. A returnable FAULT may preserve verified entry and completed counters, but never claims successful completion; counts must be actual, not capped if an invariant detects excess. Invalid receipt combinations cause Worker disposal.
+
+No public absolute `gametic/leveltime`, player index, masks, built tag, full command, source, high-water, last-consumed history, mission/map/flags, or debug counters. The Worker knows which operation/request it invoked; one fixed local player needs no index. Per-operation exact counts suffice for host accounting; C checks absolute deltas and tests trace them, including map resets. Identity `(epoch,sequence)` is unique without an extra consumed-tic scalar. Snapshot contains current phase/epoch/neutral, status READY/PENDING/INELIGIBLE (or NOT_INITIALIZED/FAULT/limit), and zeros for operation evidence/reasons/counts. It does not reconstruct a missing receipt.
+
+The record is scratch storage valid until the next bridge call; copy immediately before render/snapshot/another step. Validate pointer alignment/bounds/version/length and recreate views after memory growth. A runId is attached in TS, never in C. Render emits a frame only at a published safe state; it returns no new receipt and never replaces consumption evidence. While work remains pending, skip drawing and retain the last completed frame; a snapshot/phase return exposes only normalized state. This avoids assuming every between-action intermediate state is drawable before Stage A proves display ownership.
+
+### Phases and outcomes
+
+Normalize with this precedence: UNINITIALIZED/FAULT; WORK_PENDING for unfinished supported action/rebirth/title preparation; MENU; PAUSED; TITLE_OR_DEMO for suspended attract mode; DEAD; INTERMISSION; FINALE; READY. In a user level, DEAD means valid local `PST_DEAD`; REBORN maps to WORK_PENDING. READY alone represents the complete readiness predicate. Missing actor/player in a supposedly prepared user level is a fault, not a false READY. Menu/pause overlays can hide the underlying phase; after closure/reconciliation the host receives the authoritative next phase. The Worker never decodes raw engine flags to decide readiness.
+
+Supported dispatches are ga_loadlevel, ga_newgame, ga_completed, ga_victory and ga_worlddone; ga_loadgame retains a whole-action barrier if reached internally/tested, without a public save/load operation. ga_savegame and ga_screenshot are excluded from the controlled profile. `ga_playdemo` is deliberately suspended as TITLE_OR_DEMO rather than treated as resumable supported work; it never enters demo/player simulation. New-game menu selection may replace it. Unknown/out-of-profile actions cannot masquerade as PENDING. Saved pause stays suspended in P0; new-game/restart can leave it. Public quit/save/load UI is outside the supported menu script; do not automate arbitrary menu paths.
+
+| Status | Applicable call / rule | Receipt / work |
+| --- | --- | --- |
+| `APPLIED` | Step completed all live invariants; current phase may have transitioned | consumedValid=1, engine/world=1/1. New epoch/reasons distinguish a consumed transition. |
+| `READY` | Init/phase/snapshot ends ready | consumedValid=0; counts 0/0: supported readiness changes occur through responder/preparation work, then stop before a destination ticker. |
+| `PENDING` | Phase exhausted local preparation budget with supported work still pending; snapshot reports that state | consumedValid=0; counts 0/0. Resume explicitly with advancePhase(currentEpoch,NONE). |
+| `TRANSITION` | Step admitted/built but a legitimate control edge interrupted it before simulation; phase changed epoch and ends non-ready (newly requested work may remain; exhausted preparation takes PENDING precedence) | Step counts 0/0; phase may have non-playable counts. No live consumption. |
+| `INELIGIBLE` | Step refuses non-ready state without work; phase/snapshot remains stably non-ready with no new epoch edge | Step counts 0/0; phase may report one non-playable tic. This is not an instruction to spin. |
+| `NEUTRAL_REQUIRED` | Ready step with nonzero mask while obligation set | No admission/build/input change; all evidence/counts zero. |
+| `STALE_EPOCH`, `BAD_SEQUENCE`, `BAD_MASK`, `BAD_PHASE_OPERATION`, `NOT_INITIALIZED`, `LIMIT_REACHED` | Pre-admission rejection | No engine work, input mutation, or C high-water change; all receipt evidence/counts zero. |
+| `FAULT` | Actual invariant failure/invalid engine state; latched poison | Discard instance; preserve only verified partial evidence if returnable. Hang/trap may yield no record. |
+
+Phase outcome precedence: FAULT/rejection, then PENDING if budget exhausted with supported work remaining, then READY if ready, then TRANSITION if epoch changed in this operation, otherwise INELIGIBLE. Counts convey ordinary phase progress; no PHASE_ADVANCED synonym is needed. A step refused because phase is WORK_PENDING returns INELIGIBLE, not PENDING: it performed no preparation. A snapshot reports PENDING without progressing it. Neutral-first is a mask obligation on READY, not another lifecycle phase.
 
 ### Complete gameplay mask
 
-Use bits 0–8 for `Forward`, `Backward`, `TurnLeft`, `TurnRight`, `StrafeLeft`, `StrafeRight`, `Fire`, `Use`, `Run`; bits 9–16 for held weapon slots 1–8. No Alt strafe modifier, pause, save, menu, chat, cheats, weapon-cycle events, mouse, or joystick. Dedicated strafe keys plus turning cover compound strafe+turn without alternate-arrow meaning. Mask 0 is neutral.
+Bits 0–8: Forward, Backward, TurnLeft, TurnRight, StrafeLeft, StrafeRight, Fire, Use, Run. Bits 9–16: held weapon slots 1–8. Mask 0 is neutral. Reject unknown bits, opposite movement/turn/strafe pairs, or multiple weapon slots. Other combinations, including movement+turn+strafe+fire, are valid. No Alt, pause/save/menu/chat/cheats/weapon-cycle/device events.
 
-Reject unknown bits, forward+backward, turn-left+turn-right, strafe-left+strafe-right, and multiple weapon slots. All other combinations are valid, including movement+turn+strafe+fire. Held weapon slot requests remain subject to Doom ownership/shareware/shared-slot rules. No model output is converted to arbitrary key codes.
+The private helper overwrites the full keyboard array from the mask and reads controlled bindings back. Validate distinct in-range default bindings; exclude autorun sentinels (`G_BuildTiccmd:310–311`), low-res demo turning, double-click contributors and other devices. Do not rebuild to verify: the native builder mutates history. Held weapon requests use native slot/ownership rules; acknowledgment promises delivery, not a switch. Gameplay masks bypass responders; only phase UI taps use them.
 
-The engine helper maps bits to supported `key_*` bindings in `g_game.c`, overwrites the entire keyboard array in exclusive mode, and reads it back. Validate/fix controlled-mode bindings at initialization: distinct, in-range defaults; disable autorun sentinel settings (`key_speed >= NUMKEYS` or `joybspeed >= MAX_JOY_BUTTONS` in `G_BuildTiccmd:310–311`), low-res demo turning, and other input devices. Do not reset `turnheld` between accepted live steps; only at invalidation. Every accepted call replaces the whole set, so unrequested keys cannot persist. The builder retains Doom's normal keyboard behavior.
+### Phase operations
 
-### Bounded phase operation
+`advancePhase(expectedEpoch, operation)` has enum NONE, menu taps ESCAPE/UP/DOWN/LEFT/RIGHT/ENTER/CONFIRM, CONTINUE_DOWN, CONTINUE_UP, RESPAWN. Validate pairing and epoch before work. Pending preparation permits only NONE; no new UI event can replace a partially processed supported chain. Suspended attract demo still permits bounded new-game menu navigation.
 
-`advancePhase` is necessary to get out of an ineligible state without allowing gameplay controls to navigate menus or continue intermission. Its uint32 operation is a small enum: `NONE`, menu taps `ESCAPE/UP/DOWN/LEFT/RIGHT/ENTER/CONFIRM`, `CONTINUE_DOWN`, `CONTINUE_UP`, `RESPAWN`. Validate operation for the current phase; stale epoch rejects before event processing. Serialize these with gameplay requests in the same Worker.
+- UI taps post at most two initialized down/up events through responders, no platform key scan or carried UI held cache. ESCAPE can open a menu from READY with zero world tics. After responder processing, clear any gameplay keys responders touched, reconcile epoch, prepare pending work, and stop if control becomes ready or a load completes. No arbitrary 256-key event replay into the 64-slot ring (`d_event.c:25–57`).
+- NONE first resumes preparation. If preparation did work, publish its boundary with zero tics rather than also ticking the destination phase. Otherwise at most one menu/title, dead-world, intermission, or finale tic. A READY NONE returns READY with zero. Menu/pause calls never run a live P_Ticker, including the initial-view exception.
+- Phase tick command is privately owned and zeroed, with BT_USE only for a permitted continuation/respawn. No G_BuildTiccmd and no host consumption receipt. CONTINUE_UP/NONE consume no buttons; continuation downs require an intervening consumed up interval for intermission edge logic (`WI_checkForAccelerate:1252–1273`). A preparation-only result did not consume a continue pulse; host checks counts and issues a fresh phase operation later.
+- RESPAWN requires a dead valid player, no blocking menu/pause, and no pending work: one dead-world tick through P_DeathThink with BT_USE. It sets REBORN; return without reload dispatch. Later NONE calls prepare reload, stop before live simulation, and expose neutral-required. NONE dead tics use no earlier combat buttons.
+- At most one non-playable ticker and no action dispatch after that ticker. If it requests new work (rebirth, exit, worlddone, advancedemo), publish that pending boundary and let the next phase call prepare. No loop runs until gameplay appears. Attract demo playback stays suspended; initial title page and bounded page/menu work are supported.
 
-- Menu taps are bounded down/up events processed through the existing responders, with no held UI state carried forward. At most two events per call; do not replay a whole keyboard into the 64-slot ring (`E/src/d_event.c:25–57`). Gate them to title/menu/paused management. `ESCAPE` may explicitly open a menu from playable state, but that call performs no world tick.
-- `NONE` runs at most one non-playable phase tic: menu ticker/title page, dead world, intermission, or finale. It never runs a live player tic, including stock menu's initial-view exception. A fully playable state returns `READY` with zero tics.
-- Intermission/finale continuation uses a phase-owned zeroed `ticcmd` with only `BT_USE` for that one `CONTINUE_DOWN` tic, or no buttons for `CONTINUE_UP`/`NONE`; report phase source and actual command. No phase held-input cache is needed. Caller sends a consumed up interval between downs. This uses stock continuation logic rather than skipping statistics/finale state by fiat.
-- `RESPAWN` is allowed only for a dead local player: one dead world tic with a phase-owned neutral movement command plus `BT_USE`, through `P_DeathThink`. It reports playable=0, world=1, reborn/epoch change. A later call processes reload and stops before live simulation. `NONE` dead tics cannot carry an earlier live use/fire.
-- P0 **suspends attract-demo gameplay**, rather than executing demo `P_PlayerThink`. Title/menu responders still allow new game. A pending demo-start action returns a suspended demo phase; a later menu new-game action replaces it. Demo timing/playback is outside this contract. No phase operation may accidentally consume a demo or a new live player's command.
-
-Phase results use the same record with `PHASE_ADVANCED` (engine tics 0 or 1 as explicitly reported), `READY`, `TRANSITION`, or rejection/fault. An unsupported operation/phase pairing returns `BAD_PHASE_OPERATION` with zero tics; a reentrant/mixed-mode invocation is a contract fault before further simulation. Phase processing can load/reset counters but stops at a live-player barrier. At a load barrier engine/world/playable counts are all zero. No loop runs “until playable.” Doom's paused bit is not used for host waits; P0 can leave an externally restored pause suspended and require new-game/restart rather than adding a pause-toggle command.
-
-### TypeScript calling semantics
+### Worker calling semantics
 
 ```ts
-type StepInput = {
-  expectedControlEpoch: number;
-  commandSequence: number;
-  heldControls: number;
-};
-
-// Wrapper methods are synchronous INSIDE the single engine Worker.
-// Main-thread message delivery is asynchronous and includes runId.
+// Synchronous inside the sole Worker; outer messages carry runId/context.
 let state = doom.snapshot();
-if (state.neutralRequired) {
-  const neutral = doom.step({ expectedControlEpoch: state.controlEpoch,
-    commandSequence: nextSequence(), heldControls: 0 });
-  if (neutral.status !== "APPLIED") return handlePhaseOrFault(neutral);
-  assert(neutral.playableTics === 1);
-  state = neutral.after;
-}
-const result = doom.step({ expectedControlEpoch: state.controlEpoch,
-  commandSequence: nextSequence(),
-  heldControls: Control.Forward | Control.Fire });
-if (result.status === "APPLIED" || result.status === "APPLIED_TRANSITION") {
-  assert(result.consumed.sequence === result.request.sequence);
+if (state.phase !== "READY") return handleLifecycle(state);
+const input = { expectedEpoch: state.controlEpoch,
+  sequence: nextSequence(), heldMask: state.neutralRequired ? 0 : chosenMask };
+const result = doom.step(input); // immediately copy its 12 words
+if (result.status === "FAULT") return disposeRun();
+if (result.status === "APPLIED") {
+  assert(result.consumedValid && result.consumedEpoch === input.expectedEpoch);
+  assert(result.consumedSequence === input.sequence);
+  assert(result.engineTics === 1 && result.worldTics === 1);
   doom.render();
-}
-// Any transition ends the action batch. Reobserve before another command.
-// During an external wait, call no simulation/phase exports.
+  if (result.controlEpoch !== input.expectedEpoch || result.phase !== "READY")
+    return handleLifecycle(result); // consumed transition ends action batch
+} else return handleRejectionOrLifecycle(result); // retire identity; never retry
+// External waits call neither step nor phase. Snapshot/render cannot step.
 ```
 
-Sequence identifies **one tic request**, not a multi-tic action. To hold for N eligible tics, issue N fresh atomic requests, checking each acknowledgment and stopping at the first transition/rejection. Pausing means no step/phase invocation; the next step must still provide a complete mask. Neutral input while advancing is different from freezing simulation.
+Holding N tics means N fresh requests, each checked before proceeding, with neutral-first a distinct acknowledged step. Obsolete remote results are rejected by run/epoch/observation/request context before allocating/invoking a C request. Missing/malformed acknowledgment or trapped/timed-out call disposes the run; no automatic replay. Main-thread watchdog contains a blocked Worker. No TS implementation of Doom mechanics or engine-state offsets.
 
-## 6. Rejected Alternatives and Tradeoffs
+## 6. Source Ordering and Phase Ownership
 
-| Alternative | Benefit | Why rejected / retained detail |
+**SV:** stock `TryRunTics` builds before `RunTic` and increments gametic afterward (`d_loop.c:653–728`); `RunTic` installs borrowed netcmds and advances demo before `G_Ticker` (`d_net.c:80–88`). `G_Ticker` handles REBORN (`738–741`), loops actions (`744–778`), installs commands/demo input (`780–828`), processes specials (`830–855`), performs intermission cleanup/oldgamestate update (`857–863`), then dispatches phase tickers (`865–885`). `P_Ticker` gates pause/menu, calls player thinking, then world thinkers/specials and increments leveltime (`p_tick.c:98–117`). `P_PlayerThink` edits chainsaw input before its DEAD branch (`p_user.c:201–211`).
+
+**INF: choose separated ownership.** Factor the existing rebirth/action preparation and continuation for controlled mode; `advancePhase` alone invokes preparation. `stepOneTic` verifies no pending work and uses only installation/normal continuation. No event pump, mutable JS callback, or demo routine between build and entry. Retain M_Ticker once per live tic (SV: it only animates the menu skull at `m_menu.c:1607–1611`), and preserve ordinary HUD/automap/status work. Snapshot/render never prepare actions. Legacy G_Ticker still executes the same preparation, installation, housekeeping and simulation in its original order without the controlled budget/guards.
+
+| Boundary example | Stock ordering / defect | Proposed ordering |
 | --- | --- | --- |
-| `setControls(mask)` + `stepOneTic()` + `getSnapshot()` | Familiar, simple setters | Leaves mutable pending state, lifetime/epoch ambiguity, and a gap between submission and consumption. Could be made safe with generation tagging and strict serialization, but adds state without reducing engine changes. Read-only snapshots remain useful. |
-| Drain all keyboard events and repair release loop | Small input-pump fix; useful for manual hosts | Does not handle responder interception, load resets, prebuilt commands, exact timing, or actual consumption. Atomic gameplay masks bypass events entirely. Manual key-up-loop cleanup can be deferred because P0 menu taps are tightly bounded. |
-| Atomic step with direct host-built `ticcmd` | Removes keyboard cache/command conversion | Would give TS a second movement/turn/weapon encoder and skip builder turn acceleration, key-speed/slot mapping, and builder history. It still needs lifecycle barriers and an actual consumer acknowledgment. Player `usedown` semantics would survive only with correctly consumed release tics; injection does not inherently skip them. It would skip menus intentionally, but supplies no menu/start policy. |
-| Engine builds from a mask, immediately installs command | Retains native builder and eliminates backlog | **Chosen.** Bypass key-event delivery and scheduler buffering, not `G_BuildTiccmd` or player rules. Require exclusive input and a small engine helper because `gamekeydown` is private. |
-| Existing `singletics` alone | Existing one-build seam; `NetUpdate` suppression | Still clock queries/waits/backlog, lifecycle-after-build ordering, and display wipes. Use its lessons, not its timedemo promise as an API contract. |
-| One queue with future tic commands and cancellation | Could amortize host calls | Unnecessary for one synchronous owner; makes transitions and validity harder. No queue in P0. |
-| Run a hidden neutral tic immediately after load | Could prime view/use flags | Violates zero-tic transition reporting and hides a first player command. Require an explicit accepted neutral request instead. |
+| Transition before build: menu skill selects new game | `BuildNewTic` processes M_ChooseSkill (defer newgame/clear menu), then builds; G_Ticker loads before installing that command. | Only phase processes menu. Complete bounded newgame/load action, reset epoch/neutral, return zero tics. Step sees only already prepared state and requires neutral. |
+| Pending reload exists at step entry | G_Ticker would load after build and continue P_Ticker. | Reject INELIGIBLE with no build/dispatch; phase owns reload. Pending action already makes readiness false even before load hook. |
+| After-build/pre-entry transition fixture | Demonstrates why the last guard cannot be removed merely because there is one owner. | Detect pending action/epoch change, invalidate admitted build, clear future input/history, return TRANSITION with zero tics; no dispatch. Next phase prepares, never reuse that sequence. A command mismatch with no legitimate transition is FAULT. |
+| Exit during live tic | `G_ExitLevel` sets ga_completed; current P_Ticker finishes; next G_Ticker dispatches completion. | Same gameplay ordering: APPLIED old consumed identity, new epoch/EXIT, one completion/increment; next phase dispatches completion without another playable tic. |
+| Death during live tic, including held use | P_PlayerThink may die in a sector or later thinkers kill it; next dead think can set REBORN from use. | Finish killing tic and acknowledge old live entry. Future combat input reset; only explicit dead phase RESPAWN can supply use. Phase reload stops before new player. |
+| Worlddone during intermission | WI_Ticker→WI_updateNoState→G_WorldDone can directly call F_StartFinale on selected commercial maps (`g_game.c:1298–1315`), rather than only defer an action. | Reconcile direct phase change at phase-tic return; preserve stock call, no nested live tick. Otherwise next NONE prepares ga_worlddone/load. |
 
-The chosen path changes when input is built only in controlled mode, after lifecycle preparation; legacy game behavior stays on the original path. The cost is an intentional split in `G_Ticker` preparation versus command installation/simulation. That split is the minimum unavoidable engine change for an honest boundary.
+This narrows stepping: no prebuild or after-build action dispatch chains. It **does not remove the G_Ticker split**. Calling stock G_Ticker with a promise that gameaction was initially empty is insufficient: it still owns dispatch/rebirth and can tick a loaded live player. Moving a copy of those branches into the adapter is not simpler. Reuse private preparation/continuation helpers, including state-change housekeeping. **RH:** localized factoring preserves oldgamestate/WI_End, init, rendering and save-load ordering in compiled WASM. Stage A must establish this; if it requires broad rewrites of simulation/player/WAD semantics, stop before expanding scope.
 
-## 7. Exact Stepping and Timing
-
-### Why `singletics` is insufficient
-
-`TryRunTics` samples `I_GetTime` before its single-tic branch. It builds a command, then computes availability/counts and can enter a time-polled wait (`636–705`); existing backlog can expand counts. The no-multiplayer configuration actually sets `new_sync=0`, `ticdup=1` (`d_loop.c:404–414`), so do not assume new-sync's availability calculation is the only path. It increments `gametic` around `RunTic`, even if the world ticker is paused or in intermission. `NetUpdate` returns for singletics (`201–202`), but that does not move lifecycle work ahead of build. `D_Display` still runs its synchronous melt (`278–295`).
-
-Use a dedicated bounded single-player controlled entry in `d_loop.c`, leaving `TryRunTics` for legacy operation. Set controlled mode before init; make `NetUpdate` an explicit no-op in this mode, covering renderer calls as well. Do not rely on `singletics` remaining true when demo routines alter flags. No scheduler clock query, lowtic polling, command-ring read, `TicdupSquash`, or catch-up loop belongs in a controlled step.
-
-### Required ordering (proposed pseudocode)
+### Controlled ordering pseudocode (INF)
 
 ```text
 step(e, s, mask):
-  guard initialized/exclusive/not reentrant; validate mask/sequence
-  spend valid fresh sequence; reject stale epoch BEFORE any engine work
-  capture before-state; reconcile eligibility edge
-  prepare pending demo/lifecycle/rebirth work, with action-dispatch budget
-  if preparation changed identity/phase: reset future input; return TRANSITION
-  if not eligible: return INELIGIBLE
-  if load neutral required and mask != 0: return NEUTRAL_REQUIRED
-  provisionally admit request in current epoch
-  overwrite engine controls; assert effective mask == mask
-  build once with G_BuildTiccmd(..., gametic); save field values + tag
-  install current command through controlled G_Ticker continuation
-  recheck full eligibility/epoch/tag immediately before simulation
-  if a lifecycle action appeared after build:
-    invalidate build; bounded preparation only; return TRANSITION with zero tics
-  P_Ticker -> P_PlayerThink entry: verify keys/tag/command, commit/record consumption
-  finish this ONE world tick; increment gametic once
-  verify counts/deltas; finish deferred transition invalidation
-  return APPLIED or APPLIED_TRANSITION
+  enter exclusive busy guard; reject poisoned/uninitialized/mixed mode
+  validate integer mask/sequence; reject stale e before engine work
+  reject s <= admittedHighWater; reject non-ready; reject non-neutral obligation
+  preflight conservative epoch/tic/time retirement limits before mutation
+  admittedHighWater = s                     // only here; never on rejection
+  capture private T/L, actor identity; M_Ticker once; overwrite/read back keys
+  G_BuildTiccmd once; save named fields and private (e,s,T) tag
+  test-only after-build fixture may request a transition
+  if legitimate pending action/control edge detected before simulation:
+    latch/reconcile epoch + reason; invalidate build and future input/history
+    publish TRANSITION, no consumed identity, engine/world=0/0
+    return                                 // no action dispatcher in step
+  install through controlled continuation; assert pre-P_Ticker readiness
+  P_PlayerThink entry: verify live actor/epoch/tag/keys/all command fields
+    record consumed identity from verified tag; mismatch => poison before body
+  finish P_Ticker + normal G_Ticker continuation; increment gametic/virtual once
+  check one build/live entry/world completion and T+1/L+1
+  reconcile transitions; finish deferred input reset; clear borrowed netcmds
+  if any invariant/poison failed: publish FAULT with verified partial evidence
+  else lift load-neutral on successful neutral tic; publish APPLIED
+
+phase(e, operation):
+  guard; validate epoch and allowed operation/phase before any mutation
+  preflight retirement limits; never alter gameplay sequence high-water
+  process at most one allowlisted UI tap, if requested; reconcile control edges
+  prepare up to budget complete units (rebirth/title/action), no command build
+    only after each whole function returns: reconcile + state-change housekeeping
+  if supported work remains and budget exhausted: publish PENDING, counts=0/0
+  else if any preparation ran, a load finished, or UI made control ready:
+    publish current outcome, counts=0/0; return without destination ticker
+  else if ready or suspended demo/paused state: publish current outcome, no tic
+  else run at most one permitted non-playable phase ticker with owned command
+    guard out live player simulation even at viewz==1
+    finish normal phase continuation; increment gametic/virtual once
+    reconcile new work/direct phase change; finish state-change housekeeping
+    publish current outcome and actual engine/world counts; never dispatch again
 ```
 
-Split/reuse `G_Ticker`'s action preparation (`738–778`) and continuation rather than processing actions twice on the normal path. The controlled `RunTic` seam must report whether a tic actually ran so `d_loop.c` does not increment `gametic` for a preparation-only load. Use a private callback/helper extension as needed; do not force a void legacy `RunTic` result into successful acknowledgment. Revalidate after any preparation that can replace the player. The final guard includes `gameaction == ga_nothing`, player identity/state, menu/pause/demo flags, not just epoch: a deferred load request can exist before its load hook increments the epoch. A newly pending action after build invokes preparation only, spending the same per-operation dispatch budget, and stops before simulation. No import callback or event pump occurs between build and entry in normal controlled execution.
+For a menu overlay, the permitted phase ticker is M_Ticker without a live world body; a title page may tick D_PageTicker, intermission WI_Ticker, finale F_Ticker, or a dead valid level P_Ticker plus normal level continuation. These are engine tics only when the controlled outer loop explicitly increments gametic/virtual time. UI taps/preparation alone never increment it. Menu/paused overlays must also suppress underlying intermission/finale continuation when that would consume a UI-only operation's input. Record phase-owned command installation/consumption in test traces; public consumedValid stays zero. Never call stock RunTic/G_Ticker and infer the permitted ticker ran from its void return.
 
-Each public operation processes at most eight pending action dispatches (including chained `ga_completed -> ga_victory`, for example). If more remain, return a poisoned `FAULT`; do not spin until an arbitrary WAD becomes playable. Ordinary map setup remains synchronous and can itself hang/trap; watchdog containment bounds host exposure, not C instruction count. Suspended demos are excluded from this dispatch budget. Normal supported assets/action chains must prove they fit the budget in the POC.
+### Safe resumable preparation boundary
 
-`advancePhase` runs bounded responder/menu work and lifecycle preparation, then at most one permitted non-playable ticker. It has the same stop-before-live rule. The initial controller-owned title setup (`D_DoAdvanceDemo` for the first title page) may occur in controlled initialization, but does not run a player/world tic. Disable the two implicit init simulation calls in `D_DoomLoop` only for controlled mode; initialize graphics/view normally and publish snapshot. Initialization never claims an accepted gameplay command.
+**SV:** each switch dispatcher returns completely to G_Ticker's `while (gameaction != ga_nothing)` head. `G_DoCompleted` can set ga_victory and return before dispatching F_StartFinale (`1177–1202`); G_DoReborn can request load; newgame/worlddone execute load within their own dispatcher; G_DoLoadGame runs all unarchive/close work before returning. `P_SetupLevel` resets leveltime (`p_setup.c:704`); save restore can replace it afterward. The stock while loop has no dispatch budget and no default case for an invalid action.
 
-### Virtual time and render separation
+**INF:** the safe resumable boundary is **after a whole supported dispatcher returns, and after required state-change bookkeeping**, before another action/command install/ticker. No C stack, half-unarchived map, callback, or partial function is suspended. Factor `WI_End` and oldgamestate update (`G_Ticker:857–863`) so a published intermission departure is cleaned exactly once; never publish new state while retaining an invalid old intermission resource lifetime. There must be no player/world ticker to make publication safe. Pure snapshot exposes normalized state only; pending rendering is skipped. **RH:** the action-return boundary plus housekeeping is sufficient for supported assets and retained draw/init ownership; it is not yet a runtime guarantee.
 
-35 tics/s is simulation time (`E/include/i_timer.h:22`), not a real-time requirement. In controlled mode `I_GetTime` returns a controller-owned integer virtual engine-tic count; `I_GetTimeMS`/`DG_GetTicksMs` derive `floor(1000 * virtualTics / 35)` using wide arithmetic. Initialize/reset the timer baseline explicitly rather than depending on the legacy zero-basetime sentinel. Increment virtual time exactly once per reported engine tic, including non-playable phase tics, never on queries, rejection, rendering, network waits, or map setup without a ticker. Enforce this in timer/adapter seams; leave legacy timing unchanged.
+Use a private per-phase-call budget of eight completed preparation units; charge local rebirth preparation, bounded title advancement, and each action dispatch, so neither rebirth nor title work evades bounded accounting. Do not rerun G_DoReborn on every resume while ga_loadlevel is already pending. Prefer existing gameaction as continuation state, with at most one private rebirth-prepared latch if needed. Suspended ga_playdemo is not dispatched. After preparation units, no destination phase ticker in that call. If supported work remains at budget exhaustion, clear future command validity, return PENDING at the safe boundary, phase=WORK_PENDING, current epoch/neutral and accumulated transition reasons, engine/world counts=0/0, and permit only subsequent NONE preparation. Count value resets per call; gametic/virtual time do not advance for map setup. Epoch changes only at actual control edges, not each PENDING poll.
 
-`renderControlledFrame` draws current completed state once, calls the existing draw import, suppresses `NetUpdate`, and bypasses **both wipe preparation and the melt loop** in controlled mode. Maintain destination display state/background redraw bookkeeping. It performs no input scan, builder, phase advance, or world/player ticker. Assert these counts/tic identities unchanged across render. Renderer bookkeeping/palette/frame contents can change; render is not promised to be bitwise pure. Avoid accepting draw callback counts as simulation proof. No sound/music work is necessary for this POC.
+A non-playable phase ticker may itself request work; it returns TRANSITION (with phase WORK_PENDING and actual tic counts), not budget-exhaustion PENDING. Snapshot then reports PENDING; the host sees the same resume requirement. READY says a command may be submitted (subject to neutral); INELIGIBLE says stable phase management is needed; TRANSITION reports a boundary this operation crossed; PENDING reports unfinished bounded preparation. Current phase/epoch drive resumption, no continuation token/action queue or raw gameaction export.
 
-With no polling loops entered, virtual time can remain constant while synchronous code reads it. A wall-clock frozen inside the unmodified scheduler/wipe would deadlock; an increment-on-read clock would change simulation with query count. Both are rejected. The host can wait 2s or 10s between requests without catch-up because neither elapsed host time nor a pending ring determines the next command.
+Local progress means a preparation unit completed atomically, or one permitted phase tic completed; returning from one unit does not prove global termination or meaningful state change. Eight dispatches bound each returning call, not time inside G_DoLoadLevel or thinker loops. Host/harness caps consecutive phase calls/total work and elapsed time; diagnose repeated unchanged action/phase/epoch with test traces, optionally stop for no progress. Do not fault merely because an action value repeats: it may represent valid work. No-progress detection and total-work caps are host policy/test failure, not automatic C poison for valid unfinished work. Each call still has a main-thread deadline; trap/hang returns no successful PENDING.
+
+Poison only on actual broken invariants: unknown action/state enum; unsupported active net/demo/multiple-player mode; missing actor in a prepared user level; command/key/tag mismatch; extra build/entry/tick or wrong counter delta; phase entering a newly live player; unsafe reentry/mode mixing; load returning an inconsistent/unrestored state. Unsupported menu operation is BAD_PHASE_OPERATION before mutation. A known but prohibited action reaching internal dispatch unexpectedly is a mode invariant failure; deliberate attract-demo suspension is exempt. Routine budget exhaustion, a refused mask, or ordinary missing save reader is not corruption. FAULT is sticky; no recovery claim on the same instance.
+
+## 7. Timing, Rendering, and Compact Future Observation
+
+### Exact external timing
+
+SV: TryRunTics samples time before singletics, can build ahead/wait and executes a counted batch (`d_loop.c:636–737`); non-multiplayer sets new_sync=0/ticdup=1 (`404–414`). NetUpdate returns in singletics (`201–202`), but neither that flag nor its comment fixes lifecycle-after-build ordering. D_Display's polling wipe remains (`d_main.c:278–295`).
+
+INF: dedicated controlled loop bypasses TryRunTics, scheduler queues, polling, catch-up and TicdupSquash. Make NetUpdate a mode no-op at its central definition, covering D_Display and all four renderer call sites. Controlled engine virtual tics increment exactly once with each reported outer engine tic, including allowed non-playable phase tics; no clock changes from reads/rejections/preparation/render/waits. I_GetTime returns that integer directly; I_GetTimeMS/DG_GetTicksMs derive floor(1000*tics/35) in wide arithmetic. Explicit timer baseline avoids legacy zero-basetime behavior (`i_timer.c:34–72`). Retire conservatively before signed tic/millisecond arithmetic overflows; do not merely wait for uint32 sequence exhaustion.
+
+Render draws completed published state once through the frame import, bypassing both wipe setup and polling loop while maintaining destination redraw/palette bookkeeping (`d_main.c:179–184,228–256,278–295`). Skip pending/poisoned states. It does no input scan, native command build, phase preparation, player/world simulation or time advance. Display bookkeeping need not be bitwise pure. **RH:** destination redraw/palette bookkeeping must be proved; stock drawing gates on gametic (`186–225`). A complete initial level view before the explicit neutral tic is not required: if unavailable, retain the prior frame until that acknowledged tic rather than silently prime simulation or broaden renderer changes. No sound/music work is needed for the proof. Waiting 2s or 10s invokes no simulation/phase operation and creates no catch-up. Freeze-on-read inside unmodified polling code and increment-on-read clocks are both rejected.
+
+### Health and what “game over” means
+
+This is a source-backed scope check, not authorization for a game-state SDK.
+
+| Semantic distinction | Pinned SV signal / location | Small observer interpretation (INF, deferred) |
+| --- | --- | --- |
+| Live vs dead awaiting respawn | `PST_LIVE/DEAD/REBORN`, `d_player.h:43–51`; `P_KillMobj` assigns DEAD at `p_inter.c:617`. Player health mirrored/clamped at `753–755`; actor health may be negative. | DEAD is both death animation and waiting for optional respawn; there is no distinct engine “animation finished, now game over” flag. Read health only for a validated player/level. |
+| Respawn requested / reborn | `P_DeathThink:183–184` sets REBORN on BT_USE without a live usedown edge; `G_DoReborn:1094–1096` reloads single-player level. `G_PlayerReborn:947–949` / `P_SpawnPlayer:589–606` restore LIVE. | RESPAWNING means requested/preparing replacement, then PLAYING under a new epoch; REBORN is not a permanently finished run. |
+| Exit / map transition | `G_ExitLevel/G_SecretExitLevel:1150–1163` set ga_completed. `G_DoCompleted:1286–1292` enters intermission; episode map 8 instead queues ga_victory (`1186–1189`); Chex map 5 exception (`1180–1183`). | TRANSITIONING precedes committed INTERMISSION/FINALE or another map; map completion is not campaign completion. |
+| Intermission | `GS_INTERMISSION`; `WI_checkForAccelerate:1252–1273` uses fire/use edges, stats wait at `1204–1211`, `WI_updateNoState:643–653` calls worlddone. | INTERMISSION requires deliberate host phase control, never stale combat input; zero health does not determine it. |
+| Finale | `F_StartFinale:104–144` sets GS_FINALE; `G_WorldDone:1304–1315` also selects it after commercial maps 6/11/20/30 and secret exits 15/31. | FINALE alone cannot say terminal: map-6 narrative still continues the campaign. |
+| Engine progression ending | `F_Ticker:159–192`: commercial button after >50 tics goes worlddone except map 30 starts cast; noncommercial text progresses to artwork. `F_CastTicker:326–331` cycles cast indefinitely. | No universal completed flag or engine shutdown. Stock noncommercial episode end and commercial map-30 ending can satisfy a declared objective, but the engine remains runnable/menu-accessible. |
+
+[Death/damage source](https://github.com/jacobenget/doom.wasm/blob/31cc1af9656a8184830090c4e9f268383f5d7e15/doomgeneric/src/p_inter.c#L611-L618), [finale progression](https://github.com/jacobenget/doom.wasm/blob/31cc1af9656a8184830090c4e9f268383f5d7e15/doomgeneric/src/f_finale.c#L104-L192), [intermission continuation](https://github.com/jacobenget/doom.wasm/blob/31cc1af9656a8184830090c4e9f268383f5d7e15/doomgeneric/src/wi_stuff.c#L1204-L1273).
+
+**Recommendation:** no health/terminal fields or observer export in P0. Reserve the idea of a separate compact post-tic observation after exact stepping passes; reserve no unused production words. A future AI-facing `{health: i32|null, state: SmallState}` can suffice if SmallState distinguishes PLAYING, SUSPENDED/TITLE, DEAD, RESPAWNING, TRANSITIONING, INTERMISSION, FINALE and an objective-specific COMPLETE. Nullable health avoids another validity flag or misleading retained/default health outside a player level. COMPLETE is a latched host/product objective result, not a synonym for DEAD or GS_FINALE. The minimal two-field idea works only with this richer state and a declared objective.
+
+A single boolean gameOver fails precisely for death followed by respawn and for Doom II map-6 finale followed by map 7. If ending recognition is later required, choose verified asset/mission/episode/objective semantics: e.g. one-map exit, one noncommercial episode's victory path, or stock commercial map-30 ending. Detect at authoritative C lifecycle hooks using private mission/map context; latch completion for that run/objective. An arbitrary custom WAD has no universal terminal rule. No terminalReason field is needed until multiple product termination reasons must be distinguished; STOP/FAULT remain service outcomes, not engine victory. Do not enlarge this design with ammo/position/enemy/objective telemetry.
+
+The Worker still requires current epoch, normalized readiness, neutral obligation, and actual consumption/completion receipt even if the model sees only health and state. AI-facing observation and control-plane ABI have different consumers; compressing the model prompt does not eliminate engine lifecycle isolation. Asset compatibility/objective interpretation is unresolved until an asset route is chosen; that choice is separate from proving one tic.
 
 ## 8. Prospective Source Changes
 
@@ -284,15 +351,15 @@ With no polling loops entered, virtual time can remain constant while synchronou
 
 | Repository-relative file(s) | Symbols / proposed responsibility |
 | --- | --- |
-| `references/doom.wasm/src/doom_wasm.c`, `src/doom_wasm.h` | Controlled initializer/export wrappers; mask/sequence validation; resettable adapter caches; immutable mode and reentrancy guard; stable word-record ABI and C-owned acknowledgment storage; virtual `DG_GetTicksMs`; gate legacy keys/tick in controlled mode. |
-| `references/doom.wasm/doomgeneric/src/g_game.c`, `doomgeneric/include/g_game.h` | Private key overwrite/readback helper; clear builder contributors; split `G_Ticker` prepare/continue for controlled dispatch; one native build and tagged installation; load/death-rebirth/exit generation coordination; `G_DoLoadLevel`, `G_DoLoadGame`, `G_DoReborn`, exits/newgame/worlddone barriers. Own normal builder history. |
-| `references/doom.wasm/doomgeneric/src/d_loop.c`, `doomgeneric/include/d_loop.h` | Bounded exact controlled operation, engine-tic accounting, command-ring clear/index alignment, explicit controlled `NetUpdate` no-op, forbid scheduler-mode mixing. One active command tag, not per-ring-entry metadata or a new queue. |
+| `references/doom.wasm/src/doom_wasm.c`, `src/doom_wasm.h` | Controlled initializer/export wrappers; mask/sequence validation; exclusive legacy-input gating; immutable mode and reentrancy guard; 12-word record ABI and C-owned acknowledgment storage; virtual `DG_GetTicksMs`; gate legacy keys/tick in controlled mode. |
+| `references/doom.wasm/doomgeneric/src/g_game.c`, `doomgeneric/include/g_game.h` | Private key overwrite/readback helper; clear builder contributors; factor reusable `G_Ticker` preparation/continuation and intermission cleanup; phase owns bounded preparation; one native build and tagged installation; load/death-rebirth/exit generation coordination; `G_DoLoadLevel`, `G_DoLoadGame`, `G_DoReborn`, exits/newgame/worlddone barriers. Own normal builder history. |
+| `references/doom.wasm/doomgeneric/src/d_loop.c`, `doomgeneric/include/d_loop.h` | Bounded exact controlled operation, engine-tic accounting, permanently bypass command-ring scheduling, explicit controlled `NetUpdate` no-op, forbid scheduler-mode mixing. One active command tag, not per-ring-entry metadata or a new queue. |
 | `references/doom.wasm/doomgeneric/src/d_net.c` | `RunTic`/loop callback wiring: separate controlled preparation/demo handling and propagate zero/one-tic outcome. Keep legacy callback behavior; allow a small private callback extension in `d_loop.h` rather than duplicating the entire dispatcher. |
 | `references/doom.wasm/doomgeneric/src/p_tick.c` | `P_Ticker` controlled pre-simulation guard and world-ticker completion count. Phase mode explicitly prevents a live tick despite menu initial-view exception. |
-| `references/doom.wasm/doomgeneric/src/p_user.c` | `P_PlayerThink` entry assertion/authoritative command copy; capture documented chainsaw adjustment before movement; trace use-release/edge behavior in test builds. No rewriting of movement/use/weapon rules. |
+| `references/doom.wasm/doomgeneric/src/p_user.c` | `P_PlayerThink` entry assertion/authoritative command copy; check command equality at entry in production; capture chainsaw adjustment and trace use edges only in test builds. No rewriting of movement/use/weapon rules. |
 | `references/doom.wasm/doomgeneric/src/p_inter.c` | `P_KillMobj` local-death hook/latch at `PST_DEAD`, deferred reset if command is already consuming. Health getter is unnecessary. |
 | `references/doom.wasm/doomgeneric/src/d_main.c`, `doomgeneric/doomgeneric.h` | Controlled init without implicit `TryRunTics`/`doomgeneric_Tick`; bounded title/menu processing ownership; render-only entry; controlled wipe bypass and correct redraw bookkeeping. |
-| `references/doom.wasm/doomgeneric/src/i_input.c`, `doomgeneric/include/i_video.h` | Minimal reset helper for translation/shift state, declared through the existing video/input platform interface (there is no current `i_input.h`); controlled mode excludes legacy gameplay key pump. Removing key-up break for manual hosts is optional later, not the core proof. |
+| `references/doom.wasm/doomgeneric/src/i_input.c`, `doomgeneric/include/i_video.h` | No required patch if controlled mode never calls the platform key pump. Synthetic menu taps provide initialized character data. A shift/cache reset is needed only if that pump is retained, which is outside the preferred P0 route. |
 | `references/doom.wasm/doomgeneric/src/i_timer.c`, `doomgeneric/include/i_timer.h` | Integer virtual-time branch and explicit baseline setup; legacy host timing preserved. |
 | `references/doom.wasm/src/wat/merge-two-initialization-functions-into-one.wat` | Add `initControlledGame` wrapper that calls WASI initialization before controlled C initialization; prohibit both initializers in one instance. No WAT control constants required: mask values are public schema constants. |
 | `references/doom.wasm/src/reachability_graph_for_wasm-metadce.json`, `Makefile`, `doom.wasm.interface.txt` | Preserve new exports in allowlist; include engine headers for adapter compile (`Makefile:240–245` currently lacks `doomgeneric/include`); verify merge ordering and regenerate final interface description. No dependency upgrade. Licensed embedded-asset replacement, if selected, is a separately explicit build requirement. |
@@ -304,15 +371,15 @@ With no polling loops entered, virtual time can remain constant while synchronou
 
 ### Bounded execution plan after authorization
 
-One compiled-WASM harness in a browser Worker, one fixed build/hash, one provenance-verified compatible IWAD plus at most one tiny licensed fixture PWAD, fixed skill/maps. No Decisions/API client or public UI. Cap each case at 2,000 engine tics, each WASM operation at a main-thread watchdog deadline of 2s, and the post-build suite at 5 minutes. A limit exceeded is failure with the last authoritative record, not an infinite retry. Build time is separately bounded/recorded after checking tool availability; no build-time estimate is runtime evidence.
+One compiled-WASM harness in a browser Worker, one fixed build/hash, one provenance-verified compatible IWAD plus at most one tiny licensed fixture PWAD, fixed skill/maps. No Decisions/API client or public UI. Cap each case at 2,000 engine tics and 4,000 phase calls (including zero-tic preparation), each WASM operation at a main-thread watchdog deadline of 2s, and the post-build suite at 5 minutes. A limit exceeded is failure with the last authoritative record, not an infinite retry. Build time is separately bounded/recorded after checking tool availability; no build-time estimate is runtime evidence.
 
-After authorized implementation: inspect final WASM exports/imports, verify only approved production exports remain, load assets before synchronous init, run cases below, and save machine-readable traces plus a brief acceptance report. Use test-only fixtures for lethal damage, same-map reload, and exit requests to avoid relying on AI skill or long play. They must call normal engine paths (`P_DamageMobj/P_KillMobj`, pending load, `G_ExitLevel`), not manually bump counters. Hook triggers at named boundaries: before preparation, after build/before player entry, inside player/world simulation. Production ABI excludes these hooks. A fixture that forces a transition after build is specifically needed to test the last generation guard, even though ordinary controlled ordering excludes that race.
+After authorized implementation: inspect final WASM exports/imports, verify only approved production exports remain, load assets before synchronous init, run cases below, and save machine-readable traces plus a brief acceptance report. Use test-only fixtures for lethal damage, same-map reload, and exit requests to avoid relying on AI skill or long play. They must call normal engine paths (`P_DamageMobj/P_KillMobj`, pending load, `G_ExitLevel`), not manually bump counters. Hook triggers at named boundaries: before preparation, after build/before player entry, inside player/world simulation. Keep injection points separate from production assertions; fixtures must not increment counters or synthesize success receipts. Production ABI excludes these hooks. A fixture that requests a transition after build tests the final guard; the step must invalidate and return without dispatching that action. Only a later phase call may prepare it. Add a test-only budget override (e.g. one dispatch) to expose real chained-action `PENDING` boundaries without inventing new production actions.
 
 ### Instrumentation before build and at consumption
 
 In an assertion-enabled compiled WASM, record these stages: request validation; prebuild effective input; postbuild command/tag; post-lifecycle invalidation; player-entry command/tag/effective mask; initial-rule command adjustment; world-ticker completion; operation return. Store a small bounded per-operation trace in C and retrieve it **after** return; no reentrant JS callback at mutable simulation boundaries. Saturation is test failure. The production acknowledgment remains a fixed single-operation record.
 
-Every trace joins `(runId, expectedEpoch, epochAtStage, epochAfter, requestedSequence, consumedSequence, requestedMask, effectiveMask, gameticBefore/after, leveltimeBefore/after, engine/world/playable counts, phase/flags, mission/episode/map, player index/state, build and entry command fields, invalidation reason/count)`. Include `usedown` before/after and test-only use-attempt counters for the use case; include RNG/game-state digest in the replay case. These are diagnostic test values, not a new production observation API.
+Every trace joins `(runId, expectedEpoch, epochAtStage, epochAfter, requestedSequence, consumedSequence, requestedMask, effectiveMask, gameticBefore/after, leveltimeBefore/after, engine/world/playable counts, phase/flags, mission/episode/map, player index/state, build and entry command fields, invalidation reason/count, internal admission high-water, action budget/dispatch count, publication boundary)`. Also trace native builder contributors/configuration/history, private command/actor identity tags and their validity, virtual tics/milliseconds, rebirth-preparation state, and WI_End/oldgamestate ownership. Include `usedown` before/after and test-only use-attempt counters for the use case; include RNG/game-state digest in the replay case. These are diagnostic test values, not a new production observation API.
 
 Assert before build and at player entry; never rely solely on a post-call key mask. Verify fresh tags and all named command fields through actual installation. Expected-command checks for pinned default controls include neutral movement/buttons, normal forward=25, backward=-25, run forward=50, normal strafe magnitude=24, slow-turn magnitude=320 for the first five held turn tics, then normal=640 (run=1280), and `BT_ATTACK/BT_USE`. Verify values/signs from `g_game.c:149–151,315–347` at implementation time. Chainsaw override is separately tested/flagged, not treated as stale host input. Test counts come from actual thinker/ticker hooks; exported call count is insufficient.
 
@@ -320,53 +387,72 @@ Assert before build and at player entry; never rely solely on a post-call key ma
 | --- | --- | --- |
 | 1. Compound release | Consume forward+fire, then mask 0. | Both keys false before the next build and at entry; fresh neutral command delivered; one engine/world/playable tic. Residual momentum is allowed. |
 | 2. Compound replacement | Consume forward+fire, then backward. | Forward/fire false and backward true at both boundaries; forwardmove=-25 and no attack; no intervening partial command. |
-| 3. Menu/start ghost | Hold gameplay request, open menu, submit it while ineligible, navigate new game, and hold menu arrow on legacy cache in a test fixture. | No playable entry in phase/menu/load calls; epoch invalidated, caches/event/keys reset; old request rejected. First new-map playable request is an acknowledged neutral tic; later fresh forward works. Also test menu dismissal without load. |
-| 4. Death/rebirth/restart | Damage inside a live step, including while use is held; submit old request; explicit dead neutral then respawn phase operation, process load; fresh instance restart. | Killing tic returns `APPLIED_TRANSITION` with old consumed identity and new epoch. Old request cannot drive dead/reborn/new player; dead use belongs only to explicit PHASE command. New run rejects old Worker messages; first live tic neutral. |
-| 5. Same-map reload | Defer reload before preparation with a pending gameplay request; also inject transition after build. | Map ID identical but epoch changes. Pre-entry interrupted operation has zero gameplay/engine/world ticks and absent consumed tag; built command invalidated if present. Old epoch fails; next live tic neutral. |
+| 3. Menu/start ghost | Hold gameplay request, open menu, submit it while ineligible, navigate new game, and hold menu arrow on legacy cache in a test fixture. | No playable entry in phase/menu/load calls; epoch invalidated, events/keys reset and adapter caches remain bypassed (including the held legacy-cache fixture); old request rejected. First new-map playable request is an acknowledged neutral tic; later fresh forward works. Also test menu dismissal without load. |
+| 4. Death/rebirth/restart | Damage inside a live step, including while use is held; submit old request; explicit dead neutral then respawn phase operation, process load; fresh instance restart. | Killing tic returns `APPLIED` with old consumed identity, new epoch, and `DEATH` reason. Old request cannot drive dead/reborn/new player; dead use belongs only to explicit PHASE command. New run rejects old Worker messages; first live tic neutral. |
+| 5. Same-map reload | Defer reload before preparation with a pending gameplay request; also inject transition after build. | Map ID identical but epoch changes. Step refuses the pending reload without dispatch/build; phase loads with zero engine/world/playable ticks. An after-build interruption returns `TRANSITION` with absent consumed identity; its admitted sequence remains spent, then phase performs the load. Old epoch fails; next live tic neutral. |
 | 6. Exit/intermission/next map | Exit inside a step, then phase tick/continue down-up pulses, next-map load. | Exit-triggering step consumes once in old epoch; no old fire/use progresses intermission. No phase operation ticks new live player; new-map load barrier and neutral-required visible. |
-| 7. Intra-call transition | Menu event selects new game; after-build test hook reloads; live world hook causes exit or death. | First two yield zero playable ticks with explicit transition and invalidation; last yields exactly one playable tic plus transition. `accepted`, `consumedValid`, identity and counts agree, never an ambiguous `APPLIED` with zero. |
+| 7. Intra-call transition | Menu event selects new game; after-build test hook requests reload; live world hook causes exit or death. | Menu start yields READY with load reasons (or PENDING if budget-limited), and after-build abort yields TRANSITION; both have zero playable ticks and explicit invalidation; last yields exactly one playable tic plus transition. `consumedValid`, identity, status and counts agree; no public accepted/build flags. No `APPLIED` with zero or phase call with a playable entry. |
 | 8. Use edges | After initial neutral, consume use, neutral release, use again; choose a repeatable use fixture and instrument `P_UseLines`. | Release command actually reaches live player and clears `usedown`; next press attempts use once. Consecutive held-use tics produce no extra attempt. No physical door outcome assumed. |
 | 9. Wait independence | Two fresh runs, same init/menu/render schedule and scripted masks; insert 2s vs 10s waits at one equivalent boundary with no step/phase calls. | Snapshot/gameplay digest unchanged during waits; next request always one tic. Compare all normalized authoritative traces (omit runId/wall timestamps), commands/RNG/world state per step; no catch-up. Keep render schedule equal because display bookkeeping may affect non-gameplay state. |
 | 10. Worker containment | Main heartbeat every 50ms while cases run. In a dedicated instance trigger a controlled hang, then trap. | Normal steps leave heartbeat running (no attributable gap >250ms). Main watchdog terminates hang at 2s, flags error within the next 250ms, ignores late results, and can create a new run. Trap handled as fault/disposal; no fake consumption acknowledgment. Never rely on a timer inside the blocked Worker. |
-| 11. Rejection/render discipline | Unknown bits/conflicts, duplicate/out-of-order sequence, stale epoch, mask!=0 after load; render repeatedly with clock fixed. | All specified rejections execute zero tics/builds/entries and no input mutation; correct high-water policy. Render changes no input, command provenance, epoch, game/world/playable counters, or virtual time; builds remain zero despite renderer NetUpdate call sites. |
+| 11. Rejection/render discipline | Unknown bits/conflicts, duplicate/out-of-order sequence, stale epoch, mask!=0 after load; render repeatedly with clock fixed. | All specified rejections execute zero tics/builds/entries and no input mutation; admission-only high-water unchanged on rejection. Include stale UINT32_MAX, menu dismissal, missing acknowledgment disposal, and after-build abort/replay. Force budget=1 on episode-end `ga_completed -> ga_victory`: first phase returns `PENDING`, snapshot reports work pending, subsequent NONE resumes without tics. Exercise intermission-to-map and intermission-to-finale departure at budget=1 to check WI_End exactly once; these need not produce PENDING if their single whole dispatcher completes. Harness total-work timeout fails the case without requiring C to poison valid work. Render changes no input, command provenance, epoch, game/world/playable counters, or virtual time; builds remain zero despite renderer NetUpdate call sites. |
 | 12. Native semantics | Hold turn for seven tics, neutral, turn again; request an unavailable weapon slot; chainsaw-lunge fixture. | Builder acceleration/reset matches expected history; unavailable weapon request still has correctly built/consumed BT_CHANGE without promising switch; entry command and documented chainsaw override are distinguished. |
 
 **Suite failure:** any successful zero/multi-tic operation, pre-entry identity mismatch reaching `P_PlayerThink`, stale phase/gameplay command reaching a new player, hidden new-map tic, release mismatch, unexplained command mutation, wait-dependent authoritative trace, blocked UI, or missing transition result. Expected ineligible/transition zero counts are successes only when status, phase, consumption validity, and hooks all corroborate them. A world tic with dead player is explicitly non-playable; `leveltime` alone cannot classify it.
 
 ### Toolchain and asset prerequisites
 
-Read-only checks today found Python 3, Docker CLI, Make, curl, Git, and clang on PATH. Docker daemon access, SDK image availability, versions, architecture support, and browser automation dependencies were **not exercised**. `wasm-opt`, `wasm-merge`, and `wasm-metadce` were not found on PATH; the upstream build actually uses local `.binaryen/bin/wasm-as`, `wasm-merge`, and `wasm-metadce`. `.binaryen`, `.dev_virtualenvs/python_virtualenv`, `.dev_virtualenvs/rust_virtualenv`, `build/`, and browser `assets/doom.wasm` are absent. Compared with the investigation, **no new compiled artifact or ready local build environment was observed**; it did not establish prior PATH versions, so no package-version change can be inferred.
+The earlier design recorded Python 3, Docker CLI, Make, curl, Git, and clang on PATH; this revision does not revalidate that environment inventory. Docker daemon access, SDK image availability, versions, architecture support, and browser automation dependencies were **not exercised**. That earlier inventory did not find `wasm-opt`, `wasm-merge`, and `wasm-metadce` on PATH; the upstream build actually uses local `.binaryen/bin/wasm-as`, `wasm-merge`, and `wasm-metadce`. Read-only path checks in this revision found `.binaryen`, both `.dev_virtualenvs/python_virtualenv` and `rust_virtualenv`, `build/`, and browser `assets/doom.wasm` absent; no daemon, toolchain, or dependency setup is exercised. There is still **no compiled-WASM proof**. Recheck availability and record versions only in an authorized Stage A.
 
 Future build needs upstream's Python environment, Docker WASI SDK 24, Binaryen 119 and CMake/native compiler/Make for its local build; Git SSH access is currently assumed by the Binaryen clone recipe (`Makefile:128–142`). Rust is used by the interface-description utility, not by the C gameplay contract. Confirm architecture support and any minimal alternative tool setup before installing; record tool/image/assets hashes. The existing command is `make -C references/doom.wasm all`; it has download/install/build side effects and was **not run**. Final module needs export inspection after WAT merging/dead-code elimination, not just a successful C compile.
 
-The engine/glue are GPL-covered; preserve notices and matching source/build materials when distributing a modified WASM. Game data rights are separate from engine rights, as explained by [Freedoom's official overview](https://freedoom.github.io/about.html). Select and hash a compatible Freedoom release with its [license/credits](https://github.com/freedoom/freedoom/blob/master/COPYING.adoc), or permitted local assets, plus a licensed test fixture. Do not assume modern Freedoom map compatibility until exercised in this port. The checked-in Freedoom WAD's release provenance remains unresolved. The default build downloads and embeds shareware `DOOM1.WAD` (`Makefile:174,258–269`); passing a replacement at runtime does not remove embedded bytes. Approve removing/replacing that fallback for a distributable Freedoom-only POC, or establish exact permission for the embedded shareware package. No public asset redistribution is authorized by this design task.
+Asset/distribution prerequisites remain those documented in the [feasibility investigation](doom-wasm-feasibility-investigation.md#3-current-dependency-and-licensing): choose provenance-verified compatible assets with their notices and matching engine source/build materials, plus a licensed fixture. This revision makes no new external licensing determination. Do not assume modern Freedoom map compatibility until exercised in this port. The checked-in Freedoom WAD's release provenance remains unresolved. The default build downloads and embeds shareware `DOOM1.WAD` (`Makefile:174,258–269`); passing a replacement at runtime does not remove embedded bytes. Approve removing/replacing that fallback for a distributable Freedoom-only POC, or establish exact permission for the embedded shareware package. No public asset redistribution is authorized by this design task.
 
-## 10. Risks, Open Questions, and Decision Request
+## 10. Tradeoffs, Remaining Gates, and Stage A Decision
 
-**P0 scope:** exact controlled stepping; full input overwrite and readback; lifecycle invalidation including same-map and intra-call transitions; native command build and actual consumer acknowledgment; minimal phase/player-validity info; explicit neutral-first tic; nonblocking render path; executable Worker harness and adversarial fixtures. Player state/death hook and map/epoch are indispensable because GS_LEVEL/leveltime cannot distinguish live control, death, and same-map replacement. Health/ammo/position are not indispensable to this contract.
+### Decision matrix
 
-**Later authoritative observation:** health, armor, ammo, weapons, position/orientation, objectives/metrics/enemy state, richer terminal reasons, observation/frame SDK. Diagnostic fixture/digest data need not become public exports.
+| Question | Recommendation | Source evidence (SV) | Alternative rejected | Residual uncertainty |
+| --- | --- | --- | --- | --- |
+| Durable ABI / acknowledgment | Five operations, 12-word current-state/operation receipt; always-on C boundary checks; trace internals test-only | Input/build/install/entry are distinct (`doom_wasm.c:123–142`, `g_game.c:291–517,738–788`, `p_tick.c:98–117`, `p_user.c:190–207`) | Exporting masks/full commands/raw flags/debug clocks/history; combining unrelated operations | **Stage A/B RH:** final compiled hooks/exports and exact completion checks. Small receipts do not prove C checks exist; executable traces must. |
+| Sequence and rejections | Private run-global H on admission, including pre-entry aborted build; no spending on zero-work rejection | Builder mutates turn/chat/device history (`g_game.c:315–321,379,412,474`); menu/load alter eligibility (`m_menu.c:717–725`, `g_game.c:522–578`) | Spent stale/malformed requests; consumption-only H; no C replay check. Epoch-scoped H viable but no simplification here | Wrapper must retire unadmitted requests and authenticate observation/run context; no recovery for a lost receipt. Future compiled replay/abort tests required. |
+| Lifecycle budget | Resumable PENDING after complete dispatcher + housekeeping; host caps total work/time | `G_Ticker:744–778,857–863`; `G_DoLoadGame:1344–1385`; actual completed→victory chain (`1186–1189`) | Budget exhaustion as automatic FAULT; suspension inside load; bounded budget as global termination proof | **Stage A RH:** publication/cleanup safe between actions, including WI_End and nested load completion. Individual dispatch still can trap/hang. |
+| Phase owns preparation | Yes; step refuses pending state, final pre-simulation guard aborts without dispatch | Build-before-actions defect (`d_loop.c:138–181`, `d_net.c:80–88`, `g_game.c:738–788`); exit deferral (`1150–1163`) | Two preparation passes in step or copied adapter dispatcher; calling stock G_Ticker as a supposedly pure continuation | **Stage A RH:** local helper factoring preserves legacy init/display/phase semantics. Stop if broad simulation restructuring is necessary. |
+| Health / terminal scope | Defer public observer; later nullable health + small state, objective-defined COMPLETE | DEAD→REBORN→reload (`p_user.c:183–184`, `g_game.c:1094–1096`); narrative vs ending finale (`f_finale.c:159–192,326–331`) | health=0 or any GS_FINALE as boolean gameOver; broad observation SDK | Asset/objective choice required for terminal recognition; P0 needs no such field. |
 
-**Later product:** Decisions calls, screenshot encoding/transport, server proxy, public UI, smooth scheduling, audio/music, deployment, polished recovery, and graceful engine shutdown. P0 uses Worker disposal for traps/hangs; the known `I_Error` infinite loop and quit limitations (`E/src/i_system.c`, `A/src/internal__wasi-snapshot-preview1.c`) are containment cases, not solved by this control proposal.
+### Scope and feasibility risks
 
-Hard gates for coding are architecture authorization and a chosen legal/compatible asset/build route. There is no demonstrated source-level impossibility, but the following remain execution hypotheses:
+P0 is the controlled input/step/lifecycle/render bridge and bounded Worker proof, not Decisions integration or product deployment. Map identity, health, ammunition, position, enemies, metrics, general observation SDK, graceful shutdown, audio and smooth spectator scheduling are not new requirements. Private player validity/death recognition is necessary; exporting player/map internals is not. Legacy quit/fatal paths remain containment cases (`i_system.c:227–294`, `internal__wasi-snapshot-preview1.c:48–67`, SV), not a recoverable PENDING path.
 
-- `G_Ticker` preparation/continuation can be split locally without breaking initialization, HUD/display, or save-load ownership. If this needs wider simulation changes, stop and revise scope/verdict.
-- Bypassing wipe setup as well as its loop while preserving redraw bookkeeping produces valid destination frames.
-- Normal lifecycle chains fit eight dispatches and all creation/load paths pass the chosen epoch hooks. Save-game restore must be covered through action completion even if save/load is not exposed as a normal P0 host feature.
-- Compiled artifacts preserve the exports/schema and do not enter another hidden polling path. Watchdog bounds containment; it cannot guarantee every C call completes in a fixed instruction count.
-- Wait-independence is required within the same build/assets/script. It is not a promise of cross-build/platform bit-for-bit determinism. Fixture and RNG/gameplay digests are needed to detect divergence invisible to a small snapshot.
+Remaining proof obligations are concrete:
 
-Approve these concrete choices before implementation: atomic mask step retaining `G_BuildTiccmd`; control epoch broader than load epoch; run-global sequence with spent rejected attempts; player-entry acknowledgment plus documented internal command override; separate phase/render calls; explicit neutral-first load tic; suspended attract-demo gameplay; immutable single-player controlled mode; and bounded Worker POC rather than production integration. A direct engine command-injection design remains a fallback if the keyboard helper proves invasive, but it requires a new control semantics review, not a silent substitution.
+- Factoring G_Ticker must preserve command installation, special-button handling, intermission resource cleanup, oldgamestate, HUD/automap/status tickers, and complete enclosing load actions. Supported phase preparation must reach a safe zero-tic publication boundary. The split is a feasibility risk, not an existing engine feature.
+- Init skips implicit simulation without leaving graphics/title/view initialization unusable. Render never builds through NetUpdate, draws safe destination frames without wipe setup/polling, and skips pending work. No hidden neutral tic may be used to repair initialization or view state.
+- All control edges, including same-map load and direct finale changes during intermission, must invalidate before future command entry. After-build legitimate transition must abort before P_Ticker; arbitrary mid-world reload is not supported recovery and is a fault. Compiled fixtures must preserve normal death/exit paths and not invent mid-world replacement as valid gameplay.
+- Compiled always-on checks and test-only traces must agree; optimized/release WASM must preserve only approved production exports and no fixture entrypoints. Fault counts reflect actual partial completion; no success follows merely from command installation.
+- Budget-resume tests must show no repeated rebirth dispatch, partial save restore, duplicate WI_End, hidden phase player tick, or input leak. A real chain must work when the test budget is one, even if ordinary supported chains fit eight. Global work limits remain harness/host policy.
+- Wait-independence is within one build/assets/script, not cross-build/platform deterministic replay. Compare command/RNG/gameplay traces with identical render/phase schedules. Main-thread watchdog contains an unreturning call; it cannot prove an instruction/time bound inside each engine function.
 
-This task stops at this proposal. No C/WAT/TypeScript/build/test/dependency changes, build/install/run, commit, push, or runtime testing were done. Final repository verification should show only `?? docs/doom-control-contract-design.md`; the submodule must remain clean at the original gitlink.
+A failure requiring broad changes to thinkers, player mechanics, WAD progression or a generalized continuation framework is a **stop gate**. Report it and revise feasibility before enlarging Stage A. Direct host-built ticcmd injection is not an authorized fallback: it would need a new native-semantics review. A narrower fail-closed preparation policy is acceptable only if compiled evidence disproves safe resumable publication; do not silently replace PENDING with FAULT because normal testing used short chains.
 
-### Implementation Authorization Checklist
+### Staged roadmap (future, separately authorized)
 
-- [ ] Approve the five-export controlled ABI, mask allowlist, word-record schema strategy, phase policy, and no legacy scheduler mixing.
-- [ ] Approve run/epoch/sequence ownership, invalidation hooks, spent-attempt rules, and explicit neutral first playable tic after every load.
-- [ ] Approve `APPLIED` versus `APPLIED_TRANSITION` versus zero-tic transition semantics and entry-command versus chainsaw-adjusted-command evidence.
-- [ ] Choose verified compatible assets and embedded-fallback provenance/removal; approve the bounded build/toolchain setup and future submodule/fork change workflow separately.
-- [ ] Require one build/one entry/one world completion and `gametic +1`, `leveltime +1` for every successful playable step; zero playable entries for every rejection/pre-entry transition/phase barrier.
-- [ ] Require all twelve compiled-WASM cases, both wait scripts, exact-boundary traces, final export inspection, and Worker watchdog/heartbeat criteria to pass before integrating Decisions.
-- [ ] Explicitly authorize implementation only after architecture review; keep broader observation/product work deferred.
+| Stage | Work and exit evidence | Scope boundary |
+| --- | --- | --- |
+| **A — compiled-WASM exact-stepping proof** | Choose legal/compatible asset and bounded build route; produce/hash real WASM; use test-only build/entry/world/action traces to prove init/render zero tics, one ready tic, G_Ticker preparation/continuation ordering, phase barriers, and resumable action boundary (including WI_End). | A local experiment with minimal hooks, not authorization to implement the entire durable ABI or expand simulation semantics. Stop/report factoring or asset incompatibility. |
+| **B — atomic mask and actual consumption acknowledgment** | Complete overwrite/readback and native builder exclusions; production C entry/command/tag and completion checks; compact result layout and final export inspection. | No public test trace or duplicate TS encoder; do not turn A instrumentation into permanent ABI fields. |
+| **C — lifecycle isolation and neutral-first** | Full epoch/reset hooks, admission replay rule, same-map/intra-call transition isolation, dead/respawn/menu/intermission/finale phase policy, explicit acknowledged load-neutral tic. | No hidden live phase tick or reinit/recovery of a faulty instance. |
+| **D — twelve compiled-WASM acceptance cases and durable results report** | All twelve §9 scenarios with adversarial fixtures, budget-resume coverage, two wait scripts, watchdog/heartbeat and export verification; save machine-readable traces, hashes and report. | Scenarios here are future requirements, not tests run by this document task. Decisions remains deferred until the proof passes and is separately authorized. |
+
+### Implementation Authorization Checklist — before Stage A
+
+- [ ] Approve **Stage A only** as a bounded compiled experiment, with the proposed phase-owned preparation and stop gate if local factoring is insufficient. This design revision authorizes no code/build/download activity.
+- [ ] Select provenance-verified compatible IWAD/fixture assets and resolve default embedded shareware fallback by permitted replacement/removal or established permission for that package. Approve the specific build/tool setup, downloads/installations, resource/time limits and artifact/hash recording before running it.
+- [ ] Agree future submodule/fork editing workflow; no silent gitlink/dependency refresh. Future commits/pushes and root revision updates require their own task authorization.
+- [ ] Accept the architectural direction: native builder, exclusive complete masks, one synchronous Worker, epochs, admission-only sequence high-water, five operations/compact record, bounded resumable preparation and explicit neutral-first. Final ABI numeric assignments may follow evidence; any material contract change returns for review.
+- [ ] Require A traces at actual build/player-entry/world-completion boundaries and zero playable tics in init/phase/render, including after-build abort and completed→victory PENDING. A test-only proof may expose internals but must never prescribe permanent private offsets or production fixture exports.
+- [ ] Keep B/C/D gated on A evidence, and require all twelve acceptance cases and durable results before Decisions integration. Separately approve any later objective/health observer work.
+
+### Revision validation and repository boundary
+
+This revision reads both documents and pinned sources and edits only `docs/doom-control-contract-design.md`. The entire updated document is reviewed for ABI validity, admission/epoch timing, post-entry transitions, neutral-first, phase counts/publication, future test expectations and authorization gates. Read-only validation completed: `git diff --check` passed without output; the full document/diff was reviewed; all twelve acceptance rows and balanced code fences were confirmed by document-only checks. Final root status is ` M docs/doom-control-contract-design.md`, with unchanged clean submodule at `31cc1af9656a8184830090c4e9f268383f5d7e15`. No engine/header/WAT/build/TS/test/dependency edits, installations/downloads, WASM build/run, test execution, Decisions calls, commits or pushes occur in this task.
