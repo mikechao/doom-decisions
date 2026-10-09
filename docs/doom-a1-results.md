@@ -1,6 +1,6 @@
 # Stage A1 — first executable proof checkpoint
 
-**FIRST PROOF PASS; REPEAT/IDLE PASS (owner manual runs, 2026-10-09); A1 / Issue #3 NOT ACCEPTED.** The exact final transformed WASM loaded external Freedoom Phase 1 in a Chrome Worker, initialized once and returned a visible 640×400 title frame at time zero. The second experiment produced six identical title frames across a two-second idle interval, with unchanged zero simulation work/time. The earlier CSP failure was corrected without rebuilding WASM. These bounded title experiments do not establish full A1 acceptance.
+**FIRST PROOF PASS; REPEAT/IDLE PASS; MISSING-IWAD PASS (owner manual runs, 2026-10-09); A1 / Issue #3 NOT ACCEPTED.** The exact final transformed WASM loaded external Freedoom Phase 1 in a Chrome Worker, initialized once and returned a visible 640×400 title frame at time zero. The second experiment produced six identical title frames across a two-second idle interval, with unchanged zero simulation work/time. The third confirmed native missing-IWAD refusal before engine startup. The earlier CSP failure was corrected without rebuilding WASM. These bounded experiments do not establish full A1 acceptance.
 
 ## Baseline and changes
 
@@ -133,6 +133,27 @@ All six Worker-reported raw RGBA hashes equal **`d6c8cfd39fb13d32e9ec6ab2778dc3a
 
 Exact evidence is preserved in ignored local output: [repeat/idle receipt](../references/doom.wasm/build/a1-first-proof/evidence/repeat-idle-20261009T211448Z.json) (**21,005 bytes**, SHA-256 **`deca6fd686b84d0e79a48ea83618fd8306bb5ee716fc40f739e863fd9ca41148`**) and [final title PNG](../references/doom.wasm/build/a1-first-proof/evidence/repeat-idle-20261009T211448Z.png). Downloads originals remain intact. The receipt records the operation order and measured idle duration, while the inspected harness establishes that the idle interval dispatches no Worker messages; it does not record the page URL. This proves repeated title rendering and idle isolation for this instance/sequence, not hang containment, arbitrary lifecycle cases or gameplay.
 
+## Experiment 3 — missing-IWAD refusal (owner manual)
+
+Implementation baseline: clean `main`, HEAD **`951923aa13bb25d5d0f02061e946888d822eaa84`**. Only `experiments/stage-a/harness.html` changed for this experiment. Its explicit missing-IWAD mode bypasses JavaScript WAD admission, pins the existing final WASM hash, and supplies count/total zero through validated memory in `loading.wadSizes`. It records unexpected callbacks as failures, transports the actual native status, and dispatches only load, one init and one read-only snapshot. No engine/WAT edits or rebuild occurred; positive experiment paths remain intact.
+
+Owner supplied `/Users/mike/Downloads/a1-missing-iwad.json`, receipt date **2026-10-09T21:25:29.301Z**, user-agent **Chrome/154.0.0.0**. Verdict: **MISSING-IWAD PASS** (expected negative test), with **A1 NOT ACCEPTED**. All three operations returned `ok:true`: load **2.4 ms**, native init **0.4 ms**, snapshot **0 ms**. The receipt hashes the selected `a1-first-proof.wasm` to the final identity above, independently rehashed locally; import/export names/kinds match the first-proof inventory. WAD selection is `null`.
+
+| Observation | Verified result |
+| --- | --- |
+| Pre-init | All 19 counters and four callback counts zero; `frameProduced:false` |
+| Actual `initControlled()` status | **`-2`** |
+| `wasiInit`, `cInit` | Each 1 after refusal |
+| All other 17 native counters | Zero, including engine/title startup, rendering, simulation work and virtual time |
+| `wadSizes` | Called once; checked memory readback reports count=0, total=0 |
+| `readWads`, `onGameInit`, `drawFrame` | Each called zero times |
+| Post-refusal snapshot | All counters/callback observations unchanged; `frameProduced:false` |
+| Failure handling | `watchdogMs:2000`, `watchdogFired:false`; no error, trap or truncated logs reported; init logs empty |
+
+This is native refusal evidence, not a JavaScript admission failure: [`AdmitExternalWad`](../references/doom.wasm/src/doom_wasm.c#L57) returns false for count other than one; [`_initializeControlled`](../references/doom.wasm/src/doom_wasm.c#L97) returns `-2` before `engineCreate` and `doomgeneric_Create`. The [WAT wrapper](../references/doom.wasm/src/wat/controlled-title-init.wat) propagates the native return value after one WASI initialization. No render was requested and no frame callback occurred; no PNG is expected. This does not exercise invalid-but-present WADs, repeated initialization or hang/trap containment.
+
+Exact [missing-IWAD receipt](../references/doom.wasm/build/a1-first-proof/evidence/missing-iwad-20261009T212529Z.json) is retained in ignored local evidence (**6,225 bytes**, SHA-256 **`e74f0d552a7f34f4bafd887c4ca9af532b8c45711ee71e67beed6de0fc778f12`**), preserving the Downloads original.
+
 ## Checks and next checkpoint
 
 Passed:
@@ -147,6 +168,8 @@ Fixture result: **19 passed, 1 live process-integration test skipped**. Also pas
 
 Experiment 2 harness checks passed before the owner run: extracted inline JavaScript and serialized Worker syntax via `node --check`, inspection of the unchanged first-proof checks and message-free idle block, and `git diff --check`. During evidence review, Python standard-library assertions checked every operation/checkpoint, complete counter snapshots, idle equality, frame hashes, PNG header/byte equality and artifact/interface identities; `git diff --check` passed again. Codex did not launch a browser or rebuild WASM.
 
-**Next recommended check, after separate authorization:** bounded missing-external-IWAD refusal before engine startup, with native startup/work counters captured where available. Disposable hang/trap checks and repeated/fixture-disabled build evidence remain subsequent A1 work.
+Experiment 3 checks passed before the owner run: inline JavaScript and serialized Worker syntax via `node --check`, static comparison of the preserved positive render/idle sequences and CSP, and `git diff --check`. Receipt review independently asserted operation order, exact native status, all counters and callback observations, unchanged snapshot, artifact/interface identity and watchdog outcome. `git diff --check` passed after documentation. No browser launch, rebuild or additional runtime experiment occurred during review.
 
-Missing-WAD runtime refusal, repeated-init/reentry tests, hang/trap containment, repeat/fixture-disabled builds, and full Issue #3 acceptance were **not run**. No A2/A3, Decisions API, proxy, server, commits, pushes or publication. Stop here pending review of this checkpoint.
+**Next recommended check, after separate authorization:** disposable Worker hang/trap containment with main-thread responsiveness/disposal evidence and fresh-Worker recovery. This requires a separately scoped fixture/build experiment; the existing artifact was not changed. Repeated/fixture-disabled build evidence also remains subsequent A1 work.
+
+Repeated-init/reentry tests, hang/trap containment, repeat/fixture-disabled builds, and full Issue #3 acceptance were **not run**. No A2/A3, Decisions API, proxy, server, commits, pushes or publication. Stop here pending review of this checkpoint.
