@@ -11,13 +11,28 @@ PATH_TO_THIS_MAKEFILE := $(abspath $(lastword $(MAKEFILE_LIST)))
 DIR_CONTAINING_THIS_MAKEFILE := $(dir PATH_TO_THIS_MAKEFILE)
 
 
+# The wrapper admits inputs and creates a fresh ignored output directory first.
+# No legacy recipes are defined at all in this explicitly selected mode.
+LOCAL_ONLY :=
+DEPENDENCY_FLAGS =
+ifneq ($(BUILD_PROFILE),)
+ifneq ($(BUILD_PROFILE),upstream-shareware)
+$(error Unsupported BUILD_PROFILE)
+endif
+LOCAL_ONLY := 1
+ifneq ($(MAKECMDGOALS),local-build)
+$(error Local mode accepts only local-build; use scripts/build_doom.py)
+endif
+else
 all: doom
+endif
 
 
 ####################################################################
 # Targets for managing the local dev environments and local tools
 ####################################################################
 
+ifeq ($(LOCAL_ONLY),)
 DEV_VIRTUAL_ENVS_DIR = .dev_virtualenvs
 
 # A virtual Python environment is used in dev for managing pre-commit hooks, and to install the Rust dev environment
@@ -140,6 +155,7 @@ ${BINARYEN_DIR}:
 $(BINARYEN_UTILS): ${BINARYEN_DIR}/bin/%: ${BINARYEN_DIR}
 	@echo [Building the Binaryen util '$*']
 	${VB}$(MAKE) --directory=$< $*
+endif
 
 
 ####################################################################################
@@ -169,6 +185,27 @@ OUTPUT_UTIL_WASM_MODULES = $(OUTPUT_DIR)/util-wasm-modules
 FILE_EMBEDDED_IN_CODE_DIR = $(OUTPUT_DIR)/file_embedded_in_code
 FILE_EMBEDDED_IN_CODE_OUTPUT_DIR = $(FILE_EMBEDDED_IN_CODE_DIR)/$(OUTPUT_DIR)
 
+ifdef LOCAL_ONLY
+ifeq ($(LOCAL_ADMITTED),)
+$(error Local mode requires wrapper admission)
+endif
+ifeq ($(wildcard $(OUTPUT_DIR)/evidence/manifest.json),)
+$(error Missing wrapper manifest)
+endif
+ifeq ($(wildcard $(LOCAL_EMBED_WAD)),)
+$(error Missing explicitly supplied local WAD)
+endif
+# Correct the upstream directory typo only in the new mode.
+DIR_CONTAINING_THIS_MAKEFILE := $(dir $(PATH_TO_THIS_MAKEFILE))
+FILE_EMBEDDED_IN_CODE_OUTPUT_DIR = $(FILE_EMBEDDED_IN_CODE_DIR)/objects
+override CC := $(LOCAL_WASI_SDK)/bin/clang
+override WASM_AS := $(LOCAL_BINARYEN_BIN)/wasm-as
+override WASM_MERGE := $(LOCAL_BINARYEN_BIN)/wasm-merge
+override WASM_METADCE := $(LOCAL_BINARYEN_BIN)/wasm-metadce
+CFLAGS += --sysroot=$(LOCAL_WASI_SDK)/share/wasi-sysroot
+DEPENDENCY_FLAGS = -MMD -MP
+endif
+
 SRC_DOOM = dummy.c am_map.c doomdef.c doomstat.c dstrings.c d_event.c d_items.c d_iwad.c d_loop.c d_main.c d_mode.c d_net.c f_finale.c f_wipe.c g_game.c hu_lib.c hu_stuff.c info.c i_cdmus.c i_endoom.c i_joystick.c i_scale.c i_sound.c i_system.c i_timer.c memio.c m_argv.c m_bbox.c m_cheat.c m_config.c m_controls.c m_fixed.c m_menu.c m_misc.c m_random.c p_ceilng.c p_doors.c p_enemy.c p_floor.c p_inter.c p_lights.c p_map.c p_maputl.c p_mobj.c p_plats.c p_pspr.c p_saveg.c p_setup.c p_sight.c p_spec.c p_switch.c p_telept.c p_tick.c p_user.c r_bsp.c r_data.c r_draw.c r_main.c r_plane.c r_segs.c r_sky.c r_things.c sha1.c sounds.c statdump.c st_lib.c st_stuff.c s_sound.c tables.c v_video.c wi_stuff.c w_checksum.c w_file.c w_wad.c z_zone.c i_input.c i_video.c doomgeneric.c
 SRC_DOOM_WASM_SPECIFIC = doom_wasm.c internal__wasi-snapshot-preview1.c
 EMBEDDED_BINARY_FILES = DOOM1.WAD
@@ -181,6 +218,7 @@ OBJS_EMBEDDED_FILE += $(addprefix $(FILE_EMBEDDED_IN_CODE_OUTPUT_DIR)/, $(addsuf
 
 # The WASI SDK (https://github.com/WebAssembly/wasi-sdk) conventiently packages up all that's needed to use Clang to compile to WebAssembly,
 # and what's even better is that they provide a Docker image with all needed tools already installed and configured: https://github.com/WebAssembly/wasi-sdk?tab=readme-ov-file#docker-image
+ifeq ($(LOCAL_ONLY),)
 RUN_IN_WASI_SDK_DOCKER_IMAGE = docker run --rm -v $(DIR_CONTAINING_THIS_MAKEFILE):/repo -w /repo ghcr.io/webassembly/wasi-sdk:wasi-sdk-24
 
 
@@ -198,19 +236,30 @@ doom: $(SRC_FOR_EMBEDDED_FILES) $(HEADERS_FOR_EMBEDDED_FILES)
 	$(VB)${RUN_IN_WASI_SDK_DOCKER_IMAGE} make $(MAKEFLAGS) $(OUTPUT_RAW_FROM_LINKING)
 	@echo [Stepping out of WASI SDK Docker image for final steps of building the main artifact]
 	$(VB)$(MAKE) $(MAKEFLAGS) $(OUTPUT)
+endif
+
+# One set of native command definitions, shared by both execution modes.
+LINK_COMMAND = $(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) $(OBJS_WASM_SPECIFIC) $(OBJS_EMBEDDED_FILE) -s -o $@ $(LIBS)
+ENGINE_COMPILE = $(CC) $(CFLAGS) $(DEPENDENCY_FLAGS) -I$(DIR_CONTAINING_THIS_MAKEFILE)/doomgeneric -I$(DIR_CONTAINING_THIS_MAKEFILE)/doomgeneric/include -c $< -o $@
+ADAPTER_COMPILE = $(CC) $(CFLAGS) $(DEPENDENCY_FLAGS) -I$(DIR_CONTAINING_THIS_MAKEFILE)/doomgeneric -I$(OUTPUT_DIR) -c $< -o $@
+EMBED_COMPILE = $(CC) $(CFLAGS) $(DEPENDENCY_FLAGS) -c $< -o $@
 
 # Link all object files together to produce the needed artifact, but make sure that linking happens via the WASI SDK.
 # We do this by detecting when the literal phrase 'wasi' DOESN'T appear in the path to the compiler
 # (e.g. you're running locally and aren't configured to use a local WASI SDK installation)
 # and then rerunning this `make` target in a docker container based on the WASI SDK docker image.
 $(OUTPUT_RAW_FROM_LINKING): $(OBJS) $(OBJS_WASM_SPECIFIC) $(OBJS_EMBEDDED_FILE)
+ifdef LOCAL_ONLY
+	$(VB)$(LINK_COMMAND)
+else
 	$(VB)if echo "$(CC)" | grep -q "wasi"; then \
 		echo [Linking $@]; \
-		$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) $(OBJS_WASM_SPECIFIC) $(OBJS_EMBEDDED_FILE) -s -o $@ $(LIBS); \
+		$(LINK_COMMAND); \
 	else \
 		echo [Delegating to WASI SDK Docker image]; \
 		${RUN_IN_WASI_SDK_DOCKER_IMAGE} make $(MAKEFLAGS) $@; \
 	fi
+endif
 
 $(OBJS): | $(OUTPUT_DIR)
 
@@ -229,32 +278,57 @@ $(OUTPUT_DIRS):
 # (e.g. you're running locally and aren't configured to use a local WASI SDK installation)
 # and then rerunning this `make` target in a docker container based on the WASI SDK docker image.
 $(OUTPUT_DIR)/%.o:	doomgeneric/src/%.c
+ifdef LOCAL_ONLY
+	$(VB)$(ENGINE_COMPILE)
+else
 	$(VB)if echo "$(CC)" | grep -q "wasi"; then \
 		echo [Compiling $<]; \
-		$(CC) $(CFLAGS) -I$(DIR_CONTAINING_THIS_MAKEFILE)/doomgeneric -I$(DIR_CONTAINING_THIS_MAKEFILE)/doomgeneric/include -c $< -o $@; \
+		$(ENGINE_COMPILE); \
 	else \
 		echo [Delegating to WASI SDK Docker image]; \
 		${RUN_IN_WASI_SDK_DOCKER_IMAGE} make $(MAKEFLAGS) $@; \
 	fi
+endif
 
 $(OUTPUT_DIR_WASM_SPECIFIC)/%.o:	src/%.c $(HEADERS_FOR_EMBEDDED_FILES)
+ifdef LOCAL_ONLY
+	$(VB)$(ADAPTER_COMPILE)
+else
 	$(VB)if echo "$(CC)" | grep -q "wasi"; then \
 		echo [Compiling $<]; \
-		$(CC) $(CFLAGS) -I$(DIR_CONTAINING_THIS_MAKEFILE)/doomgeneric -I$(OUTPUT_DIR) -c $< -o $@; \
+		$(ADAPTER_COMPILE); \
 	else \
 		echo [Delegating to WASI SDK Docker image]; \
 		${RUN_IN_WASI_SDK_DOCKER_IMAGE} make $(MAKEFLAGS) $@; \
 	fi
+endif
 
 $(FILE_EMBEDDED_IN_CODE_OUTPUT_DIR)/%.o:	$(FILE_EMBEDDED_IN_CODE_DIR)/%.c
+ifdef LOCAL_ONLY
+	$(VB)$(EMBED_COMPILE)
+else
 	$(VB)if echo "$(CC)" | grep -q "wasi"; then \
 		echo [Compiling $<]; \
-		$(CC) $(CFLAGS) -c $< -o $@; \
+		$(EMBED_COMPILE); \
 	else \
 		echo [Delegating to WASI SDK Docker image]; \
 		${RUN_IN_WASI_SDK_DOCKER_IMAGE} make $(MAKEFLAGS) $@; \
 	fi
+endif
 
+ifdef LOCAL_ONLY
+# A single stamp serializes the paired generator outputs on Make 3.81.
+# Missing peers are errors, not permission to regenerate into an existing run.
+$(FILE_EMBEDDED_IN_CODE_DIR)/.generated: $(LOCAL_EMBED_WAD) utils/generate_code_for_embedded_file.py | $(FILE_EMBEDDED_IN_CODE_DIR)
+	$(VB)$(LOCAL_PYTHON) utils/generate_code_for_embedded_file.py --input $(LOCAL_EMBED_WAD) --destination-folder $(FILE_EMBEDDED_IN_CODE_DIR)
+	$(VB)test -s $(SRC_FOR_EMBEDDED_FILES) && test -s $(HEADERS_FOR_EMBEDDED_FILES)
+	$(VB)touch $@
+
+$(SRC_FOR_EMBEDDED_FILES) $(HEADERS_FOR_EMBEDDED_FILES): $(FILE_EMBEDDED_IN_CODE_DIR)/.generated
+	$(VB)test -s $@
+
+$(OBJS_EMBEDDED_FILE): $(HEADERS_FOR_EMBEDDED_FILES)
+else
 # Provide the Doom shareware WAD by retrieving it via the URL advertised here: https://doomwiki.org/wiki/DOOM1.WAD
 $(OUTPUT_DIR)/DOOM1.WAD: | $(OUTPUT_DIR)
 	@echo [Retreiving Shareware Doom WAD from the internet]
@@ -268,6 +342,7 @@ $(FILE_EMBEDDED_IN_CODE_DIR)/%.c $(FILE_EMBEDDED_IN_CODE_DIR)/%.h: $(OUTPUT_DIR)
 		${ACTIVATE_DEV_PYTHON_VIRTUAL_ENV}; \
 		python utils/generate_code_for_embedded_file.py --input $< --destination-folder $(FILE_EMBEDDED_IN_CODE_DIR) ; \
 	)
+endif
 
 # Compile .wat files in src/wat in order to produce an associated .wasm module in $(OUTPUT_DIR)/util-wasm-modules
 $(OUTPUT_UTIL_WASM_MODULES)/%.wasm: src/wat/%.wat $(WASM_AS) | $(OUTPUT_UTIL_WASM_MODULES)
@@ -316,6 +391,13 @@ $(OUTPUT): $(OUTPUT_INTERMEDIATE_WITH_GLOBAL_CONSTANTS_ADDED)
 	@echo [Producing final Doom WebAssembly]
 	$(VB)cp $< $@
 
+ifdef LOCAL_ONLY
+local-build: $(OUTPUT)
+	$(VB)test -s $(OUTPUT)
+
+-include $(OBJS:.o=.d) $(OBJS_WASM_SPECIFIC:.o=.d) $(OBJS_EMBEDDED_FILE:.o=.d)
+.PHONY: local-build
+else
 
 # Produce a text file that describes the imports and exports of the Doom WebAssembly module.
 $(OUTPUT_NAME).interface.txt: $(OUTPUT) utils/print-interface-of-wasm-module/
@@ -383,3 +465,4 @@ run-precommit-on-staged-files: | ${DEV_PYTHON_VIRTUAL_ENV}
 
 
 .PHONY: doom clean dev-init dev-clean install-pre-commit-hooks uninstall-pre-commit-hooks generate-python-dev-requirements run-precommit-on-all-files run-precommit-on-staged-files $(BUILD_RUST_UTILS) $(REMOVE_ACTIVATE_LINK_FROM_RUST_UTILS)
+endif

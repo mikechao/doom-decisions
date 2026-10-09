@@ -9,7 +9,7 @@ The goal is to let users watch Doom running in the browser while OpenAI’s deci
 
 ## Project Structure & Module Organization
 
-This repository contains `LICENSE` and the upstream Doom/WASM source vendored as ordinary root-tracked files under `references/doom.wasm/`. The pinned source revision, import check, and asset caveats are recorded in [docs/doom-vendor-provenance.md](docs/doom-vendor-provenance.md). There is no root application, build configuration, or test suite yet.
+This repository contains `LICENSE` and the upstream Doom/WASM source vendored as ordinary root-tracked files under `references/doom.wasm/`. The pinned source revision, import check, and asset caveats are recorded in [docs/doom-vendor-provenance.md](docs/doom-vendor-provenance.md). There is no root application; the local build wrapper and fixture checks are described in [docs/doom-build.md](docs/doom-build.md).
 
 Inside the vendored source:
 - `src/` contains the C WebAssembly adapter and WAT helpers.
@@ -22,7 +22,9 @@ Treat changes under `references/doom.wasm/` as ordinary changes in this root rep
 
 ## Build, Test, and Development Commands
 
-The repository has no root build system. The following commands invoke upstream recipes from the vendored source:
+For an independently authorized local build, use the explicit `upstream-shareware` workflow in [docs/doom-build.md](docs/doom-build.md). Make owns the build graph; the Python entrypoint admits local inputs and records evidence. Legacy `all`, `doom`, example, dev-init, clean and hook targets are **not** safe local-only entrypoints and require separate authorization.
+
+The following commands invoke legacy upstream recipes from the vendored source:
 
 - `make -C references/doom.wasm all`: runs the upstream Doom/WASM build and writes under `references/doom.wasm/build/`.
 - `make -C references/doom.wasm run-example_browser`: serve the browser example at `http://127.0.0.1:8000/doom.html`.
@@ -39,7 +41,7 @@ The vendored pre-commit configuration checks whitespace and YAML, formats C/C++,
 
 ## Testing Guidelines
 
-No automated test suite or coverage threshold is currently defined. For runtime changes, rebuild and manually exercise the affected example, checking startup, rendering, and keyboard input. Check saving or custom WAD loading in a host that supports those features. Include reproduction steps and validation results in the pull request.
+Build infrastructure fixture checks are documented in [docs/doom-build.md](docs/doom-build.md); no engine runtime test suite or coverage threshold is currently defined. For runtime changes, rebuild and manually exercise the affected example, checking startup, rendering, and keyboard input. Check saving or custom WAD loading in a host that supports those features. Include reproduction steps and validation results in the pull request.
 
 ## Commit & Pull Request Guidelines
 
