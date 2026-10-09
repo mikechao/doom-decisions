@@ -7,6 +7,13 @@
 #define IMPORT_MODULE(moduleName) __attribute__((import_module(moduleName)))
 #define EXPORT __attribute__((visibility("default")))
 
+#ifdef DOOM_CONTROLLED_TITLE
+/* Experimental title proof only; no gameplay control ABI. */
+EXPORT int32_t _initializeControlled(void);
+EXPORT int32_t renderControlled(void);
+EXPORT int32_t a1ReadCounter(int32_t index);
+#endif
+
 /*
  * This file specifies the module interface (i.e. imports and exports) that is
  * produced when Doom is compiled to a WebAssembly module.

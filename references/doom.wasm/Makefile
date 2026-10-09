@@ -16,7 +16,7 @@ DIR_CONTAINING_THIS_MAKEFILE := $(dir PATH_TO_THIS_MAKEFILE)
 LOCAL_ONLY :=
 DEPENDENCY_FLAGS =
 ifneq ($(BUILD_PROFILE),)
-ifneq ($(BUILD_PROFILE),upstream-shareware)
+ifeq ($(filter $(BUILD_PROFILE),upstream-shareware controlled-title),)
 $(error Unsupported BUILD_PROFILE)
 endif
 LOCAL_ONLY := 1
@@ -192,8 +192,10 @@ endif
 ifeq ($(wildcard $(OUTPUT_DIR)/evidence/manifest.json),)
 $(error Missing wrapper manifest)
 endif
+ifeq ($(BUILD_PROFILE),upstream-shareware)
 ifeq ($(wildcard $(LOCAL_EMBED_WAD)),)
 $(error Missing explicitly supplied local WAD)
+endif
 endif
 # Correct the upstream directory typo only in the new mode.
 DIR_CONTAINING_THIS_MAKEFILE := $(dir $(PATH_TO_THIS_MAKEFILE))
@@ -209,6 +211,14 @@ endif
 SRC_DOOM = dummy.c am_map.c doomdef.c doomstat.c dstrings.c d_event.c d_items.c d_iwad.c d_loop.c d_main.c d_mode.c d_net.c f_finale.c f_wipe.c g_game.c hu_lib.c hu_stuff.c info.c i_cdmus.c i_endoom.c i_joystick.c i_scale.c i_sound.c i_system.c i_timer.c memio.c m_argv.c m_bbox.c m_cheat.c m_config.c m_controls.c m_fixed.c m_menu.c m_misc.c m_random.c p_ceilng.c p_doors.c p_enemy.c p_floor.c p_inter.c p_lights.c p_map.c p_maputl.c p_mobj.c p_plats.c p_pspr.c p_saveg.c p_setup.c p_sight.c p_spec.c p_switch.c p_telept.c p_tick.c p_user.c r_bsp.c r_data.c r_draw.c r_main.c r_plane.c r_segs.c r_sky.c r_things.c sha1.c sounds.c statdump.c st_lib.c st_stuff.c s_sound.c tables.c v_video.c wi_stuff.c w_checksum.c w_file.c w_wad.c z_zone.c i_input.c i_video.c doomgeneric.c
 SRC_DOOM_WASM_SPECIFIC = doom_wasm.c internal__wasi-snapshot-preview1.c
 EMBEDDED_BINARY_FILES = DOOM1.WAD
+INIT_WAT = merge-two-initialization-functions-into-one
+REACHABILITY_GRAPH = src/reachability_graph_for_wasm-metadce.json
+ifeq ($(BUILD_PROFILE),controlled-title)
+EMBEDDED_BINARY_FILES =
+INIT_WAT = controlled-title-init
+REACHABILITY_GRAPH = src/reachability-controlled-title.json
+CFLAGS += -DDOOM_CONTROLLED_TITLE
+endif
 SRC_FOR_EMBEDDED_FILES = $(addprefix $(FILE_EMBEDDED_IN_CODE_DIR)/, $(addsuffix .c, $(EMBEDDED_BINARY_FILES)))
 HEADERS_FOR_EMBEDDED_FILES = $(addprefix $(FILE_EMBEDDED_IN_CODE_DIR)/, $(addsuffix .h, $(EMBEDDED_BINARY_FILES)))
 
@@ -241,7 +251,7 @@ endif
 # One set of native command definitions, shared by both execution modes.
 LINK_COMMAND = $(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) $(OBJS_WASM_SPECIFIC) $(OBJS_EMBEDDED_FILE) -s -o $@ $(LIBS)
 ENGINE_COMPILE = $(CC) $(CFLAGS) $(DEPENDENCY_FLAGS) -I$(DIR_CONTAINING_THIS_MAKEFILE)/doomgeneric -I$(DIR_CONTAINING_THIS_MAKEFILE)/doomgeneric/include -c $< -o $@
-ADAPTER_COMPILE = $(CC) $(CFLAGS) $(DEPENDENCY_FLAGS) -I$(DIR_CONTAINING_THIS_MAKEFILE)/doomgeneric -I$(OUTPUT_DIR) -c $< -o $@
+ADAPTER_COMPILE = $(CC) $(CFLAGS) $(DEPENDENCY_FLAGS) -I$(DIR_CONTAINING_THIS_MAKEFILE)/doomgeneric -I$(DIR_CONTAINING_THIS_MAKEFILE)/doomgeneric/include -I$(OUTPUT_DIR) -c $< -o $@
 EMBED_COMPILE = $(CC) $(CFLAGS) $(DEPENDENCY_FLAGS) -c $< -o $@
 
 # Link all object files together to produce the needed artifact, but make sure that linking happens via the WASI SDK.
@@ -317,6 +327,7 @@ else
 endif
 
 ifdef LOCAL_ONLY
+ifeq ($(BUILD_PROFILE),upstream-shareware)
 # A single stamp serializes the paired generator outputs on Make 3.81.
 # Missing peers are errors, not permission to regenerate into an existing run.
 $(FILE_EMBEDDED_IN_CODE_DIR)/.generated: $(LOCAL_EMBED_WAD) utils/generate_code_for_embedded_file.py | $(FILE_EMBEDDED_IN_CODE_DIR)
@@ -328,6 +339,7 @@ $(SRC_FOR_EMBEDDED_FILES) $(HEADERS_FOR_EMBEDDED_FILES): $(FILE_EMBEDDED_IN_CODE
 	$(VB)test -s $@
 
 $(OBJS_EMBEDDED_FILE): $(HEADERS_FOR_EMBEDDED_FILES)
+endif
 else
 # Provide the Doom shareware WAD by retrieving it via the URL advertised here: https://doomwiki.org/wiki/DOOM1.WAD
 $(OUTPUT_DIR)/DOOM1.WAD: | $(OUTPUT_DIR)
@@ -364,14 +376,14 @@ $(OUTPUT_INTERMEDIATE_WITH_WASI_HOLES_FILLED): $(OUTPUT_RAW_FROM_LINKING) $(OUTP
 #
 #   2. Multiple `initialization` functions are merged into a single one
 OUTPUT_INTERMEDIATE_WITH_INIT_FUNCTIONS_MERGED = $(OUTPUT_DIR)/doom-with-init-functions-merged.wasm
-$(OUTPUT_INTERMEDIATE_WITH_INIT_FUNCTIONS_MERGED): $(OUTPUT_INTERMEDIATE_WITH_WASI_HOLES_FILLED) $(OUTPUT_UTIL_WASM_MODULES)/merge-two-initialization-functions-into-one.wasm $(WASM_MERGE)
+$(OUTPUT_INTERMEDIATE_WITH_INIT_FUNCTIONS_MERGED): $(OUTPUT_INTERMEDIATE_WITH_WASI_HOLES_FILLED) $(OUTPUT_UTIL_WASM_MODULES)/$(INIT_WAT).wasm $(WASM_MERGE)
 	@echo [Merging the Doom WebAssembly module with module that combines both init functions]
 	$(VB)$(WASM_MERGE) $< has-two-init-functions $(word 2,$^) merges-init-functions -o $@ $(BINARYEN_FLAGS)
 #
 #
 #   3. All exports that are not allow-listed are removed
 OUTPUT_INTERMEDIATE_WITH_TRIMMED_EXPORTS = $(OUTPUT_DIR)/doom-with-trimmed-exports.wasm
-$(OUTPUT_INTERMEDIATE_WITH_TRIMMED_EXPORTS): $(OUTPUT_INTERMEDIATE_WITH_INIT_FUNCTIONS_MERGED) src/reachability_graph_for_wasm-metadce.json $(WASM_METADCE)
+$(OUTPUT_INTERMEDIATE_WITH_TRIMMED_EXPORTS): $(OUTPUT_INTERMEDIATE_WITH_INIT_FUNCTIONS_MERGED) $(REACHABILITY_GRAPH) $(WASM_METADCE)
 	@echo [Removing from Doom WebAssembly module all exports not listed as reachable in $(word 2,$^)]
 #     Note: the wasm-metadce tool is very chatty, unconditionally (as far as I can tell) outputing details
 #     about the unused exports. To prevent this mostly useless output from being seen we redirect stdout to

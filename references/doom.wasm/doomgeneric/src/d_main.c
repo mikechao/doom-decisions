@@ -19,6 +19,7 @@
 //	and call the startup functions.
 //
 
+#include "a1_trace.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -176,12 +177,16 @@ void D_Display(void) {
     borderdrawcount = 3;
   }
 
+#ifdef DOOM_CONTROLLED_TITLE
+  wipe = false;
+#else
   // save the current screen if about to wipe
   if (gamestate != wipegamestate) {
     wipe = true;
     wipe_StartScreen(0, 0, SCREENWIDTH, SCREENHEIGHT);
   } else
     wipe = false;
+#endif
 
   if (gamestate == GS_LEVEL && gametic)
     HU_Erase();
@@ -396,7 +401,9 @@ void D_DoomLoop(void) {
 
   main_loop_started = true;
 
+#ifndef DOOM_CONTROLLED_TITLE
   TryRunTics();
+#endif
 
   I_SetWindowTitle(gamedescription);
   I_GraphicsCheckCommandLine();
@@ -407,6 +414,10 @@ void D_DoomLoop(void) {
   V_RestoreBuffer();
   R_ExecuteSetViewSize();
 
+#ifdef DOOM_CONTROLLED_TITLE
+  D_DoAdvanceDemo(); // Only the initial queued title transition, no ticker.
+  A1_COUNT(A1_TITLE_PREPARE);
+#else
   D_StartGameLoop();
 
   if (testcontrols) {
@@ -414,6 +425,7 @@ void D_DoomLoop(void) {
   }
 
   doomgeneric_Tick();
+#endif
 }
 
 //
@@ -525,6 +537,13 @@ void D_DoAdvanceDemo(void) {
     pagename = DEH_String("INTERPIC");
   }
 }
+
+#ifdef DOOM_CONTROLLED_TITLE
+int D_A1TitleReady(void) {
+  return gamestate == GS_DEMOSCREEN && demosequence == 0 && !advancedemo &&
+         pagename != NULL && strcmp(pagename, "TITLEPIC") == 0;
+}
+#endif
 
 //
 // D_StartTitle

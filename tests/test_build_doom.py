@@ -46,15 +46,17 @@ def section(number, data):
     return bytes([number]) + leb(len(data)) + data
 
 
-def module_fixture(*, start=False, wrong_import=False, mutable_key=False, wrong_signature=False, wrong_export=False):
+def module_fixture(*, controlled=False, start=False, wrong_import=False, mutable_key=False, wrong_signature=False, wrong_export=False):
     """Hand-encoded inert core sections; no compiler, assembler or instantiation."""
     types = [([], []), ([127], []), ([127, 127], []), ([127, 127, 127], [127]),
-             ([127, 127], [127]), ([127], [127]), ([], [126])]
+             ([127, 127], [127]), ([127], [127]), ([], [126]), ([], [127])]
     imports = [("console", "onErrorMessage", 2), ("console", "onInfoMessage", 2),
                ("gameSaving", "writeSaveGame", 3), ("gameSaving", "readSaveGame", 4),
                ("gameSaving", "sizeOfSaveGame", 5), ("runtimeControl", "timeInMilliseconds", 6),
                ("ui", "unexpected" if wrong_import else "drawFrame", 1),
                ("loading", "readWads", 2), ("loading", "wadSizes", 2), ("loading", "onGameInit", 2)]
+    if controlled:
+        imports = [item for item in imports if item[0] != "runtimeControl"]
     if wrong_signature:
         imports[0] = ("console", "onErrorMessage", 1)
     keys = [("KEY_LEFTARROW", 172), ("KEY_RIGHTARROW", 174), ("KEY_UPARROW", 173),
@@ -64,12 +66,15 @@ def module_fixture(*, start=False, wrong_import=False, mutable_key=False, wrong_
     globals_ = [(True, 65536), (False, 0)] + [(mutable_key and i == 0, v) for i, (_, v) in enumerate(keys)]
     exports = [("memory", 2, 0), ("initGame", 0, 10), ("unexpected" if wrong_export else "tickGame", 0, 11),
                ("reportKeyDown", 0, 12), ("reportKeyUp", 0, 13)]
+    if controlled:
+        exports = [("memory", 2, 0), ("initControlled", 0, 9), ("renderControlled", 0, 10),
+                   ("a1ReadCounter", 0, 11), ("a1WasiInitCount", 0, 12)]
     exports += [(n, 3, i + 2) for i, (n, _) in enumerate(keys)]
     data = b"\0asm\x01\0\0\0"
     data += section(1, vector([b"\x60" + vector([bytes([v]) for v in p]) +
                               vector([bytes([v]) for v in r]) for p, r in types]))
     data += section(2, vector([name(m) + name(n) + b"\0" + leb(t) for m, n, t in imports]))
-    data += section(3, vector([leb(t) for t in [0, 0, 1, 1]]))
+    data += section(3, vector([leb(t) for t in ([7, 7, 5, 7] if controlled else [0, 0, 1, 1])]))
     data += section(4, vector([b"\x70\x01" + leb(169) + leb(169)]))
     data += section(5, vector([b"\0" + leb(72)]))
     data += section(6, vector([b"\x7f" + bytes([int(m)]) + b"\x41" + leb(v, True) + b"\x0b"
@@ -78,7 +83,7 @@ def module_fixture(*, start=False, wrong_import=False, mutable_key=False, wrong_
     if start:
         data += section(8, leb(10))
     # Even the init/start function traps if ever called; static inspection must not call it.
-    data += section(10, vector([leb(len(body)) + body for body in [b"\0\0\x0b", *[b"\0\x0b"] * 3]]))
+    data += section(10, vector([leb(len(body)) + body for body in ([b"\0\0\x0b"] * 4 if controlled else [b"\0\0\x0b", *[b"\0\x0b"] * 3])]))
     return data
 
 
@@ -154,7 +159,7 @@ class BuildTests(Fixtures):
             self.child.poll.return_value = 7 if self.mode == "make" else 0
             return self.child
         self.assertEqual(Path(argv[1]).name, "inspect_doom.mjs")
-        final = build.identity(argv[-1])
+        final = build.identity(argv[2])
         kwargs["stdout"].write(json.dumps({**final, "validate": True, "instantiated": False,
                                           "exportsCalled": False, "startSection": False}).encode())
         return mock.Mock(poll=mock.Mock(return_value=9 if self.mode == "inspection" else 0))
@@ -166,6 +171,20 @@ class BuildTests(Fixtures):
 
     def manifest(self):
         return json.loads((Path(self.args.out) / "evidence/manifest.json").read_text())
+
+    def test_controlled_profile_omits_embed_input(self):
+        self.args.profile = "controlled-title"
+        self.args.embed_wad = self.args.embed_sha256 = None
+        manifest = self.invoke()
+        self.assertIsNone(manifest["asset"])
+        self.assertFalse(any(a.startswith("LOCAL_EMBED_WAD=") for a in manifest["make"]["argv"]))
+        self.assertEqual(manifest["inspection"]["argv"][-2:], ["--profile", "controlled-title"])
+
+    def test_controlled_profile_refuses_embed_arguments_before_tools(self):
+        self.args.profile = "controlled-title"
+        with self.assertRaisesRegex(build.BuildError, "forbids embedded"):
+            build.execute_build(self.args)
+        self.start.assert_not_called()
 
     def test_safe_invocation_manifest_and_source_evidence(self):
         manifest = self.invoke()
@@ -435,9 +454,12 @@ class ProcessGroupIntegrationTests(Fixtures):
 
 @unittest.skipUnless(shutil.which("node"), "Installed Node required for fixture-only inspection")
 class InspectorTests(Fixtures):
-    def inspect(self, data):
+    def inspect(self, data, profile=None):
         path = self.root / "fixture.wasm"; path.write_bytes(data)
-        return subprocess.run([shutil.which("node"), REPO / "scripts/inspect_doom.mjs", path],
+        argv = [shutil.which("node"), REPO / "scripts/inspect_doom.mjs", path]
+        if profile:
+            argv += ["--profile", profile]
+        return subprocess.run(argv,
                               capture_output=True, text=True, timeout=10)
 
     def test_valid_typed_fixture_is_never_instantiated(self):
@@ -451,6 +473,17 @@ class InspectorTests(Fixtures):
         self.assertEqual(report["imports"][0]["signature"], [["i32", "i32"], []])
         self.assertEqual(report["memories"][0]["minimum"], 72)
         self.assertEqual(report["tables"][0]["maximum"], 169)
+
+    def test_controlled_typed_fixture_and_profile_isolation(self):
+        result = self.inspect(module_fixture(controlled=True), "controlled-title")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(len(report["imports"]), 9)
+        self.assertFalse(report["instantiated"])
+        self.assertEqual(next(x["details"] for x in report["exports"]
+                              if x["name"] == "initControlled"), [[], ["i32"]])
+        self.assertNotEqual(self.inspect(module_fixture(), "controlled-title").returncode, 0)
+        self.assertNotEqual(self.inspect(module_fixture(controlled=True)).returncode, 0)
 
     def test_invalid_interface_and_bytes_fail(self):
         for data, error in [(module_fixture(start=True), "start section"),

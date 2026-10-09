@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Admit a local shareware experiment; Make owns every build recipe."""
+"""Admit a local Doom experiment; Make owns every build recipe."""
 import argparse
 import datetime
 import hashlib
@@ -165,6 +165,9 @@ def source_evidence(evidence):
     inputs = [VENDOR / "Makefile", VENDOR / "utils/generate_code_for_embedded_file.py",
               VENDOR / "src/reachability_graph_for_wasm-metadce.json"]
     inputs += sorted((VENDOR / "src/wat").glob("*.wat"))
+    # Include newly added profile inputs even before they are tracked by Git.
+    inputs += sorted((VENDOR / "src").glob("reachability-*.json"))
+    inputs += sorted((VENDOR / "doomgeneric/include").glob("a1_*.h"))
     return {"head": git_read("rev-parse", "HEAD").decode().strip(),
             "status": git_read("status", "--porcelain=v1", "--untracked-files=all").decode(),
             "local_patch": identity(patch),
@@ -202,7 +205,12 @@ def execute_build(args):
     require(out.is_relative_to(VENDOR / "build") and out != VENDOR / "build",
             "Output must be beneath ignored references/doom.wasm/build/")
     require(not out.exists(), "Output already exists; choose a new directory")
-    wad = safe_path(args.embed_wad)
+    controlled = args.profile == "controlled-title"
+    require(not controlled or (not args.embed_wad and not args.embed_sha256),
+            "controlled-title forbids embedded WAD arguments")
+    require(controlled or (args.embed_wad and args.embed_sha256),
+            "upstream-shareware requires --embed-wad and --embed-sha256")
+    wad = None if controlled else safe_path(args.embed_wad)
     sdk, binaryen = safe_path(args.wasi_sdk), safe_path(args.binaryen_bin)
     python = safe_path(sys.executable)
     node = safe_path(args.node or shutil.which("node") or "missing-node")
@@ -213,9 +221,11 @@ def execute_build(args):
                   for name in ("wasm-as", "wasm-merge", "wasm-metadce")})
     admitted = {name: executable_identity(path) for name, (path, _) in tools.items()}
     admitted["python"] = {**executable_identity(python), "version": sys.version}
-    asset, sdk_info = validate_wad(wad, args.embed_sha256.lower()), sdk_identity(sdk)
+    asset = None if controlled else validate_wad(wad, args.embed_sha256.lower())
+    sdk_info = sdk_identity(sdk)
     require(git_read("check-ignore", str(out / "probe")).strip(), "Output is not Git-ignored")
-    require(git_read("check-ignore", str(wad)).strip(), "Shareware asset must remain Git-ignored")
+    if wad is not None:
+        require(git_read("check-ignore", str(wad)).strip(), "Shareware asset must remain Git-ignored")
     require(shutil.disk_usage(VENDOR).free >= 512 * 1024**2, "Require at least 512 MiB free disk")
     out.mkdir(parents=True, exist_ok=False)
     evidence = out / "evidence"
@@ -236,8 +246,10 @@ def execute_build(args):
             admitted[name]["version"] = version
         command = [str(tools["make"][0]), "-rR", "-j" + str(args.jobs), "VERBOSE=1",
                    "BUILD_PROFILE=" + args.profile, "LOCAL_ADMITTED=1", "OUTPUT_DIR=" + str(out),
-                   "LOCAL_EMBED_WAD=" + str(wad), "LOCAL_WASI_SDK=" + str(sdk),
+                   "LOCAL_WASI_SDK=" + str(sdk),
                    "LOCAL_BINARYEN_BIN=" + str(binaryen), "LOCAL_PYTHON=" + str(python), "local-build"]
+        if wad is not None:
+            command.insert(7, "LOCAL_EMBED_WAD=" + str(wad))
         manifest["make"] = {"argv": command, "cwd": str(VENDOR)}
         supervise(command, VENDOR, env, out, "make", deadline)
         final = out / "doom.wasm"
@@ -245,6 +257,8 @@ def execute_build(args):
                 "Missing/invalid final copied module")
         manifest["final"] = identity(final)
         command = [str(node), str(ROOT / "scripts/inspect_doom.mjs"), str(final)]
+        if controlled:
+            command += ["--profile", args.profile]
         manifest["inspection"] = {"argv": command, "cwd": str(ROOT)}
         supervise(command, ROOT, env, out, "inspection", deadline)
         interface = json.loads((evidence / "inspection.stdout.log").read_text())
@@ -276,9 +290,9 @@ def execute_build(args):
 def main(argv=None):
     global _pending_signal
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", required=True, choices=["upstream-shareware"])
-    parser.add_argument("--embed-wad", required=True)
-    parser.add_argument("--embed-sha256", required=True)
+    parser.add_argument("--profile", required=True, choices=["upstream-shareware", "controlled-title"])
+    parser.add_argument("--embed-wad")
+    parser.add_argument("--embed-sha256")
     parser.add_argument("--out", required=True)
     parser.add_argument("--jobs", type=int, choices=[1, 2], default=2)
     parser.add_argument("--timeout", type=int, choices=range(1, 121), default=120, metavar="1..120")

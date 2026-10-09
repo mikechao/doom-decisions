@@ -15,6 +15,7 @@
 // DESCRIPTION:  none
 //
 
+#include "a1_trace.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -297,6 +298,7 @@ void G_BuildTiccmd(ticcmd_t *cmd, int maketic) {
   int forward;
   int side;
 
+  A1_COUNT(A1_NATIVE_BUILD);
   memset(cmd, 0, sizeof(ticcmd_t));
 
   cmd->consistancy = consistancy[consoleplayer][maketic % BACKUPTICS];
@@ -1838,6 +1840,7 @@ static char *DemoVersionDescription(int version) {
 }
 
 void G_DoPlayDemo(void) {
+  A1_COUNT(A1_DEMO_LOAD);
   skill_t skill;
   int i, episode, map;
   int demoversion;

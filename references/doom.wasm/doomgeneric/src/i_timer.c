@@ -33,9 +33,18 @@
 
 static uint64_t basetime = 0;
 
-uint64_t I_GetTicks(void) { return DG_GetTicksMs(); }
+uint64_t I_GetTicks(void) {
+#ifdef DOOM_CONTROLLED_TITLE
+  return 0;
+#else
+  return DG_GetTicksMs();
+#endif
+}
 
 int I_GetTime(void) {
+#ifdef DOOM_CONTROLLED_TITLE
+  return 0;
+#else
   uint32_t ticks;
 
   ticks = I_GetTicks();
@@ -46,6 +55,7 @@ int I_GetTime(void) {
   ticks -= basetime;
 
   return (ticks * TICRATE) / 1000;
+#endif
 }
 
 //
@@ -53,6 +63,9 @@ int I_GetTime(void) {
 //
 
 int I_GetTimeMS(void) {
+#ifdef DOOM_CONTROLLED_TITLE
+  return 0;
+#else
   uint32_t ticks;
 
   ticks = I_GetTicks();
@@ -61,6 +74,7 @@ int I_GetTimeMS(void) {
     basetime = ticks;
 
   return ticks - basetime;
+#endif
 }
 
 // Sleep for a specified number of ms

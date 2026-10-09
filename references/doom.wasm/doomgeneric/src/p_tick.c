@@ -17,6 +17,7 @@
 //	Thinker, Ticker.
 //
 
+#include "a1_trace.h"
 #include "z_zone.h"
 #include "p_local.h"
 
@@ -115,4 +116,5 @@ void P_Ticker(void) {
 
   // for par times
   leveltime++;
+  A1_COUNT(A1_WORLD_COMPLETE);
 }

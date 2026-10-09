@@ -1,10 +1,17 @@
+#ifdef DOOM_CONTROLLED_TITLE
+#include "doomstat.h"
+#include "i_timer.h"
+#endif
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "doomgeneric.h"
 #include "doom_wasm.h"
+#include "a1_trace.h"
+#ifndef DOOM_CONTROLLED_TITLE
 #include "file_embedded_in_code/DOOM1.WAD.h"
+#endif
 
 /*
  * This file reconciles the WebAssembly interface (i.e. imports/exports)
@@ -30,6 +37,101 @@
 // the user of this module has reported to via `reportKeyDown` and
 // `reportKeyUp`.
 static bool isKeyPressed[UINT8_MAX + 1] = {false};
+
+#ifdef DOOM_CONTROLLED_TITLE
+uint32_t a1_counts[A1_COUNT_LIMIT];
+static struct DB_BytesForAllWads admitted_wads;
+static bool controlled_ready;
+static bool controlled_busy;
+void D_Display(void);
+int D_A1TitleReady(void);
+
+static uint32_t ReadLE32(const unsigned char *p) {
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+         ((uint32_t)p[3] << 24);
+}
+
+/* Admit one external file before any doomgeneric_Create/D_DoomMain work.
+ * Hash admission belongs to the harness; enforce memory-safe WAD structure here.
+ * W_OpenFile keeps these bytes, so retain the allocation for instance lifetime. */
+static bool AdmitExternalWad(void) {
+  int count = 0;
+  size_t total = 0;
+  wadSizes(&count, &total);
+  if (count != 1 || total < 12 || total > 32 * 1024 * 1024)
+    return false;
+  unsigned char *data = malloc(total);
+  if (!data)
+    return false;
+  int length = 0;
+  readWads(data, &length);
+  bool valid = length > 0 && (size_t)length == total &&
+               memcmp(data, "IWAD", 4) == 0;
+  uint32_t lumps = ReadLE32(data + 4);
+  uint32_t offset = ReadLE32(data + 8);
+  valid = valid && lumps > 0 && lumps <= 65536 && offset >= 12 &&
+          offset <= total && lumps <= (total - offset) / 16;
+  bool title = false, palette = false;
+  if (valid) {
+    for (uint32_t i = 0; i < lumps; ++i) {
+      const unsigned char *entry = data + offset + i * 16;
+      uint32_t position = ReadLE32(entry);
+      uint32_t size = ReadLE32(entry + 4);
+      if (position > total || size > total - position) {
+        valid = false;
+        break;
+      }
+      title |= memcmp(entry + 8, "TITLEPIC", 8) == 0;
+      palette |= memcmp(entry + 8, "PLAYPAL\0", 8) == 0;
+    }
+  }
+  if (!valid || !title || !palette) {
+    free(data);
+    return false;
+  }
+  admitted_wads.iWad.data = data;
+  admitted_wads.iWad.byteLength = total;
+  return true;
+}
+
+int32_t _initializeControlled(void) {
+  if (controlled_busy || controlled_ready || a1_counts[A1_C_INIT])
+    return -1;
+  controlled_busy = true;
+  A1_COUNT(A1_C_INIT);
+  if (!AdmitExternalWad()) {
+    controlled_busy = false;
+    return -2;
+  }
+  A1_COUNT(A1_ENGINE_CREATE);
+  doomgeneric_Create(0, NULL);
+  controlled_ready = D_A1TitleReady() && DG_ScreenBuffer != NULL;
+  controlled_busy = false;
+  return controlled_ready ? 0 : -3;
+}
+
+int32_t renderControlled(void) {
+  if (!controlled_ready || controlled_busy)
+    return -1;
+  controlled_busy = true;
+  A1_COUNT(A1_RENDER);
+  D_Display();
+  controlled_busy = false;
+  return 0;
+}
+
+int32_t a1ReadCounter(int32_t index) {
+  if (index >= 0 && index < A1_COUNT_LIMIT)
+    return a1_counts[index];
+  switch (index) {
+  case A1_COUNT_LIMIT: return gametic;
+  case A1_COUNT_LIMIT + 1: return leveltime;
+  case A1_COUNT_LIMIT + 2: return I_GetTime();
+  case A1_COUNT_LIMIT + 3: return D_A1TitleReady();
+  default: return -1;
+  }
+}
+#endif
 
 void _initializeDoom() {
   // Provide 0 command line arguments to Doom.
@@ -77,6 +179,9 @@ void reportKeyUp(int32_t doomKey) {
 void DG_Init() { onGameInit(DOOMGENERIC_RESX, DOOMGENERIC_RESY); }
 
 struct DB_BytesForAllWads DG_GetWads() {
+#ifdef DOOM_CONTROLLED_TITLE
+  return admitted_wads;
+#else
   struct DB_BytesForAllWads result = {0};
 
   int numberOfWads = 0;
@@ -116,9 +221,13 @@ struct DB_BytesForAllWads DG_GetWads() {
   }
 
   return result;
+#endif
 }
 
-void DG_DrawFrame() { drawFrame(DG_ScreenBuffer); }
+void DG_DrawFrame() {
+  A1_COUNT(A1_FRAME);
+  drawFrame(DG_ScreenBuffer);
+}
 
 int DG_GetKey(int *pressed, uint8_t *doomKey) {
   // Keep a cache of what the last communicated state of each key was, so that
@@ -172,7 +281,13 @@ void DG_SleepMs(uint32_t ms) {
   }
 }
 
-uint64_t DG_GetTicksMs() { return timeInMilliseconds(); }
+uint64_t DG_GetTicksMs() {
+#ifdef DOOM_CONTROLLED_TITLE
+  return 0;
+#else
+  return timeInMilliseconds();
+#endif
+}
 
 //
 // Features related to the reading and writing of saved games

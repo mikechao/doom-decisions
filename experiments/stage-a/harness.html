@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; worker-src blob:; connect-src 'none'">
+<title>Doom A1 first title proof</title>
+<style>
+  body { font: 16px system-ui; max-width: 960px; margin: 24px auto; padding: 0 16px; }
+  label { display: block; margin: 12px 0; }
+  canvas { display: block; max-width: 100%; background: #111; margin: 16px 0; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<h1>Doom A1 first title proof</h1>
+<p>One initialization and one render in a Worker at fixed time zero. Select the final
+controlled-title WASM and external Freedoom 0.13.0 Phase 1 IWAD. No network requests.</p>
+<label>Final WASM <input id="wasm" type="file" accept=".wasm"></label>
+<label>External Freedoom Phase 1 <input id="wad" type="file" accept=".wad"></label>
+<button id="run">Run first proof</button>
+<button id="save" disabled>Save JSON</button>
+<button id="image" disabled>Save title PNG</button>
+<canvas id="screen" width="640" height="400" aria-label="Doom title framebuffer"></canvas>
+<pre id="result" aria-live="polite">Ready. Full A1 acceptance is outside this checkpoint.</pre>
+<script>
+function titleWorker() {
+  const counterNames = ['cInit', 'engineCreate', 'titlePrepare', 'nativeBuild',
+    'playerEntry', 'worldComplete', 'outerComplete', 'schedulerEntry', 'netBody',
+    'netIntercept', 'wipeEntry', 'demoLoad', 'render', 'frame',
+    'gametic', 'leveltime', 'virtualTicks', 'titleReady'];
+  const wadHash = '7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d';
+  let instance, memory, wad, dimensions, pendingFrame;
+  const logs = [];
+  let logsTruncated = false;
+  const check = (ok, message) => { if (!ok) throw Error(message); };
+  const hash = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+    byte => byte.toString(16).padStart(2, '0')).join('');
+  function span(pointer, length) {
+    const start = pointer >>> 0;
+    check(memory && Number.isSafeInteger(length) && length >= 0 &&
+      start <= memory.buffer.byteLength && length <= memory.buffer.byteLength - start,
+    'Import memory span out of bounds');
+    return start;
+  }
+  function log(kind, pointer, length) {
+    const start = span(pointer, length);
+    check(length <= 4096, 'Oversized console message');
+    if (logs.length < 128) logs.push({kind, text: new TextDecoder().decode(
+      new Uint8Array(memory.buffer, start, length))});
+    else logsTruncated = true;
+  }
+  function snapshot() {
+    return {wasiInit: instance.exports.a1WasiInitCount(), ...Object.fromEntries(
+      counterNames.map((name, index) => [name, instance.exports.a1ReadCounter(index)]))};
+  }
+  const imports = {
+    console: {
+      onInfoMessage: (p, n) => log('info', p, n),
+      onErrorMessage: (p, n) => log('error', p, n),
+    },
+    loading: {
+      onGameInit: (width, height) => {
+        check(width === 640 && height === 400, 'Unexpected framebuffer dimensions');
+        dimensions = {width, height};
+      },
+      wadSizes: (count, total) => {
+        const c = span(count, 4), t = span(total, 4);
+        const view = new DataView(memory.buffer);
+        view.setInt32(c, 1, true);
+        view.setUint32(t, wad.byteLength, true);
+      },
+      readWads: (destination, lengths) => {
+        const d = span(destination, wad.byteLength), l = span(lengths, 4);
+        new Uint8Array(memory.buffer, d, wad.byteLength).set(wad);
+        new DataView(memory.buffer).setInt32(l, wad.byteLength, true);
+      },
+    },
+    ui: {drawFrame: pointer => {
+      check(dimensions && !pendingFrame, 'Unexpected or duplicate frame callback');
+      const start = span(pointer, 1024000);
+      const bgra = new Uint8Array(memory.buffer, start, 1024000);
+      pendingFrame = new Uint8ClampedArray(1024000);
+      for (let i = 0; i < bgra.length; i += 4) {
+        pendingFrame[i] = bgra[i + 2];
+        pendingFrame[i + 1] = bgra[i + 1];
+        pendingFrame[i + 2] = bgra[i];
+        pendingFrame[i + 3] = 255;
+      }
+    }},
+    runtimeControl: {timeInMilliseconds: () => 0n},
+    gameSaving: {sizeOfSaveGame: () => 0, readSaveGame: () => 0, writeSaveGame: () => 0},
+  };
+  self.onmessage = async ({data}) => {
+    const started = performance.now();
+    try {
+      let result, pixels;
+      if (data.op === 'load') {
+        check(!instance, 'Already loaded');
+        check(data.wasm.byteLength <= 16 * 1024 * 1024, 'Oversized WASM');
+        check(data.wad.byteLength === 28795076, 'Unexpected Freedoom length');
+        const [wasmSha256, wadSha256] = await Promise.all([hash(data.wasm), hash(data.wad)]);
+        check(wadSha256 === wadHash, 'Freedoom hash mismatch');
+        wad = new Uint8Array(data.wad);
+        const module = await WebAssembly.compile(data.wasm);
+        instance = await WebAssembly.instantiate(module, imports);
+        memory = instance.exports.memory;
+        result = {wasmSha256, wadSha256,
+          imports: WebAssembly.Module.imports(module), exports: WebAssembly.Module.exports(module),
+          counters: snapshot()};
+      } else if (data.op === 'init') {
+        const status = instance.exports.initControlled();
+        result = {status, counters: snapshot(), dimensions, logs, logsTruncated};
+        check(status === 0, 'Controlled initialization refused: ' + status);
+      } else if (data.op === 'render') {
+        const status = instance.exports.renderControlled();
+        result = {status, counters: snapshot(), dimensions, logs, logsTruncated};
+        check(status === 0 && pendingFrame, 'Render did not return one frame');
+        check(pendingFrame.some((value, i) => i % 4 !== 3 && value !== pendingFrame[i % 4]),
+          'Rendered frame has only one color');
+        result.frameSha256 = await hash(pendingFrame);
+        pixels = pendingFrame.buffer;
+        pendingFrame = undefined;
+      } else throw Error('Unknown operation');
+      self.postMessage({ok: true, op: data.op, elapsedMs: performance.now() - started,
+        result, pixels}, pixels ? [pixels] : []);
+    } catch (error) {
+      self.postMessage({ok: false, op: data.op, error: String(error), logs, logsTruncated,
+        counters: instance ? snapshot() : undefined});
+    }
+  };
+}
+
+const runButton = document.querySelector('#run');
+const saveButton = document.querySelector('#save');
+const imageButton = document.querySelector('#image');
+const output = document.querySelector('#result');
+const canvas = document.querySelector('#screen');
+let receipt;
+const display = () => { output.textContent = JSON.stringify(receipt, null, 2); };
+function download(blob, name) {
+  const url = URL.createObjectURL(blob), link = document.createElement('a');
+  link.href = url; link.download = name; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+saveButton.onclick = () => download(new Blob([JSON.stringify(receipt, null, 2)],
+  {type: 'application/json'}), 'a1-first-proof.json');
+imageButton.onclick = () => canvas.toBlob(blob => download(blob, 'a1-title.png'));
+runButton.onclick = async () => {
+  const wasm = document.querySelector('#wasm').files[0];
+  const wad = document.querySelector('#wad').files[0];
+  if (!wasm || !wad) { output.textContent = 'Select both local files first.'; return; }
+  runButton.disabled = true; saveButton.disabled = true; imageButton.disabled = true;
+  receipt = {checkpoint: 'RUNNING', a1Acceptance: 'NOT ACCEPTED',
+    date: new Date().toISOString(), userAgent: navigator.userAgent,
+    files: {wasm: wasm.name, wad: wad.name}, watchdogMs: 2000, watchdogFired: false, operations: []};
+  display();
+  const url = URL.createObjectURL(new Blob(['(' + titleWorker.toString() + ')()'],
+    {type: 'text/javascript'}));
+  const worker = new Worker(url);
+  function request(op, extra = {}, transfer = []) {
+    return new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => {
+        receipt.watchdogFired = true;
+        worker.onmessage = null;
+        worker.onerror = null;
+        worker.terminate();
+        reject(Error(op + ' timed out after 2000 ms'));
+      }, 2000); // Armed on main thread before dispatch.
+      worker.onerror = event => { clearTimeout(deadline); reject(Error(event.message)); };
+      worker.onmessage = ({data}) => {
+        clearTimeout(deadline);
+        const {pixels, ...observation} = data;
+        receipt.operations.push(observation);
+        display();
+        if (!data.ok) reject(Error(data.error));
+        else resolve(data);
+      };
+      worker.postMessage({op, ...extra}, transfer);
+    });
+  }
+  try {
+    const [wasmBytes, wadBytes] = await Promise.all([wasm.arrayBuffer(), wad.arrayBuffer()]);
+    await request('load', {wasm: wasmBytes, wad: wadBytes}, [wasmBytes, wadBytes]);
+    await request('init');
+    const rendered = await request('render');
+    canvas.getContext('2d').putImageData(new ImageData(
+      new Uint8ClampedArray(rendered.pixels), 640, 400), 0, 0);
+    imageButton.disabled = false;
+    const zero = ['nativeBuild', 'playerEntry', 'worldComplete', 'outerComplete',
+      'schedulerEntry', 'netBody', 'wipeEntry', 'demoLoad', 'gametic', 'leveltime', 'virtualTicks'];
+    const [before, init, frame] = receipt.operations.map(op => op.result.counters);
+    const valid = Object.values(before).every(value => value === 0) &&
+      [init, frame].every(counts => zero.every(name => counts[name] === 0) &&
+        ['wasiInit', 'cInit', 'engineCreate', 'titlePrepare', 'titleReady'].every(name => counts[name] === 1)) &&
+      init.render === 0 && init.frame === 0 && init.netIntercept === 0 &&
+      frame.render === 1 && frame.frame === 1 && frame.netIntercept === 1;
+    if (!valid) throw Error('Native zero-work/title invariants failed');
+    receipt.checkpoint = 'FIRST PROOF PASS';
+  } catch (error) {
+    receipt.checkpoint = 'FIRST PROOF FAIL';
+    receipt.error = String(error);
+  } finally {
+    worker.onmessage = null; worker.onerror = null;
+    worker.terminate(); URL.revokeObjectURL(url);
+    display(); runButton.disabled = false; saveButton.disabled = false;
+  }
+};
+</script>
+</html>

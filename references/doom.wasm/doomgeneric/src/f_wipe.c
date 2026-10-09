@@ -16,6 +16,7 @@
 //	Mission begin melt/wipe screen special effect.
 //
 
+#include "a1_trace.h"
 #include <string.h>
 
 #include "z_zone.h"
@@ -177,6 +178,7 @@ int wipe_exitMelt(int width, int height, int ticks) {
 }
 
 int wipe_StartScreen(int x, int y, int width, int height) {
+  A1_COUNT(A1_WIPE_ENTRY);
   wipe_scr_start = Z_Malloc(SCREENWIDTH * SCREENHEIGHT, PU_STATIC, NULL);
   I_ReadScreen(wipe_scr_start);
   return 0;

@@ -1,0 +1,12 @@
+[
+  {
+    "name": "outside",
+    "root": true,
+    "reaches": ["init", "render", "counters", "wasi-count", "memory"]
+  },
+  {"name": "init", "export": "initControlled"},
+  {"name": "render", "export": "renderControlled"},
+  {"name": "counters", "export": "a1ReadCounter"},
+  {"name": "wasi-count", "export": "a1WasiInitCount"},
+  {"name": "memory", "export": "memory"}
+]

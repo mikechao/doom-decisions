@@ -16,6 +16,7 @@
 //     Main loop code.
 //
 
+#include "a1_trace.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -194,6 +195,12 @@ void NetUpdate(void) {
   int nowtime;
   int newtics;
   int i;
+
+#ifdef DOOM_CONTROLLED_TITLE
+  A1_COUNT(A1_NET_INTERCEPT);
+  return;
+#endif
+  A1_COUNT(A1_NET_BODY);
 
   // If we are running with singletics (timing a demo), this
   // is all done separately.
@@ -642,6 +649,8 @@ void TryRunTics(void) {
   int availabletics;
   int counts;
 
+  A1_COUNT(A1_SCHEDULER_ENTRY);
+
   // get real tics
   entertic = I_GetTime() / ticdup;
   realtics = entertic - oldentertics;
@@ -726,6 +735,7 @@ void TryRunTics(void) {
 
       loop_interface->RunTic(set->cmds, set->ingame);
       gametic++;
+      A1_COUNT(A1_OUTER_COMPLETE);
 
       // modify command for duplicated tics
 

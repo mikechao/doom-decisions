@@ -1,7 +1,10 @@
-// Static inspection of the pinned upstream-shareware interface. Never instantiate.
+// Static inspection of explicit local profiles. Never instantiate.
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 
+const profile = process.argv.length === 5 && process.argv[3] === '--profile'
+  ? process.argv[4] : 'upstream-shareware';
+const controlled = profile === 'controlled-title';
 const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_ITEMS = 4096;
 const fail = message => { throw new Error(message); };
@@ -65,7 +68,13 @@ const expectedImports = new Map([
   ['loading.wadSizes', [['i32', 'i32'], []]],
   ['loading.onGameInit', [['i32', 'i32'], []]],
 ]);
-const coreExports = new Map([
+// Controlled time never reaches the host. Other imports remain reachable through
+// stock initialization / G_Ticker references; inspect the exact final set.
+if (controlled) expectedImports.delete('runtimeControl.timeInMilliseconds');
+const coreExports = controlled ? new Map([
+  ['initControlled', [[], ['i32']]], ['renderControlled', [[], ['i32']]],
+  ['a1ReadCounter', [['i32'], ['i32']]], ['a1WasiInitCount', [[], ['i32']]],
+]) : new Map([
   ['initGame', [[], []]], ['tickGame', [[], []]],
   ['reportKeyDown', [['i32'], []]], ['reportKeyUp', [['i32'], []]],
 ]);
@@ -146,12 +155,14 @@ function inspect(bytes) {
 }
 
 try {
-  check(process.argv.length === 3, 'Usage: node scripts/inspect_doom.mjs final.wasm');
+  check(process.argv.length === 3 || (process.argv.length === 5 && process.argv[3] === '--profile'),
+    'Usage: node scripts/inspect_doom.mjs final.wasm [--profile upstream-shareware|controlled-title]');
+  check(['upstream-shareware', 'controlled-title'].includes(profile), 'Unsupported profile');
   const path = process.argv[2];
   check(fs.statSync(path).size <= MAX_BYTES, 'Final module exceeds 16 MiB inspection limit');
   const bytes = fs.readFileSync(path);
   check(bytes.length <= MAX_BYTES, 'Final module grew beyond inspection limit');
-  console.log(JSON.stringify({profile: 'upstream-shareware', bytes: bytes.length,
+  console.log(JSON.stringify({profile, bytes: bytes.length,
     sha256: crypto.createHash('sha256').update(bytes).digest('hex'), ...inspect(bytes)}, null, 2));
 } catch (error) {
   console.error(`Static inspection failed: ${error.message}`);

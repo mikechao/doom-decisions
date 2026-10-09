@@ -18,6 +18,7 @@
 //	Pending weapon.
 //
 
+#include "a1_trace.h"
 #include "doomdef.h"
 #include "d_event.h"
 
@@ -190,6 +191,8 @@ void P_DeathThink(player_t *player) {
 void P_PlayerThink(player_t *player) {
   ticcmd_t *cmd;
   weapontype_t newweapon;
+
+  A1_COUNT(A1_PLAYER_ENTRY);
 
   // fixme: do this in the cheat code
   if (player->cheats & CF_NOCLIP)
