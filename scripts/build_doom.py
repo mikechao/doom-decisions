@@ -206,6 +206,8 @@ def execute_build(args):
             "Output must be beneath ignored references/doom.wasm/build/")
     require(not out.exists(), "Output already exists; choose a new directory")
     controlled = args.profile == "controlled-title"
+    require(controlled or not args.without_a1_fixtures,
+            "--without-a1-fixtures requires controlled-title")
     require(not controlled or (not args.embed_wad and not args.embed_sha256),
             "controlled-title forbids embedded WAD arguments")
     require(controlled or (args.embed_wad and args.embed_sha256),
@@ -239,6 +241,17 @@ def execute_build(args):
     try:
         atomic_json(evidence / "manifest.json", manifest)
         manifest["sources"] = source_evidence(evidence)
+        if controlled:
+            suffix = "-no-fixtures" if args.without_a1_fixtures else ""
+            init_wat = VENDOR / f"src/wat/controlled-title-init{suffix}.wat"
+            graph = VENDOR / f"src/reachability-controlled-title{suffix}.json"
+            for path in (init_wat, graph):
+                shutil.copyfile(path, evidence / "sources" / path.name)
+            manifest["controlled_title"] = {
+                "a1_fixtures": not args.without_a1_fixtures,
+                "defines": ["DOOM_CONTROLLED_TITLE"] +
+                           (["DOOM_A1_NO_FIXTURES"] if args.without_a1_fixtures else []),
+                "init_wat": identity(init_wat), "reachability_graph": identity(graph)}
         for name, (path, pattern) in tools.items():
             supervise([path, "--version"], ROOT, env, out, "version-" + name, deadline)
             version = (evidence / ("version-" + name + ".stdout.log")).read_text()
@@ -250,6 +263,8 @@ def execute_build(args):
                    "LOCAL_BINARYEN_BIN=" + str(binaryen), "LOCAL_PYTHON=" + str(python), "local-build"]
         if wad is not None:
             command.insert(7, "LOCAL_EMBED_WAD=" + str(wad))
+        if args.without_a1_fixtures:
+            command.insert(7, "A1_FIXTURES=0")
         manifest["make"] = {"argv": command, "cwd": str(VENDOR)}
         supervise(command, VENDOR, env, out, "make", deadline)
         final = out / "doom.wasm"
@@ -259,6 +274,8 @@ def execute_build(args):
         command = [str(node), str(ROOT / "scripts/inspect_doom.mjs"), str(final)]
         if controlled:
             command += ["--profile", args.profile]
+        if args.without_a1_fixtures:
+            command += ["--without-a1-fixtures"]
         manifest["inspection"] = {"argv": command, "cwd": str(ROOT)}
         supervise(command, ROOT, env, out, "inspection", deadline)
         interface = json.loads((evidence / "inspection.stdout.log").read_text())
@@ -293,6 +310,8 @@ def main(argv=None):
     parser.add_argument("--profile", required=True, choices=["upstream-shareware", "controlled-title"])
     parser.add_argument("--embed-wad")
     parser.add_argument("--embed-sha256")
+    parser.add_argument("--without-a1-fixtures", action="store_true",
+                        help="controlled-title only: omit diagnostic hooks and test exports")
     parser.add_argument("--out", required=True)
     parser.add_argument("--jobs", type=int, choices=[1, 2], default=2)
     parser.add_argument("--timeout", type=int, choices=range(1, 121), default=120, metavar="1..120")

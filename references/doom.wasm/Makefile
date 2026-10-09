@@ -218,6 +218,15 @@ EMBEDDED_BINARY_FILES =
 INIT_WAT = controlled-title-init
 REACHABILITY_GRAPH = src/reachability-controlled-title.json
 CFLAGS += -DDOOM_CONTROLLED_TITLE
+A1_FIXTURES ?= 1
+ifeq ($(filter $(A1_FIXTURES),0 1),)
+$(error A1_FIXTURES must be 0 or 1)
+endif
+ifeq ($(A1_FIXTURES),0)
+CFLAGS += -DDOOM_A1_NO_FIXTURES
+INIT_WAT = controlled-title-init-no-fixtures
+REACHABILITY_GRAPH = src/reachability-controlled-title-no-fixtures.json
+endif
 endif
 SRC_FOR_EMBEDDED_FILES = $(addprefix $(FILE_EMBEDDED_IN_CODE_DIR)/, $(addsuffix .c, $(EMBEDDED_BINARY_FILES)))
 HEADERS_FOR_EMBEDDED_FILES = $(addprefix $(FILE_EMBEDDED_IN_CODE_DIR)/, $(addsuffix .h, $(EMBEDDED_BINARY_FILES)))

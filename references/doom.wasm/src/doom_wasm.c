@@ -39,10 +39,13 @@
 static bool isKeyPressed[UINT8_MAX + 1] = {false};
 
 #ifdef DOOM_CONTROLLED_TITLE
+#ifndef DOOM_A1_NO_FIXTURES
 uint32_t a1_counts[A1_COUNT_LIMIT];
+#endif
 static struct DB_BytesForAllWads admitted_wads;
 static bool controlled_ready;
 static bool controlled_busy;
+static bool controlled_attempted;
 void D_Display(void);
 int D_A1TitleReady(void);
 
@@ -95,8 +98,9 @@ static bool AdmitExternalWad(void) {
 }
 
 int32_t _initializeControlled(void) {
-  if (controlled_busy || controlled_ready || a1_counts[A1_C_INIT])
+  if (controlled_busy || controlled_ready || controlled_attempted)
     return -1;
+  controlled_attempted = true;
   controlled_busy = true;
   A1_COUNT(A1_C_INIT);
   if (!AdmitExternalWad()) {
@@ -120,6 +124,7 @@ int32_t renderControlled(void) {
   return 0;
 }
 
+#ifndef DOOM_A1_NO_FIXTURES
 int32_t a1ReadCounter(int32_t index) {
   if (index >= 0 && index < A1_COUNT_LIMIT)
     return a1_counts[index];
@@ -131,6 +136,7 @@ int32_t a1ReadCounter(int32_t index) {
   default: return -1;
   }
 }
+#endif
 #endif
 
 void _initializeDoom() {

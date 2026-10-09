@@ -46,7 +46,9 @@ def section(number, data):
     return bytes([number]) + leb(len(data)) + data
 
 
-def module_fixture(*, controlled=False, start=False, wrong_import=False, mutable_key=False, wrong_signature=False, wrong_export=False):
+def module_fixture(*, controlled=False, without_a1_fixtures=False, start=False, wrong_import=False,
+                   mutable_key=False, wrong_signature=False, wrong_export=False,
+                   wrong_core_signature=False, wrong_memory=False):
     """Hand-encoded inert core sections; no compiler, assembler or instantiation."""
     types = [([], []), ([127], []), ([127, 127], []), ([127, 127, 127], [127]),
              ([127, 127], [127]), ([127], [127]), ([], [126]), ([], [127])]
@@ -69,6 +71,10 @@ def module_fixture(*, controlled=False, start=False, wrong_import=False, mutable
     if controlled:
         exports = [("memory", 2, 0), ("initControlled", 0, 9), ("renderControlled", 0, 10),
                    ("a1ReadCounter", 0, 11), ("a1WasiInitCount", 0, 12)]
+        if without_a1_fixtures:
+            exports = [item for item in exports if item[0] not in ("a1ReadCounter", "a1WasiInitCount")]
+        if wrong_core_signature:
+            exports[1] = ("initControlled", 0, 11)  # Valid module, wrong public function type.
     exports += [(n, 3, i + 2) for i, (n, _) in enumerate(keys)]
     data = b"\0asm\x01\0\0\0"
     data += section(1, vector([b"\x60" + vector([bytes([v]) for v in p]) +
@@ -76,7 +82,7 @@ def module_fixture(*, controlled=False, start=False, wrong_import=False, mutable
     data += section(2, vector([name(m) + name(n) + b"\0" + leb(t) for m, n, t in imports]))
     data += section(3, vector([leb(t) for t in ([7, 7, 5, 7] if controlled else [0, 0, 1, 1])]))
     data += section(4, vector([b"\x70\x01" + leb(169) + leb(169)]))
-    data += section(5, vector([b"\0" + leb(72)]))
+    data += section(5, vector([b"\0" + leb(9 if wrong_memory else 8 if controlled else 72)]))
     data += section(6, vector([b"\x7f" + bytes([int(m)]) + b"\x41" + leb(v, True) + b"\x0b"
                               for m, v in globals_]))
     data += section(7, vector([name(n) + bytes([k]) + leb(i) for n, k, i in exports]))
@@ -106,10 +112,13 @@ class BuildTests(Fixtures):
         self.sdk, self.binaryen = self.root / "sdk", self.root / "binaryen"
         self.args = argparse.Namespace(profile="upstream-shareware", out=str(self.vendor / "build/run"),
             embed_wad=str(self.root / "DOOM1.WAD"), wasi_sdk=str(self.sdk),
-            binaryen_bin=str(self.binaryen), node=str(self.root / "node"), jobs=2, timeout=120)
+            binaryen_bin=str(self.binaryen), node=str(self.root / "node"), jobs=2, timeout=120,
+            without_a1_fixtures=False)
         files = ["vendor/Makefile", "vendor/utils/generate_code_for_embedded_file.py",
                  "vendor/src/reachability_graph_for_wasm-metadce.json", "vendor/src/wat/fixture.wat",
                  "scripts/build_doom.py", "scripts/inspect_doom.mjs", "make", "node",
+                 "vendor/src/wat/controlled-title-init.wat", "vendor/src/wat/controlled-title-init-no-fixtures.wat",
+                 "vendor/src/reachability-controlled-title.json", "vendor/src/reachability-controlled-title-no-fixtures.json",
                  "sdk/bin/clang", "sdk/bin/wasm-ld", "binaryen/wasm-as", "binaryen/wasm-merge",
                  "binaryen/wasm-metadce", "sdk/share/wasi-sysroot/include/wasm32-wasi/stdio.h",
                  "sdk/share/wasi-sysroot/lib/wasm32-wasi/libc.a", "sdk/share/wasi-sysroot/lib/wasm32-wasi/libm.a",
@@ -179,6 +188,29 @@ class BuildTests(Fixtures):
         self.assertIsNone(manifest["asset"])
         self.assertFalse(any(a.startswith("LOCAL_EMBED_WAD=") for a in manifest["make"]["argv"]))
         self.assertEqual(manifest["inspection"]["argv"][-2:], ["--profile", "controlled-title"])
+        self.assertTrue(manifest["controlled_title"]["a1_fixtures"])
+        self.assertEqual(manifest["controlled_title"]["defines"], ["DOOM_CONTROLLED_TITLE"])
+        self.assertFalse(any(a.startswith("A1_FIXTURES=") for a in manifest["make"]["argv"]))
+
+    def test_fixture_disabled_mode_admission_and_selected_inputs(self):
+        self.args.without_a1_fixtures = True
+        with self.assertRaisesRegex(build.BuildError, "requires controlled-title"):
+            self.invoke()
+        self.start.assert_not_called()
+        self.args.profile = "controlled-title"
+        self.args.embed_wad = self.args.embed_sha256 = None
+        manifest = self.invoke()
+        selected = manifest["controlled_title"]
+        self.assertFalse(selected["a1_fixtures"])
+        self.assertEqual(selected["defines"], ["DOOM_CONTROLLED_TITLE", "DOOM_A1_NO_FIXTURES"])
+        self.assertIn("A1_FIXTURES=0", manifest["make"]["argv"])
+        self.assertEqual(manifest["inspection"]["argv"][-3:],
+                         ["--profile", "controlled-title", "--without-a1-fixtures"])
+        for key in ("init_wat", "reachability_graph"):
+            path = Path(selected[key]["path"])
+            self.assertIn("no-fixtures", path.name)
+            self.assertEqual((Path(self.args.out) / "evidence/sources" / path.name).read_bytes(), path.read_bytes())
+        self.assertIsNone(manifest["asset"])
 
     def test_controlled_profile_refuses_embed_arguments_before_tools(self):
         self.args.profile = "controlled-title"
@@ -454,11 +486,13 @@ class ProcessGroupIntegrationTests(Fixtures):
 
 @unittest.skipUnless(shutil.which("node"), "Installed Node required for fixture-only inspection")
 class InspectorTests(Fixtures):
-    def inspect(self, data, profile=None):
+    def inspect(self, data, profile=None, without_a1_fixtures=False):
         path = self.root / "fixture.wasm"; path.write_bytes(data)
         argv = [shutil.which("node"), REPO / "scripts/inspect_doom.mjs", path]
         if profile:
             argv += ["--profile", profile]
+        if without_a1_fixtures:
+            argv += ["--without-a1-fixtures"]
         return subprocess.run(argv,
                               capture_output=True, text=True, timeout=10)
 
@@ -496,6 +530,29 @@ class InspectorTests(Fixtures):
                 result = self.inspect(data)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(error, result.stderr)
+
+    def test_fixture_disabled_exact_interface_and_isolation(self):
+        data = module_fixture(controlled=True, without_a1_fixtures=True)
+        result = self.inspect(data, "controlled-title", True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["a1Fixtures"])
+        self.assertFalse(report["instantiated"])
+        self.assertEqual(len(report["imports"]), 9)
+        self.assertEqual(len(report["exports"]), 17)
+        self.assertFalse({"a1ReadCounter", "a1WasiInitCount"} & {x["name"] for x in report["exports"]})
+        self.assertNotEqual(self.inspect(data, "controlled-title").returncode, 0)
+        self.assertNotEqual(self.inspect(module_fixture(controlled=True), "controlled-title", True).returncode, 0)
+        self.assertNotEqual(self.inspect(module_fixture(), "upstream-shareware", True).returncode, 0)
+
+    def test_fixture_disabled_rejects_wrong_signatures_keys_and_memory(self):
+        for change, message in [("wrong_core_signature", "core export"), ("wrong_signature", "import/signature"),
+                                ("mutable_key", "key global"), ("wrong_memory", "memory limits")]:
+            with self.subTest(change=change):
+                data = module_fixture(controlled=True, without_a1_fixtures=True, **{change: True})
+                result = self.inspect(data, "controlled-title", True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
 
 
 if __name__ == "__main__":

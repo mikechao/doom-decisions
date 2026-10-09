@@ -11,7 +11,9 @@
 /* Experimental title proof only; no gameplay control ABI. */
 EXPORT int32_t _initializeControlled(void);
 EXPORT int32_t renderControlled(void);
+#ifndef DOOM_A1_NO_FIXTURES
 EXPORT int32_t a1ReadCounter(int32_t index);
+#endif
 #endif
 
 /*

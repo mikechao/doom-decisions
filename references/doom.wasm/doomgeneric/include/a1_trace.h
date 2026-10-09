@@ -20,7 +20,7 @@ enum {
   A1_COUNT_LIMIT
 };
 
-#ifdef DOOM_CONTROLLED_TITLE
+#if defined(DOOM_CONTROLLED_TITLE) && !defined(DOOM_A1_NO_FIXTURES)
 #include <stdint.h>
 extern uint32_t a1_counts[A1_COUNT_LIMIT];
 #define A1_COUNT(index) (++a1_counts[index])

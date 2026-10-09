@@ -19,11 +19,14 @@ controlled-title WASM and external Freedoom 0.13.0 Phase 1 IWAD. No network requ
 <button id="repeat">Run Experiment 2: repeat / idle</button>
 <button id="missing">Run Experiment 3: missing IWAD</button>
 <button id="faults">Run Experiment 4: Worker faults</button>
+<button id="no-fixtures">Run fixture-disabled smoke test</button>
 <p>Experiment 2 renders five frames, waits two seconds without engine calls, then
 renders a sixth frame. Experiment 3 needs only the WASM selection and ignores the WAD picker;
 it expects native refusal before engine startup, with no frame. Experiment 4 tests a WASM trap and
 infinite loop in disposable Workers, each followed by fresh-Worker title recovery. Watch the heartbeat
 count during the two-second hang. Full A1 acceptance remains pending.</p>
+<p>The fixture-disabled smoke test requires the final no-fixtures WASM. It checks initialization,
+second-init refusal and one matching title frame. Native counters are absent, so it cannot measure zero tics.</p>
 <button id="save" disabled>Save JSON</button>
 <button id="image" disabled>Save title PNG</button>
 <canvas id="screen" width="640" height="400" aria-label="Doom title framebuffer"></canvas>
@@ -37,6 +40,7 @@ function titleWorker() {
   const wadHash = '7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d';
   let instance, memory, wad, dimensions, pendingFrame;
   let missingIwad = false;
+  let noFixtures = false;
   const callbacks = {wadSizes: 0, readWads: 0, onGameInit: 0, drawFrame: 0};
   const logs = [];
   let logsTruncated = false;
@@ -61,6 +65,29 @@ function titleWorker() {
     return {wasiInit: instance.exports.a1WasiInitCount(), ...Object.fromEntries(
       counterNames.map((name, index) => [name, instance.exports.a1ReadCounter(index)]))};
   }
+  function observations() {
+    // Never call diagnostics in the fixture-disabled mode, including error reporting.
+    return noFixtures ? {callbacks: {...callbacks}} : {counters: snapshot()};
+  }
+  function checkNoFixturesInterface(module) {
+    const expectedImports = ['console.onErrorMessage', 'console.onInfoMessage',
+      'gameSaving.writeSaveGame', 'gameSaving.readSaveGame', 'gameSaving.sizeOfSaveGame',
+      'ui.drawFrame', 'loading.onGameInit', 'loading.readWads', 'loading.wadSizes']
+      .map(name => name + ':function').sort();
+    const keys = {KEY_LEFTARROW: 172, KEY_RIGHTARROW: 174, KEY_UPARROW: 173,
+      KEY_DOWNARROW: 175, KEY_STRAFE_L: 160, KEY_STRAFE_R: 161, KEY_FIRE: 163,
+      KEY_USE: 162, KEY_SHIFT: 182, KEY_TAB: 9, KEY_ESCAPE: 27, KEY_ENTER: 13,
+      KEY_BACKSPACE: 127, KEY_ALT: 184};
+    const expectedExports = ['initControlled:function', 'renderControlled:function', 'memory:memory',
+      ...Object.keys(keys).map(name => name + ':global')].sort();
+    check(JSON.stringify(WebAssembly.Module.imports(module)
+      .map(item => item.module + '.' + item.name + ':' + item.kind).sort()) ===
+      JSON.stringify(expectedImports), 'Fixture-disabled import interface mismatch');
+    check(JSON.stringify(WebAssembly.Module.exports(module)
+      .map(item => item.name + ':' + item.kind).sort()) === JSON.stringify(expectedExports),
+    'Fixture-disabled export interface mismatch (diagnostic exports must be absent)');
+    return keys;
+  }
   const imports = {
     console: {
       onInfoMessage: (p, n) => log('info', p, n),
@@ -68,6 +95,7 @@ function titleWorker() {
     },
     loading: {
       onGameInit: (width, height) => {
+        if (noFixtures) callbacks.onGameInit++;
         if (missingIwad) {
           callbacks.onGameInit++;
           throw Error('Unexpected onGameInit during missing-IWAD test');
@@ -76,7 +104,7 @@ function titleWorker() {
         dimensions = {width, height};
       },
       wadSizes: (count, total) => {
-        if (missingIwad) callbacks.wadSizes++;
+        if (missingIwad || noFixtures) callbacks.wadSizes++;
         const c = span(count, 4), t = span(total, 4);
         const view = new DataView(memory.buffer);
         if (missingIwad) {
@@ -89,6 +117,7 @@ function titleWorker() {
         view.setUint32(t, wad.byteLength, true);
       },
       readWads: (destination, lengths) => {
+        if (noFixtures) callbacks.readWads++;
         if (missingIwad) {
           callbacks.readWads++;
           throw Error('Unexpected readWads during missing-IWAD test');
@@ -99,6 +128,7 @@ function titleWorker() {
       },
     },
     ui: {drawFrame: pointer => {
+      if (noFixtures) callbacks.drawFrame++;
       if (missingIwad) {
         callbacks.drawFrame++;
         throw Error('Unexpected drawFrame during missing-IWAD test');
@@ -121,7 +151,8 @@ function titleWorker() {
     const started = performance.now();
     try {
       let result, pixels;
-      if (data.op === 'load' || data.op === 'load-missing-iwad') {
+      if (data.op === 'load' || data.op === 'load-missing-iwad' || data.op === 'load-no-fixtures') {
+        if (data.op === 'load-no-fixtures') noFixtures = true;
         check(!instance, 'Already loaded');
         check(data.wasm.byteLength <= 16 * 1024 * 1024, 'Oversized WASM');
         missingIwad = data.op === 'load-missing-iwad';
@@ -136,20 +167,40 @@ function titleWorker() {
           check(wadSha256 === wadHash, 'Freedoom hash mismatch');
           wad = new Uint8Array(data.wad);
         }
+        if (noFixtures) check(wasmSha256 ===
+          '647ee4031a4067639a915aa2747f0613f3f0997bc1bcd6797a50256946cae1fd',
+        'Fixture-disabled final WASM hash mismatch');
         const module = await WebAssembly.compile(data.wasm);
+        const keys = noFixtures ? checkNoFixturesInterface(module) : undefined;
         instance = await WebAssembly.instantiate(module, imports);
         memory = instance.exports.memory;
+        if (noFixtures) {
+          check(memory instanceof WebAssembly.Memory && memory.buffer.byteLength === 524288,
+            'Fixture-disabled initial memory mismatch');
+          check(instance.exports.initControlled.length === 0 && instance.exports.renderControlled.length === 0,
+            'Fixture-disabled function arity mismatch');
+          check(Object.entries(keys).every(([name, value]) =>
+            instance.exports[name] instanceof WebAssembly.Global && instance.exports[name].value === value),
+          'Fixture-disabled key globals mismatch');
+        }
         result = {wasmSha256, wadSha256,
           imports: WebAssembly.Module.imports(module), exports: WebAssembly.Module.exports(module),
-          counters: snapshot()};
-      } else if (data.op === 'init') {
+          ...observations()};
+        // The exact pinned bytes were statically inspected as () -> i32 for both functions.
+        // Browser reflection checks names/kinds/arity; it does not expose result types.
+        if (noFixtures) result.interfaceCheck = {imports: 9, exports: 17, diagnosticsAbsent: true,
+          functionSignatures: 'initControlled() -> i32; renderControlled() -> i32',
+          signatureEvidence: 'Pinned SHA-256 of the statically typed-inspected final artifact'};
+      } else if (data.op === 'init' || (noFixtures && data.op === 'init-again')) {
         const status = instance.exports.initControlled();
-        result = {status, counters: snapshot(), dimensions, logs, logsTruncated};
-        // Experiment 3 transports the native numeric refusal; main thread checks -2.
-        if (!missingIwad) check(status === 0, 'Controlled initialization refused: ' + status);
+        result = {status, ...observations(), dimensions, logs, logsTruncated};
+        if (noFixtures) result.expectedRefusal = data.op === 'init-again';
+        // Negative-test modes transport actual native statuses for main-thread assertions.
+        if (!missingIwad && !noFixtures)
+          check(status === 0, 'Controlled initialization refused: ' + status);
       } else if (data.op === 'render') {
         const status = instance.exports.renderControlled();
-        result = {status, counters: snapshot(), dimensions, logs, logsTruncated};
+        result = {status, ...observations(), dimensions, logs, logsTruncated};
         check(status === 0 && pendingFrame, 'Render did not return one frame');
         check(pendingFrame.some((value, i) => i % 4 !== 3 && value !== pendingFrame[i % 4]),
           'Rendered frame has only one color');
@@ -157,6 +208,7 @@ function titleWorker() {
         pixels = pendingFrame.buffer;
         pendingFrame = undefined;
       } else if (data.op === 'snapshot') {
+        check(!noFixtures, 'Native snapshot unavailable without fixtures');
         result = {counters: snapshot()}; // Read only; no init, display or tick call.
       } else throw Error('Unknown operation');
       if (missingIwad) {
@@ -167,7 +219,7 @@ function titleWorker() {
         result, pixels}, pixels ? [pixels] : []);
     } catch (error) {
       self.postMessage({ok: false, op: data.op, error: String(error), logs, logsTruncated,
-        counters: instance ? snapshot() : undefined,
+        ...(instance ? observations() : {}),
         ...(missingIwad ? {callbacks: {...callbacks}, frameProduced: Boolean(pendingFrame)} : {})});
     }
   };
@@ -213,6 +265,7 @@ const runButton = document.querySelector('#run');
 const repeatButton = document.querySelector('#repeat');
 const missingButton = document.querySelector('#missing');
 const faultsButton = document.querySelector('#faults');
+const noFixturesButton = document.querySelector('#no-fixtures');
 const saveButton = document.querySelector('#save');
 const imageButton = document.querySelector('#image');
 const output = document.querySelector('#result');
@@ -226,23 +279,27 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 saveButton.onclick = () => download(new Blob([JSON.stringify(receipt, null, 2)],
-  {type: 'application/json'}), receipt.experiment === 'worker-faults' ? 'a1-worker-faults.json' :
+  {type: 'application/json'}), receipt.experiment === 'fixture-disabled' ? 'a1-no-fixtures.json' :
+    receipt.experiment === 'worker-faults' ? 'a1-worker-faults.json' :
     receipt.experiment === 'missing-iwad' ? 'a1-missing-iwad.json' :
     receipt.experiment === 'repeat-idle' ? 'a1-repeat-idle.json' : 'a1-first-proof.json');
 imageButton.onclick = () => canvas.toBlob(blob => download(blob,
-  receipt.experiment === 'worker-faults' ? 'a1-worker-faults-title.png' :
+  receipt.experiment === 'fixture-disabled' ? 'a1-no-fixtures-title.png' :
+    receipt.experiment === 'worker-faults' ? 'a1-worker-faults-title.png' :
     receipt.experiment === 'repeat-idle' ? 'a1-repeat-idle-title.png' : 'a1-title.png'));
 runButton.onclick = () => runExperiment(false);
 repeatButton.onclick = () => runExperiment(true);
 missingButton.onclick = () => runExperiment(false, true);
 faultsButton.onclick = () => runExperiment(false, false, true);
-async function runExperiment(repeatIdle, missingIwad = false, workerFaults = false) {
+noFixturesButton.onclick = () => runExperiment(false, false, false, true);
+async function runExperiment(repeatIdle, missingIwad = false, workerFaults = false, noFixtures = false) {
   if (running) return;
   const wasm = document.querySelector('#wasm').files[0];
   const wad = missingIwad ? undefined : document.querySelector('#wad').files[0];
   if (!wasm || (!missingIwad && !wad)) {
-    if (workerFaults) {
-      receipt = {experiment: 'worker-faults', checkpoint: 'FAULT-CONTAINMENT FAIL',
+    if (workerFaults || noFixtures) {
+      receipt = {experiment: noFixtures ? 'fixture-disabled' : 'worker-faults',
+        checkpoint: noFixtures ? 'FIXTURE-DISABLED FAIL' : 'FAULT-CONTAINMENT FAIL',
         activeCheckpoint: 'file-selection', a1Acceptance: 'NOT ACCEPTED', date: new Date().toISOString(),
         userAgent: navigator.userAgent, files: {wasm: wasm?.name ?? null, wad: wad?.name ?? null},
         watchdogMs: 2000, watchdogFired: false, operations: [], error: 'Select both local files first.'};
@@ -253,7 +310,7 @@ async function runExperiment(repeatIdle, missingIwad = false, workerFaults = fal
     return;
   }
   running = true;
-  runButton.disabled = repeatButton.disabled = missingButton.disabled = faultsButton.disabled = true;
+  runButton.disabled = repeatButton.disabled = missingButton.disabled = faultsButton.disabled = noFixturesButton.disabled = true;
   saveButton.disabled = true; imageButton.disabled = true;
   receipt = {checkpoint: 'RUNNING', a1Acceptance: 'NOT ACCEPTED',
     date: new Date().toISOString(), userAgent: navigator.userAgent,
@@ -261,11 +318,17 @@ async function runExperiment(repeatIdle, missingIwad = false, workerFaults = fal
   if (repeatIdle) receipt.experiment = 'repeat-idle';
   if (missingIwad) receipt.experiment = 'missing-iwad';
   if (workerFaults) { receipt.experiment = 'worker-faults'; receipt.faults = []; }
+  if (noFixtures) {
+    receipt.experiment = 'fixture-disabled';
+    receipt.nativeCountersAvailable = false;
+    receipt.coverage = 'Initialization, second-init refusal and title smoke only; zero simulation tics not independently measured.';
+    receipt.activeCheckpoint = 'worker-create';
+  }
   display();
   let url, worker, workerFailure, currentFault;
   function request(op, extra = {}, transfer = [], checkpoint = op) {
     if (workerFailure) throw workerFailure;
-    if (repeatIdle || missingIwad || workerFaults) receipt.activeCheckpoint = checkpoint;
+    if (repeatIdle || missingIwad || workerFaults || noFixtures) receipt.activeCheckpoint = checkpoint;
     return new Promise((resolve, reject) => {
       const dispatched = performance.now();
       if (workerFaults && op === 'fixture-run') currentFault.dispatchedAtMs = dispatched;
@@ -277,7 +340,7 @@ async function runExperiment(repeatIdle, missingIwad = false, workerFaults = fal
           currentFault.terminateCalled = true;
           currentFault.terminationElapsedMs = performance.now() - dispatched;
         }
-        if (repeatIdle || missingIwad || workerFaults) receipt.operations.push({ok: false, op, checkpoint,
+        if (repeatIdle || missingIwad || workerFaults || noFixtures) receipt.operations.push({ok: false, op, checkpoint,
           error: String(error), ...(workerFaults ? {failureType, elapsedMs: performance.now() - dispatched} : {})});
         reject(error);
       };
@@ -299,7 +362,11 @@ async function runExperiment(repeatIdle, missingIwad = false, workerFaults = fal
         }
         clearTimeout(deadline);
         const {pixels, ...observation} = data;
-        if (repeatIdle || missingIwad || workerFaults) {
+        if (noFixtures && data.op !== op) {
+          fail(Error('Unexpected Worker response operation: ' + data.op), 'protocol-error');
+          return;
+        }
+        if (repeatIdle || missingIwad || workerFaults || noFixtures) {
           observation.checkpoint = checkpoint;
           // Keep initialization logs once; retain counters/hash/status for every boundary.
           if (op !== 'init' && observation.result) {
@@ -438,7 +505,38 @@ async function runExperiment(repeatIdle, missingIwad = false, workerFaults = fal
         throw Error('Missing-IWAD pre-init counters/callbacks were not zero');
     } else {
       const [wasmBytes, wadBytes] = await Promise.all([wasm.arrayBuffer(), wad.arrayBuffer()]);
-      loaded = await request('load', {wasm: wasmBytes, wad: wadBytes}, [wasmBytes, wadBytes]);
+      loaded = await request(noFixtures ? 'load-no-fixtures' : 'load',
+        {wasm: wasmBytes, wad: wadBytes}, [wasmBytes, wadBytes]);
+    }
+    if (noFixtures) {
+      const sameCallbacks = (result, drawFrame) => JSON.stringify(result.callbacks) === JSON.stringify(
+        {wadSizes: 1, readWads: 1, onGameInit: 1, drawFrame});
+      if (loaded.result.wasmSha256 !== '647ee4031a4067639a915aa2747f0613f3f0997bc1bcd6797a50256946cae1fd' ||
+          loaded.result.wadSha256 !== '7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d' ||
+          loaded.result.interfaceCheck?.diagnosticsAbsent !== true ||
+          !Object.values(loaded.result.callbacks).every(value => value === 0))
+        throw Error('Fixture-disabled identity/interface or pre-init callbacks failed');
+      const initialized = await request('init', {}, [], 'first-init');
+      if (initialized.result.status !== 0 || initialized.result.expectedRefusal !== false ||
+          !sameCallbacks(initialized.result, 0))
+        throw Error('Fixture-disabled first initialization failed');
+      const refused = await request('init-again', {}, [], 'second-init-refusal');
+      if (refused.result.status !== -1 || refused.result.expectedRefusal !== true || !sameCallbacks(refused.result, 0))
+        throw Error('Fixture-disabled second initialization did not refuse without startup callbacks');
+      receipt.secondInitRefusalVerified = true;
+      const rendered = await request('render', {}, [], 'title-render');
+      if (rendered.result.status !== 0 || !sameCallbacks(rendered.result, 1) ||
+          rendered.result.dimensions?.width !== 640 || rendered.result.dimensions?.height !== 400 ||
+          rendered.pixels?.byteLength !== 1024000 ||
+          rendered.result.frameSha256 !== 'd6c8cfd39fb13d32e9ec6ab2778dc3a17dd3216c423183012a28da8f6f344525' ||
+          receipt.watchdogFired || receipt.operations.some(op => op.result?.logsTruncated) ||
+          initialized.result.logs.some(log => log.kind === 'error') ||
+          rendered.result.logs.some(log => log.kind === 'error'))
+        throw Error('Fixture-disabled title frame/status/log requirements failed');
+      showFrame(rendered);
+      receipt.checkpoint = 'FIXTURE-DISABLED PASS';
+      delete receipt.activeCheckpoint;
+      return;
     }
     if (repeatIdle) {
       if (loaded.result.wasmSha256 !== 'bd4115cf78f9f2dc5e594206491398bd2b591a4e808d67f72265870051d3bb84')
@@ -518,7 +616,7 @@ async function runExperiment(repeatIdle, missingIwad = false, workerFaults = fal
     if (!valid) throw Error('Native zero-work/title invariants failed');
     receipt.checkpoint = 'FIRST PROOF PASS';
   } catch (error) {
-    receipt.checkpoint = workerFaults ? 'FAULT-CONTAINMENT FAIL' :
+    receipt.checkpoint = noFixtures ? 'FIXTURE-DISABLED FAIL' : workerFaults ? 'FAULT-CONTAINMENT FAIL' :
       missingIwad ? 'MISSING-IWAD FAIL' : repeatIdle ? 'REPEAT/IDLE FAIL' : 'FIRST PROOF FAIL';
     receipt.error = String(error);
   } finally {
@@ -528,7 +626,7 @@ async function runExperiment(repeatIdle, missingIwad = false, workerFaults = fal
     }
     if (url) URL.revokeObjectURL(url);
     display(); running = false;
-    runButton.disabled = repeatButton.disabled = missingButton.disabled = faultsButton.disabled = false;
+    runButton.disabled = repeatButton.disabled = missingButton.disabled = faultsButton.disabled = noFixturesButton.disabled = false;
     saveButton.disabled = false;
     if (repeatIdle) imageButton.disabled = !receipt.lastVisibleFrame;
     if (missingIwad) imageButton.disabled = true;

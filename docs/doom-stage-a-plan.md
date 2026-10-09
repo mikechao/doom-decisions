@@ -195,6 +195,12 @@ Proposed allowance: three clean A1 builds (two identical trace-profile builds an
 
 ### A1 — final WASM and observable controlled initialization
 
+**Owner-approved amendment — 2026-10-09; pending final acceptance.** The original baseline was **three clean builds: two identical trace-profile builds plus one fixture-disabled build**, including an equivalent repeat trace inventory. For this prototype checkpoint, the owner explicitly substituted **one fresh trace-enabled build plus one fresh fixture-disabled build from the same frozen source**. This amendment supersedes only the A1 build-count/repeat-build clauses in the pipeline, resource allowance, trace/pass criteria and initial authorization text; those original clauses remain above/below as historical context.
+
+The [recorded two-build evidence and owner Chrome smokes](doom-a1-results.md#final-two-build-verification-and-owner-chrome-smokes) demonstrate valid final transformed artifacts, no embedded WAD inputs, diagnostic instrumentation/export isolation, and a matching title smoke for both modes. The trace artifact supplies direct zero-work counters; the disabled smoke supplies initialization, second-init refusal and frame evidence without diagnostic counters. **Independent same-profile rebuild reproducibility was not established**; the two different modes are not a substitute measurement of it.
+
+Open [Issue #3](https://github.com/mikechao/doom-decisons/issues/3) still requires the original three-build inventories. The owner must explicitly reconcile that requirement at final acceptance/issue closeout; this amendment neither changes the issue nor declares its original criterion passed. **A1 remains NOT ACCEPTED pending separate final review and explicit Issue #3 acceptance reconciliation. A2 requires separate authorization.**
+
 **Prerequisites:** A0 passes; explicit A1 source/build/browser authorization. Verified Phase1 bytes prefetched; no fallback. Test trace active before init. Worker deadline already installed.
 
 **Scope:** Stage A build profile/no-embed adapter branch; `src/doom_wasm.{c,h}`, init WAT/test allowlist; `d_main.c` init/render branch; `d_loop.c` central NetUpdate guard; `i_timer.c` integer virtual branch; minimal counter hooks in `g_game.c`, `p_user.c`, `p_tick.c`, outer loop. Only headers needed for these seams. Add root minimal local-file Worker/Canvas/results harness. **No ready-step implementation or full lifecycle split.**

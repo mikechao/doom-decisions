@@ -2,8 +2,10 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 
-const profile = process.argv.length === 5 && process.argv[3] === '--profile'
-  ? process.argv[4] : 'upstream-shareware';
+const args = process.argv.slice(2);
+const withoutA1Fixtures = args.at(-1) === '--without-a1-fixtures';
+if (withoutA1Fixtures) args.pop();
+const profile = args.length === 3 && args[1] === '--profile' ? args[2] : 'upstream-shareware';
 const controlled = profile === 'controlled-title';
 const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_ITEMS = 4096;
@@ -78,6 +80,10 @@ const coreExports = controlled ? new Map([
   ['initGame', [[], []]], ['tickGame', [[], []]],
   ['reportKeyDown', [['i32'], []]], ['reportKeyUp', [['i32'], []]],
 ]);
+if (withoutA1Fixtures) {
+  coreExports.delete('a1ReadCounter');
+  coreExports.delete('a1WasiInitCount');
+}
 const keys = new Map([
   ['KEY_LEFTARROW', 172], ['KEY_RIGHTARROW', 174], ['KEY_UPARROW', 173],
   ['KEY_DOWNARROW', 175], ['KEY_STRAFE_L', 160], ['KEY_STRAFE_R', 161],
@@ -137,13 +143,16 @@ function inspect(bytes) {
   'Unexpected import count/duplicates');
   for (const item of imports) check(same(item.signature, expectedImports.get(`${item.module}.${item.name}`)),
     `Unexpected import/signature: ${item.module}.${item.name}`);
-  check(exports.length === 19, 'Expected four functions, memory and fourteen key globals');
+  check(exports.length === coreExports.size + 15,
+    `Expected ${coreExports.size} functions, memory and fourteen key globals`);
   for (const [name, signature] of coreExports) {
     const item = exports.find(x => x.name === name);
     check(item?.kind === 'function' && same(item.details, signature), `Unexpected core export: ${name}`);
   }
   check(exports.find(x => x.name === 'memory')?.kind === 'memory' && memories.length === 1,
     'Expected one exported memory');
+  check(memories[0].minimum === (controlled ? 8 : 72) && memories[0].maximum === null,
+    'Unexpected memory limits');
   for (const [name, value] of keys) {
     const item = exports.find(x => x.name === name);
     check(item?.kind === 'global' && item.details.type === 'i32' && !item.details.mutable &&
@@ -155,14 +164,15 @@ function inspect(bytes) {
 }
 
 try {
-  check(process.argv.length === 3 || (process.argv.length === 5 && process.argv[3] === '--profile'),
-    'Usage: node scripts/inspect_doom.mjs final.wasm [--profile upstream-shareware|controlled-title]');
+  check(args.length === 1 || (args.length === 3 && args[1] === '--profile'),
+    'Usage: node scripts/inspect_doom.mjs final.wasm [--profile upstream-shareware|controlled-title] [--without-a1-fixtures]');
   check(['upstream-shareware', 'controlled-title'].includes(profile), 'Unsupported profile');
-  const path = process.argv[2];
+  check(controlled || !withoutA1Fixtures, '--without-a1-fixtures requires controlled-title');
+  const path = args[0];
   check(fs.statSync(path).size <= MAX_BYTES, 'Final module exceeds 16 MiB inspection limit');
   const bytes = fs.readFileSync(path);
   check(bytes.length <= MAX_BYTES, 'Final module grew beyond inspection limit');
-  console.log(JSON.stringify({profile, bytes: bytes.length,
+  console.log(JSON.stringify({profile, ...(controlled ? {a1Fixtures: !withoutA1Fixtures} : {}), bytes: bytes.length,
     sha256: crypto.createHash('sha256').update(bytes).digest('hex'), ...inspect(bytes)}, null, 2));
 } catch (error) {
   console.error(`Static inspection failed: ${error.message}`);
