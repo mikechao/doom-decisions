@@ -11,11 +11,14 @@
   pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>
 <h1>Doom A1 first title proof</h1>
-<p>One initialization and one render in a Worker at fixed time zero. Select the final
+<p>The first proof performs one initialization and one render in a Worker at fixed time zero. Select the final
 controlled-title WASM and external Freedoom 0.13.0 Phase 1 IWAD. No network requests.</p>
 <label>Final WASM <input id="wasm" type="file" accept=".wasm"></label>
 <label>External Freedoom Phase 1 <input id="wad" type="file" accept=".wad"></label>
 <button id="run">Run first proof</button>
+<button id="repeat">Run Experiment 2: repeat / idle</button>
+<p>Experiment 2 renders five frames, waits two seconds without engine calls, then
+renders a sixth frame. Both experiments leave full A1 acceptance pending.</p>
 <button id="save" disabled>Save JSON</button>
 <button id="image" disabled>Save title PNG</button>
 <canvas id="screen" width="640" height="400" aria-label="Doom title framebuffer"></canvas>
@@ -118,6 +121,8 @@ function titleWorker() {
         result.frameSha256 = await hash(pendingFrame);
         pixels = pendingFrame.buffer;
         pendingFrame = undefined;
+      } else if (data.op === 'snapshot') {
+        result = {counters: snapshot()}; // Read only; no init, display or tick call.
       } else throw Error('Unknown operation');
       self.postMessage({ok: true, op: data.op, elapsedMs: performance.now() - started,
         result, pixels}, pixels ? [pixels] : []);
@@ -129,11 +134,13 @@ function titleWorker() {
 }
 
 const runButton = document.querySelector('#run');
+const repeatButton = document.querySelector('#repeat');
 const saveButton = document.querySelector('#save');
 const imageButton = document.querySelector('#image');
 const output = document.querySelector('#result');
 const canvas = document.querySelector('#screen');
 let receipt;
+let running = false;
 const display = () => { output.textContent = JSON.stringify(receipt, null, 2); };
 function download(blob, name) {
   const url = URL.createObjectURL(blob), link = document.createElement('a');
@@ -141,51 +148,134 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 saveButton.onclick = () => download(new Blob([JSON.stringify(receipt, null, 2)],
-  {type: 'application/json'}), 'a1-first-proof.json');
-imageButton.onclick = () => canvas.toBlob(blob => download(blob, 'a1-title.png'));
-runButton.onclick = async () => {
+  {type: 'application/json'}), receipt.experiment === 'repeat-idle' ? 'a1-repeat-idle.json' : 'a1-first-proof.json');
+imageButton.onclick = () => canvas.toBlob(blob => download(blob,
+  receipt.experiment === 'repeat-idle' ? 'a1-repeat-idle-title.png' : 'a1-title.png'));
+runButton.onclick = () => runExperiment(false);
+repeatButton.onclick = () => runExperiment(true);
+async function runExperiment(repeatIdle) {
+  if (running) return;
   const wasm = document.querySelector('#wasm').files[0];
   const wad = document.querySelector('#wad').files[0];
   if (!wasm || !wad) { output.textContent = 'Select both local files first.'; return; }
-  runButton.disabled = true; saveButton.disabled = true; imageButton.disabled = true;
+  running = true;
+  runButton.disabled = repeatButton.disabled = true;
+  saveButton.disabled = true; imageButton.disabled = true;
   receipt = {checkpoint: 'RUNNING', a1Acceptance: 'NOT ACCEPTED',
     date: new Date().toISOString(), userAgent: navigator.userAgent,
     files: {wasm: wasm.name, wad: wad.name}, watchdogMs: 2000, watchdogFired: false, operations: []};
+  if (repeatIdle) receipt.experiment = 'repeat-idle';
   display();
-  const url = URL.createObjectURL(new Blob(['(' + titleWorker.toString() + ')()'],
-    {type: 'text/javascript'}));
-  const worker = new Worker(url);
-  function request(op, extra = {}, transfer = []) {
+  let url, worker, workerFailure;
+  function request(op, extra = {}, transfer = [], checkpoint = op) {
+    if (workerFailure) throw workerFailure;
+    if (repeatIdle) receipt.activeCheckpoint = checkpoint;
     return new Promise((resolve, reject) => {
+      const fail = error => {
+        workerFailure = error;
+        worker.onmessage = null; worker.onerror = null;
+        worker.terminate();
+        if (repeatIdle) receipt.operations.push({ok: false, op, checkpoint, error: String(error)});
+        reject(error);
+      };
       const deadline = setTimeout(() => {
         receipt.watchdogFired = true;
-        worker.onmessage = null;
-        worker.onerror = null;
-        worker.terminate();
-        reject(Error(op + ' timed out after 2000 ms'));
+        fail(Error(op + ' timed out after 2000 ms'));
       }, 2000); // Armed on main thread before dispatch.
-      worker.onerror = event => { clearTimeout(deadline); reject(Error(event.message)); };
+      worker.onerror = event => { clearTimeout(deadline); fail(Error(event.message)); };
       worker.onmessage = ({data}) => {
         clearTimeout(deadline);
         const {pixels, ...observation} = data;
+        if (repeatIdle) {
+          observation.checkpoint = checkpoint;
+          // Keep initialization logs once; retain counters/hash/status for every boundary.
+          if (op !== 'init' && observation.result) {
+            const {logs, ...compact} = observation.result;
+            observation.result = compact;
+            if (logs) compact.logCount = logs.length;
+          }
+        }
         receipt.operations.push(observation);
         display();
         if (!data.ok) reject(Error(data.error));
         else resolve(data);
       };
-      worker.postMessage({op, ...extra}, transfer);
+      try { worker.postMessage({op, ...extra}, transfer); }
+      catch (error) { clearTimeout(deadline); fail(error); }
     });
   }
-  try {
-    const [wasmBytes, wadBytes] = await Promise.all([wasm.arrayBuffer(), wad.arrayBuffer()]);
-    await request('load', {wasm: wasmBytes, wad: wadBytes}, [wasmBytes, wadBytes]);
-    await request('init');
-    const rendered = await request('render');
+  const zero = ['nativeBuild', 'playerEntry', 'worldComplete', 'outerComplete',
+    'schedulerEntry', 'netBody', 'wipeEntry', 'demoLoad', 'gametic', 'leveltime', 'virtualTicks'];
+  function checkBoundary(counts, number) {
+    const valid = zero.every(name => counts[name] === 0) &&
+      ['wasiInit', 'cInit', 'engineCreate', 'titlePrepare', 'titleReady'].every(name => counts[name] === 1) &&
+      ['render', 'frame', 'netIntercept'].every(name => counts[name] === number);
+    if (!valid) throw Error('Native counter invariants failed at ' + receipt.activeCheckpoint);
+  }
+  const sameCounters = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function showFrame(rendered) {
     canvas.getContext('2d').putImageData(new ImageData(
       new Uint8ClampedArray(rendered.pixels), 640, 400), 0, 0);
-    imageButton.disabled = false;
-    const zero = ['nativeBuild', 'playerEntry', 'worldComplete', 'outerComplete',
-      'schedulerEntry', 'netBody', 'wipeEntry', 'demoLoad', 'gametic', 'leveltime', 'virtualTicks'];
+    imageButton.disabled = repeatIdle;
+  }
+  try {
+    canvas.getContext('2d').clearRect(0, 0, 640, 400);
+    url = URL.createObjectURL(new Blob(['(' + titleWorker.toString() + ')()'],
+      {type: 'text/javascript'}));
+    worker = new Worker(url);
+    const [wasmBytes, wadBytes] = await Promise.all([wasm.arrayBuffer(), wad.arrayBuffer()]);
+    const loaded = await request('load', {wasm: wasmBytes, wad: wadBytes}, [wasmBytes, wadBytes]);
+    if (repeatIdle) {
+      if (loaded.result.wasmSha256 !== 'bd4115cf78f9f2dc5e594206491398bd2b591a4e808d67f72265870051d3bb84')
+        throw Error('Experiment 2 requires the proven final WASM');
+      if (!Object.values(loaded.result.counters).every(value => value === 0))
+        throw Error('Pre-init counters were not zero');
+    }
+    const initialized = await request('init');
+    if (repeatIdle) {
+      checkBoundary(initialized.result.counters, 0);
+      let firstFrameHash;
+      async function renderPair(number) {
+        const rendered = await request('render', {}, [], 'render-' + number);
+        checkBoundary(rendered.result.counters, number);
+        const {status, dimensions, frameSha256} = rendered.result;
+        if (status !== 0 || dimensions?.width !== 640 || dimensions?.height !== 400 ||
+            rendered.pixels?.byteLength !== 1024000 || !/^[a-f0-9]{64}$/.test(frameSha256))
+          throw Error('Invalid title frame at render-' + number);
+        showFrame(rendered);
+        receipt.lastVisibleFrame = number;
+        firstFrameHash ??= frameSha256;
+        if (frameSha256 !== firstFrameHash) {
+          receipt.visualDivergence = {render: number, expected: firstFrameHash, actual: frameSha256};
+          throw Error('Title frame hash changed at render-' + number);
+        }
+        const observed = await request('snapshot', {}, [], 'snapshot-after-render-' + number);
+        checkBoundary(observed.result.counters, number);
+        if (!sameCounters(rendered.result.counters, observed.result.counters))
+          throw Error('Read-only snapshot changed counters after render-' + number);
+        return observed.result.counters;
+      }
+      let beforeIdle;
+      for (let number = 1; number <= 5; number++) beforeIdle = await renderPair(number);
+      receipt.activeCheckpoint = 'idle-after-frame-5';
+      receipt.idle = {requestedMs: 2000, before: beforeIdle};
+      display();
+      const started = performance.now();
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Main thread only; no Worker requests.
+      receipt.idle.elapsedMs = performance.now() - started;
+      const afterIdle = await request('snapshot', {}, [], 'snapshot-after-idle');
+      receipt.idle.after = afterIdle.result.counters;
+      checkBoundary(afterIdle.result.counters, 5);
+      receipt.idle.countersUnchanged = sameCounters(beforeIdle, afterIdle.result.counters);
+      if (!receipt.idle.countersUnchanged) throw Error('Counters changed during idle');
+      await renderPair(6);
+      receipt.frameHashesEqual = true;
+      receipt.checkpoint = 'REPEAT/IDLE PASS';
+      delete receipt.activeCheckpoint;
+      return;
+    }
+    const rendered = await request('render');
+    showFrame(rendered);
     const [before, init, frame] = receipt.operations.map(op => op.result.counters);
     const valid = Object.values(before).every(value => value === 0) &&
       [init, frame].every(counts => zero.every(name => counts[name] === 0) &&
@@ -195,13 +285,19 @@ runButton.onclick = async () => {
     if (!valid) throw Error('Native zero-work/title invariants failed');
     receipt.checkpoint = 'FIRST PROOF PASS';
   } catch (error) {
-    receipt.checkpoint = 'FIRST PROOF FAIL';
+    receipt.checkpoint = repeatIdle ? 'REPEAT/IDLE FAIL' : 'FIRST PROOF FAIL';
     receipt.error = String(error);
   } finally {
-    worker.onmessage = null; worker.onerror = null;
-    worker.terminate(); URL.revokeObjectURL(url);
-    display(); runButton.disabled = false; saveButton.disabled = false;
+    if (worker) {
+      worker.onmessage = null; worker.onerror = null;
+      worker.terminate();
+    }
+    if (url) URL.revokeObjectURL(url);
+    display(); running = false;
+    runButton.disabled = repeatButton.disabled = false;
+    saveButton.disabled = false;
+    if (repeatIdle) imageButton.disabled = !receipt.lastVisibleFrame;
   }
-};
+}
 </script>
 </html>

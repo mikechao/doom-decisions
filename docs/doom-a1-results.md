@@ -1,6 +1,6 @@
 # Stage A1 — first executable proof checkpoint
 
-**FIRST PROOF PASS (owner manual run, 2026-10-09T20:58:08.918Z); A1 / Issue #3 NOT ACCEPTED.** The exact final transformed WASM loaded external Freedoom Phase 1 in a Chrome Worker, initialized once and returned a visible 640×400 title frame at time zero. Native counters show zero command builds, player-think entries, completed world bodies and outer simulation tics through this single init/render. The earlier CSP failure was corrected without rebuilding WASM. This proves the first vertical slice, not repeated rendering/idle isolation or full A1 acceptance.
+**FIRST PROOF PASS; REPEAT/IDLE PASS (owner manual runs, 2026-10-09); A1 / Issue #3 NOT ACCEPTED.** The exact final transformed WASM loaded external Freedoom Phase 1 in a Chrome Worker, initialized once and returned a visible 640×400 title frame at time zero. The second experiment produced six identical title frames across a two-second idle interval, with unchanged zero simulation work/time. The earlier CSP failure was corrected without rebuilding WASM. These bounded title experiments do not establish full A1 acceptance.
 
 ## Baseline and changes
 
@@ -113,6 +113,26 @@ Both initialized snapshots report **640×400**. The attached PNG is visually the
 
 Exact owner evidence is retained locally, without modifying Downloads originals: [manual receipt](../references/doom.wasm/build/a1-first-proof/evidence/manual-20261009T205808Z.json) and [title PNG](../references/doom.wasm/build/a1-first-proof/evidence/manual-20261009T205808Z.png). Logs are not truncated and contain no `error` entries; they retain the port's general Freedoom compatibility warning. This title result does not establish map compatibility. Receipt JSON does not record the page URL, so launch scheme is not independently captured.
 
+## Experiment 2 — repeated renders and idle (owner manual)
+
+Implementation baseline: `main`, HEAD **`0535aa369905b9dcd6a560356b71d3cc450d092a`**, initially clean. Only `experiments/stage-a/harness.html` changed for the experiment: a separate repeat/idle action, read-only Worker `snapshot` operation and bounded receipt, preserving first-proof behavior. One Worker/instance performs load/init once, five render/snapshot pairs, a main-thread idle delay with no dispatched messages, a snapshot, then a sixth render/snapshot pair. The existing 2,000 ms per-request watchdog excludes the intentional idle delay. No engine/build changes or WASM rebuild occurred.
+
+Owner supplied `a1-repeat-idle.json` and `a1-repeat-idle-title.png`, receipt date **2026-10-09T21:14:48.819Z**, user-agent **Chrome/154.0.0.0**. Verdict: **REPEAT/IDLE PASS**, with **A1 NOT ACCEPTED**. Independent receipt checks verified all **15** ordered operations succeeded: one load, one init, six renders and seven read-only snapshots. WASM/WAD hashes match the exact admitted artifacts above, rehashed locally; import/export names/kinds match the first-proof inventory. Load took **20.8 ms**, init **11.6 ms**, renders **2.2–7.6 ms**, snapshots **0–0.1 ms**. All init/render statuses are **0**, all frames report **640×400**, and `watchdogFired:false`.
+
+| Observation | Verified result |
+| --- | --- |
+| Before init | All 19 counters zero |
+| `wasiInit`, `cInit`, `engineCreate`, `titlePrepare`, `titleReady` | Each 1 after init and at every later boundary |
+| `render`, `frame`, `netIntercept` | Each N after render N (1–6) |
+| `nativeBuild`, `playerEntry`, `worldComplete`, `outerComplete`, `schedulerEntry`, `netBody`, `wipeEntry`, `demoLoad`, `gametic`, `leveltime`, `virtualTicks` | Each zero at every boundary |
+| Each read-only snapshot | Full counter object equals preceding render/snapshot |
+| Idle | **2,001.6 ms** elapsed; all counters identical before/after, including render/frame/interception counts staying 5 |
+| After idle | Sixth render succeeds normally; render/frame/interception counts become 6 |
+
+All six Worker-reported raw RGBA hashes equal **`d6c8cfd39fb13d32e9ec6ab2778dc3a17dd3216c423183012a28da8f6f344525`**, also matching the first proof. The final attached PNG visibly shows Freedoom Phase 1 TITLEPIC; its header is 640×400 and its encoded bytes exactly match the first-proof PNG (**90,145 bytes**, SHA-256 **`aab99c921b67ce791bb82d224fa854351898bb2a1741cc7bfdf8cf2521e81260`**). Decoded pixels were not independently rehashed. Initialization logs are untruncated, contain no error entries, and retain the general Freedoom compatibility warning.
+
+Exact evidence is preserved in ignored local output: [repeat/idle receipt](../references/doom.wasm/build/a1-first-proof/evidence/repeat-idle-20261009T211448Z.json) (**21,005 bytes**, SHA-256 **`deca6fd686b84d0e79a48ea83618fd8306bb5ee716fc40f739e863fd9ca41148`**) and [final title PNG](../references/doom.wasm/build/a1-first-proof/evidence/repeat-idle-20261009T211448Z.png). Downloads originals remain intact. The receipt records the operation order and measured idle duration, while the inspected harness establishes that the idle interval dispatches no Worker messages; it does not record the page URL. This proves repeated title rendering and idle isolation for this instance/sequence, not hang containment, arbitrary lifecycle cases or gameplay.
+
 ## Checks and next checkpoint
 
 Passed:
@@ -125,6 +145,8 @@ git diff --check
 
 Fixture result: **19 passed, 1 live process-integration test skipped**. Also passed Python AST / root-graph JSON parsing, extracted inline harness JS syntax via `node --check --input-type=commonjs`, and controlled C syntax checks using `tools/wasi-sdk-24.0/bin/clang --target=wasm32-unknown-wasi --sysroot=tools/wasi-sdk-24.0/share/wasi-sysroot -DDOOM_CONTROLLED_TITLE -Wall -fsyntax-only -Ireferences/doom.wasm/doomgeneric -Ireferences/doom.wasm/doomgeneric/include` for adapter plus changed engine C files. No Node engine instantiation was used as a substitute for Chrome.
 
-**Next recommended check, after separate authorization:** extend the minimal harness to repeated render/snapshot pairs, a host idle delay and another render/snapshot, requiring unchanged zero work/time and no scheduler/wipe body. This is the next unproved isolation assumption. Missing-WAD and disposable hang/trap checks plus repeated/fixture-disabled build evidence remain subsequent A1 work. No new experiment, build or browser launch was performed while reviewing the supplied successful evidence.
+Experiment 2 harness checks passed before the owner run: extracted inline JavaScript and serialized Worker syntax via `node --check`, inspection of the unchanged first-proof checks and message-free idle block, and `git diff --check`. During evidence review, Python standard-library assertions checked every operation/checkpoint, complete counter snapshots, idle equality, frame hashes, PNG header/byte equality and artifact/interface identities; `git diff --check` passed again. Codex did not launch a browser or rebuild WASM.
 
-Missing-WAD runtime refusal, repeated-init/reentry tests, multiple renders/idle waits, hang/trap containment, repeat/fixture-disabled builds, and full Issue #3 acceptance were **not run**. No A2/A3, Decisions API, proxy, server, commits, pushes or publication. Stop here pending review of this checkpoint.
+**Next recommended check, after separate authorization:** bounded missing-external-IWAD refusal before engine startup, with native startup/work counters captured where available. Disposable hang/trap checks and repeated/fixture-disabled build evidence remain subsequent A1 work.
+
+Missing-WAD runtime refusal, repeated-init/reentry tests, hang/trap containment, repeat/fixture-disabled builds, and full Issue #3 acceptance were **not run**. No A2/A3, Decisions API, proxy, server, commits, pushes or publication. Stop here pending review of this checkpoint.
