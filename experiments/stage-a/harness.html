@@ -18,9 +18,12 @@ controlled-title WASM and external Freedoom 0.13.0 Phase 1 IWAD. No network requ
 <button id="run">Run first proof</button>
 <button id="repeat">Run Experiment 2: repeat / idle</button>
 <button id="missing">Run Experiment 3: missing IWAD</button>
+<button id="faults">Run Experiment 4: Worker faults</button>
 <p>Experiment 2 renders five frames, waits two seconds without engine calls, then
 renders a sixth frame. Experiment 3 needs only the WASM selection and ignores the WAD picker;
-it expects native refusal before engine startup, with no frame. Full A1 acceptance remains pending.</p>
+it expects native refusal before engine startup, with no frame. Experiment 4 tests a WASM trap and
+infinite loop in disposable Workers, each followed by fresh-Worker title recovery. Watch the heartbeat
+count during the two-second hang. Full A1 acceptance remains pending.</p>
 <button id="save" disabled>Save JSON</button>
 <button id="image" disabled>Save title PNG</button>
 <canvas id="screen" width="640" height="400" aria-label="Doom title framebuffer"></canvas>
@@ -170,9 +173,46 @@ function titleWorker() {
   };
 }
 
+function faultWorker() {
+  // Both modules export run: () -> void, have no imports or start section.
+  // Trap WAT: (module (func (export "run") unreachable))
+  // Hang WAT: (module (func (export "run") (loop (br 0))))
+  const prefix = [0,97,115,109,1,0,0,0,1,4,1,96,0,0,3,2,1,0,7,7,1,3,114,117,110,0,0];
+  const bodies = {trap: [10,5,1,3,0,0,11], hang: [10,10,1,8,0,3,64,12,0,11,0,11]};
+  let instance, kind;
+  self.onmessage = async ({data}) => {
+    const started = performance.now();
+    let phase = 'prepare';
+    try {
+      if (data.op === 'fixture-load') {
+        if (instance || !Object.hasOwn(bodies, data.kind)) throw Error('Invalid fixture load');
+        kind = data.kind;
+        const bytes = new Uint8Array([...prefix, ...bodies[kind]]);
+        if (!WebAssembly.validate(bytes)) throw Error('Invalid fixture WASM');
+        const module = await WebAssembly.compile(bytes);
+        instance = await WebAssembly.instantiate(module, {});
+        const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+          byte => byte.toString(16).padStart(2, '0')).join('');
+        self.postMessage({ok: true, op: data.op, elapsedMs: performance.now() - started,
+          result: {kind, validated: true, sha256, byteLength: bytes.length}});
+      } else if (data.op === 'fixture-run' && instance) {
+        phase = 'execute';
+        self.postMessage({op: data.op, phase: 'executing', kind});
+        instance.exports.run(); // Actual synchronous WASM; hang never reaches the following reply.
+        self.postMessage({ok: true, op: data.op, elapsedMs: performance.now() - started});
+      } else throw Error('Invalid fixture operation');
+    } catch (error) {
+      self.postMessage({ok: false, op: data.op, elapsedMs: performance.now() - started,
+        error: String(error), fault: {kind, phase, name: error.name, message: error.message,
+          isWasmRuntimeError: error instanceof WebAssembly.RuntimeError}});
+    }
+  };
+}
+
 const runButton = document.querySelector('#run');
 const repeatButton = document.querySelector('#repeat');
 const missingButton = document.querySelector('#missing');
+const faultsButton = document.querySelector('#faults');
 const saveButton = document.querySelector('#save');
 const imageButton = document.querySelector('#image');
 const output = document.querySelector('#result');
@@ -186,51 +226,80 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 saveButton.onclick = () => download(new Blob([JSON.stringify(receipt, null, 2)],
-  {type: 'application/json'}), receipt.experiment === 'missing-iwad' ? 'a1-missing-iwad.json' :
+  {type: 'application/json'}), receipt.experiment === 'worker-faults' ? 'a1-worker-faults.json' :
+    receipt.experiment === 'missing-iwad' ? 'a1-missing-iwad.json' :
     receipt.experiment === 'repeat-idle' ? 'a1-repeat-idle.json' : 'a1-first-proof.json');
 imageButton.onclick = () => canvas.toBlob(blob => download(blob,
-  receipt.experiment === 'repeat-idle' ? 'a1-repeat-idle-title.png' : 'a1-title.png'));
+  receipt.experiment === 'worker-faults' ? 'a1-worker-faults-title.png' :
+    receipt.experiment === 'repeat-idle' ? 'a1-repeat-idle-title.png' : 'a1-title.png'));
 runButton.onclick = () => runExperiment(false);
 repeatButton.onclick = () => runExperiment(true);
 missingButton.onclick = () => runExperiment(false, true);
-async function runExperiment(repeatIdle, missingIwad = false) {
+faultsButton.onclick = () => runExperiment(false, false, true);
+async function runExperiment(repeatIdle, missingIwad = false, workerFaults = false) {
   if (running) return;
   const wasm = document.querySelector('#wasm').files[0];
   const wad = missingIwad ? undefined : document.querySelector('#wad').files[0];
   if (!wasm || (!missingIwad && !wad)) {
+    if (workerFaults) {
+      receipt = {experiment: 'worker-faults', checkpoint: 'FAULT-CONTAINMENT FAIL',
+        activeCheckpoint: 'file-selection', a1Acceptance: 'NOT ACCEPTED', date: new Date().toISOString(),
+        userAgent: navigator.userAgent, files: {wasm: wasm?.name ?? null, wad: wad?.name ?? null},
+        watchdogMs: 2000, watchdogFired: false, operations: [], error: 'Select both local files first.'};
+      display(); saveButton.disabled = false; imageButton.disabled = true;
+      return;
+    }
     output.textContent = missingIwad ? 'Select the Final WASM file first.' : 'Select both local files first.';
     return;
   }
   running = true;
-  runButton.disabled = repeatButton.disabled = missingButton.disabled = true;
+  runButton.disabled = repeatButton.disabled = missingButton.disabled = faultsButton.disabled = true;
   saveButton.disabled = true; imageButton.disabled = true;
   receipt = {checkpoint: 'RUNNING', a1Acceptance: 'NOT ACCEPTED',
     date: new Date().toISOString(), userAgent: navigator.userAgent,
     files: {wasm: wasm.name, wad: missingIwad ? null : wad.name}, watchdogMs: 2000, watchdogFired: false, operations: []};
   if (repeatIdle) receipt.experiment = 'repeat-idle';
   if (missingIwad) receipt.experiment = 'missing-iwad';
+  if (workerFaults) { receipt.experiment = 'worker-faults'; receipt.faults = []; }
   display();
-  let url, worker, workerFailure;
+  let url, worker, workerFailure, currentFault;
   function request(op, extra = {}, transfer = [], checkpoint = op) {
     if (workerFailure) throw workerFailure;
-    if (repeatIdle || missingIwad) receipt.activeCheckpoint = checkpoint;
+    if (repeatIdle || missingIwad || workerFaults) receipt.activeCheckpoint = checkpoint;
     return new Promise((resolve, reject) => {
-      const fail = error => {
+      const dispatched = performance.now();
+      if (workerFaults && op === 'fixture-run') currentFault.dispatchedAtMs = dispatched;
+      const fail = (error, failureType) => {
         workerFailure = error;
         worker.onmessage = null; worker.onerror = null;
         worker.terminate();
-        if (repeatIdle || missingIwad) receipt.operations.push({ok: false, op, checkpoint, error: String(error)});
+        if (workerFaults && op === 'fixture-run') {
+          currentFault.terminateCalled = true;
+          currentFault.terminationElapsedMs = performance.now() - dispatched;
+        }
+        if (repeatIdle || missingIwad || workerFaults) receipt.operations.push({ok: false, op, checkpoint,
+          error: String(error), ...(workerFaults ? {failureType, elapsedMs: performance.now() - dispatched} : {})});
         reject(error);
       };
       const deadline = setTimeout(() => {
         receipt.watchdogFired = true;
-        fail(Error(op + ' timed out after 2000 ms'));
+        if (workerFaults && op === 'fixture-run') currentFault.watchdogFired = true;
+        fail(Error(op + ' timed out after 2000 ms'), 'timeout');
       }, 2000); // Armed on main thread before dispatch.
-      worker.onerror = event => { clearTimeout(deadline); fail(Error(event.message)); };
+      worker.onerror = event => { clearTimeout(deadline); fail(Error(event.message), 'worker-error'); };
       worker.onmessage = ({data}) => {
+        if (workerFaults && op === 'fixture-run' && data.phase === 'executing') {
+          if (data.op !== op || data.kind !== currentFault.kind || currentFault.executionStartedMs !== undefined) {
+            clearTimeout(deadline); fail(Error('Unexpected fixture execution message'), 'protocol-error');
+          } else {
+            currentFault.executionStartedMs = performance.now() - dispatched;
+            display();
+          }
+          return; // Progress is not success; the main-thread watchdog remains armed.
+        }
         clearTimeout(deadline);
         const {pixels, ...observation} = data;
-        if (repeatIdle || missingIwad) {
+        if (repeatIdle || missingIwad || workerFaults) {
           observation.checkpoint = checkpoint;
           // Keep initialization logs once; retain counters/hash/status for every boundary.
           if (op !== 'init' && observation.result) {
@@ -245,7 +314,7 @@ async function runExperiment(repeatIdle, missingIwad = false) {
         else resolve(data);
       };
       try { worker.postMessage({op, ...extra}, transfer); }
-      catch (error) { clearTimeout(deadline); fail(error); }
+      catch (error) { clearTimeout(deadline); fail(error, 'dispatch-error'); }
     });
   }
   const zero = ['nativeBuild', 'playerEntry', 'worldComplete', 'outerComplete',
@@ -260,10 +329,103 @@ async function runExperiment(repeatIdle, missingIwad = false) {
   function showFrame(rendered) {
     canvas.getContext('2d').putImageData(new ImageData(
       new Uint8ClampedArray(rendered.pixels), 640, 400), 0, 0);
-    imageButton.disabled = repeatIdle;
+    imageButton.disabled = repeatIdle || workerFaults;
   }
   try {
     canvas.getContext('2d').clearRect(0, 0, 640, 400);
+    if (workerFaults) {
+      for (const kind of ['trap', 'hang']) {
+        const fault = {kind, worker: kind + '-fault', recoveryWorker: kind + '-recovery', watchdogFired: false};
+        receipt.faults.push(fault);
+        currentFault = fault;
+        receipt.activeCheckpoint = kind + '/worker-create';
+        url = URL.createObjectURL(new Blob(['(' + faultWorker.toString() + ')()'], {type: 'text/javascript'}));
+        worker = new Worker(url);
+        const prepared = await request('fixture-load', {kind}, [], kind + '/fixture-load');
+        if (prepared.result.kind !== kind || prepared.result.validated !== true)
+          throw Error('Fixture preparation failed: ' + kind);
+        let heartbeatTimer;
+        const started = performance.now();
+        let lastBeat = started;
+        if (kind === 'hang') {
+          fault.heartbeat = {intervalMs: 50, count: 0, maxGapMs: 0};
+          heartbeatTimer = setInterval(() => {
+            const now = performance.now();
+            fault.heartbeat.count++;
+            fault.heartbeat.maxGapMs = Math.max(fault.heartbeat.maxGapMs, now - lastBeat);
+            lastBeat = now;
+            display();
+          }, 50);
+        }
+        try {
+          await request('fixture-run', {}, [], kind + '/fixture-run');
+        } catch (error) {
+          fault.error = String(error);
+        } finally {
+          clearInterval(heartbeatTimer);
+          if (fault.heartbeat) {
+            fault.heartbeat.elapsedMs = performance.now() - started;
+            fault.heartbeat.maxGapMs = Math.max(fault.heartbeat.maxGapMs, performance.now() - lastBeat);
+          }
+          worker.onmessage = null; worker.onerror = null;
+          fault.handlersCleared = true;
+          worker.terminate(); // Detach handlers and dispose before any recovery Worker exists.
+          fault.terminateCalled = true;
+          fault.disposalElapsedMs = performance.now() - started;
+          if (kind === 'hang') fault.disposalAfterDeadlineMs = performance.now() - fault.dispatchedAtMs - 2000;
+          URL.revokeObjectURL(url); url = undefined; worker = undefined;
+        }
+        const outcome = receipt.operations.at(-1);
+        fault.operationIndex = receipt.operations.length - 1;
+        fault.acceptedSuccess = outcome.ok === true;
+        if (fault.executionStartedMs === undefined || fault.acceptedSuccess || !fault.terminateCalled)
+          throw Error('Fixture did not execute and fail as required: ' + kind);
+        if (kind === 'trap') {
+          if (fault.watchdogFired || outcome.fault?.phase !== 'execute' ||
+              outcome.fault.kind !== kind || !outcome.fault.isWasmRuntimeError ||
+              outcome.fault.name !== 'RuntimeError' || !/unreachable/i.test(outcome.fault.message))
+            throw Error('Expected WASM unreachable trap was not observed');
+        } else {
+          fault.terminationAfterDeadlineMs = fault.terminationElapsedMs - 2000;
+          if (!fault.watchdogFired || outcome.failureType !== 'timeout' ||
+              fault.terminationAfterDeadlineMs < 0 || fault.terminationAfterDeadlineMs > 250 ||
+              fault.disposalAfterDeadlineMs < 0 || fault.disposalAfterDeadlineMs > 250 ||
+              fault.heartbeat.count < 1 || fault.heartbeat.maxGapMs > 250)
+            throw Error('Hang watchdog/disposal/heartbeat requirements failed');
+        }
+        fault.expectedFaultObserved = true;
+        currentFault = undefined;
+        workerFailure = undefined;
+        receipt.activeCheckpoint = kind + '/recovery-create';
+        url = URL.createObjectURL(new Blob(['(' + titleWorker.toString() + ')()'], {type: 'text/javascript'}));
+        worker = new Worker(url); // Fresh Worker, fresh buffers and fresh Doom instance after each fault.
+        receipt.activeCheckpoint = kind + '/recovery-inputs';
+        const [wasmBytes, wadBytes] = await Promise.all([wasm.arrayBuffer(), wad.arrayBuffer()]);
+        const loaded = await request('load', {wasm: wasmBytes, wad: wadBytes}, [wasmBytes, wadBytes], kind + '/recovery-load');
+        if (loaded.result.wasmSha256 !== 'bd4115cf78f9f2dc5e594206491398bd2b591a4e808d67f72265870051d3bb84' ||
+            loaded.result.wadSha256 !== '7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d' ||
+            !Object.values(loaded.result.counters).every(value => value === 0))
+          throw Error('Recovery artifact identity or pre-init counters failed');
+        const initialized = await request('init', {}, [], kind + '/recovery-init');
+        checkBoundary(initialized.result.counters, 0);
+        const rendered = await request('render', {}, [], kind + '/recovery-render');
+        checkBoundary(rendered.result.counters, 1);
+        if (initialized.result.status !== 0 || rendered.result.status !== 0 ||
+            rendered.result.dimensions?.width !== 640 || rendered.result.dimensions?.height !== 400 ||
+            rendered.pixels?.byteLength !== 1024000 ||
+            rendered.result.frameSha256 !== 'd6c8cfd39fb13d32e9ec6ab2778dc3a17dd3216c423183012a28da8f6f344525' ||
+            rendered.result.logsTruncated || initialized.result.logs.some(log => log.kind === 'error'))
+          throw Error('Recovery title frame/status/log requirements failed');
+        showFrame(rendered);
+        receipt.lastVisibleRecovery = kind;
+        fault.recoveryPassed = true;
+        worker.onmessage = null; worker.onerror = null; worker.terminate();
+        URL.revokeObjectURL(url); url = undefined; worker = undefined;
+      }
+      receipt.checkpoint = 'FAULT-CONTAINMENT PASS';
+      delete receipt.activeCheckpoint;
+      return;
+    }
     url = URL.createObjectURL(new Blob(['(' + titleWorker.toString() + ')()'],
       {type: 'text/javascript'}));
     worker = new Worker(url);
@@ -356,7 +518,8 @@ async function runExperiment(repeatIdle, missingIwad = false) {
     if (!valid) throw Error('Native zero-work/title invariants failed');
     receipt.checkpoint = 'FIRST PROOF PASS';
   } catch (error) {
-    receipt.checkpoint = missingIwad ? 'MISSING-IWAD FAIL' : repeatIdle ? 'REPEAT/IDLE FAIL' : 'FIRST PROOF FAIL';
+    receipt.checkpoint = workerFaults ? 'FAULT-CONTAINMENT FAIL' :
+      missingIwad ? 'MISSING-IWAD FAIL' : repeatIdle ? 'REPEAT/IDLE FAIL' : 'FIRST PROOF FAIL';
     receipt.error = String(error);
   } finally {
     if (worker) {
@@ -365,10 +528,11 @@ async function runExperiment(repeatIdle, missingIwad = false) {
     }
     if (url) URL.revokeObjectURL(url);
     display(); running = false;
-    runButton.disabled = repeatButton.disabled = missingButton.disabled = false;
+    runButton.disabled = repeatButton.disabled = missingButton.disabled = faultsButton.disabled = false;
     saveButton.disabled = false;
     if (repeatIdle) imageButton.disabled = !receipt.lastVisibleFrame;
     if (missingIwad) imageButton.disabled = true;
+    if (workerFaults) imageButton.disabled = !receipt.lastVisibleRecovery;
   }
 }
 </script>

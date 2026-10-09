@@ -1,6 +1,6 @@
 # Stage A1 — first executable proof checkpoint
 
-**FIRST PROOF PASS; REPEAT/IDLE PASS; MISSING-IWAD PASS (owner manual runs, 2026-10-09); A1 / Issue #3 NOT ACCEPTED.** The exact final transformed WASM loaded external Freedoom Phase 1 in a Chrome Worker, initialized once and returned a visible 640×400 title frame at time zero. The second experiment produced six identical title frames across a two-second idle interval, with unchanged zero simulation work/time. The third confirmed native missing-IWAD refusal before engine startup. The earlier CSP failure was corrected without rebuilding WASM. These bounded experiments do not establish full A1 acceptance.
+**FIRST PROOF PASS; REPEAT/IDLE PASS; MISSING-IWAD PASS; FAULT-CONTAINMENT PASS (owner manual runs, 2026-10-09); A1 / Issue #3 NOT ACCEPTED.** The exact final transformed WASM loaded external Freedoom Phase 1 in a Chrome Worker, initialized once and returned a visible 640×400 title frame at time zero. The second experiment produced six identical title frames across a two-second idle interval, with unchanged zero simulation work/time. The third confirmed native missing-IWAD refusal before engine startup. The fourth contained separate WASM trap/hang fixtures and recovered the title in two fresh Workers. The earlier CSP failure was corrected without rebuilding WASM. These bounded experiments do not establish full A1 acceptance.
 
 ## Baseline and changes
 
@@ -154,6 +154,27 @@ This is native refusal evidence, not a JavaScript admission failure: [`AdmitExte
 
 Exact [missing-IWAD receipt](../references/doom.wasm/build/a1-first-proof/evidence/missing-iwad-20261009T212529Z.json) is retained in ignored local evidence (**6,225 bytes**, SHA-256 **`e74f0d552a7f34f4bafd887c4ca9af532b8c45711ee71e67beed6de0fc778f12`**), preserving the Downloads original.
 
+## Experiment 4 — simplified Worker fault containment (owner manual)
+
+Implementation baseline: clean `main`, HEAD **`fa927f76064ca891f823a98e3c36c78d9d19f880`**. Only `experiments/stage-a/harness.html` changed: two inline, import-free WASM fixtures with adjacent equivalent WAT, a fault action using the existing main-thread watchdog, heartbeat/disposal observations and two fresh Doom recoveries. The **34-byte trap** executes `unreachable`; the **39-byte hang** executes an unconditional `loop/br`. Their SHA-256 values are **`17dc0b5ef1bc192036c9f8bb6dfc95a38af3517baa2a3d626ae65df4d7322611`** and **`f8dd9cf3439b3928de845c4519350d97ec3cdc18ab6755df791ed96e002918c2`**, matching the inspected inline bytes and independently assembled WAT. Doom C/WAT/build configuration and its final artifact remain unchanged.
+
+Owner supplied `a1-worker-faults.json` and `a1-worker-faults-title.png`, receipt date **2026-10-09T21:44:15.743Z**, user-agent **Chrome/154.0.0.0**. Verdict: **FAULT-CONTAINMENT PASS**, with **A1 NOT ACCEPTED**. All **10** ordered operations match the intended sequence: for each fixture, load → fault execution → fresh Doom load/init/render. The two fault executions are correctly recorded as `ok:false`; the other eight operations are successful. Each fixture reports successful validation/compilation and an execution-start message before its synchronous WASM call.
+
+| Observation | Trap | Hang |
+| --- | --- | --- |
+| Actual negative outcome | `WebAssembly.RuntimeError`, `unreachable`, phase `execute`; **0.2 ms** | Main-thread watchdog timeout; **2,001.4 ms** |
+| Watchdog fired | false | true, expected |
+| Main-thread heartbeat | Not required for the prompt trap response | **40** beats at 50 ms nominal interval; maximum gap **51.7 ms**, including interval boundaries |
+| Disposal | Handlers cleared, `terminate()` called; **0.5 ms** after test start | Termination call **1.4 ms** after deadline; disposal/handler cleanup **1.5 ms** after deadline, within 250 ms |
+| Fault accepted as successful operation | false | false |
+| Fresh recovery load / init / render | **20.6 / 11.4 / 4.4 ms** | **16.8 / 11.0 / 4.3 ms** |
+
+The receipt's top-level `watchdogFired:true` is the intentional hang outcome. Both recovery paths independently report the admitted final WASM and Freedoom hashes, matching local rehashes and the original import/export inventory. Each recovery starts with all **19** counters zero; after init, `wasiInit`, `cInit`, `engineCreate`, `titlePrepare`, `titleReady` are each **1**, and after render `render`, `frame`, `netIntercept` are each **1**. All eleven simulation/scheduler/body/wipe/demo/time counters remain **0** at every boundary. Both init/render statuses are **0**, dimensions **640×400**, logs untruncated with no error entries. Recovery buffers are reread from the selected files, and inspected source creates each recovery Worker only after disposing of the faulty one and removing its handlers. No fault success acknowledgment appears in the receipt; this does not inject or independently test a synthetic late reply.
+
+Both recovery frame hashes equal the first proof's **`d6c8cfd39fb13d32e9ec6ab2778dc3a17dd3216c423183012a28da8f6f344525`**. The final supplied PNG visibly shows Freedoom Phase 1 TITLEPIC, has a 640×400 header, and is byte-identical to the first-proof PNG (**90,145 bytes**, SHA-256 **`aab99c921b67ce791bb82d224fa854351898bb2a1741cc7bfdf8cf2521e81260`**); decoded pixels were not independently rehashed. Exact [fault receipt](../references/doom.wasm/build/a1-first-proof/evidence/worker-faults-20261009T214415Z.json) (**23,049 bytes**, SHA-256 **`c6f1aca340baf93394506cffc13e2faf7e0ff2895074121516415be148bb9e05`**) and [recovery PNG](../references/doom.wasm/build/a1-first-proof/evidence/worker-faults-20261009T214415Z.png) are preserved in ignored local evidence, leaving Downloads originals intact.
+
+This establishes the simplified browser Worker containment checkpoint using separate synchronous WASM faults and successful fresh Doom recovery. It does not exercise Doom's own fatal/quit paths, add fault exports to Doom, or establish production supervision/full Stage D containment.
+
 ## Checks and next checkpoint
 
 Passed:
@@ -170,6 +191,8 @@ Experiment 2 harness checks passed before the owner run: extracted inline JavaSc
 
 Experiment 3 checks passed before the owner run: inline JavaScript and serialized Worker syntax via `node --check`, static comparison of the preserved positive render/idle sequences and CSP, and `git diff --check`. Receipt review independently asserted operation order, exact native status, all counters and callback observations, unchanged snapshot, artifact/interface identity and watchdog outcome. `git diff --check` passed after documentation. No browser launch, rebuild or additional runtime experiment occurred during review.
 
-**Next recommended check, after separate authorization:** disposable Worker hang/trap containment with main-thread responsiveness/disposal evidence and fresh-Worker recovery. This requires a separately scoped fixture/build experiment; the existing artifact was not changed. Repeated/fixture-disabled build evidence also remains subsequent A1 work.
+Experiment 4 checks passed before the owner run: page and both serialized Worker syntax via `node --check`, fixture validation/compilation without execution in Node, exact WAT-to-byte comparison with installed Binaryen `wasm-as`, and static preservation checks for the Doom Worker, Experiments 1–3 engine sequences, CSP and 2,000 ms pre-dispatch watchdog. Receipt review asserted both fixture identities/outcomes, operation order, heartbeat/disposal limits, complete recovery counter snapshots, artifact/interface identities and PNG header/byte equality. `git diff --check` passed after documentation. No browser launch, fixture execution or Doom rebuild occurred during Codex evidence review.
 
-Repeated-init/reentry tests, hang/trap containment, repeat/fixture-disabled builds, and full Issue #3 acceptance were **not run**. No A2/A3, Decisions API, proxy, server, commits, pushes or publication. Stop here pending review of this checkpoint.
+**Next recommended checkpoint, after separate authorization:** review the remaining A1 build/export acceptance evidence and scope repeated trace/fixture-disabled build verification. The simplified fixtures were deliberately separate from Doom; this experiment supplies no additional Doom build evidence and does not resolve the final fixture-disabled interface.
+
+Repeated-init/reentry tests, repeat/fixture-disabled builds, and full Issue #3 acceptance were **not run**. No A2/A3, Decisions API, proxy, server, commits, pushes or publication. Stop here pending review of this checkpoint.
