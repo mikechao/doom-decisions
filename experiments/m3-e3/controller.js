@@ -280,7 +280,7 @@ async function decide(run, entry, imageUrl, OpenAI) {
       {type: 'input_text', text: 'This is the currently rendered first-person Doom E1M1 frame. You only have this image, not full game state.'},
       {type: 'input_image', image_url: imageUrl},
     ]}], questions: [{type: 'choice', name: 'next_action',
-      instructions: 'Choose the next action to explore E1M1 and survive based on the visible frame. The action will persist for exactly six native gameplay tics (about 171 ms), then a new frame is observed. neutral releases all six keys. Do not assume unseen game state.',
+      instructions: 'You are controlling the player in Doom E1M1. Your primary objective is to explore the level and make progress toward the exit while surviving. Choose an action that makes useful progress based on the current screenshot. Moving forward or turning to explore is generally preferable to standing still. Choose neutral only when waiting has a specific tactical benefit. Each action lasts six gameplay tics, after which you will receive another screenshot. Do not assume unseen game state.',
       choices: Object.keys(masks).map(value => ({value})),
     }]};
     // Same pinned client mechanics as M3-E2. Both helpers observe ONE APIPromise.
