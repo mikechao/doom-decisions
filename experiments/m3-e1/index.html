@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://api.openai.com; base-uri 'none'; form-action 'none'">
+  <title>M3-E1 — browser-direct Decisions probe</title>
+  <style>
+    body { font: 16px system-ui; max-width: 760px; margin: 24px auto; padding: 0 16px; }
+    canvas, label { display: block; margin: 16px 0; }
+    input { max-width: 100%; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h1>M3-E1 — browser-direct Decisions probe</h1>
+  <p>Owner authorization is required before running this potentially billed test.
+    One click permits at most one POST per page load, with a 10-second deadline and no retries.</p>
+  <canvas id="image" width="64" height="64" role="img" aria-label="Solid red test image"></canvas>
+  <label for="key">Manually supplied, temporary, restricted test API key</label>
+  <input id="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" size="48" aria-describedby="key-note">
+  <p id="key-note">The page keeps the key only in transient memory and clears this input on Run.
+    The executing page and browser DevTools can see the key. Do not save it in a password manager,
+    share an unredacted HAR, or capture credentials in screenshots. Revoke the temporary key afterward.</p>
+  <button id="run" type="button">Run one test</button>
+  <pre id="result" role="status" aria-live="polite">Not run. No API request has been made.</pre>
+  <p>Normal Chrome security is required. Inspect Console/Network for CSP, CORS, or network details.
+    A response visible only in Network does not establish page readability. Reload for another attempt;
+    each additional attempt requires authorization. Aborting does not prove processing or billing stopped.</p>
+
+  <script>
+    "use strict";
+
+    const canvas = document.getElementById("image");
+    const keyInput = document.getElementById("key");
+    const runButton = document.getElementById("run");
+    const output = document.getElementById("result");
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#ff0000";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    let attempted = false;
+    let pending = false;
+    let cspBlocked = false;
+    window.addEventListener("pagehide", () => { keyInput.value = ""; });
+    document.addEventListener("securitypolicyviolation", (event) => {
+      if (pending && event.effectiveDirective === "connect-src" && event.disposition === "enforce") {
+        cspBlocked = true;
+      }
+    });
+
+    runButton.addEventListener("click", async (event) => {
+      // Reject scripted clicks, and lock before any asynchronous operation.
+      if (!event.isTrusted || attempted) return;
+      attempted = true;
+      runButton.disabled = true;
+      let key = keyInput.value.trim();
+      keyInput.value = "";
+      keyInput.disabled = true;
+      if (!key) {
+        output.textContent = "Not sent: no key supplied. Elapsed: 0 ms. Reload for another attempt.";
+        return;
+      }
+
+      const controller = new AbortController();
+      const started = performance.now();
+      const deadlineMs = 10_000;
+      let timedOut = false;
+      const result = {
+        status: "Running",
+        transport: "Not yet established",
+        authenticated: "Not yet established",
+        correctness: "Not evaluated",
+        http: "Unavailable",
+        body: "Not yet read",
+        type: "Unavailable",
+        name: "Unavailable",
+        choice: "Unavailable",
+        refusal: "Not evaluated",
+        requestId: "Unavailable / not exposed",
+      };
+      function render() {
+        output.textContent = [
+          `Status: ${result.status}`,
+          `Elapsed: ${Math.round(performance.now() - started)} ms (deadline: ${deadlineMs} ms)`,
+          `Transport/CORS: ${result.transport}`,
+          `Authenticated API: ${result.authenticated}`,
+          `Image-choice correctness: ${result.correctness}`,
+          `HTTP status: ${result.http}`,
+          `Response body readable: ${result.body}`,
+          `Answer type: ${result.type}`,
+          `Answer name: ${result.name}`,
+          `Selected choice: ${result.choice}`,
+          `Refusal: ${result.refusal}`,
+          `Request ID (only if exposed): ${result.requestId}`,
+        ].join("\n");
+      }
+      function checkDeadline() {
+        if (timedOut || performance.now() - started >= deadlineMs) {
+          timedOut = true;
+          controller.abort();
+          throw new DOMException("Overall deadline exceeded", "AbortError");
+        }
+      }
+      const deadline = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, deadlineMs);
+      const ticker = setInterval(render, 100);
+      pending = true;
+      render();
+
+      try {
+        const payload = {
+          model: "gpt-6-luna",
+          input: [{
+            role: "user",
+            content: [{ type: "input_image", image_url: canvas.toDataURL("image/png") }],
+          }],
+          questions: [{
+            type: "choice",
+            name: "dominant_color",
+            instructions: "Identify the dominant color of the image. Select red or blue.",
+            choices: [{ value: "red" }, { value: "blue" }],
+          }],
+        };
+        checkDeadline();
+        // The browser may send OPTIONS itself; this is the sole fetch/POST.
+        const responsePromise = fetch("https://api.openai.com/v1/decisions", {
+          method: "POST",
+          mode: "cors",
+          credentials: "omit",
+          cache: "no-store",
+          redirect: "error",
+          referrerPolicy: "no-referrer",
+          headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        key = "";
+        const response = await responsePromise;
+        result.http = String(response.status);
+        result.transport = "HTTP status readable; body pending";
+        result.requestId = response.headers.get("x-request-id") || "Unavailable / not exposed";
+        checkDeadline();
+        const body = await response.text();
+        result.body = "Yes";
+        result.transport = "PASS — page JavaScript read HTTP status and body";
+        checkDeadline();
+
+        if (!response.ok) {
+          const category = {
+            401: "authentication rejected",
+            403: "permission/access rejected",
+            429: "rate limit or quota rejection",
+          }[response.status] || "other HTTP error";
+          result.status = `HTTP failure — ${response.status}: ${category}`;
+          result.authenticated = "FAIL — HTTP rejection (transport still passed)";
+          return;
+        }
+
+        // Never display/log the raw body, error messages, or authorization value.
+        const data = JSON.parse(body);
+        const answers = data?.answers;
+        const answer = Array.isArray(answers) && answers.length === 1 ? answers[0] : null;
+        result.type = typeof answer?.type === "string" ? answer.type : "Missing / invalid";
+        result.name = typeof answer?.name === "string" ? answer.name : "Missing / invalid";
+        result.choice = typeof answer?.choice === "string" ? answer.choice : "Missing / invalid";
+        result.refusal = answer?.type === "refusal" ? "Yes — API returned a refusal" : "No refusal observed";
+        if (answer?.type === "refusal" && answer.name === "dominant_color") {
+          result.status = "Refusal — no choice answer";
+          result.authenticated = "FAIL — refusal (transport passed)";
+          return;
+        }
+
+        const probability = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+        const options = ["red", "blue"];
+        const validProbabilities = Array.isArray(answer?.probabilities) && answer.probabilities.length === 2 &&
+          options.every((value) => answer.probabilities.filter((entry) => entry?.value === value && probability(entry.probability)).length === 1);
+        if (answer?.type !== "choice" || answer.name !== "dominant_color" ||
+            !options.includes(answer.choice) || !probability(answer.confidence) || !validProbabilities) {
+          result.status = "Malformed response — expected one documented dominant_color choice answer";
+          result.authenticated = "FAIL — malformed answer (transport passed)";
+          return;
+        }
+        checkDeadline();
+        result.authenticated = "PASS — successful HTTP response and valid named choice answer";
+        result.correctness = answer.choice === "red" ? "PASS — red" : "FAIL — blue (transport and API passed)";
+        result.status = answer.choice === "red" ? "Complete — all three checks passed" : "Complete — incorrect image choice";
+      } catch (error) {
+        result.authenticated = "Not established";
+        if (timedOut) {
+          result.status = "Timeout — overall 10-second deadline exceeded; processing/billing may still occur";
+        } else if (cspBlocked) {
+          result.status = "CSP blocked connection — inspect DevTools Console";
+        } else if (error instanceof SyntaxError) {
+          result.status = "Malformed response — body was not valid JSON";
+          result.authenticated = "FAIL — malformed JSON (transport passed)";
+        } else if (error instanceof TypeError) {
+          result.status = "Fetch/body failure — preflight/CORS or network; inspect DevTools Console/Network";
+        } else {
+          result.status = "Local/request failure — inspect DevTools Console/Network";
+        }
+        if (result.body !== "Yes") {
+          result.body = "No — reading did not complete";
+        }
+      } finally {
+        key = "";
+        pending = false;
+        clearTimeout(deadline);
+        clearInterval(ticker);
+        render();
+      }
+    });
+  </script>
+</body>
+</html>
