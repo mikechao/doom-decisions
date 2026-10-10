@@ -1,0 +1,5 @@
+{
+  "name": "doom-decisions-m3-e2",
+  "private": true,
+  "dependencies": { "openai": "7.32.0" }
+}
