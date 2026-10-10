@@ -1,10 +1,76 @@
 # Stage A2.2: twenty explicit native tics and paired waits
 
-**Source checks and the sole trace-enabled build PASS. Owner Chrome: PENDING.**
-No Doom WASM exports were executed by Codex. This does not establish A2/Issue #4
-acceptance or Decisions integration.
+**Owner-reported 20-tic / 2-second Chrome run: LOCAL CHECKS PASS.
+Original paired-run A2/Issue #4 acceptance is NOT ESTABLISHED.** Source checks
+and the sole trace-enabled build previously passed. Prototype closure requires
+owner approval of the narrowed acceptance below; Decisions integration is unproven.
+
+## Owner evidence and acceptance reconciliation — 2026-10-10
+
+The worktree was clean on `main` at HEAD
+`54e8d7308e48866f9d561e5e50ae0a83eea61752` (`Implement Stage A2 native single-tic
+stepping`). A2.1 and A2.2 code and these results documents are committed in HEAD.
+This documentation reconciliation ran no builds, tests, Chrome sessions or Doom
+WASM exports and made no GitHub changes.
+
+The owner reports completing the A2.2 20-gameplay-tic script in Chrome with
+`a2-2.wasm` and `freedoom1.wad`, ending at
+`2s LOCAL CHECKS PASS — save evidence, retire, run 10s case`.
+The owner observed forward movement, turning and a still rendered view during
+the 2-second external wait, and saved the completed JSON locally. That JSON was
+not inspected here; no complete committed receipt, exact runtime hashes/counters
+or screenshots are asserted. Build-time identities recorded below do not by
+themselves identify the bytes used in this owner run.
+
+Supporting evidence is the **reported 31 passed, one skipped** local tests
+(not rerun here), the earlier [A2.1 receipt/level-render results](doom-a2-1-results.md),
+and an owner-supplied focused Codex review with **no actionable correctness
+findings** in these five files: `doomgeneric/include/g_game.h`,
+`doomgeneric/src/g_game.c`, `doomgeneric/src/i_timer.c` and `src/doom_wasm.h`
+under `references/doom.wasm/`, plus `tests/test_a21_contracts.py`.
+This review approval does not cover the entire experimental harness.
+
+The original [Issue #4 acceptance](https://github.com/mikechao/doom-decisons/issues/4)
+and [Stage A plan A2](doom-stage-a-plan.md#a2--one-ready-tic-native-build-and-rendertime-isolation)
+remain unchanged. Their evidence is reconciled as follows:
+
+| Original requirement | Available support / boundary |
+| --- | --- |
+| One native build, matching live-player entry, completed world/outer tic and +1 clocks per successful step | The reported completed 20-tic checkpoint, local fixtures and native review support single-tic command behavior for this script. Per-operation A2.2 receipt values were not independently audited here. |
+| Zero unexpected work during init/load/refusal/snapshot/render; no hidden load tic | Earlier A2.1 receipt evidence and the reported A2.2 script support zero-tic preparation, explicit neutral-first, first-forward/unknown-input refusals and passive observations/renders. Real-WASM menu/pause/pending-newgame/reload refusal fixtures remain unverified. |
+| Scheduler-free render/passive virtual time; paired waits agree without catch-up | The owner-reported 2-second run supports bounded wait/render isolation and subsequent requested stepping. The fresh-Worker 10-second run and paired normalized trace/frame equality comparison were intentionally not performed: **unverified/deferred, not passed**. |
+| Compiled Worker traces, artifact identity and summary support each claim | Historical build evidence and A2.1 receipts exist; the owner retains A2.2 JSON locally. Independent A2.2 receipt/artifact matching and complete durable evidence for the original paired claims are not established here. |
+
+Additional limits remain: the selected digest is not a complete world/replay
+checksum; diagnostics-disabled compiled gameplay, legacy gameplay regression,
+sustained heartbeat/fault containment and broader lifecycle coverage are unproven.
+Issue #3 is CLOSED at this read-only check, although older A1 results/plan text
+still says acceptance pending; this task does not revalidate A1.
+
+The broader review found a deferred, non-blocking **P2** in
+`experiments/stage-a/harness.html`: retiring an A2.1 Worker does not refresh A2.2
+load-button enabled state, so switching modes requires a page reload. This is a
+harness UI defect, not a native stepping defect. It is not fixed or waived as
+correct behavior, and the harness is not fully reviewed/approved.
+
+**Proposed owner acceptance / explicit waiver (not yet approved by this edit):**
+
+> I accept Issue #4 as a narrowed prototype milestone: the reported 20-tic,
+> 2-second Chrome run, local test results, A2.1 evidence and focused native review
+> sufficiently demonstrate bounded native single-tic behavior and wait/render
+> isolation for this script. I waive the fresh-Worker 10-second run and paired
+> normalized trace/frame comparison for this milestone, accepting the owner-held
+> A2.2 JSON and reported checkpoint without an independent receipt/artifact audit.
+> Those checks remain unverified. Runtime refusal cases and other limits listed
+> above are outside this narrowed milestone, not passed. The P2 harness defect
+> remains deferred. Full original A2 acceptance is not established; closure
+> prioritizes progress toward visible browser Doom controlled by Decisions and
+> does not authorize A3, later implementation or claim Decisions integration.
 
 ## Baseline and implementation
+
+The following implementation/build record is historical, before the code commit
+and the owner update above; its pending protocol is not the current run status.
 
 Branch `main`; starting HEAD `f309a81c9188fb2b39b4b7ed707ec3648df57f6c`;
 initial `git status --short --untracked-files=all` empty. Investigation and A2.1
@@ -152,7 +218,7 @@ reports `instantiated=false`, `exportsCalled=false`; code/data are opaque.
 No new static call-shape matcher was built or used. Compiled gameplay behavior
 requires the native Worker trace from Chrome.
 
-## Owner Chrome protocol — PENDING
+## Original owner Chrome protocol — 2-second run reported complete; 10-second run deferred
 
 Manually open this HTML in Chrome; no server or automation. File-picker paths
 (Cmd-Shift-G) are:
@@ -201,15 +267,18 @@ ambiguous result, reload a level or change engine/assets to force success.
 
 ## Remaining acceptance and final paths
 
-Actual Chrome movement/rotation, rendering at zero/nonzero tics, 20-step native
-traces and paired wait/digest agreement are all PENDING. The selected digest does
-not cover every sector/thinker/weapon state. Separate real-WASM menu/pause/pending
+The owner reports Chrome movement/rotation and completion of the 20-tic/2-second
+script with passive rendering/wait checks; the receipt was not audited here.
+The 10-second run and paired trace/frame agreement remain unverified/deferred.
+The selected digest does not cover every sector/thinker/weapon state.
+Separate real-WASM menu/pause/pending
 newgame/reload refusals, diagnostics-disabled compiled runtime evidence and broader
 lifecycle coverage were not run. A2.1's two supplemental cases remain pending for
 its historical bytes; this new artifact cannot retroactively certify them. Issue
 #4 acceptance requires owner evidence/reconciliation, not this build receipt.
 
-Changed paths are exactly the status below. Headers document the experimental
+The historical pre-commit changed paths are exactly the status below; this is
+not the current worktree status. Headers document the experimental
 selector/boundaries; no extra production paths were needed. Adapter C, p_user,
 p_tick, reachability graphs, inspector, build driver/Make, WAT and historical
 reports remain unchanged. No Chrome, Decisions call, asset download, second
