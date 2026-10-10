@@ -2044,22 +2044,43 @@ static boolean A21NeutralInput(void) {
          !dclickstate2 && !dclicks2;
 }
 
-/* Only these two native keys belong to the private selector. Bindings must not
+/* All six native keys belong to the private mask. Bindings must not
  * alias another builder contributor; reject configuration, never rewrite it. */
 static boolean A21InputAvailable(void) {
-  int other[] = {key_left, key_down, key_strafe, key_speed, key_strafeleft,
-                 key_straferight, key_fire, key_use};
-  if (key_up < 0 || key_up >= NUMKEYS || key_right < 0 ||
-      key_right >= NUMKEYS || key_up == key_right || key_speed < 0 ||
-      key_speed >= NUMKEYS || joybspeed < -1 || joybspeed >= MAX_JOY_BUTTONS ||
-      forwardmove[0] != 25 || angleturn[0] != 640 || angleturn[2] != 320 ||
+  int owned[] = {key_up, key_right, key_down, key_left, key_fire, key_use};
+  int other[] = {key_strafe, key_speed, key_strafeleft, key_straferight};
+  int mouse[] = {mousebstrafe, mousebfire, mousebuse, mousebforward,
+                 mousebbackward, mousebstrafeleft, mousebstraferight};
+  int joy[] = {joybstrafe, joybspeed, joybfire, joybuse,
+               joybstrafeleft, joybstraferight};
+  if (forwardmove[0] != 25 || forwardmove[1] != 50 ||
+      angleturn[0] != 640 || angleturn[2] != 320 ||
       dclick_use != 1)
     return false;
+  for (int i = 0; i < arrlen(owned); ++i) {
+    if (owned[i] < 0 || owned[i] >= NUMKEYS)
+      return false;
+    for (int j = 0; j < i; ++j)
+      if (owned[i] == owned[j])
+        return false;
+    for (int j = 0; j < arrlen(other); ++j)
+      if (owned[i] == other[j])
+        return false;
+    for (int j = 0; j < arrlen(weapon_keys); ++j)
+      if (owned[i] == *weapon_keys[j])
+        return false;
+  }
   for (int i = 0; i < arrlen(other); ++i)
-    if (other[i] == key_up || other[i] == key_right)
+    if (other[i] < 0 || other[i] >= NUMKEYS)
       return false;
   for (int i = 0; i < arrlen(weapon_keys); ++i)
-    if (*weapon_keys[i] == key_up || *weapon_keys[i] == key_right)
+    if (*weapon_keys[i] < 0 || *weapon_keys[i] >= NUMKEYS)
+      return false;
+  for (int i = 0; i < arrlen(mouse); ++i)
+    if (mouse[i] < -1 || mouse[i] >= MAX_MOUSE_BUTTONS)
+      return false;
+  for (int i = 0; i < arrlen(joy); ++i)
+    if (joy[i] < -1 || joy[i] >= MAX_JOY_BUTTONS)
       return false;
   return true;
 }
@@ -2068,7 +2089,8 @@ static boolean A21Contributors(void) {
   if (!A21InputAvailable())
     return false;
   for (int i = 0; i < NUMKEYS; ++i)
-    if (i != key_up && i != key_right && gamekeydown[i])
+    if (i != key_up && i != key_right && i != key_down && i != key_left &&
+        i != key_fire && i != key_use && gamekeydown[i])
       return false;
   for (int i = 0; i < arrlen(mousearray); ++i)
     if (mousearray[i])
@@ -2077,7 +2099,8 @@ static boolean A21Contributors(void) {
     if (joyarray[i])
       return false;
   return !mousex && !mousey && !joyxmove && !joyymove && !joystrafemove &&
-         !sendpause && !sendsave && !next_weapon && !lowres_turn;
+         !sendpause && !sendsave && !next_weapon && !lowres_turn &&
+         !dclickstate && !dclicks && !dclickstate2 && !dclicks2;
 }
 
 static boolean A21Resources(void) {
@@ -2186,9 +2209,12 @@ int G_A21Step(int input) {
   ticcmd_t expected = {0};
   ticcmd_t *previous;
   int n = a21_events[A21_OUTER];
-  /* Private selector: 0 neutral, 1 forward, 2 right. Every ordinary refusal
+  /* Private six-bit held mask (g_game.h). Every ordinary refusal
    * precedes menu/input/build/history/timer work. First native tic is neutral. */
-  if (input < 0 || input > 2 || (n == 0 && input != 0) ||
+  if ((input & ~A21_INPUT_ALL) ||
+      (input & (A21_FORWARD | A21_BACKWARD)) == (A21_FORWARD | A21_BACKWARD) ||
+      (input & (A21_RIGHT | A21_LEFT)) == (A21_RIGHT | A21_LEFT) ||
+      (n == 0 && input != 0) ||
       !G_A21Ready() || !A21Contributors() || (n == 0 && !A21NeutralInput()))
     return -1;
   G_A21CheckPassive();
@@ -2199,14 +2225,21 @@ int G_A21Step(int input) {
   G_A21Boundary(A21_MENU);
   A21Require(A21GameEligible() && players[0].mo == a21_actor &&
              A21Contributors());
-  gamekeydown[key_up] = input == 1;
-  gamekeydown[key_right] = input == 2;
+  gamekeydown[key_up] = (input & A21_FORWARD) != 0;
+  gamekeydown[key_right] = (input & A21_RIGHT) != 0;
+  gamekeydown[key_down] = (input & A21_BACKWARD) != 0;
+  gamekeydown[key_left] = (input & A21_LEFT) != 0;
+  gamekeydown[key_fire] = (input & A21_FIRE) != 0;
+  gamekeydown[key_use] = (input & A21_USE) != 0;
   G_BuildTiccmd(&cmds[0], gametic);
   a21_built = cmds[0];
   /* Verify the supported native output, never bypass the stock builder. */
-  expected.forwardmove = input == 1 ? 25 : 0;
-  expected.angleturn =
-      input == 2 ? -angleturn[turnheld < SLOWTURNTICS ? 2 : 0] : 0;
+  expected.forwardmove = (input & A21_FORWARD) ? 25 :
+                         (input & A21_BACKWARD) ? -25 : 0;
+  expected.angleturn = ((input & A21_LEFT) ? 1 : (input & A21_RIGHT) ? -1 : 0) *
+                       angleturn[turnheld < SLOWTURNTICS ? 2 : 0];
+  expected.buttons = ((input & A21_FIRE) ? BT_ATTACK : 0) |
+                     ((input & A21_USE) ? BT_USE : 0);
   expected.consistancy = consistancy[0][gametic % BACKUPTICS];
   A21Require(A21CommandEqual(&a21_built, &expected) && A21GameEligible() &&
              players[0].mo == a21_actor);
@@ -2218,7 +2251,8 @@ int G_A21Step(int input) {
     A21Require(a21_events[i] == n + 1);
   A21Require(gametic == n && leveltime == n + 1 && I_GetTime() == n &&
              a21_install_equal && a21_entry_equal && a21_actor_equal &&
-             players[0].mo == a21_actor && !players[0].usedown);
+             players[0].mo == a21_actor &&
+             players[0].usedown == ((input & A21_USE) != 0));
   ++gametic;
   I_A21CommitTic(gametic);
   G_A21Boundary(A21_OUTER);
@@ -2353,6 +2387,14 @@ int G_A21Observe(int index) {
     return players[0].mo ? players[0].mo->reactiontime : 0;
   case 71:
     return players[0].mo ? players[0].mo->flags : 0;
+  case 72:
+    return A21InputAvailable() ? gamekeydown[key_down] : 0;
+  case 73:
+    return A21InputAvailable() ? gamekeydown[key_left] : 0;
+  case 74:
+    return A21InputAvailable() ? gamekeydown[key_fire] : 0;
+  case 75:
+    return A21InputAvailable() ? gamekeydown[key_use] : 0;
 
   default:
     return -1;

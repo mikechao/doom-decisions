@@ -79,6 +79,11 @@ enum {
 };
 #ifdef DOOM_CONTROLLED_TITLE
 #include "d_player.h"
+/* Private experiment held mask, not a production ABI. Zero releases all six. */
+enum {
+  A21_FORWARD = 1, A21_RIGHT = 2, A21_BACKWARD = 4, A21_LEFT = 8,
+  A21_FIRE = 16, A21_USE = 32, A21_INPUT_ALL = 63
+};
 int G_A21Prepare(void);
 int G_A21Ready(void);
 void G_A21CheckPassive(void);

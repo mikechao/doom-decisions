@@ -39,6 +39,21 @@ without a click. Keep this tab visible. A wait sends no Worker messages.</p>
 <button id="a22-next" disabled>Next request</button>
 <button id="a22-retire" disabled>Retire A2.2 Worker</button>
 </fieldset>
+<fieldset id="i11-controls">
+<legend>Issue #11 — prepared owner script (requires separate run authorization)</legend>
+<p>Select the newly built trace-enabled WASM and pinned IWAD above. Supply the final WASM
+SHA-256 and select the five changed source files below to retain their hashes in the receipt.
+The script uses fresh Workers, isolated right/left turns before fire/use, explicit single tics
+and a two-second message-free wait.
+Mask bits: 1 forward, 2 right, 4 backward, 8 left, 16 fire, 32 use; 0 releases all.
+Opposing directions refuse. Actions last 1–20 explicit tics; expiration adds no tic.</p>
+<label>Expected final WASM SHA-256 <input id="i11-hash" type="text" size="68"></label>
+<label>Full Chrome version (from chrome://version) <input id="i11-browser" type="text"></label>
+<label>Source files: g_game.c, g_game.h, doom_wasm.h, harness.html, test_a21_contracts.py
+<input id="i11-sources" type="file" multiple></label>
+<button id="i11-run">Run prepared Issue #11 script</button>
+<button id="i11-stop" disabled>Stop / retire Worker</button>
+</fieldset>
 <button id="run">Run first proof</button>
 <button id="repeat">Run Experiment 2: repeat / idle</button>
 <button id="missing">Run Experiment 3: missing IWAD</button>
@@ -56,6 +71,80 @@ second-init refusal and one matching title frame. Native counters are absent, so
 <canvas id="screen" width="640" height="400" aria-label="Doom title framebuffer"></canvas>
 <pre id="result" aria-live="polite">Ready. Full A1 acceptance is outside this checkpoint.</pre>
 <script>
+function i11MaskValid(mask) {
+  return Number.isInteger(mask) && mask >= 0 && mask <= 63 &&
+    (mask & 5) !== 5 && (mask & 10) !== 10;
+}
+function i11VerifyStep(mask, before, after) {
+  const require = (ok, message) => { if (!ok) throw Error(message); };
+  if (after.status === -1) {
+    require(JSON.stringify(before.counters) === JSON.stringify(after.counters) &&
+      JSON.stringify(before.native) === JSON.stringify(after.native), 'Refusal mutated native state');
+    return;
+  }
+  const n = before.counters.gametic, p = after.native, cmd = p.built;
+  const held = (mask & 10) ? before.native.turnheld + 1 : 0;
+  const turn = ((mask & 8) ? 1 : (mask & 2) ? -1 : 0) * (held < 6 ? 320 : 640);
+  require(after.status === 0 && before.native.ready === 1 &&
+    ['build', 'install', 'liveEntry', 'world', 'status', 'automap', 'hud', 'menu', 'outer']
+      .every(k => before.native[k] === n && p[k] === n + 1) &&
+    ['nativeBuild', 'playerEntry', 'worldComplete', 'outerComplete', 'gametic', 'leveltime', 'virtualTicks']
+      .every(k => before.counters[k] === n && after.counters[k] === n + 1) &&
+    p.virtualMs === Math.floor((n + 1) * 1000 / 35), 'Single-tic completion/clock mismatch');
+  require(i11MaskValid(mask) && (n !== 0 || mask === 0) && p.buildTick === n && p.turnheld === held &&
+    ['keyUp', 'keyRight', 'keyDown', 'keyLeft', 'keyFire', 'keyUse']
+      .every((k, i) => p[k] === +Boolean(mask & (1 << i))) &&
+    cmd.forwardmove === ((mask & 1) ? 25 : (mask & 4) ? -25 : 0) && cmd.angleturn === turn &&
+    cmd.buttons === (((mask & 16) ? 1 : 0) | ((mask & 32) ? 2 : 0)) &&
+    ['sidemove', 'chatchar', 'buttons2', 'inventory', 'lookfly', 'arti'].every(k => cmd[k] === 0) &&
+    JSON.stringify(cmd) === JSON.stringify(p.entered) &&
+    ['installEqual', 'entryEqual', 'actorEqual', 'contributorsValid'].every(k => p[k] === 1) &&
+    p.usedown === +Boolean(mask & 32) && p.dclicktime === before.native.dclicktime + 1 &&
+    p.dclicktime2 === before.native.dclicktime2 + 1 &&
+    ['dclickstate', 'dclicks', 'dclickstate2', 'dclicks2'].every(k => p[k] === 0),
+  'Native command/entry/input/history mismatch');
+  // Final player angle is not a generic invariant: native weapon effects can
+  // reorient after consumption. The prepared script proves isolated turns below.
+  require(!after.logsTruncated && !after.logs?.some(log => log.kind === 'error') &&
+    ['schedulerEntry', 'netBody', 'wipeEntry', 'demoLoad'].every(k => after.counters[k] === 0),
+  'Unexpected diagnostic or scheduler work');
+}
+function i11VerifyIsolatedTurn(mask, before, after) {
+  i11VerifyStep(mask, before, after);
+  // Script-only: neutral at N=1, then right at N=2 and left at N=3, before
+  // fire/use or movement. Unavailable normal-turn conditions never skip proof.
+  const b = before.native, p = after.native;
+  const normal = (mask === 2 || mask === 8) && before.counters.gametic === (mask === 2 ? 1 : 2) &&
+    after.status === 0 && p.ready === 1 && b.built.buttons === 0 && b.keyFire === 0 && b.keyUse === 0 &&
+    b.reactiontime === 0 && p.reactiontime === 0 && Number.isInteger(b.flags) && Number.isInteger(p.flags) &&
+    !((b.flags | p.flags) & 128) && [b.angle, p.angle].every(a => Number.isInteger(a) && a >= 0 && a <= 0xffffffff);
+  if (!normal) throw Error('Isolated turn setup unavailable; rotation proof INCONCLUSIVE');
+  const expected = (b.angle + p.built.angleturn * 65536) >>> 0;
+  if (p.angle === b.angle || p.angle !== expected) throw Error('Isolated player rotation mismatch');
+}
+function i11Action(mask, tics, step, observe) {
+  const action = {mask, requestedTics: tics, completedTics: 0, outcome: 'REFUSED', status: -1, steps: []};
+  let last;
+  try {
+    last = observe();
+    if (!i11MaskValid(mask) || !Number.isInteger(tics) || tics < 1 || tics > 20)
+      return {...last, ...action, reason: 'Invalid mask/duration; no native call'};
+    for (let i = 0; i < tics; ++i) {
+      const status = step(mask);
+      const after = {status, ...observe()};
+      i11VerifyStep(mask, last, after);
+      if (status === -1) return {...after, ...action};
+      action.steps.push(after);
+      action.completedTics++;
+      last = after;
+    }
+    // Expiration does not release via another tic. Next accepted action replaces all keys.
+    return {...last, ...action, outcome: 'APPLIED', status: 0};
+  } catch (error) {
+    return {...last, ...action, outcome: 'FAULT', status: null,
+      currentTic: 'UNKNOWN', error: String(error)};
+  }
+}
 function titleWorker() {
   const counterNames = ['cInit', 'engineCreate', 'titlePrepare', 'nativeBuild',
     'playerEntry', 'worldComplete', 'outerComplete', 'schedulerEntry', 'netBody',
@@ -67,6 +156,7 @@ function titleWorker() {
   let noFixtures = false;
   let a21 = false;
   let a22 = false;
+  let i11 = false;
   const callbacks = {wadSizes: 0, readWads: 0, onGameInit: 0, drawFrame: 0};
   const logs = [];
   let logsTruncated = false;
@@ -101,7 +191,8 @@ function titleWorker() {
     const read = index => instance.exports.a21ReadObservation(index);
     const extra = ['x', 'y', 'angle', 'momx', 'momy', 'turnheld', 'dclicktime',
       'dclickstate', 'dclicks', 'dclicktime2', 'dclickstate2', 'dclicks2', 'rndindex',
-      'prndindex', 'keyUp', 'keyRight', 'contributorsValid', 'buildTick', 'reactiontime', 'flags'];
+      'prndindex', 'keyUp', 'keyRight', 'contributorsValid', 'buildTick', 'reactiontime', 'flags',
+      ...(i11 ? ['keyDown', 'keyLeft', 'keyFire', 'keyUse'] : [])];
     return {...Object.fromEntries(names.map((name, i) => [name, read(i)])),
       ...(a22 ? Object.fromEntries(extra.map((name, i) => [name, name === 'angle' ? read(52 + i) >>> 0 : read(52 + i)])) : {}),
       built: Object.fromEntries(fields.map((name, i) => [name, read(32 + i)])),
@@ -194,7 +285,8 @@ function titleWorker() {
     let nativeExecuting = false;
     try {
       let result, pixels;
-      if (data.op === 'load' || data.op === 'load-missing-iwad' || data.op === 'load-no-fixtures' || data.op === 'load-a21' || data.op === 'load-a22') {
+      if (data.op === 'load' || data.op === 'load-missing-iwad' || data.op === 'load-no-fixtures' || data.op === 'load-a21' || data.op === 'load-a22' || data.op === 'load-i11') {
+        if (data.op === 'load-i11') i11 = a21 = a22 = true;
         if (data.op === 'load-a21' || data.op === 'load-a22') a21 = true;
         if (data.op === 'load-a22') a22 = true;
         if (data.op === 'load-no-fixtures') noFixtures = true;
@@ -255,6 +347,11 @@ function titleWorker() {
         // Negative-test modes transport actual native statuses for main-thread assertions.
         if (!missingIwad && !noFixtures && !a21)
           check(status === 0, 'Controlled initialization refused: ' + status);
+      } else if (data.op === 'action') {
+        check(i11, 'Finite action requires Issue #11 mode');
+        result = i11Action(data.mask, data.tics,
+          mask => instance.exports.stepNeutralControlled(mask),
+          () => ({...observations(), logs: [...logs], logsTruncated}));
       } else if (data.op === 'prepare' || data.op === 'step' || data.op === 'step-invalid') {
         check(a21, 'A2.1 operation requires the A2.1 artifact');
         nativeExecuting = true;
@@ -289,6 +386,7 @@ function titleWorker() {
       }
       self.postMessage({ok: true, op: data.op, elapsedMs: performance.now() - started,
         result, pixels}, pixels ? [pixels] : []);
+      if (result.outcome === 'FAULT') self.close();
     } catch (error) {
       self.postMessage({ok: false, op: data.op, error: String(error), logs, logsTruncated,
         ...(a21 ? {outcome: nativeExecuting ? 'FAULT' : 'ERROR', retired: true, isWasmRuntimeError: error instanceof WebAssembly.RuntimeError} : {}),
@@ -869,7 +967,7 @@ const a22Retire = document.querySelector('#a22-retire');
 let a22Cursor = 0, a22WaitMs = 2000, a22Reference;
 const a22Plan = [
   ['init'], ['render'], ['prepare'], ['snapshot'], ['render'],
-  ['step', 1, 'refuse first FORWARD'], ['step', 3, 'refuse unknown input'],
+  ['step', 1, 'refuse first FORWARD'], ['step', 64, 'refuse unknown input'],
   ['step', 0], ['render'],
   ...Array.from({length: 4}, () => ['step', 1]), ['render'],
   ...Array.from({length: 5}, () => ['step', 2]), ['render'], ['snapshot'],
@@ -904,7 +1002,7 @@ function a22Verify(op, input, before, after) {
     return;
   }
   const n = before.counters.gametic;
-  const refused = op === 'step' && (input === 3 || (n === 0 && input !== 0));
+  const refused = op === 'step' && (input === 64 || (n === 0 && input !== 0));
   if (refused) {
     a21Check(after.status === -1, 'Expected first-input/unknown refusal');
     a21PassiveCheck(before, after);
@@ -1014,5 +1112,199 @@ a22NextButton.onclick = async () => {
   }
   a22ButtonsUpdate(); display();
 };
+
+// Owner-run preparation only. No background scheduler or native batch export.
+const i11RunButton = document.querySelector('#i11-run');
+const i11StopButton = document.querySelector('#i11-stop');
+let i11Worker, i11Url, i11Cancel, i11Stopped = false;
+function i11Retire() {
+  if (i11Worker) { i11Worker.onmessage = i11Worker.onerror = null; i11Worker.terminate(); }
+  if (i11Url) URL.revokeObjectURL(i11Url);
+  i11Worker = i11Url = undefined;
+}
+i11StopButton.onclick = () => {
+  i11Stopped = true;
+  i11Retire(); // Also interrupts a synchronous action currently executing in WASM.
+  if (i11Cancel) i11Cancel(Error('Owner stopped; Worker retired'));
+};
+async function runI11() {
+  if (running || a21Worker) return;
+  running = true; i11Stopped = false;
+  i11RunButton.disabled = true; i11StopButton.disabled = false;
+  [...a21Buttons, runButton, repeatButton, missingButton, faultsButton, noFixturesButton]
+    .forEach(b => { b.disabled = true; });
+  a22ButtonsUpdate(); saveButton.disabled = imageButton.disabled = true;
+  receipt = {experiment: 'issue-11-prepared-script', checkpoint: 'RUNNING',
+    milestoneAcceptance: 'NOT DECLARED', date: new Date().toISOString(), userAgent: navigator.userAgent,
+    operations: [], frames: [], turnProofs: [], sourceHashes: {}, sourceIdentity: 'Owner-selected files; retain build evidence too',
+    watchdogMs: 2000, watchdogFired: false, heartbeat: {intervalMs: 50, count: 0, maxGapMs: 0}};
+  let heartbeatTimer, last, active, failureOutcome = 'ERROR';
+  const digest = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+    b => b.toString(16).padStart(2, '0')).join('');
+  function unknown(error) {
+    if (active?.op === 'action') receipt.interruptedAction = {...active,
+      requestedTics: active.tics, outcome: 'UNKNOWN/FAULT', completedTics: null, reason: String(error)};
+    i11Retire();
+  }
+  async function request(op, extra = {}, transfer = []) {
+    a21Check(!i11Stopped && i11Worker, 'Stopped; no future native calls');
+    active = {op, ...extra};
+    failureOutcome = 'UNKNOWN/FAULT';
+    // Keep only the action request in fault receipts, never the transferred asset buffers.
+    if (op !== 'action') active = {op};
+    receipt.activeOperation = active; display();
+    const data = await new Promise((resolve, reject) => {
+      const fail = error => { clearTimeout(deadline); i11Cancel = undefined; unknown(error); reject(error); };
+      const deadline = setTimeout(() => {
+        receipt.watchdogFired = true;
+        fail(Error(op + ' watchdog expired; completion unknown'));
+      }, receipt.watchdogMs);
+      i11Cancel = fail;
+      i11Worker.onerror = event => fail(Error(event.message));
+      i11Worker.onmessage = ({data}) => {
+        clearTimeout(deadline); i11Cancel = undefined;
+        const {pixels, ...record} = data;
+        receipt.operations.push(record);
+        if (!data.ok || data.op !== op) { fail(Error(data.error || 'Unexpected Worker reply')); return; }
+        resolve(data);
+      };
+      try { i11Worker.postMessage({op, ...extra}, transfer); } catch (error) { fail(error); }
+    });
+    active = undefined; delete receipt.activeOperation;
+    a21Check(!i11Stopped, 'Stopped after reply');
+    const after = data.result;
+    failureOutcome = after.outcome === 'REFUSED' && op === 'action' ? 'REFUSED' : 'FAULT';
+    a21Check(after.outcome !== 'FAULT', after.error || 'Native action fault');
+    if (op === 'step') {
+      i11VerifyStep(extra.input, last, after);
+      a21Check(after.status === -1, 'Script expected native refusal');
+    } else if (op === 'action') {
+      a21Check(after.requestedTics === extra.tics && after.mask === extra.mask &&
+        after.completedTics === extra.tics && after.steps.length === extra.tics &&
+        after.outcome === 'APPLIED' && after.status === 0, 'Incomplete action; stop and retain prefix');
+      let before = last;
+      for (const step of after.steps) { i11VerifyStep(extra.mask, before, step); before = step; }
+      a21Check(JSON.stringify(before.native) === JSON.stringify(after.native) &&
+        JSON.stringify(before.counters) === JSON.stringify(after.counters), 'Expiration advanced another tic');
+      a21Check(after.native.ready === 1, 'Lost native readiness after action');
+    } else if (op === 'init' || op === 'prepare') {
+      a21Check(after.status === 0 && a21Work.every(k => after.native[k] === 0) &&
+        ['nativeBuild', 'playerEntry', 'worldComplete', 'outerComplete', 'gametic', 'leveltime', 'virtualTicks']
+          .every(k => after.counters[k] === 0) && after.native.virtualMs === 0, 'Hidden init/preparation tic');
+      a21Check(['wasiInit', 'cInit', 'engineCreate', 'titlePrepare', 'titleReady']
+        .every(k => after.counters[k] === 1), 'One-shot init mismatch');
+      if (op === 'prepare') a21Check(['ready', 'loadComplete', 'resources', 'liveActor', 'gameEligible', 'contributorsValid']
+        .every(k => after.native[k] === 1) && after.native.episode === 1 && after.native.map === 1 &&
+        after.native.skill === 2 && after.native.playerstate === 0 && after.native.health > 0 &&
+        after.native.gamestate === 0 && after.native.gameaction === 0, 'Genuine E1M1 READY failed');
+    } else if (op === 'load-i11') {
+      a21Check(Object.values(after.counters).every(v => v === 0), 'Pre-init work');
+    } else {
+      a21PassiveCheck(last, after);
+      if (op === 'snapshot') a21Check(JSON.stringify(last.counters) === JSON.stringify(after.counters), 'Snapshot mutated counts');
+    }
+    if (op === 'render') {
+      a21Check(after.status === 0 && data.pixels?.byteLength === 1024000, 'Missing real frame');
+      a21Check(after.counters.render === last.counters.render + 1 &&
+        after.counters.frame === last.counters.frame + 1 &&
+        after.counters.netIntercept === last.counters.netIntercept + (last.counters.gametic ? 5 : 1),
+      'Passive render cadence mismatch');
+      canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data.pixels), 640, 400), 0, 0);
+      receipt.lastFrameSha256 = after.frameSha256;
+      receipt.frames.push({operation: receipt.operations.length - 1, gametic: after.counters.gametic,
+        sha256: after.frameSha256, png: canvas.toDataURL('image/png')});
+    }
+    last = after; display();
+    return after;
+  }
+  try {
+    const wasmFile = document.querySelector('#wasm').files[0], wadFile = document.querySelector('#wad').files[0];
+    const expectedWasmHash = document.querySelector('#i11-hash').value.trim();
+    a21Check(wasmFile && wadFile && /^[0-9a-f]{64}$/.test(expectedWasmHash), 'Select assets and supply final WASM hash');
+    receipt.ownerBrowserVersion = document.querySelector('#i11-browser').value.trim();
+    a21Check(receipt.ownerBrowserVersion, 'Record the full Chrome version');
+    const sources = [...document.querySelector('#i11-sources').files];
+    for (const name of ['g_game.c', 'g_game.h', 'doom_wasm.h', 'harness.html', 'test_a21_contracts.py'])
+      a21Check(sources.filter(file => file.name === name).length === 1, 'Select exactly one source file: ' + name);
+    for (const file of sources) receipt.sourceHashes[file.name] = await digest(await file.arrayBuffer());
+    const [wasm, wad] = await Promise.all([wasmFile.arrayBuffer(), wadFile.arrayBuffer()]);
+    receipt.files = {wasm: wasmFile.name, wad: wadFile.name, expectedWasmHash};
+    let beat = performance.now();
+    heartbeatTimer = setInterval(() => {
+      const now = performance.now(); receipt.heartbeat.count++;
+      receipt.heartbeat.maxGapMs = Math.max(receipt.heartbeat.maxGapMs, now - beat); beat = now; display();
+    }, 50);
+    for (let run = 0; run < 2; ++run) {
+      a21Check(!i11Stopped, 'Stopped before new Worker');
+      i11Retire(); last = undefined;
+      i11Url = URL.createObjectURL(new Blob([i11MaskValid.toString(), i11VerifyStep.toString(),
+        i11Action.toString(), '(' + titleWorker.toString() + ')()'], {type: 'text/javascript'}));
+      i11Worker = new Worker(i11Url);
+      await request('load-i11', {wasm: wasm.slice(0), wad: wad.slice(0), expectedWasmHash});
+      await request('init');
+      if (!run) { await request('render'); receipt.titleFrameSha256 = last.frameSha256; }
+      await request('prepare'); await request('snapshot');
+      await request('step', {input: 1}); // Refuse first non-neutral on both fresh instances.
+      await request('action', {mask: 0, tics: 1}); await request('render');
+      a21Check(last.frameSha256 !== receipt.titleFrameSha256, 'Neutral-first frame still equals title');
+      if (run) { receipt.freshRunNeutralFirstVerified = true; break; }
+      for (const mask of [2, 8]) {
+        const proof = {mask, requestedTics: 1, verifiedTics: 0, outcome: 'PENDING', before: last};
+        receipt.turnProofs.push(proof);
+        try {
+          await request('action', {mask, tics: 1});
+          proof.after = last;
+          i11VerifyIsolatedTurn(mask, proof.before, proof.after);
+          proof.verifiedTics = 1; proof.outcome = 'VERIFIED';
+        } catch (error) {
+          proof.outcome = error.message === 'Isolated turn setup unavailable; rotation proof INCONCLUSIVE' ?
+            'INCONCLUSIVE' : 'FAULT';
+          if (proof.outcome === 'INCONCLUSIVE') failureOutcome = 'INCONCLUSIVE';
+          proof.error = String(error); throw error;
+        }
+      }
+      await request('render');
+      const movementBaseline = last;
+      await request('action', {mask: 51, tics: 6}); await request('render');
+      a21Check(last.frameSha256 !== movementBaseline.frameSha256 &&
+        (last.native.x !== movementBaseline.native.x || last.native.y !== movementBaseline.native.y), 'No visible/native movement');
+      await request('step', {input: 64}); // Real native refusal after moving, including unchanged held inputs.
+      await request('step', {input: 5});
+      await request('action', {mask: 0, tics: 1}); await request('render');
+      await request('action', {mask: 4, tics: 2}); await request('render');
+      await request('action', {mask: 0, tics: 1}); await request('render');
+      const waitFrame = last.frameSha256;
+      await request('snapshot');
+      const before = last, started = performance.now();
+      receipt.checkpoint = 'WAITING — two seconds without Worker messages'; display();
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { i11Cancel = undefined; resolve(); }, 2000);
+        i11Cancel = error => { clearTimeout(timer); i11Cancel = undefined; reject(error); };
+      });
+      await request('snapshot'); a21PassiveCheck(before, last);
+      receipt.wait = {requestedMs: 2000, elapsedMs: performance.now() - started, before, after: last};
+      await request('render');
+      a21Check(last.frameSha256 === waitFrame, 'Idle/passive render changed frame');
+      receipt.wait.frameSha256 = waitFrame; receipt.wait.unchanged = true;
+      await request('snapshot');
+      await request('action', {mask: 0, tics: 1}); await request('render'); await request('snapshot');
+      // Neutral + right + left + combined*6 + neutral + backward*2 + neutral + post-wait neutral.
+      a21Check(last.counters.gametic === 14 && receipt.turnProofs.every(p => p.outcome === 'VERIFIED'),
+        'Incomplete 14-tic/isolated-turn proof');
+    }
+    a21Check(receipt.heartbeat.maxGapMs <= 250 && !receipt.watchdogFired, 'Heartbeat/watchdog failed');
+    receipt.checkpoint = 'SCRIPT CHECKS PASSED — retain receipt/frames for owner review; acceptance NOT DECLARED';
+  } catch (error) {
+    receipt.error = String(error); receipt.checkpoint = failureOutcome + ' — stopped; retain verified prefix';
+  } finally {
+    clearInterval(heartbeatTimer); i11Cancel = undefined; i11Retire();
+    receipt.retired = true; delete receipt.activeOperation; running = false;
+    i11RunButton.disabled = false; i11StopButton.disabled = true;
+    a21Buttons.forEach(b => { b.disabled = b.dataset.a21 !== 'load-a21'; });
+    [runButton, repeatButton, missingButton, faultsButton, noFixturesButton].forEach(b => { b.disabled = false; });
+    a22ButtonsUpdate(); saveButton.disabled = false; imageButton.disabled = !receipt.lastFrameSha256; display();
+  }
+}
+i11RunButton.onclick = runI11;
 </script>
 </html>

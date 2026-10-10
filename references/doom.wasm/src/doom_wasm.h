@@ -12,7 +12,10 @@
 EXPORT int32_t _initializeControlled(void);
 EXPORT int32_t renderControlled(void);
 EXPORT int32_t prepareE1M1Controlled(void);
-/* Historical name; selector 0=neutral, 1=forward, 2=right. First tic neutral. */
+/* Private held mask: 1 forward, 2 right, 4 backward, 8 left, 16 fire, 32 use.
+ * 0 releases all; first tic must be 0. Unknown/opposing bits refuse before work.
+ * 0 return verifies one native tic; -1 refuses; partial-work contradictions trap.
+ * Host duration is 1-20 explicit calls, never a native batch operation. */
 EXPORT int32_t stepNeutralControlled(int32_t input);
 #ifndef DOOM_A1_NO_FIXTURES
 EXPORT int32_t a1ReadCounter(int32_t index);
