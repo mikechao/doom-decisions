@@ -1995,12 +1995,13 @@ boolean G_CheckDemoStatus(void) {
 }
 
 #ifdef DOOM_CONTROLLED_TITLE
-/* A2.1: one whole load and one neutral command in a fresh reactor. These small
+/* A2.2: one whole load and explicit consecutive native commands. These small
  * enforcement counters and identities exist even with diagnostics disabled. */
-static boolean a21_load_attempted, a21_load_complete, a21_active, a21_spent;
+static boolean a21_load_attempted, a21_load_complete, a21_active;
 static mobj_t *a21_actor;
 static ticcmd_t a21_built, a21_entered;
 static int a21_events[A21_EVENT_LIMIT];
+static int a21_build_tick;
 static boolean a21_install_equal, a21_entry_equal, a21_actor_equal;
 extern boolean advancedemo;
 extern int D_A1TitleReady(void);
@@ -2043,6 +2044,42 @@ static boolean A21NeutralInput(void) {
          !dclickstate2 && !dclicks2;
 }
 
+/* Only these two native keys belong to the private selector. Bindings must not
+ * alias another builder contributor; reject configuration, never rewrite it. */
+static boolean A21InputAvailable(void) {
+  int other[] = {key_left, key_down, key_strafe, key_speed, key_strafeleft,
+                 key_straferight, key_fire, key_use};
+  if (key_up < 0 || key_up >= NUMKEYS || key_right < 0 ||
+      key_right >= NUMKEYS || key_up == key_right || key_speed < 0 ||
+      key_speed >= NUMKEYS || joybspeed < -1 || joybspeed >= MAX_JOY_BUTTONS ||
+      forwardmove[0] != 25 || angleturn[0] != 640 || angleturn[2] != 320 ||
+      dclick_use != 1)
+    return false;
+  for (int i = 0; i < arrlen(other); ++i)
+    if (other[i] == key_up || other[i] == key_right)
+      return false;
+  for (int i = 0; i < arrlen(weapon_keys); ++i)
+    if (*weapon_keys[i] == key_up || *weapon_keys[i] == key_right)
+      return false;
+  return true;
+}
+
+static boolean A21Contributors(void) {
+  if (!A21InputAvailable())
+    return false;
+  for (int i = 0; i < NUMKEYS; ++i)
+    if (i != key_up && i != key_right && gamekeydown[i])
+      return false;
+  for (int i = 0; i < arrlen(mousearray); ++i)
+    if (mousearray[i])
+      return false;
+  for (int i = 0; i < arrlen(joyarray); ++i)
+    if (joyarray[i])
+      return false;
+  return !mousex && !mousey && !joyxmove && !joyymove && !joystrafemove &&
+         !sendpause && !sendsave && !next_weapon && !lowres_turn;
+}
+
 static boolean A21Resources(void) {
   return numvertexes > 0 && vertexes && numlines > 0 && lines && numsides > 0 &&
          sides && numsectors > 0 && sectors && numsegs > 0 && segs &&
@@ -2079,7 +2116,7 @@ static boolean A21GameEligible(void) {
 }
 
 int G_A21Ready(void) {
-  return a21_load_complete && !a21_active && !a21_spent && A21GameEligible() &&
+  return a21_load_complete && !a21_active && A21GameEligible() &&
          players[0].mo == a21_actor;
 }
 
@@ -2093,7 +2130,7 @@ static boolean A21ZeroWork(void) {
 
 /* Rendering must retain the completed boundary even without trace exports. */
 void G_A21CheckPassive(void) {
-  int expected = a21_spent ? 1 : 0;
+  int expected = a21_events[A21_OUTER];
   A21Require(!a21_active && gametic == expected && leveltime == expected &&
              I_GetTime() == expected);
   for (int i = 0; i < A21_EVENT_LIMIT; ++i)
@@ -2117,69 +2154,82 @@ int G_A21Prepare(void) {
 
 void G_A21BuildEntry(int tick) {
   G_A21Boundary(A21_BUILD);
-  A21Require(a21_active && a21_events[A21_BUILD] == 1 && tick == gametic &&
-             tick == 0 && I_GetTime() == 0);
+  A21Require(a21_active && a21_events[A21_BUILD] == a21_events[A21_OUTER] + 1 &&
+             tick == gametic && tick == a21_events[A21_OUTER] &&
+             leveltime == tick && I_GetTime() == tick);
+  a21_build_tick = tick;
 }
 
 void G_A21Install(int player, const ticcmd_t *cmd) {
   G_A21Boundary(A21_INSTALL);
-  A21Require(a21_active && player == 0 && a21_events[A21_INSTALL] == 1);
+  A21Require(a21_active && player == 0 &&
+             a21_events[A21_INSTALL] == a21_events[A21_OUTER] + 1);
   a21_install_equal = A21CommandEqual(cmd, &a21_built);
   A21Require(a21_install_equal);
 }
 
 void G_A21PlayerEntry(player_t *player) {
+  int n = a21_events[A21_OUTER];
   G_A21Boundary(A21_ENTRY);
   a21_actor_equal =
       player == &players[0] && player->mo == a21_actor && A21LiveActor();
   a21_entry_equal = A21CommandEqual(&player->cmd, &a21_built);
-  A21Require(a21_active && a21_events[A21_ENTRY] == 1 &&
-             a21_events[A21_INSTALL] == 1 && a21_events[A21_BUILD] == 1 &&
+  A21Require(a21_active && a21_events[A21_ENTRY] == n + 1 &&
+             a21_events[A21_INSTALL] == n + 1 && a21_events[A21_BUILD] == n + 1 &&
              a21_actor_equal && a21_entry_equal && A21GameEligible() &&
-             gametic == 0 && leveltime == 0 && I_GetTime() == 0);
+             gametic == n && leveltime == n && I_GetTime() == n);
   a21_entered = player->cmd; /* Before any native flag/command mutation. */
 }
 
 int G_A21Step(int input) {
   ticcmd_t cmds[MAXPLAYERS] = {{0}};
-  ticcmd_t neutral = {0};
+  ticcmd_t expected = {0};
   ticcmd_t *previous;
-  int i;
-  /* Every ordinary refusal precedes menu/input/build/history/timer work. */
-  if (input != 0 || !G_A21Ready() || !A21ZeroWork() || !A21NeutralInput())
+  int n = a21_events[A21_OUTER];
+  /* Private selector: 0 neutral, 1 forward, 2 right. Every ordinary refusal
+   * precedes menu/input/build/history/timer work. First native tic is neutral. */
+  if (input < 0 || input > 2 || (n == 0 && input != 0) ||
+      !G_A21Ready() || !A21Contributors() || (n == 0 && !A21NeutralInput()))
     return -1;
+  G_A21CheckPassive();
+  A21Require(n < 0x7fffffff && turnheld < 0x7fffffff &&
+             dclicktime < 0x7fffffff && dclicktime2 < 0x7fffffff);
   a21_active = true;
-  a21_spent = true;
   M_Ticker();
   G_A21Boundary(A21_MENU);
   A21Require(A21GameEligible() && players[0].mo == a21_actor &&
-             A21NeutralInput());
+             A21Contributors());
+  gamekeydown[key_up] = input == 1;
+  gamekeydown[key_right] = input == 2;
   G_BuildTiccmd(&cmds[0], gametic);
   a21_built = cmds[0];
-  neutral.consistancy = consistancy[0][gametic % BACKUPTICS];
-  A21Require(A21CommandEqual(&a21_built, &neutral) && A21GameEligible() &&
+  /* Verify the supported native output, never bypass the stock builder. */
+  expected.forwardmove = input == 1 ? 25 : 0;
+  expected.angleturn =
+      input == 2 ? -angleturn[turnheld < SLOWTURNTICS ? 2 : 0] : 0;
+  expected.consistancy = consistancy[0][gametic % BACKUPTICS];
+  A21Require(A21CommandEqual(&a21_built, &expected) && A21GameEligible() &&
              players[0].mo == a21_actor);
   previous = netcmds;
-  netcmds =
-      cmds; /* Synchronous lending; restore before stack storage expires. */
+  netcmds = cmds; /* Synchronous lending; restore before stack storage expires. */
   G_TickerContinuation();
   netcmds = previous;
-  for (i = 0; i < A21_OUTER; ++i)
-    A21Require(a21_events[i] == 1);
-  A21Require(gametic == 0 && leveltime == 1 && I_GetTime() == 0 &&
+  for (int i = 0; i < A21_OUTER; ++i)
+    A21Require(a21_events[i] == n + 1);
+  A21Require(gametic == n && leveltime == n + 1 && I_GetTime() == n &&
              a21_install_equal && a21_entry_equal && a21_actor_equal &&
              players[0].mo == a21_actor && !players[0].usedown);
   ++gametic;
   I_A21CommitTic(gametic);
   G_A21Boundary(A21_OUTER);
   A1_COUNT(A1_OUTER_COMPLETE);
-  A21Require(a21_events[A21_OUTER] == 1 && gametic == 1 && leveltime == 1 &&
-             I_GetTime() == 1);
   a21_active = false;
+  G_A21CheckPassive();
   return 0;
 }
 
 #ifndef DOOM_A1_NO_FIXTURES
+extern int prndindex;
 static int A21CommandField(const ticcmd_t *cmd, int field) {
   switch (field) {
   case 0:
@@ -2262,6 +2312,48 @@ int G_A21Observe(int index) {
     return numnodes;
   case 31:
     return players[0].usedown;
+  /* A2.2 private player/history/RNG observations; angle is raw unsigned bits. */
+  case 52:
+    return players[0].mo ? players[0].mo->x : 0;
+  case 53:
+    return players[0].mo ? players[0].mo->y : 0;
+  case 54:
+    return players[0].mo ? (int)players[0].mo->angle : 0;
+  case 55:
+    return players[0].mo ? players[0].mo->momx : 0;
+  case 56:
+    return players[0].mo ? players[0].mo->momy : 0;
+  case 57:
+    return turnheld;
+  case 58:
+    return dclicktime;
+  case 59:
+    return dclickstate;
+  case 60:
+    return dclicks;
+  case 61:
+    return dclicktime2;
+  case 62:
+    return dclickstate2;
+  case 63:
+    return dclicks2;
+  case 64:
+    return rndindex;
+  case 65:
+    return prndindex;
+  case 66:
+    return A21InputAvailable() ? gamekeydown[key_up] : 0;
+  case 67:
+    return A21InputAvailable() ? gamekeydown[key_right] : 0;
+  case 68:
+    return A21Contributors();
+  case 69:
+    return a21_build_tick;
+  case 70:
+    return players[0].mo ? players[0].mo->reactiontime : 0;
+  case 71:
+    return players[0].mo ? players[0].mo->flags : 0;
+
   default:
     return -1;
   }

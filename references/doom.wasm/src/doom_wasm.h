@@ -8,10 +8,11 @@
 #define EXPORT __attribute__((visibility("default")))
 
 #ifdef DOOM_CONTROLLED_TITLE
-/* Experimental A2.1 only; no production gameplay control ABI. */
+/* Experimental A2.2 only; no production gameplay control ABI. */
 EXPORT int32_t _initializeControlled(void);
 EXPORT int32_t renderControlled(void);
 EXPORT int32_t prepareE1M1Controlled(void);
+/* Historical name; selector 0=neutral, 1=forward, 2=right. First tic neutral. */
 EXPORT int32_t stepNeutralControlled(int32_t input);
 #ifndef DOOM_A1_NO_FIXTURES
 EXPORT int32_t a1ReadCounter(int32_t index);

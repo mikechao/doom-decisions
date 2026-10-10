@@ -28,6 +28,17 @@ READY at zero tics may retain the title image. Check the heartbeat during every 
 <button data-a21="step" disabled>4. Execute one neutral tic</button>
 <button data-a21="retire" disabled>Retire Worker</button>
 </fieldset>
+<fieldset id="a22-controls">
+<legend>A2.2 — twenty explicit native tics, paired external waits</legend>
+<p>Select the new A2.2 WASM. Load the 2-second case, then click Next request once
+per operation until complete. Save JSON and PNG. Load the 10-second case and
+repeat; the completed traces and frame hashes are compared. No requests run
+without a click. Keep this tab visible. A wait sends no Worker messages.</p>
+<button id="a22-load-2">Load fresh A2.2 / 2-second wait</button>
+<button id="a22-load-10" disabled>Load fresh A2.2 / 10-second wait</button>
+<button id="a22-next" disabled>Next request</button>
+<button id="a22-retire" disabled>Retire A2.2 Worker</button>
+</fieldset>
 <button id="run">Run first proof</button>
 <button id="repeat">Run Experiment 2: repeat / idle</button>
 <button id="missing">Run Experiment 3: missing IWAD</button>
@@ -55,6 +66,7 @@ function titleWorker() {
   let missingIwad = false;
   let noFixtures = false;
   let a21 = false;
+  let a22 = false;
   const callbacks = {wadSizes: 0, readWads: 0, onGameInit: 0, drawFrame: 0};
   const logs = [];
   let logsTruncated = false;
@@ -87,7 +99,11 @@ function titleWorker() {
     const fields = ['forwardmove', 'sidemove', 'angleturn', 'chatchar', 'buttons', 'consistancy',
       'buttons2', 'inventory', 'lookfly', 'arti'];
     const read = index => instance.exports.a21ReadObservation(index);
+    const extra = ['x', 'y', 'angle', 'momx', 'momy', 'turnheld', 'dclicktime',
+      'dclickstate', 'dclicks', 'dclicktime2', 'dclickstate2', 'dclicks2', 'rndindex',
+      'prndindex', 'keyUp', 'keyRight', 'contributorsValid', 'buildTick', 'reactiontime', 'flags'];
     return {...Object.fromEntries(names.map((name, i) => [name, read(i)])),
+      ...(a22 ? Object.fromEntries(extra.map((name, i) => [name, name === 'angle' ? read(52 + i) >>> 0 : read(52 + i)])) : {}),
       built: Object.fromEntries(fields.map((name, i) => [name, read(32 + i)])),
       entered: Object.fromEntries(fields.map((name, i) => [name, read(42 + i)]))};
   }
@@ -178,8 +194,9 @@ function titleWorker() {
     let nativeExecuting = false;
     try {
       let result, pixels;
-      if (data.op === 'load' || data.op === 'load-missing-iwad' || data.op === 'load-no-fixtures' || data.op === 'load-a21') {
-        if (data.op === 'load-a21') a21 = true;
+      if (data.op === 'load' || data.op === 'load-missing-iwad' || data.op === 'load-no-fixtures' || data.op === 'load-a21' || data.op === 'load-a22') {
+        if (data.op === 'load-a21' || data.op === 'load-a22') a21 = true;
+        if (data.op === 'load-a22') a22 = true;
         if (data.op === 'load-no-fixtures') noFixtures = true;
         check(!instance, 'Already loaded');
         check(data.wasm.byteLength <= 16 * 1024 * 1024, 'Oversized WASM');
@@ -242,7 +259,7 @@ function titleWorker() {
         check(a21, 'A2.1 operation requires the A2.1 artifact');
         nativeExecuting = true;
         const status = data.op === 'prepare' ? instance.exports.prepareE1M1Controlled() :
-          instance.exports.stepNeutralControlled(data.op === 'step-invalid' ? 1 : 0);
+          instance.exports.stepNeutralControlled(a22 ? data.input : data.op === 'step-invalid' ? 1 : 0);
         nativeExecuting = false;
         check(status === 0 || status === -1, 'Unexpected native status');
         result = {status, outcome: status === 0 ? 'APPLIED' : 'REFUSED', ...observations(), logs, logsTruncated};
@@ -336,12 +353,12 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 saveButton.onclick = () => download(new Blob([JSON.stringify(receipt, null, 2)],
-  {type: 'application/json'}), receipt.experiment === 'a2.1' ? 'a2-1-receipt.json' : receipt.experiment === 'fixture-disabled' ? 'a1-no-fixtures.json' :
+  {type: 'application/json'}), receipt.experiment === 'a2.2' ? 'a2-2-receipt.json' : receipt.experiment === 'a2.1' ? 'a2-1-receipt.json' : receipt.experiment === 'fixture-disabled' ? 'a1-no-fixtures.json' :
     receipt.experiment === 'worker-faults' ? 'a1-worker-faults.json' :
     receipt.experiment === 'missing-iwad' ? 'a1-missing-iwad.json' :
     receipt.experiment === 'repeat-idle' ? 'a1-repeat-idle.json' : 'a1-first-proof.json');
 imageButton.onclick = () => canvas.toBlob(blob => download(blob,
-  receipt.experiment === 'a2.1' ? (receipt.levelRendered ? 'a2-1-level.png' : 'a2-1-title.png') :
+  receipt.experiment === 'a2.2' ? 'a2-2-level.png' : receipt.experiment === 'a2.1' ? (receipt.levelRendered ? 'a2-1-level.png' : 'a2-1-title.png') :
     receipt.experiment === 'fixture-disabled' ? 'a1-no-fixtures-title.png' :
     receipt.experiment === 'worker-faults' ? 'a1-worker-faults-title.png' :
     receipt.experiment === 'repeat-idle' ? 'a1-repeat-idle-title.png' : 'a1-title.png'));
@@ -709,7 +726,7 @@ function a21PassiveCheck(before, after) {
   'Passive/refused operation changed native work, commands or time');
 }
 for (const button of a21Buttons) button.onclick = () => manualA21(button.dataset.a21);
-async function manualA21(op) {
+async function manualA21(op, input) {
   if (running) return;
   if (op === 'retire') {
     retireA21(); receipt.checkpoint = 'RETIRED'; display();
@@ -725,22 +742,23 @@ async function manualA21(op) {
   let failureOutcome = 'ERROR';
   try {
     let extra = {}, transfer = [];
-    if (op === 'load-a21') {
+    if (op === 'load-a21' || op === 'load-a22') {
       retireA21(); a21Last = undefined;
       const wasmFile = document.querySelector('#wasm').files[0], wadFile = document.querySelector('#wad').files[0];
-      receipt = {experiment: 'a2.1', checkpoint: 'RUNNING', ownerChrome: 'PENDING',
+      receipt = {experiment: op === 'load-a22' ? 'a2.2' : 'a2.1', checkpoint: 'RUNNING', ownerChrome: 'PENDING',
         a2Acceptance: 'NOT ESTABLISHED', date: new Date().toISOString(), userAgent: navigator.userAgent,
-        files: {wasm: wasmFile?.name, wad: wadFile?.name}, maxOperations: 32, watchdogMs: 2000, watchdogFired: false,
+        files: {wasm: wasmFile?.name, wad: wadFile?.name}, maxOperations: op === 'load-a22' ? 64 : 32, watchdogMs: 2000, watchdogFired: false,
         operations: [], heartbeat: {intervalMs: 50, count: 0, maxGapMs: 0}};
       canvas.getContext('2d').clearRect(0, 0, 640, 400);
-      a21Check(wasmFile && wadFile, 'Select the A2.1 final WASM and pinned IWAD');
+      a21Check(wasmFile && wadFile, 'Select the final WASM for this mode and pinned IWAD');
       const [wasm, wad] = await Promise.all([wasmFile.arrayBuffer(), wadFile.arrayBuffer()]);
-      extra = {wasm, wad, expectedWasmHash: 'e926848cd0a3e763ea00300808a687ac72180dec250b82838db7354543fedf15'}; transfer = [wasm, wad];
+      extra = {wasm, wad, expectedWasmHash: op === 'load-a22' ? a22WasmHash : 'e926848cd0a3e763ea00300808a687ac72180dec250b82838db7354543fedf15'}; transfer = [wasm, wad];
       a21Url = URL.createObjectURL(new Blob(['(' + titleWorker.toString() + ')()'], {type: 'text/javascript'}));
       a21Worker = new Worker(a21Url);
     }
+    if (receipt.experiment === 'a2.2') extra.input = input;
     a21Check(a21Worker, 'Load a fresh A2.1 Worker first');
-    a21Check(receipt.operations.length < receipt.maxOperations, '32-operation experiment limit reached; Worker retired');
+    a21Check(receipt.operations.length < receipt.maxOperations, 'Operation limit reached; Worker retired');
     receipt.activeOperation = op;
     const started = performance.now(); let beat = started;
     heartbeatTimer = setInterval(() => {
@@ -772,7 +790,9 @@ async function manualA21(op) {
     a21Check(!result.logsTruncated, 'Diagnostic logs overflowed');
     a21Check(['schedulerEntry', 'netBody', 'wipeEntry', 'demoLoad'].every(k => result.counters[k] === 0),
       'Unexpected scheduler, network, wipe or demo work');
-    if (result.status === -1) {
+    if (receipt.experiment === 'a2.2') {
+      a22Verify(op, input, a21Last, result);
+    } else if (result.status === -1) {
       a21PassiveCheck(a21Last, result);
       receipt.lastOutcome = 'REFUSED';
     } else if (op === 'load-a21' || op === 'init' || op === 'prepare') {
@@ -810,7 +830,10 @@ async function manualA21(op) {
     if (op === 'render' && result.status === 0) {
       a21Check(result.status === 0 && data.pixels?.byteLength === 1024000, 'Missing frame');
       canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data.pixels), 640, 400), 0, 0);
-      if (receipt.stepVerified) {
+      if (receipt.experiment === 'a2.2' && result.counters.gametic > 0) {
+        a21Check(result.frameSha256 !== receipt.titleFrameSha256, 'Post-tic frame still equals title');
+        receipt.levelRendered = true;
+      } else if (receipt.stepVerified) {
         a21Check(result.frameSha256 !== receipt.titleFrameSha256, 'Post-tic frame still equals title');
         a21Check(receipt.titleFrameSha256, 'Capture the title frame before E1M1 preparation');
         receipt.levelRendered = true;
@@ -818,6 +841,7 @@ async function manualA21(op) {
       receipt.lastFrameSha256 = result.frameSha256;
     }
     a21Check(receipt.heartbeat.maxGapMs <= 250 && !receipt.watchdogFired, 'Main-thread watchdog/heartbeat check failed');
+    if (receipt.experiment === 'a2.2') receipt.normalized.push(a22Normalize(op, input, result));
     a21Last = result;
     receipt.checkpoint = result.status === -1 ? 'REFUSED — zero native work verified' :
       receipt.levelRendered ? 'LOCAL CHECKS PASS — inspect level image and save evidence' :
@@ -833,7 +857,162 @@ async function manualA21(op) {
     a21Buttons.forEach(b => { b.disabled = a21Worker ? b.dataset.a21 === 'load-a21' : b.dataset.a21 !== 'load-a21'; });
     [runButton, repeatButton, missingButton, faultsButton, noFixturesButton].forEach(b => { b.disabled = Boolean(a21Worker); });
     saveButton.disabled = false; imageButton.disabled = !receipt.lastFrameSha256;
+    a22ButtonsUpdate();
   }
 }
+// Fixed A2.2 script. Each click sends one Worker operation or waits without messages.
+const a22WasmHash = '98dd924ac24cfc42ab748efa6ae40161878b8f257da7d709cd6a9f7c768be46c';
+const a22NextButton = document.querySelector('#a22-next');
+const a22Load2 = document.querySelector('#a22-load-2');
+const a22Load10 = document.querySelector('#a22-load-10');
+const a22Retire = document.querySelector('#a22-retire');
+let a22Cursor = 0, a22WaitMs = 2000, a22Reference;
+const a22Plan = [
+  ['init'], ['render'], ['prepare'], ['snapshot'], ['render'],
+  ['step', 1, 'refuse first FORWARD'], ['step', 3, 'refuse unknown input'],
+  ['step', 0], ['render'],
+  ...Array.from({length: 4}, () => ['step', 1]), ['render'],
+  ...Array.from({length: 5}, () => ['step', 2]), ['render'], ['snapshot'],
+  ['wait'], ['snapshot'], ['render'], ['snapshot'], ['step', 2], ['render'], ['step', 0],
+  ...[1, 1, 2, 2, 0, 1, 2, 0].map(input => ['step', input]), ['render'], ['snapshot']
+];
+function a22ButtonsUpdate() {
+  const active = a21Worker && receipt?.experiment === 'a2.2';
+  a22Load2.disabled = running || Boolean(a21Worker);
+  a22Load10.disabled = running || Boolean(a21Worker) || !a22Reference;
+  a22Retire.disabled = running || !active;
+  a22NextButton.disabled = running || !active || a22Cursor >= a22Plan.length;
+  const next = a22Plan[a22Cursor];
+  a22NextButton.textContent = next ? 'Next: ' + (next[2] || (next[0] === 'step' ?
+    ['NEUTRAL', 'FORWARD', 'TURN_RIGHT'][next[1]] : next[0] === 'wait' ?
+    'message-free ' + a22WaitMs / 1000 + 's wait' : next[0])) : 'Script complete';
+  if (active) a21Buttons.forEach(b => { b.disabled = true; });
+}
+function a22Normalize(op, input, result) {
+  return {op, ...(input === undefined ? {} : {input}),
+    ...(result.status === undefined ? {} : {status: result.status}),
+    counters: Object.fromEntries(a21Passive.map(k => [k, result.counters[k]])),
+    native: result.native, ...(result.frameSha256 ? {frameSha256: result.frameSha256} : {})};
+}
+function a22Verify(op, input, before, after) {
+  a21Check(!after.logs?.some(log => log.kind === 'error'), 'Native error log');
+  if (op === 'load-a22') {
+    receipt.normalized = [];
+    receipt.externalWaitMs = a22WaitMs;
+    if (a22WaitMs === 10000) receipt.paired = {equal: null, first: a22Reference};
+    a21Check(Object.values(after.counters).every(v => v === 0), 'Pre-init work');
+    return;
+  }
+  const n = before.counters.gametic;
+  const refused = op === 'step' && (input === 3 || (n === 0 && input !== 0));
+  if (refused) {
+    a21Check(after.status === -1, 'Expected first-input/unknown refusal');
+    a21PassiveCheck(before, after);
+    a21Check(JSON.stringify(before.counters) === JSON.stringify(after.counters), 'Refusal changed counters');
+  } else if (op === 'step') {
+    a21Check(after.status === 0 && before.native.ready === 1, 'Unexpected step refusal');
+    a21Check(a21Work.every(k => after.native[k] === n + 1) &&
+      ['nativeBuild', 'playerEntry', 'worldComplete', 'outerComplete', 'gametic', 'leveltime', 'virtualTicks']
+        .every(k => after.counters[k] === n + 1) && after.native.virtualMs === Math.floor((n + 1) * 1000 / 35),
+    'Step count/clock mismatch');
+    const held = input === 2 ? before.native.turnheld + 1 : 0;
+    const turn = input === 2 ? (held < 6 ? -320 : -640) : 0;
+    const cmd = after.native.built;
+    a21Check(after.native.buildTick === n && after.native.turnheld === held &&
+      after.native.keyUp === +(input === 1) && after.native.keyRight === +(input === 2) &&
+      cmd.forwardmove === (input === 1 ? 25 : 0) && cmd.angleturn === turn &&
+      ['sidemove', 'chatchar', 'buttons', 'buttons2', 'inventory', 'lookfly', 'arti'].every(k => cmd[k] === 0) &&
+      JSON.stringify(cmd) === JSON.stringify(after.native.entered) &&
+      ['installEqual', 'entryEqual', 'actorEqual'].every(k => after.native[k] === 1) && after.native.usedown === 0,
+    'Native command/entry/history mismatch');
+    a21Check(after.native.dclicktime === before.native.dclicktime + 1 &&
+      after.native.dclicktime2 === before.native.dclicktime2 + 1 &&
+      ['dclickstate', 'dclicks', 'dclickstate2', 'dclicks2'].every(k => after.native[k] === 0),
+    'Native double-click history was reset or changed unexpectedly');
+    a21Check(after.native.angle === ((before.native.angle + turn * 65536) >>> 0), 'Player rotation mismatch');
+    if (n === 0) receipt.neutralPosition = {x: after.native.x, y: after.native.y};
+    if (n === 4) a21Check(after.native.x !== receipt.neutralPosition.x ||
+      after.native.y !== receipt.neutralPosition.y, 'Four FORWARD tics did not move player');
+    a21Check(after.native.ready === 1, 'Post-step death/pending action/actor change: STOP');
+  } else if (op === 'init' || op === 'prepare') {
+    a21Check(after.status === 0 && a21Work.every(k => after.native[k] === 0) &&
+      ['nativeBuild', 'playerEntry', 'worldComplete', 'outerComplete', 'gametic', 'leveltime', 'virtualTicks']
+        .every(k => after.counters[k] === 0) && after.native.virtualMs === 0, 'Hidden init/load tic');
+    a21Check(['wasiInit', 'cInit', 'engineCreate', 'titlePrepare'].every(k => after.counters[k] === 1),
+      'One-shot init mismatch');
+    if (op === 'prepare') receipt.readyVerified = true;
+    if (op === 'prepare') a21Check(['ready', 'loadComplete', 'resources', 'liveActor', 'gameEligible']
+      .every(k => after.native[k] === 1) && after.native.map === 1 && after.native.episode === 1 &&
+      after.native.skill === 2, 'E1M1 READY mismatch');
+  } else {
+    if (op === 'render') a21Check(after.status === 0 && after.counters.render === before.counters.render + 1 &&
+      after.counters.frame === before.counters.frame + 1 &&
+      after.counters.netIntercept === before.counters.netIntercept + (n ? 5 : 1), 'Render cadence mismatch');
+    a21PassiveCheck(before, after);
+    if (op === 'snapshot') a21Check(JSON.stringify(before.counters) === JSON.stringify(after.counters),
+      'Snapshot changed counters');
+    if (op === 'render' && n === 1) receipt.neutralFrameSha256 = after.frameSha256;
+    if (op === 'render' && n === 5) a21Check(after.frameSha256 !== receipt.neutralFrameSha256,
+      'Forward view did not change');
+  }
+  a21Check(after.native.contributorsValid === 1, 'Uncontrolled input contributor');
+}
+async function loadA22(waitMs) {
+  if (running || a21Worker) return;
+  a22WaitMs = waitMs; a22Cursor = 0;
+  if (waitMs === 2000) a22Reference = undefined;
+  await manualA21('load-a22');
+  a22ButtonsUpdate();
+}
+a22Load2.onclick = () => loadA22(2000);
+a22Load10.onclick = () => loadA22(10000);
+a22Retire.onclick = () => { if (!running) { retireA21(); a22ButtonsUpdate();
+  a21Buttons.forEach(b => { b.disabled = b.dataset.a21 !== 'load-a21'; });
+  [runButton, repeatButton, missingButton, faultsButton, noFixturesButton].forEach(b => { b.disabled = false; }); } };
+a22NextButton.onclick = async () => {
+  if (running || !a21Worker || a22Cursor >= a22Plan.length) return;
+  const [op, input] = a22Plan[a22Cursor];
+  if (op === 'wait') {
+    running = true; a22ButtonsUpdate(); saveButton.disabled = imageButton.disabled = true;
+    const before = a22Normalize('snapshot', undefined, a21Last);
+    receipt.checkpoint = 'WAITING — no Worker messages'; display();
+    const started = performance.now();
+    await new Promise(resolve => setTimeout(resolve, a22WaitMs)); // Main thread only.
+    receipt.wait = {requestedMs: a22WaitMs, elapsedMs: performance.now() - started, before};
+    running = false;
+    receipt.checkpoint = 'WAIT DONE — next click reads native state';
+    saveButton.disabled = false; imageButton.disabled = !receipt.lastFrameSha256;
+  } else {
+    await manualA21(op, input);
+    if (!a21Worker) { a22ButtonsUpdate(); return; }
+    if (a22Plan[a22Cursor - 1]?.[0] === 'wait') {
+      receipt.wait.after = a22Normalize('snapshot', undefined, a21Last);
+      receipt.wait.unchanged = JSON.stringify(receipt.wait.before) === JSON.stringify(receipt.wait.after);
+      if (!receipt.wait.unchanged) { receipt.error = 'Idle changed authoritative state';
+        receipt.checkpoint = 'FAIL — Worker retired'; retireA21(); }
+    }
+  }
+  a22Cursor++;
+  if (a21Worker && a22Cursor < a22Plan.length && op !== 'wait')
+    receipt.checkpoint = 'A2.2 ' + a21Last.counters.gametic + '/20 tics — next request ready';
+  if (a21Worker && a22Cursor === a22Plan.length) {
+    try {
+      a21Check(a21Last.counters.gametic === 20 && receipt.wait.unchanged, 'Incomplete 20-tic/wait proof');
+      const bytes = new TextEncoder().encode(JSON.stringify(receipt.normalized));
+      receipt.normalizedSha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+        byte => byte.toString(16).padStart(2, '0')).join('');
+      if (a22WaitMs === 2000) {
+        a22Reference = JSON.parse(JSON.stringify(receipt));
+        receipt.checkpoint = '2s LOCAL CHECKS PASS — save evidence, retire, run 10s case';
+      } else {
+        receipt.paired.equal = Boolean(a22Reference &&
+          JSON.stringify(a22Reference.normalized) === JSON.stringify(receipt.normalized));
+        a21Check(receipt.paired.equal, 'Paired authoritative traces/render hashes differ');
+        receipt.checkpoint = 'PAIRED LOCAL CHECKS PASS — owner image/evidence review PENDING';
+      }
+    } catch (error) { receipt.error = String(error); receipt.checkpoint = 'FAIL — Worker retired'; retireA21(); }
+  }
+  a22ButtonsUpdate(); display();
+};
 </script>
 </html>

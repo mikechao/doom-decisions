@@ -72,7 +72,7 @@ void G_ScreenShot(void);
 void G_DrawMouseSpeedBox(void);
 int G_VanillaVersionCode(void);
 
-/* Private A2.1 boundaries; legacy builds have no instrumentation work. */
+/* Private A2 boundaries; legacy builds have no instrumentation work. */
 enum {
   A21_BUILD, A21_INSTALL, A21_ENTRY, A21_WORLD,
   A21_STATUS, A21_AUTOMAP, A21_HUD, A21_MENU, A21_OUTER, A21_EVENT_LIMIT

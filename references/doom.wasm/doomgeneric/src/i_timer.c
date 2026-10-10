@@ -22,6 +22,7 @@
 #include "doomgeneric.h"
 
 #include <stdarg.h>
+#include <limits.h>
 
 //#include <sys/time.h>
 //#include <unistd.h>
@@ -35,7 +36,9 @@
 static int controlled_tics;
 
 void I_A21CommitTic(int completed_gametic) {
-  if (controlled_tics != 0 || completed_gametic != controlled_tics + 1)
+  if (controlled_tics == INT_MAX ||
+      completed_gametic != controlled_tics + 1 ||
+      (uint64_t)completed_gametic * 1000 / TICRATE > INT_MAX)
     __builtin_trap();
   ++controlled_tics;
 }
