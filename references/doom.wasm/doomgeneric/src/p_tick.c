@@ -18,6 +18,7 @@
 //
 
 #include "a1_trace.h"
+#include "g_game.h"
 #include "z_zone.h"
 #include "p_local.h"
 
@@ -116,5 +117,6 @@ void P_Ticker(void) {
 
   // for par times
   leveltime++;
+  G_A21Boundary(A21_WORLD);
   A1_COUNT(A1_WORLD_COMPLETE);
 }

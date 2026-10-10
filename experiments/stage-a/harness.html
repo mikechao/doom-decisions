@@ -3,18 +3,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; worker-src blob:; connect-src 'none'">
-<title>Doom A1 first title proof</title>
+<title>Doom Stage A local experiments</title>
 <style>
   body { font: 16px system-ui; max-width: 960px; margin: 24px auto; padding: 0 16px; }
   label { display: block; margin: 12px 0; }
   canvas { display: block; max-width: 100%; background: #111; margin: 16px 0; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>
-<h1>Doom A1 first title proof</h1>
+<h1>Doom Stage A local experiments</h1>
 <p>The first proof performs one initialization and one render in a Worker at fixed time zero. Select the final
 controlled-title WASM and external Freedoom 0.13.0 Phase 1 IWAD. No network requests.</p>
 <label>Final WASM <input id="wasm" type="file" accept=".wasm"></label>
 <label>External Freedoom Phase 1 <input id="wad" type="file" accept=".wad"></label>
+<fieldset id="a21-controls">
+<legend>A2.1 — manual, one neutral tic per fresh Worker</legend>
+<p>Select the new A2.1 final WASM and pinned IWAD above. Each button sends one bounded operation.
+READY at zero tics may retain the title image. Check the heartbeat during every operation.</p>
+<button data-a21="load-a21">1. Load fresh A2.1 Worker</button>
+<button data-a21="init" disabled>2. Initialize title</button>
+<button data-a21="render" disabled>Render / capture Canvas</button>
+<button data-a21="prepare" disabled>3. Prepare E1M1</button>
+<button data-a21="snapshot" disabled>Observe READY / counters</button>
+<button data-a21="step-invalid" disabled>Refuse non-neutral input</button>
+<button data-a21="step" disabled>4. Execute one neutral tic</button>
+<button data-a21="retire" disabled>Retire Worker</button>
+</fieldset>
 <button id="run">Run first proof</button>
 <button id="repeat">Run Experiment 2: repeat / idle</button>
 <button id="missing">Run Experiment 3: missing IWAD</button>
@@ -28,7 +41,7 @@ count during the two-second hang. Full A1 acceptance remains pending.</p>
 <p>The fixture-disabled smoke test requires the final no-fixtures WASM. It checks initialization,
 second-init refusal and one matching title frame. Native counters are absent, so it cannot measure zero tics.</p>
 <button id="save" disabled>Save JSON</button>
-<button id="image" disabled>Save title PNG</button>
+<button id="image" disabled>Save Canvas PNG</button>
 <canvas id="screen" width="640" height="400" aria-label="Doom title framebuffer"></canvas>
 <pre id="result" aria-live="polite">Ready. Full A1 acceptance is outside this checkpoint.</pre>
 <script>
@@ -41,6 +54,7 @@ function titleWorker() {
   let instance, memory, wad, dimensions, pendingFrame;
   let missingIwad = false;
   let noFixtures = false;
+  let a21 = false;
   const callbacks = {wadSizes: 0, readWads: 0, onGameInit: 0, drawFrame: 0};
   const logs = [];
   let logsTruncated = false;
@@ -65,9 +79,21 @@ function titleWorker() {
     return {wasiInit: instance.exports.a1WasiInitCount(), ...Object.fromEntries(
       counterNames.map((name, index) => [name, instance.exports.a1ReadCounter(index)]))};
   }
+  function a21Observation() {
+    const names = ['build', 'install', 'liveEntry', 'world', 'status', 'automap', 'hud', 'menu', 'outer',
+      'ready', 'loadComplete', 'resources', 'liveActor', 'gameEligible', 'gamestate', 'gameaction',
+      'episode', 'map', 'skill', 'playerstate', 'health', 'installEqual', 'entryEqual', 'actorEqual',
+      'virtualMs', 'vertexes', 'lines', 'sectors', 'segs', 'subsectors', 'nodes', 'usedown'];
+    const fields = ['forwardmove', 'sidemove', 'angleturn', 'chatchar', 'buttons', 'consistancy',
+      'buttons2', 'inventory', 'lookfly', 'arti'];
+    const read = index => instance.exports.a21ReadObservation(index);
+    return {...Object.fromEntries(names.map((name, i) => [name, read(i)])),
+      built: Object.fromEntries(fields.map((name, i) => [name, read(32 + i)])),
+      entered: Object.fromEntries(fields.map((name, i) => [name, read(42 + i)]))};
+  }
   function observations() {
     // Never call diagnostics in the fixture-disabled mode, including error reporting.
-    return noFixtures ? {callbacks: {...callbacks}} : {counters: snapshot()};
+    return noFixtures ? {callbacks: {...callbacks}} : {counters: snapshot(), ...(a21 ? {native: a21Observation()} : {})};
   }
   function checkNoFixturesInterface(module) {
     const expectedImports = ['console.onErrorMessage', 'console.onInfoMessage',
@@ -149,9 +175,11 @@ function titleWorker() {
   };
   self.onmessage = async ({data}) => {
     const started = performance.now();
+    let nativeExecuting = false;
     try {
       let result, pixels;
-      if (data.op === 'load' || data.op === 'load-missing-iwad' || data.op === 'load-no-fixtures') {
+      if (data.op === 'load' || data.op === 'load-missing-iwad' || data.op === 'load-no-fixtures' || data.op === 'load-a21') {
+        if (data.op === 'load-a21') a21 = true;
         if (data.op === 'load-no-fixtures') noFixtures = true;
         check(!instance, 'Already loaded');
         check(data.wasm.byteLength <= 16 * 1024 * 1024, 'Oversized WASM');
@@ -170,7 +198,17 @@ function titleWorker() {
         if (noFixtures) check(wasmSha256 ===
           '647ee4031a4067639a915aa2747f0613f3f0997bc1bcd6797a50256946cae1fd',
         'Fixture-disabled final WASM hash mismatch');
+        if (a21) check(wasmSha256 === data.expectedWasmHash, 'A2.1 final WASM hash mismatch');
         const module = await WebAssembly.compile(data.wasm);
+        if (a21) {
+          const expected = ['initControlled', 'renderControlled', 'prepareE1M1Controlled',
+            'stepNeutralControlled', 'a21ReadObservation', 'a1ReadCounter', 'a1WasiInitCount'];
+          const functions = WebAssembly.Module.exports(module).filter(x => x.kind === 'function').map(x => x.name).sort();
+          check(JSON.stringify(functions) === JSON.stringify(expected.sort()), 'A2.1 function exports mismatch');
+          check(WebAssembly.Module.imports(module).length === 9 &&
+            !WebAssembly.Module.imports(module).some(x => x.module === 'runtimeControl' || x.module.startsWith('wasi')),
+          'A2.1 imports mismatch');
+        }
         const keys = noFixtures ? checkNoFixturesInterface(module) : undefined;
         instance = await WebAssembly.instantiate(module, imports);
         memory = instance.exports.memory;
@@ -192,24 +230,41 @@ function titleWorker() {
           functionSignatures: 'initControlled() -> i32; renderControlled() -> i32',
           signatureEvidence: 'Pinned SHA-256 of the statically typed-inspected final artifact'};
       } else if (data.op === 'init' || (noFixtures && data.op === 'init-again')) {
+        nativeExecuting = true;
         const status = instance.exports.initControlled();
+        nativeExecuting = false;
         result = {status, ...observations(), dimensions, logs, logsTruncated};
         if (noFixtures) result.expectedRefusal = data.op === 'init-again';
         // Negative-test modes transport actual native statuses for main-thread assertions.
-        if (!missingIwad && !noFixtures)
+        if (!missingIwad && !noFixtures && !a21)
           check(status === 0, 'Controlled initialization refused: ' + status);
+      } else if (data.op === 'prepare' || data.op === 'step' || data.op === 'step-invalid') {
+        check(a21, 'A2.1 operation requires the A2.1 artifact');
+        nativeExecuting = true;
+        const status = data.op === 'prepare' ? instance.exports.prepareE1M1Controlled() :
+          instance.exports.stepNeutralControlled(data.op === 'step-invalid' ? 1 : 0);
+        nativeExecuting = false;
+        check(status === 0 || status === -1, 'Unexpected native status');
+        result = {status, outcome: status === 0 ? 'APPLIED' : 'REFUSED', ...observations(), logs, logsTruncated};
       } else if (data.op === 'render') {
+        nativeExecuting = true;
         const status = instance.exports.renderControlled();
+        nativeExecuting = false;
         result = {status, ...observations(), dimensions, logs, logsTruncated};
-        check(status === 0 && pendingFrame, 'Render did not return one frame');
-        check(pendingFrame.some((value, i) => i % 4 !== 3 && value !== pendingFrame[i % 4]),
-          'Rendered frame has only one color');
-        result.frameSha256 = await hash(pendingFrame);
-        pixels = pendingFrame.buffer;
-        pendingFrame = undefined;
+        if (a21 && status === -1) {
+          check(!pendingFrame, 'Refused render produced a frame');
+          result.outcome = 'REFUSED';
+        } else {
+          check(status === 0 && pendingFrame, 'Render did not return one frame');
+          check(pendingFrame.some((value, i) => i % 4 !== 3 && value !== pendingFrame[i % 4]),
+            'Rendered frame has only one color');
+          result.frameSha256 = await hash(pendingFrame);
+          pixels = pendingFrame.buffer;
+          pendingFrame = undefined;
+        }
       } else if (data.op === 'snapshot') {
         check(!noFixtures, 'Native snapshot unavailable without fixtures');
-        result = {counters: snapshot()}; // Read only; no init, display or tick call.
+        result = observations(); // Read only; no init, display or tick call.
       } else throw Error('Unknown operation');
       if (missingIwad) {
         result.callbacks = {...callbacks};
@@ -219,8 +274,10 @@ function titleWorker() {
         result, pixels}, pixels ? [pixels] : []);
     } catch (error) {
       self.postMessage({ok: false, op: data.op, error: String(error), logs, logsTruncated,
+        ...(a21 ? {outcome: nativeExecuting ? 'FAULT' : 'ERROR', retired: true, isWasmRuntimeError: error instanceof WebAssembly.RuntimeError} : {}),
         ...(instance ? observations() : {}),
         ...(missingIwad ? {callbacks: {...callbacks}, frameProduced: Boolean(pendingFrame)} : {})});
+      if (a21) self.close();
     }
   };
 }
@@ -279,12 +336,13 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 saveButton.onclick = () => download(new Blob([JSON.stringify(receipt, null, 2)],
-  {type: 'application/json'}), receipt.experiment === 'fixture-disabled' ? 'a1-no-fixtures.json' :
+  {type: 'application/json'}), receipt.experiment === 'a2.1' ? 'a2-1-receipt.json' : receipt.experiment === 'fixture-disabled' ? 'a1-no-fixtures.json' :
     receipt.experiment === 'worker-faults' ? 'a1-worker-faults.json' :
     receipt.experiment === 'missing-iwad' ? 'a1-missing-iwad.json' :
     receipt.experiment === 'repeat-idle' ? 'a1-repeat-idle.json' : 'a1-first-proof.json');
 imageButton.onclick = () => canvas.toBlob(blob => download(blob,
-  receipt.experiment === 'fixture-disabled' ? 'a1-no-fixtures-title.png' :
+  receipt.experiment === 'a2.1' ? (receipt.levelRendered ? 'a2-1-level.png' : 'a2-1-title.png') :
+    receipt.experiment === 'fixture-disabled' ? 'a1-no-fixtures-title.png' :
     receipt.experiment === 'worker-faults' ? 'a1-worker-faults-title.png' :
     receipt.experiment === 'repeat-idle' ? 'a1-repeat-idle-title.png' : 'a1-title.png'));
 runButton.onclick = () => runExperiment(false);
@@ -293,7 +351,7 @@ missingButton.onclick = () => runExperiment(false, true);
 faultsButton.onclick = () => runExperiment(false, false, true);
 noFixturesButton.onclick = () => runExperiment(false, false, false, true);
 async function runExperiment(repeatIdle, missingIwad = false, workerFaults = false, noFixtures = false) {
-  if (running) return;
+  if (running || a21Worker) return;
   const wasm = document.querySelector('#wasm').files[0];
   const wad = missingIwad ? undefined : document.querySelector('#wad').files[0];
   if (!wasm || (!missingIwad && !wad)) {
@@ -631,6 +689,150 @@ async function runExperiment(repeatIdle, missingIwad = false, workerFaults = fal
     if (repeatIdle) imageButton.disabled = !receipt.lastVisibleFrame;
     if (missingIwad) imageButton.disabled = true;
     if (workerFaults) imageButton.disabled = !receipt.lastVisibleRecovery;
+  }
+}
+
+let a21Worker, a21Url, a21Last;
+const a21Buttons = [...document.querySelectorAll('[data-a21]')];
+const a21Work = ['build', 'install', 'liveEntry', 'world', 'status', 'automap', 'hud', 'menu', 'outer'];
+const a21Passive = ['wasiInit', 'cInit', 'engineCreate', 'titlePrepare', 'titleReady', 'nativeBuild', 'playerEntry', 'worldComplete', 'outerComplete',
+  'schedulerEntry', 'netBody', 'wipeEntry', 'demoLoad', 'gametic', 'leveltime', 'virtualTicks'];
+function retireA21() {
+  if (a21Worker) { a21Worker.onmessage = a21Worker.onerror = null; a21Worker.terminate(); }
+  if (a21Url) URL.revokeObjectURL(a21Url);
+  a21Worker = a21Url = undefined;
+}
+function a21Check(ok, message) { if (!ok) throw Error(message); }
+function a21PassiveCheck(before, after) {
+  a21Check(a21Passive.every(k => before.counters[k] === after.counters[k]) &&
+    JSON.stringify(before.native) === JSON.stringify(after.native),
+  'Passive/refused operation changed native work, commands or time');
+}
+for (const button of a21Buttons) button.onclick = () => manualA21(button.dataset.a21);
+async function manualA21(op) {
+  if (running) return;
+  if (op === 'retire') {
+    retireA21(); receipt.checkpoint = 'RETIRED'; display();
+    [runButton, repeatButton, missingButton, faultsButton, noFixturesButton].forEach(b => { b.disabled = false; });
+    a21Buttons.forEach(b => { b.disabled = b.dataset.a21 !== 'load-a21'; });
+    return;
+  }
+  running = true;
+  a21Buttons.forEach(b => { b.disabled = true; });
+  [runButton, repeatButton, missingButton, faultsButton, noFixturesButton].forEach(b => { b.disabled = true; });
+  saveButton.disabled = imageButton.disabled = true;
+  let heartbeatTimer;
+  let failureOutcome = 'ERROR';
+  try {
+    let extra = {}, transfer = [];
+    if (op === 'load-a21') {
+      retireA21(); a21Last = undefined;
+      const wasmFile = document.querySelector('#wasm').files[0], wadFile = document.querySelector('#wad').files[0];
+      receipt = {experiment: 'a2.1', checkpoint: 'RUNNING', ownerChrome: 'PENDING',
+        a2Acceptance: 'NOT ESTABLISHED', date: new Date().toISOString(), userAgent: navigator.userAgent,
+        files: {wasm: wasmFile?.name, wad: wadFile?.name}, maxOperations: 32, watchdogMs: 2000, watchdogFired: false,
+        operations: [], heartbeat: {intervalMs: 50, count: 0, maxGapMs: 0}};
+      canvas.getContext('2d').clearRect(0, 0, 640, 400);
+      a21Check(wasmFile && wadFile, 'Select the A2.1 final WASM and pinned IWAD');
+      const [wasm, wad] = await Promise.all([wasmFile.arrayBuffer(), wadFile.arrayBuffer()]);
+      extra = {wasm, wad, expectedWasmHash: 'e926848cd0a3e763ea00300808a687ac72180dec250b82838db7354543fedf15'}; transfer = [wasm, wad];
+      a21Url = URL.createObjectURL(new Blob(['(' + titleWorker.toString() + ')()'], {type: 'text/javascript'}));
+      a21Worker = new Worker(a21Url);
+    }
+    a21Check(a21Worker, 'Load a fresh A2.1 Worker first');
+    a21Check(receipt.operations.length < receipt.maxOperations, '32-operation experiment limit reached; Worker retired');
+    receipt.activeOperation = op;
+    const started = performance.now(); let beat = started;
+    heartbeatTimer = setInterval(() => {
+      const now = performance.now();
+      receipt.heartbeat.count++;
+      receipt.heartbeat.maxGapMs = Math.max(receipt.heartbeat.maxGapMs, now - beat);
+      beat = now; display();
+    }, 50);
+    const data = await new Promise((resolve, reject) => {
+      const fail = error => { failureOutcome = 'FAULT'; clearTimeout(deadline); retireA21(); reject(error); };
+      const deadline = setTimeout(() => {
+        receipt.watchdogFired = true; receipt.retired = true;
+        fail(Error(op + ' timed out after 2000 ms; Worker retired'));
+      }, 2000);
+      a21Worker.onerror = event => fail(Error(event.message));
+      a21Worker.onmessage = ({data}) => {
+        clearTimeout(deadline);
+        const {pixels, ...observation} = data;
+        receipt.operations.push(observation);
+        if (data.op !== op || !data.ok) { failureOutcome = data.outcome || 'ERROR'; retireA21(); reject(Error(data.error || 'Unexpected response operation')); }
+        else resolve(data);
+      };
+      try { a21Worker.postMessage({op, ...extra}, transfer); } catch (error) { fail(error); }
+    });
+    clearInterval(heartbeatTimer);
+    receipt.heartbeat.maxGapMs = Math.max(receipt.heartbeat.maxGapMs, performance.now() - beat);
+    failureOutcome = 'FAULT'; // Post-return invariant failures retire the instance.
+    const result = data.result;
+    a21Check(!result.logsTruncated, 'Diagnostic logs overflowed');
+    a21Check(['schedulerEntry', 'netBody', 'wipeEntry', 'demoLoad'].every(k => result.counters[k] === 0),
+      'Unexpected scheduler, network, wipe or demo work');
+    if (result.status === -1) {
+      a21PassiveCheck(a21Last, result);
+      receipt.lastOutcome = 'REFUSED';
+    } else if (op === 'load-a21' || op === 'init' || op === 'prepare') {
+      a21Check(a21Work.every(k => result.native[k] === 0) &&
+        ['nativeBuild', 'playerEntry', 'worldComplete', 'outerComplete', 'gametic', 'leveltime', 'virtualTicks']
+          .every(k => result.counters[k] === 0) && result.native.virtualMs === 0, 'Hidden preparation tic');
+      if (op === 'load-a21') a21Check(Object.values(result.counters).every(v => v === 0), 'Pre-init counters were not zero');
+      if (op === 'init') a21Check(['wasiInit', 'cInit', 'engineCreate', 'titlePrepare', 'titleReady']
+        .every(k => result.counters[k] === 1), 'One-shot title initialization counters failed');
+      if (op !== 'load-a21') a21Check(result.status === 0, 'Initialization/preparation refused');
+      if (op === 'prepare') {
+        a21Check(['ready', 'loadComplete', 'resources', 'liveActor', 'gameEligible'].every(k => result.native[k] === 1) &&
+          result.native.episode === 1 && result.native.map === 1 && result.native.skill === 2 &&
+          result.native.playerstate === 0 && result.native.health > 0 &&
+          result.native.gamestate === 0 && result.native.gameaction === 0,
+        'Native loaded E1M1 READY conditions failed');
+        receipt.readyVerified = true;
+      }
+    } else if (op === 'step' && result.status === 0) {
+      a21Check(a21Last?.native.ready === 1 && a21Work.every(k => result.native[k] === 1) &&
+        ['nativeBuild', 'playerEntry', 'worldComplete', 'outerComplete', 'gametic', 'leveltime', 'virtualTicks']
+          .every(k => result.counters[k] === 1) && result.native.virtualMs === 28 &&
+        ['installEqual', 'entryEqual', 'actorEqual'].every(k => result.native[k] === 1) &&
+        result.native.usedown === 0 && Object.values(result.native.built).every(v => v === 0) &&
+        JSON.stringify(result.native.built) === JSON.stringify(result.native.entered),
+      'Exact neutral native consumption/completion failed');
+      receipt.stepVerified = true;
+    } else {
+      a21PassiveCheck(a21Last, result);
+      if (op === 'step-invalid' || op === 'step') {
+        a21Check(result.status === -1, 'Expected zero-work refusal');
+        receipt.lastOutcome = 'REFUSED';
+      }
+    }
+    if (op === 'render' && result.status === 0) {
+      a21Check(result.status === 0 && data.pixels?.byteLength === 1024000, 'Missing frame');
+      canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data.pixels), 640, 400), 0, 0);
+      if (receipt.stepVerified) {
+        a21Check(result.frameSha256 !== receipt.titleFrameSha256, 'Post-tic frame still equals title');
+        a21Check(receipt.titleFrameSha256, 'Capture the title frame before E1M1 preparation');
+        receipt.levelRendered = true;
+      } else if (!receipt.readyVerified) receipt.titleFrameSha256 = result.frameSha256;
+      receipt.lastFrameSha256 = result.frameSha256;
+    }
+    a21Check(receipt.heartbeat.maxGapMs <= 250 && !receipt.watchdogFired, 'Main-thread watchdog/heartbeat check failed');
+    a21Last = result;
+    receipt.checkpoint = result.status === -1 ? 'REFUSED — zero native work verified' :
+      receipt.levelRendered ? 'LOCAL CHECKS PASS — inspect level image and save evidence' :
+      receipt.stepVerified ? 'ONE NATIVE TIC VERIFIED — render next' :
+      receipt.readyVerified ? 'READY — zero gameplay tics verified' : op + ' complete';
+  } catch (error) {
+    retireA21();
+    receipt ??= {experiment: 'a2.1', operations: []};
+    receipt.checkpoint = failureOutcome + ' — Worker retired'; receipt.lastOutcome = failureOutcome;
+    receipt.error = String(error); receipt.retired = true;
+  } finally {
+    clearInterval(heartbeatTimer); running = false; delete receipt.activeOperation; display();
+    a21Buttons.forEach(b => { b.disabled = a21Worker ? b.dataset.a21 === 'load-a21' : b.dataset.a21 !== 'load-a21'; });
+    [runButton, repeatButton, missingButton, faultsButton, noFixturesButton].forEach(b => { b.disabled = Boolean(a21Worker); });
+    saveButton.disabled = false; imageButton.disabled = !receipt.lastFrameSha256;
   }
 }
 </script>

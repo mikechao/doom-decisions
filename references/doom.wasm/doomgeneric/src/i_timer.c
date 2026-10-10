@@ -31,11 +31,21 @@
 // returns time in 1/35th second tics
 //
 
+#ifdef DOOM_CONTROLLED_TITLE
+static int controlled_tics;
+
+void I_A21CommitTic(int completed_gametic) {
+  if (controlled_tics != 0 || completed_gametic != controlled_tics + 1)
+    __builtin_trap();
+  ++controlled_tics;
+}
+#else
 static uint64_t basetime = 0;
+#endif
 
 uint64_t I_GetTicks(void) {
 #ifdef DOOM_CONTROLLED_TITLE
-  return 0;
+  return (uint64_t)controlled_tics * 1000 / TICRATE;
 #else
   return DG_GetTicksMs();
 #endif
@@ -43,7 +53,7 @@ uint64_t I_GetTicks(void) {
 
 int I_GetTime(void) {
 #ifdef DOOM_CONTROLLED_TITLE
-  return 0;
+  return controlled_tics;
 #else
   uint32_t ticks;
 
@@ -64,7 +74,7 @@ int I_GetTime(void) {
 
 int I_GetTimeMS(void) {
 #ifdef DOOM_CONTROLLED_TITLE
-  return 0;
+  return (uint64_t)controlled_tics * 1000 / TICRATE;
 #else
   uint32_t ticks;
 

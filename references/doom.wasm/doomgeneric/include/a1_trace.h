@@ -23,7 +23,10 @@ enum {
 #if defined(DOOM_CONTROLLED_TITLE) && !defined(DOOM_A1_NO_FIXTURES)
 #include <stdint.h>
 extern uint32_t a1_counts[A1_COUNT_LIMIT];
-#define A1_COUNT(index) (++a1_counts[index])
+#define A1_COUNT(index) do { \
+  if (a1_counts[index] == UINT32_MAX) __builtin_trap(); \
+  ++a1_counts[index]; \
+} while (0)
 #else
 #define A1_COUNT(index) ((void)0)
 #endif

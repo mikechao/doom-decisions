@@ -19,6 +19,7 @@
 //
 
 #include "a1_trace.h"
+#include "g_game.h"
 #include "doomdef.h"
 #include "d_event.h"
 
@@ -192,6 +193,7 @@ void P_PlayerThink(player_t *player) {
   ticcmd_t *cmd;
   weapontype_t newweapon;
 
+  G_A21PlayerEntry(player);
   A1_COUNT(A1_PLAYER_ENTRY);
 
   // fixme: do this in the cheat code

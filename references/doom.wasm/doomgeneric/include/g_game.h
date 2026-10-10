@@ -72,6 +72,31 @@ void G_ScreenShot(void);
 void G_DrawMouseSpeedBox(void);
 int G_VanillaVersionCode(void);
 
+/* Private A2.1 boundaries; legacy builds have no instrumentation work. */
+enum {
+  A21_BUILD, A21_INSTALL, A21_ENTRY, A21_WORLD,
+  A21_STATUS, A21_AUTOMAP, A21_HUD, A21_MENU, A21_OUTER, A21_EVENT_LIMIT
+};
+#ifdef DOOM_CONTROLLED_TITLE
+#include "d_player.h"
+int G_A21Prepare(void);
+int G_A21Ready(void);
+void G_A21CheckPassive(void);
+int G_A21Step(int input);
+void G_A21BuildEntry(int tick);
+void G_A21Install(int player, const ticcmd_t *cmd);
+void G_A21PlayerEntry(player_t *player);
+void G_A21Boundary(int event);
+#ifndef DOOM_A1_NO_FIXTURES
+int G_A21Observe(int index);
+#endif
+#else
+#define G_A21BuildEntry(tick) ((void)0)
+#define G_A21Install(player, cmd) ((void)0)
+#define G_A21PlayerEntry(player) ((void)0)
+#define G_A21Boundary(event) ((void)0)
+#endif
+
 extern int vanilla_savegame_limit;
 extern int vanilla_demo_limit;
 #endif

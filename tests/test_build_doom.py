@@ -48,7 +48,7 @@ def section(number, data):
 
 def module_fixture(*, controlled=False, without_a1_fixtures=False, start=False, wrong_import=False,
                    mutable_key=False, wrong_signature=False, wrong_export=False,
-                   wrong_core_signature=False, wrong_memory=False):
+                   wrong_core_signature=False, wrong_memory=False, wrong_step_signature=False):
     """Hand-encoded inert core sections; no compiler, assembler or instantiation."""
     types = [([], []), ([127], []), ([127, 127], []), ([127, 127, 127], [127]),
              ([127, 127], [127]), ([127], [127]), ([], [126]), ([], [127])]
@@ -70,9 +70,13 @@ def module_fixture(*, controlled=False, without_a1_fixtures=False, start=False, 
                ("reportKeyDown", 0, 12), ("reportKeyUp", 0, 13)]
     if controlled:
         exports = [("memory", 2, 0), ("initControlled", 0, 9), ("renderControlled", 0, 10),
-                   ("a1ReadCounter", 0, 11), ("a1WasiInitCount", 0, 12)]
+                   ("a1ReadCounter", 0, 11), ("a1WasiInitCount", 0, 12),
+                   ("prepareE1M1Controlled", 0, 13), ("stepNeutralControlled", 0, 14),
+                   ("a21ReadObservation", 0, 15)]
         if without_a1_fixtures:
-            exports = [item for item in exports if item[0] not in ("a1ReadCounter", "a1WasiInitCount")]
+            exports = [item for item in exports if item[0] not in ("a1ReadCounter", "a1WasiInitCount", "a21ReadObservation")]
+        if wrong_step_signature:
+            exports = [(n, k, 13 if n == "stepNeutralControlled" else i) for n, k, i in exports]
         if wrong_core_signature:
             exports[1] = ("initControlled", 0, 11)  # Valid module, wrong public function type.
     exports += [(n, 3, i + 2) for i, (n, _) in enumerate(keys)]
@@ -80,7 +84,7 @@ def module_fixture(*, controlled=False, without_a1_fixtures=False, start=False, 
     data += section(1, vector([b"\x60" + vector([bytes([v]) for v in p]) +
                               vector([bytes([v]) for v in r]) for p, r in types]))
     data += section(2, vector([name(m) + name(n) + b"\0" + leb(t) for m, n, t in imports]))
-    data += section(3, vector([leb(t) for t in ([7, 7, 5, 7] if controlled else [0, 0, 1, 1])]))
+    data += section(3, vector([leb(t) for t in ([7, 7, 5, 7, 7, 5, 5] if controlled else [0, 0, 1, 1])]))
     data += section(4, vector([b"\x70\x01" + leb(169) + leb(169)]))
     data += section(5, vector([b"\0" + leb(9 if wrong_memory else 8 if controlled else 72)]))
     data += section(6, vector([b"\x7f" + bytes([int(m)]) + b"\x41" + leb(v, True) + b"\x0b"
@@ -89,7 +93,7 @@ def module_fixture(*, controlled=False, without_a1_fixtures=False, start=False, 
     if start:
         data += section(8, leb(10))
     # Even the init/start function traps if ever called; static inspection must not call it.
-    data += section(10, vector([leb(len(body)) + body for body in ([b"\0\0\x0b"] * 4 if controlled else [b"\0\0\x0b", *[b"\0\x0b"] * 3])]))
+    data += section(10, vector([leb(len(body)) + body for body in ([b"\0\0\x0b"] * 7 if controlled else [b"\0\0\x0b", *[b"\0\x0b"] * 3])]))
     return data
 
 
@@ -516,6 +520,12 @@ class InspectorTests(Fixtures):
         self.assertFalse(report["instantiated"])
         self.assertEqual(next(x["details"] for x in report["exports"]
                               if x["name"] == "initControlled"), [[], ["i32"]])
+        signatures = {x["name"]: x["details"] for x in report["exports"] if x["kind"] == "function"}
+        self.assertEqual(signatures["prepareE1M1Controlled"], [[], ["i32"]])
+        self.assertEqual(signatures["stepNeutralControlled"], [["i32"], ["i32"]])
+        self.assertEqual(signatures["a21ReadObservation"], [["i32"], ["i32"]])
+        self.assertNotEqual(self.inspect(module_fixture(controlled=True, wrong_step_signature=True),
+                                        "controlled-title").returncode, 0)
         self.assertNotEqual(self.inspect(module_fixture(), "controlled-title").returncode, 0)
         self.assertNotEqual(self.inspect(module_fixture(controlled=True)).returncode, 0)
 
@@ -539,8 +549,8 @@ class InspectorTests(Fixtures):
         self.assertFalse(report["a1Fixtures"])
         self.assertFalse(report["instantiated"])
         self.assertEqual(len(report["imports"]), 9)
-        self.assertEqual(len(report["exports"]), 17)
-        self.assertFalse({"a1ReadCounter", "a1WasiInitCount"} & {x["name"] for x in report["exports"]})
+        self.assertEqual(len(report["exports"]), 19)
+        self.assertFalse({"a1ReadCounter", "a1WasiInitCount", "a21ReadObservation"} & {x["name"] for x in report["exports"]})
         self.assertNotEqual(self.inspect(data, "controlled-title").returncode, 0)
         self.assertNotEqual(self.inspect(module_fixture(controlled=True), "controlled-title", True).returncode, 0)
         self.assertNotEqual(self.inspect(module_fixture(), "upstream-shareware", True).returncode, 0)

@@ -24,6 +24,9 @@
 // Called by D_DoomLoop,
 // returns current time in tics.
 int I_GetTime(void);
+#ifdef DOOM_CONTROLLED_TITLE
+void I_A21CommitTic(int completed_gametic);
+#endif
 
 // returns current time in ms
 int I_GetTimeMS(void);

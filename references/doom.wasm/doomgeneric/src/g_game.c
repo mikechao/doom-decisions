@@ -68,6 +68,10 @@
 #include "r_sky.h"
 
 #include "g_game.h"
+#ifdef DOOM_CONTROLLED_TITLE
+#include "r_state.h"
+#include "net_client.h"
+#endif
 
 #define SAVEGAMESIZE 0x2c000
 
@@ -298,6 +302,7 @@ void G_BuildTiccmd(ticcmd_t *cmd, int maketic) {
   int forward;
   int side;
 
+  G_A21BuildEntry(maketic);
   A1_COUNT(A1_NATIVE_BUILD);
   memset(cmd, 0, sizeof(ticcmd_t));
 
@@ -732,10 +737,10 @@ boolean G_Responder(event_t *ev) {
 // G_Ticker
 // Make ticcmd_ts for the players.
 //
+static void G_TickerContinuation(void);
+
 void G_Ticker(void) {
   int i;
-  int buf;
-  ticcmd_t *cmd;
 
   // do player reborns if needed
   for (i = 0; i < MAXPLAYERS; i++)
@@ -779,6 +784,14 @@ void G_Ticker(void) {
     }
   }
 
+  G_TickerContinuation();
+}
+
+/* Shared unchanged native continuation; action/rebirth preparation stays above. */
+static void G_TickerContinuation(void) {
+  int i, buf;
+  ticcmd_t *cmd;
+
   // get commands, check consistancy,
   // and build new consistancy check
   buf = (gametic / ticdup) % BACKUPTICS;
@@ -788,6 +801,7 @@ void G_Ticker(void) {
       cmd = &players[i].cmd;
 
       memcpy(cmd, &netcmds[i], sizeof(ticcmd_t));
+      G_A21Install(i, cmd);
 
       if (demoplayback)
         G_ReadDemoTiccmd(cmd);
@@ -869,8 +883,11 @@ void G_Ticker(void) {
   case GS_LEVEL:
     P_Ticker();
     ST_Ticker();
+    G_A21Boundary(A21_STATUS);
     AM_Ticker();
+    G_A21Boundary(A21_AUTOMAP);
     HU_Ticker();
+    G_A21Boundary(A21_HUD);
     break;
 
   case GS_INTERMISSION:
@@ -1976,3 +1993,278 @@ boolean G_CheckDemoStatus(void) {
 
   return false;
 }
+
+#ifdef DOOM_CONTROLLED_TITLE
+/* A2.1: one whole load and one neutral command in a fresh reactor. These small
+ * enforcement counters and identities exist even with diagnostics disabled. */
+static boolean a21_load_attempted, a21_load_complete, a21_active, a21_spent;
+static mobj_t *a21_actor;
+static ticcmd_t a21_built, a21_entered;
+static int a21_events[A21_EVENT_LIMIT];
+static boolean a21_install_equal, a21_entry_equal, a21_actor_equal;
+extern boolean advancedemo;
+extern int D_A1TitleReady(void);
+
+static void A21Require(boolean ok) {
+  if (!ok)
+    __builtin_trap(); /* Partial native work is a terminal Worker fault. */
+}
+
+void G_A21Boundary(int event) {
+  A21Require(event >= 0 && event < A21_EVENT_LIMIT &&
+             a21_events[event] < 0x7fffffff);
+  ++a21_events[event];
+}
+
+static boolean A21CommandEqual(const ticcmd_t *a, const ticcmd_t *b) {
+  return a->forwardmove == b->forwardmove && a->sidemove == b->sidemove &&
+         a->angleturn == b->angleturn && a->chatchar == b->chatchar &&
+         a->buttons == b->buttons && a->consistancy == b->consistancy &&
+         a->buttons2 == b->buttons2 && a->inventory == b->inventory &&
+         a->lookfly == b->lookfly && a->arti == b->arti;
+}
+
+/* Assert the actual fresh contributors/history; never clear builder history.
+ * The normal loader already clears device/key state. No event pump is used. */
+static boolean A21NeutralInput(void) {
+  int i;
+  for (i = 0; i < NUMKEYS; ++i)
+    if (gamekeydown[i])
+      return false;
+  for (i = 0; i < arrlen(mousearray); ++i)
+    if (mousearray[i])
+      return false;
+  for (i = 0; i < arrlen(joyarray); ++i)
+    if (joyarray[i])
+      return false;
+  return !mousex && !mousey && !joyxmove && !joyymove && !joystrafemove &&
+         !sendpause && !sendsave && !next_weapon && !lowres_turn && !turnheld &&
+         !dclicktime && !dclickstate && !dclicks && !dclicktime2 &&
+         !dclickstate2 && !dclicks2;
+}
+
+static boolean A21Resources(void) {
+  return numvertexes > 0 && vertexes && numlines > 0 && lines && numsides > 0 &&
+         sides && numsectors > 0 && sectors && numsegs > 0 && segs &&
+         numsubsectors > 0 && subsectors && numnodes > 0 && nodes && blockmap &&
+         blockmaplump && blocklinks && bmapwidth > 0 && bmapheight > 0 &&
+         rejectmatrix;
+}
+
+static boolean A21LiveActor(void) {
+  player_t *p = &players[0];
+  mobj_t *mo = p->mo;
+  return p->playerstate == PST_LIVE && p->health > 0 && mo && mo->health > 0 &&
+         mo->player == p && mo->subsector && mo->subsector->sector &&
+         mo->thinker.function.acp1 == (actionf_p1)P_MobjThinker &&
+         mo->thinker.prev && mo->thinker.next &&
+         mo->thinker.prev->next == &mo->thinker &&
+         mo->thinker.next->prev == &mo->thinker;
+}
+
+static boolean A21GameEligible(void) {
+  int i;
+  if (gamestate != GS_LEVEL || !usergame || gameaction != ga_nothing ||
+      menuactive || paused || advancedemo || demoplayback || demorecording ||
+      netgame || netdemo || deathmatch || drone || consoleplayer != 0 ||
+      displayplayer != 0 || !playeringame[0] || ticdup != 1 ||
+      gamemission != doom || gamemode == commercial || gameepisode != 1 ||
+      gamemap != 1 || gameskill != sk_medium || !A21Resources() ||
+      !A21LiveActor())
+    return false;
+  for (i = 1; i < MAXPLAYERS; ++i)
+    if (playeringame[i])
+      return false;
+  return true;
+}
+
+int G_A21Ready(void) {
+  return a21_load_complete && !a21_active && !a21_spent && A21GameEligible() &&
+         players[0].mo == a21_actor;
+}
+
+static boolean A21ZeroWork(void) {
+  int i;
+  for (i = 0; i < A21_EVENT_LIMIT; ++i)
+    if (a21_events[i])
+      return false;
+  return gametic == 0 && leveltime == 0 && I_GetTime() == 0;
+}
+
+/* Rendering must retain the completed boundary even without trace exports. */
+void G_A21CheckPassive(void) {
+  int expected = a21_spent ? 1 : 0;
+  A21Require(!a21_active && gametic == expected && leveltime == expected &&
+             I_GetTime() == expected);
+  for (int i = 0; i < A21_EVENT_LIMIT; ++i)
+    A21Require(a21_events[i] == expected);
+}
+
+int G_A21Prepare(void) {
+  if (a21_load_attempted || !D_A1TitleReady() || menuactive || paused ||
+      advancedemo || gameaction != ga_nothing || demoplayback ||
+      demorecording || netgame || deathmatch || drone || !A21ZeroWork())
+    return -1;
+  a21_load_attempted = true;
+  G_DeferedInitNew(sk_medium, 1, 1);
+  A21Require(gameaction == ga_newgame);
+  G_DoNewGame(); /* Whole real action; no G_Ticker/preparation loop. */
+  A21Require(A21ZeroWork() && A21GameEligible() && A21NeutralInput());
+  a21_actor = players[0].mo;
+  a21_load_complete = true;
+  return 0;
+}
+
+void G_A21BuildEntry(int tick) {
+  G_A21Boundary(A21_BUILD);
+  A21Require(a21_active && a21_events[A21_BUILD] == 1 && tick == gametic &&
+             tick == 0 && I_GetTime() == 0);
+}
+
+void G_A21Install(int player, const ticcmd_t *cmd) {
+  G_A21Boundary(A21_INSTALL);
+  A21Require(a21_active && player == 0 && a21_events[A21_INSTALL] == 1);
+  a21_install_equal = A21CommandEqual(cmd, &a21_built);
+  A21Require(a21_install_equal);
+}
+
+void G_A21PlayerEntry(player_t *player) {
+  G_A21Boundary(A21_ENTRY);
+  a21_actor_equal =
+      player == &players[0] && player->mo == a21_actor && A21LiveActor();
+  a21_entry_equal = A21CommandEqual(&player->cmd, &a21_built);
+  A21Require(a21_active && a21_events[A21_ENTRY] == 1 &&
+             a21_events[A21_INSTALL] == 1 && a21_events[A21_BUILD] == 1 &&
+             a21_actor_equal && a21_entry_equal && A21GameEligible() &&
+             gametic == 0 && leveltime == 0 && I_GetTime() == 0);
+  a21_entered = player->cmd; /* Before any native flag/command mutation. */
+}
+
+int G_A21Step(int input) {
+  ticcmd_t cmds[MAXPLAYERS] = {{0}};
+  ticcmd_t neutral = {0};
+  ticcmd_t *previous;
+  int i;
+  /* Every ordinary refusal precedes menu/input/build/history/timer work. */
+  if (input != 0 || !G_A21Ready() || !A21ZeroWork() || !A21NeutralInput())
+    return -1;
+  a21_active = true;
+  a21_spent = true;
+  M_Ticker();
+  G_A21Boundary(A21_MENU);
+  A21Require(A21GameEligible() && players[0].mo == a21_actor &&
+             A21NeutralInput());
+  G_BuildTiccmd(&cmds[0], gametic);
+  a21_built = cmds[0];
+  neutral.consistancy = consistancy[0][gametic % BACKUPTICS];
+  A21Require(A21CommandEqual(&a21_built, &neutral) && A21GameEligible() &&
+             players[0].mo == a21_actor);
+  previous = netcmds;
+  netcmds =
+      cmds; /* Synchronous lending; restore before stack storage expires. */
+  G_TickerContinuation();
+  netcmds = previous;
+  for (i = 0; i < A21_OUTER; ++i)
+    A21Require(a21_events[i] == 1);
+  A21Require(gametic == 0 && leveltime == 1 && I_GetTime() == 0 &&
+             a21_install_equal && a21_entry_equal && a21_actor_equal &&
+             players[0].mo == a21_actor && !players[0].usedown);
+  ++gametic;
+  I_A21CommitTic(gametic);
+  G_A21Boundary(A21_OUTER);
+  A1_COUNT(A1_OUTER_COMPLETE);
+  A21Require(a21_events[A21_OUTER] == 1 && gametic == 1 && leveltime == 1 &&
+             I_GetTime() == 1);
+  a21_active = false;
+  return 0;
+}
+
+#ifndef DOOM_A1_NO_FIXTURES
+static int A21CommandField(const ticcmd_t *cmd, int field) {
+  switch (field) {
+  case 0:
+    return cmd->forwardmove;
+  case 1:
+    return cmd->sidemove;
+  case 2:
+    return cmd->angleturn;
+  case 3:
+    return cmd->chatchar;
+  case 4:
+    return cmd->buttons;
+  case 5:
+    return cmd->consistancy;
+  case 6:
+    return cmd->buttons2;
+  case 7:
+    return cmd->inventory;
+  case 8:
+    return cmd->lookfly;
+  case 9:
+    return cmd->arti;
+  default:
+    return -1;
+  }
+}
+
+/* Private experiment observations, no addresses or committed public record. */
+int G_A21Observe(int index) {
+  if (index >= 0 && index < A21_EVENT_LIMIT)
+    return a21_events[index];
+  if (index >= 32 && index < 42)
+    return A21CommandField(&a21_built, index - 32);
+  if (index >= 42 && index < 52)
+    return A21CommandField(&a21_entered, index - 42);
+  switch (index) {
+  case 9:
+    return G_A21Ready();
+  case 10:
+    return a21_load_complete;
+  case 11:
+    return A21Resources();
+  case 12:
+    return A21LiveActor();
+  case 13:
+    return A21GameEligible();
+  case 14:
+    return gamestate;
+  case 15:
+    return gameaction;
+  case 16:
+    return gameepisode;
+  case 17:
+    return gamemap;
+  case 18:
+    return gameskill;
+  case 19:
+    return players[0].playerstate;
+  case 20:
+    return players[0].health;
+  case 21:
+    return a21_install_equal;
+  case 22:
+    return a21_entry_equal;
+  case 23:
+    return a21_actor_equal;
+  case 24:
+    return I_GetTimeMS();
+  case 25:
+    return numvertexes;
+  case 26:
+    return numlines;
+  case 27:
+    return numsectors;
+  case 28:
+    return numsegs;
+  case 29:
+    return numsubsectors;
+  case 30:
+    return numnodes;
+  case 31:
+    return players[0].usedown;
+  default:
+    return -1;
+  }
+}
+#endif
+#endif

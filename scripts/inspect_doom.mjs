@@ -75,12 +75,15 @@ const expectedImports = new Map([
 if (controlled) expectedImports.delete('runtimeControl.timeInMilliseconds');
 const coreExports = controlled ? new Map([
   ['initControlled', [[], ['i32']]], ['renderControlled', [[], ['i32']]],
+  ['prepareE1M1Controlled', [[], ['i32']]], ['stepNeutralControlled', [['i32'], ['i32']]],
+  ['a21ReadObservation', [['i32'], ['i32']]],
   ['a1ReadCounter', [['i32'], ['i32']]], ['a1WasiInitCount', [[], ['i32']]],
 ]) : new Map([
   ['initGame', [[], []]], ['tickGame', [[], []]],
   ['reportKeyDown', [['i32'], []]], ['reportKeyUp', [['i32'], []]],
 ]);
 if (withoutA1Fixtures) {
+  coreExports.delete('a21ReadObservation');
   coreExports.delete('a1ReadCounter');
   coreExports.delete('a1WasiInitCount');
 }

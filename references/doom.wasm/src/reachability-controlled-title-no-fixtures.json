@@ -1,6 +1,8 @@
 [
-  {"name": "outside", "root": true, "reaches": ["init", "render", "memory"]},
+  {"name": "outside", "root": true, "reaches": ["init", "render", "prepare", "step", "memory"]},
   {"name": "init", "export": "initControlled"},
   {"name": "render", "export": "renderControlled"},
+  {"name": "prepare", "export": "prepareE1M1Controlled"},
+  {"name": "step", "export": "stepNeutralControlled"},
   {"name": "memory", "export": "memory"}
 ]

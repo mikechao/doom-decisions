@@ -1,6 +1,7 @@
 #ifdef DOOM_CONTROLLED_TITLE
 #include "doomstat.h"
 #include "i_timer.h"
+#include "g_game.h"
 #endif
 #include <stdbool.h>
 #include <stdio.h>
@@ -43,7 +44,7 @@ static bool isKeyPressed[UINT8_MAX + 1] = {false};
 uint32_t a1_counts[A1_COUNT_LIMIT];
 #endif
 static struct DB_BytesForAllWads admitted_wads;
-static bool controlled_ready;
+static bool controlled_initialized;
 static bool controlled_busy;
 static bool controlled_attempted;
 void D_Display(void);
@@ -98,7 +99,7 @@ static bool AdmitExternalWad(void) {
 }
 
 int32_t _initializeControlled(void) {
-  if (controlled_busy || controlled_ready || controlled_attempted)
+  if (controlled_busy || controlled_initialized || controlled_attempted)
     return -1;
   controlled_attempted = true;
   controlled_busy = true;
@@ -109,22 +110,45 @@ int32_t _initializeControlled(void) {
   }
   A1_COUNT(A1_ENGINE_CREATE);
   doomgeneric_Create(0, NULL);
-  controlled_ready = D_A1TitleReady() && DG_ScreenBuffer != NULL;
+  controlled_initialized = D_A1TitleReady() && DG_ScreenBuffer != NULL;
   controlled_busy = false;
-  return controlled_ready ? 0 : -3;
+  return controlled_initialized ? 0 : -3;
 }
 
 int32_t renderControlled(void) {
-  if (!controlled_ready || controlled_busy)
+  if (!controlled_initialized || controlled_busy)
     return -1;
   controlled_busy = true;
+  G_A21CheckPassive();
   A1_COUNT(A1_RENDER);
   D_Display();
+  G_A21CheckPassive();
   controlled_busy = false;
   return 0;
 }
 
+int32_t prepareE1M1Controlled(void) {
+  if (!controlled_initialized || controlled_busy) return -1;
+  controlled_busy = true;
+  int status = G_A21Prepare();
+  controlled_busy = false;
+  return status;
+}
+
+int32_t stepNeutralControlled(int32_t input) {
+  if (!controlled_initialized || controlled_busy) return -1;
+  controlled_busy = true;
+  int status = G_A21Step(input);
+  controlled_busy = false;
+  return status;
+}
+
 #ifndef DOOM_A1_NO_FIXTURES
+int32_t a21ReadObservation(int32_t index) {
+  if (controlled_busy) return -1;
+  return G_A21Observe(index);
+}
+
 int32_t a1ReadCounter(int32_t index) {
   if (index >= 0 && index < A1_COUNT_LIMIT)
     return a1_counts[index];
@@ -289,7 +313,7 @@ void DG_SleepMs(uint32_t ms) {
 
 uint64_t DG_GetTicksMs() {
 #ifdef DOOM_CONTROLLED_TITLE
-  return 0;
+  return I_GetTimeMS();
 #else
   return timeInMilliseconds();
 #endif

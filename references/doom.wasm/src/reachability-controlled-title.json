@@ -2,10 +2,13 @@
   {
     "name": "outside",
     "root": true,
-    "reaches": ["init", "render", "counters", "wasi-count", "memory"]
+    "reaches": ["init", "render", "prepare", "step", "observe", "counters", "wasi-count", "memory"]
   },
   {"name": "init", "export": "initControlled"},
   {"name": "render", "export": "renderControlled"},
+  {"name": "prepare", "export": "prepareE1M1Controlled"},
+  {"name": "step", "export": "stepNeutralControlled"},
+  {"name": "observe", "export": "a21ReadObservation"},
   {"name": "counters", "export": "a1ReadCounter"},
   {"name": "wasi-count", "export": "a1WasiInitCount"},
   {"name": "memory", "export": "memory"}
