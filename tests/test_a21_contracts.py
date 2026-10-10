@@ -541,6 +541,7 @@ vm.runInContext(`
         } else if (data.op === 'init') {
           ['wasiInit','cInit','engineCreate','titlePrepare','titleReady'].forEach(k => { state.counters[k] = 1; });
         } else if (data.op === 'prepare') {
+          state.counters.titleReady = 0; // Current title-screen state, not a cumulative init count.
           Object.assign(state.native, {ready: 1, loadComplete: 1, resources: 1, liveActor: 1,
             gameEligible: 1, episode: 1, map: 1, skill: 2, playerstate: 0, health: 100, gamestate: 0, gameaction: 0});
           if (unavailableTurnEvidence) delete state.native.flags;
@@ -560,7 +561,7 @@ vm.runInContext(`
       const pending = runI11();
       for (let i = 0; i < 100 && receipt.activeOperation?.op !== 'action'; ++i)
         await new Promise(resolve => setImmediate(resolve));
-      assert.equal(receipt.activeOperation?.op, 'action');
+      assert.equal(receipt.activeOperation?.op, 'action', receipt.error);
       assert.equal(calls, 1); // Only the refused first-input check reached inert native code.
       if (watchdog) timers.find(timer => timer.pending).callback();
       else i11StopButton.onclick();
@@ -626,6 +627,14 @@ vm.runInContext(`
     assert.equal(actions.at(-2).result.counters.gametic, 14);
     assert.equal(actions.at(-1).result.counters.gametic, 1);
     assert.equal(receipt.operations.filter(op => op.op === 'load-i11').length, 2);
+    const startup = receipt.operations.filter(op => op.op === 'init' || op.op === 'prepare');
+    assert.equal(startup.length, 4); // Both fresh Workers transition from title to E1M1 without tics.
+    for (const op of startup) {
+      assert.equal(op.result.counters.titleReady, op.op === 'init' ? 1 : 0);
+      assert.equal(['gametic', 'leveltime', 'virtualTicks'].every(k => op.result.counters[k] === 0), true);
+      assert.equal(a21Work.every(k => op.result.native[k] === 0), true);
+      assert.equal(op.result.native.virtualMs, 0);
+    }
     assert.equal(receipt.retired, true);
   };
 `, context);

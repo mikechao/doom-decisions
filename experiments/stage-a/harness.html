@@ -1191,8 +1191,9 @@ async function runI11() {
       a21Check(after.status === 0 && a21Work.every(k => after.native[k] === 0) &&
         ['nativeBuild', 'playerEntry', 'worldComplete', 'outerComplete', 'gametic', 'leveltime', 'virtualTicks']
           .every(k => after.counters[k] === 0) && after.native.virtualMs === 0, 'Hidden init/preparation tic');
-      a21Check(['wasiInit', 'cInit', 'engineCreate', 'titlePrepare', 'titleReady']
+      a21Check(['wasiInit', 'cInit', 'engineCreate', 'titlePrepare']
         .every(k => after.counters[k] === 1), 'One-shot init mismatch');
+      a21Check(after.counters.titleReady === (op === 'init' ? 1 : 0), 'Title/E1M1 state mismatch');
       if (op === 'prepare') a21Check(['ready', 'loadComplete', 'resources', 'liveActor', 'gameEligible', 'contributorsValid']
         .every(k => after.native[k] === 1) && after.native.episode === 1 && after.native.map === 1 &&
         after.native.skill === 2 && after.native.playerstate === 0 && after.native.health > 0 &&
