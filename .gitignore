@@ -3,3 +3,8 @@
 /assets/
 /references/doom.wasm/build/
 .DS_Store
+/app/node_modules/
+/app/dist/
+/app/public/doom.wasm
+/app/public/doom-build.json
+/app/public/notices/
