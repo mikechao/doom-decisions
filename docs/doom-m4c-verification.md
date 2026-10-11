@@ -1,6 +1,6 @@
 # M4-C owner-run browser verification
 
-Date: **2026-10-11**. Milestone: **4-C**, [Issue #13](https://github.com/mikechao/doom-decisons/issues/13).
+Date: **2026-10-11**. Milestone: **4-C**, [Issue #13](https://github.com/mikechao/doom-decisions/issues/13).
 
 The **core interactive M4-C product loop is demonstrated in an owner-run Chrome
 trial**: automatic preparation with one mandatory neutral tic, repeated human
@@ -174,7 +174,7 @@ collect sanitized build identity, Worker/frame continuity, final native idle
 snapshots, and Network observations, then exercise targeted failure/lifecycle
 cases. No such execution is authorized or performed by this documentation task.
 Worker source migration remains deferred to
-[Issue #14](https://github.com/mikechao/doom-decisons/issues/14).
+[Issue #14](https://github.com/mikechao/doom-decisions/issues/14).
 
 ## Outcome
 

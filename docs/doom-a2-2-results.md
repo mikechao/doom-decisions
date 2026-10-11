@@ -32,8 +32,8 @@ findings** in these five files: `doomgeneric/include/g_game.h`,
 under `references/doom.wasm/`, plus `tests/test_a21_contracts.py`.
 This review approval does not cover the entire experimental harness.
 
-The original [Issue #4 acceptance](https://github.com/mikechao/doom-decisons/issues/4)
-and [Stage A plan A2](https://github.com/mikechao/doom-decisons/blob/a268837ef89b114966623f58d47bae51e55c0564/docs/doom-stage-a-plan.md#a2--one-ready-tic-native-build-and-rendertime-isolation)
+The original [Issue #4 acceptance](https://github.com/mikechao/doom-decisions/issues/4)
+and [Stage A plan A2](https://github.com/mikechao/doom-decisions/blob/a268837ef89b114966623f58d47bae51e55c0564/docs/doom-stage-a-plan.md#a2--one-ready-tic-native-build-and-rendertime-isolation)
 remain unchanged. Their evidence is reconciled as follows:
 
 | Original requirement | Available support / boundary |
@@ -77,8 +77,8 @@ and the owner update above; its pending protocol is not the current run status.
 Branch `main`; starting HEAD `f309a81c9188fb2b39b4b7ed707ec3648df57f6c`;
 initial `git status --short --untracked-files=all` empty. Investigation and A2.1
 results were read in full. Read-only `gh issue view ... --json number,title,body,state`
-retrieved current [Issue #1](https://github.com/mikechao/doom-decisons/issues/1)
-and [Issue #4](https://github.com/mikechao/doom-decisons/issues/4); both remain open.
+retrieved current [Issue #1](https://github.com/mikechao/doom-decisions/issues/1)
+and [Issue #4](https://github.com/mikechao/doom-decisions/issues/4); both remain open.
 The current roadmap prioritizes native playable stepping, then minimum external
 controls and Decisions. Issue #4 still requires 20 steps, passive rendering,
 time/RNG/gameplay observations and paired waits; it was not amended.
