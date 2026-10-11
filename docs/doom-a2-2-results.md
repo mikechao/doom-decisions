@@ -1,5 +1,7 @@
 # Stage A2.2: twenty explicit native tics and paired waits
 
+**Historical record:** source, harness, test-count and acceptance statements below describe the recorded checkpoints. Native source now lives under `engine/doom/`; the retired harness is in Git history. Historical ignored build evidence under `references/doom.wasm/build/` is unavailable in this checkout and cannot be recovered from Git. See the [app guide](../app/README.md) for current setup. This annotation adds no runtime evidence.
+
 **Owner-reported 20-tic / 2-second Chrome run: LOCAL CHECKS PASS.
 Original paired-run A2/Issue #4 acceptance is NOT ESTABLISHED.** Source checks
 and the sole trace-enabled build previously passed. Prototype closure requires
@@ -31,7 +33,7 @@ under `references/doom.wasm/`, plus `tests/test_a21_contracts.py`.
 This review approval does not cover the entire experimental harness.
 
 The original [Issue #4 acceptance](https://github.com/mikechao/doom-decisons/issues/4)
-and [Stage A plan A2](doom-stage-a-plan.md#a2--one-ready-tic-native-build-and-rendertime-isolation)
+and [Stage A plan A2](https://github.com/mikechao/doom-decisons/blob/a268837ef89b114966623f58d47bae51e55c0564/docs/doom-stage-a-plan.md#a2--one-ready-tic-native-build-and-rendertime-isolation)
 remain unchanged. Their evidence is reconciled as follows:
 
 | Original requirement | Available support / boundary |

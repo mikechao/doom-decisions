@@ -4,7 +4,14 @@
 /references/doom.wasm/build/
 .DS_Store
 /app/node_modules/
+/experiments/m3-e2/node_modules/
 /app/dist/
 /app/public/doom.wasm
 /app/public/doom-build.json
 /app/public/notices/
+*.[wW][aA][dD]
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]

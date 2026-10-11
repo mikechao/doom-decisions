@@ -1,5 +1,7 @@
 # Stage A2.1: E1M1 READY and one neutral tic
 
+**Historical record:** source, harness, test-count and acceptance statements below describe the recorded checkpoints. Native source now lives under `engine/doom/`; the retired harness is in Git history. Historical ignored build evidence under `references/doom.wasm/build/` is unavailable in this checkout and cannot be recovered from Git. See the [app guide](../app/README.md) for current setup. This annotation adds no runtime evidence.
+
 **Verdict: build verified; the core owner Chrome experiment PASS: zero-tic native
 READY, one neutral native tic, and actual level rendering without extra work.**
 Two supplemental checks remain PENDING: non-neutral refusal while READY and

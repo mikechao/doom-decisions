@@ -31,11 +31,10 @@ npm --prefix app ci --no-audit --no-fund
 ./build.sh
 ```
 
-In agent sessions, obtain owner approval before dependency resolution/downloads,
-installation, builds, servers, or browser execution. This requirement comes from
-AGENTS.md and the M4-C implementation prompt. Tests/checks also require separate
-execution authorization for this change. Source inspection alone does not verify
-a build.
+In agent sessions, follow [AGENTS.md](../AGENTS.md) and task-specific execution
+authorizations. Obtain owner approval before dependency resolution/downloads,
+installation, builds, servers, browser execution or billable API calls.
+Source inspection alone does not verify a build.
 
 The default build invokes only `scripts/build_doom.py --profile controlled-title
 --jobs 2 --timeout 120` with fixtures enabled and no embedded WAD. Default tool
@@ -57,8 +56,10 @@ fixtures, absent embedded IWAD, bytes/hash, source-input fingerprint, and typed
 interface with `scripts/inspect_doom.mjs`. It stages `doom.wasm`, a sanitized
 `doom-build.json`, and licenses under ignored `app/public/`. Vite copies these
 to `app/dist/`; the handoff verifies the emitted bytes and refuses `.wad` files.
-All binary/output directories and dependencies are ignored. Historical ignored
-builds remain untouched and are never selected as fallback inputs.
+Generated app/native outputs and installed dependencies are ignored. Historical
+ignored builds are never selected as fallback inputs; old `references/doom.wasm/build/`
+receipts cited in evidence records are unavailable in this checkout. Tracked
+upstream example assets remain subject to the vendor-provenance caveats below.
 
 For subsequent frontend-only changes:
 
@@ -164,8 +165,11 @@ acceptance procedure, **not evidence of a completed M4-C runtime trial**.
 Record the generated WASM size/hash and manifest path. Compare the hash with the
 preflight reference `cc86ed8884ec04dbace3c541e8528a9f91839b79816cc79ce988af939d42dcb8`
 (360,156 bytes), without treating it as a fixed requirement for modified engines.
-See the historical [M4-B verification record](../docs/doom-m4b-verification.md)
-for owner-reported baseline results; it does not establish M4-C acceptance.
+See the [M4-C verification record](../docs/doom-m4c-verification.md) for the
+owner-reported 14 successful decisions and five supplied receipt summaries,
+including their evidence limits. The historical
+[M4-B verification record](../docs/doom-m4b-verification.md) covers the earlier
+preparation baseline. Neither record establishes uncollected runtime proof.
 Builds/static inspection do not establish Chrome, native or API runtime success.
 
 ## Static checks and source boundary
@@ -193,8 +197,8 @@ exercise DOM wiring, real SDK calls, real Workers or native WASM execution.
 `biome.json` includes app source TypeScript (including `.d.ts`), app-owned
 JavaScript and CSS, `biome.json`, `package.json`, both TypeScript configs, and
 `vite.config.js`. It force-ignores `dist/`, `public/`, `node_modules/`, and
-`package-lock.json`. The app-owned Worker is checked and formatted normally. Historical
-experiments, vendored engine code, and root scripts are outside this scope.
+`package-lock.json`. The app-owned Worker is checked and formatted normally.
+Vendored engine code and root scripts are outside this scope.
 
 ```sh
 bash -n build.sh
@@ -208,7 +212,8 @@ git diff --check
 Worker constructor and explicit ES output format. `worker-shared.ts` contains
 receipt types and one native step verifier reused by the Worker and controller;
 importing it starts no Worker. There is no raw-source/Blob assembly or experiment
-file dependency. Historical experiments and native engine semantics are unchanged.
+file dependency. Retired experiments are available in Git history; native engine
+semantics are unchanged.
 
 `tsconfig.json` checks the DOM controller and shared code; `tsconfig.worker.json`
 checks the Worker and shared code with WebWorker globals. Explicit `.ts` imports

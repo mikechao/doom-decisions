@@ -38,7 +38,7 @@ served build. Only this document was created for this task. No installs, checks 
 tests of the app, builds, servers, browsers, or API requests were run for this note;
 no staging, commits, pushes, or issue changes were made.
 
-The [M4-C investigation](doom-m4c-investigation.md) is a historical proposal, not
+The earlier M4-C investigation was a proposal, not
 the implemented acceptance record. The [M4-B verification](doom-m4b-verification.md)
 provides the evidence conventions and earlier baseline results; its hashes,
 browser version, and network/idle evidence are not evidence for this M4-C trial.
@@ -186,3 +186,14 @@ above. Milestone acceptance remains with the owner; this record neither closes
 Issue #13 nor establishes uncollected runtime proof. Any remaining acceptance
 decision is whether the documented core-loop demonstration is sufficient or the
 specific missing continuity/idle/network evidence is required first.
+
+## Later status — 2026-10-11
+
+The owner accepted the reduced v0.1.0 MVP scope described above. Worker migration,
+reported as deferred in the original record, was subsequently completed in
+commit `a268837ef89b114966623f58d47bae51e55c0564` (#14): the app now packages
+`app/src/worker.ts` as a Vite ES module Worker with shared receipt code in
+`app/src/worker-shared.ts`. Retired experiments and superseded plans are in Git
+history. This status annotation adds no Chrome/API evidence and does not fill
+the trial's uncollected proofs. See the [app guide](../app/README.md) for current
+setup and controls.

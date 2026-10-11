@@ -1,6 +1,8 @@
 # Doom/WASM vendor provenance
 
-Current location (2026-10-10 relocation): the actively maintained source is now `engine/doom/`. All 234 tracked files, including local modifications, licenses/notices, and tracked example assets, were relocated without content changes. The import paths, tree IDs, counts, and publication status below are historical records of the original import, not claims about the current tree. Ignored build artifacts remain at `references/doom.wasm/build/`; relocation does not re-establish their binary provenance or redistribution clearance.
+Current location (2026-10-10 relocation): the actively maintained source is now `engine/doom/`. All 234 tracked files, including local modifications, licenses/notices, and tracked example assets, were relocated without content changes in commit `cd97907bbaafeb9b16fddbf68df60c38ce07d20b`. The original import was committed in `8b281ef`; these are ordinary root-repository files, with no submodule initialization required. Historical ignored artifacts at `references/doom.wasm/build/` were not relocated and are unavailable in this checkout. They were never tracked and cannot be recovered from Git. New outputs and evidence belong under `engine/doom/build/`; see the [build guide](doom-build.md). Relocation does not re-establish binary provenance or redistribution clearance.
+
+The import paths, tree IDs, counts, and then-pending publication statements below describe the original import checkpoint, not the current modified tree or a current remote-publication assessment.
 
 The files under `references/doom.wasm/` were imported on **2026-10-08** from [jacobenget/doom.wasm](https://github.com/jacobenget/doom.wasm) at pinned commit **`31cc1af9656a8184830090c4e9f268383f5d7e15`**. This is a direct vendor import of the checked-out source, not a fork, submodule, or patch series. The owner has not yet committed or pushed this root-repository change.
 
@@ -15,6 +17,10 @@ The original `.git` pointer was copied to a local recovery directory outside the
 After the owner commits and pushes the root change, a fresh clone of that root revision will receive the vendored files as normal tracked files. It will not need `git submodule update`. This local import is not yet published.
 
 ## Third-party asset and license notes
+
+The paths below are relative to today's `engine/doom/`. The tracked assets remain
+unchanged; the app's controlled build does not embed or ship them. Their
+redistribution status is still unresolved, separately from repository cleanup.
 
 The upstream tree includes its `LICENSE` and per-file copyright notices. Those notices cover source code where indicated; they do not establish redistribution rights for every bundled binary asset.
 

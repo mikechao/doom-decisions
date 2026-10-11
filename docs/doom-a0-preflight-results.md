@@ -1,5 +1,7 @@
 # Stage A0 preflight results — technical PASS; cleanup complete
 
+**Historical record:** paths, authorization and publication statements below describe the A0 checkpoint. Current setup is in the [app guide](../app/README.md); retired plans are in Git history. This annotation adds no new experimental evidence.
+
 **Stage A0 / [Issue #2](https://github.com/mikechao/doom-decisons/issues/2), 2026-10-08: TECHNICAL A0 PASS, with an owner-accepted WP4 procedural deviation; A1 remains separately unauthorized.** The owner accepts the remaining WP4 evidence and network-isolation limitations for this local-only experiment. Network isolation was not independently established, so the original B1 no-network restriction cannot be claimed as satisfied; this is recorded as an accepted procedural deviation, not verified compliance. The missing screenshot and complete local JSON are accepted as non-blocking evidence limitations. This documentation records the owner's disposition and reconciles existing evidence; it performs no new preflight experiment. The historical evidence-consolidation baseline was `main` at **`292e9ceb57255e0df76bd8996a9ad37132b04186`**, with an initially clean worktree and index. Earlier run HEADs below are also historical. Prior plan/ignore edits were committed in that HEAD. This cleanup documentation update started on clean `main` at `0e4a7549d92c71ad1756f12d637931d17bc4187c`, rechecked locally. Current root ignore rules are `/tools/`, `/.a0-preflight/`, and `/assets/`.
 
 | Prerequisite | Reconciled outcome | Evidence boundary |
@@ -9,7 +11,7 @@
 | WP2: Freedoom Phase 1 admission | **Observed static PASS**, local-only | Publisher checksum, retained notices, safe ZIP and IWAD reports; runtime compatibility untested |
 | WP4: Chrome Blob Worker | **Owner/manual observed technical PASS; procedural deviation accepted by owner** | Review extract and launch records reconciled before scratch removal; no independent browser observation or complete local raw JSON; network isolation unverified and B1 no-network condition not claimed as satisfied |
 
-Together, the four prerequisite results establish **technical A0 PASS** with the owner-accepted WP4 limitations above. This is not a claim of verified B1 network compliance, and it does not authorize A1. Scope, authorization history, owner disposition and completed cleanup remain in the [A0 preflight plan](doom-a0-preflight-plan.md); later experiments remain in the [Stage A plan](doom-stage-a-plan.md).
+Together, the four prerequisite results establish **technical A0 PASS** with the owner-accepted WP4 limitations above. This is not a claim of verified B1 network compliance, and it does not authorize A1. The scope, authorization history and cleanup described here belong to that checkpoint; its superseded plans are retained in Git history.
 
 ## Source provenance
 

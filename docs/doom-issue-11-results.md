@@ -1,5 +1,7 @@
 # Issue #11: minimal native controls Chrome results
 
+**Historical record:** source, harness, test-count and acceptance statements below describe the recorded checkpoints. Native source now lives under `engine/doom/`; the retired harness is in Git history. Historical ignored build evidence under `references/doom.wasm/build/` is unavailable in this checkout and cannot be recovered from Git. See the [app guide](../app/README.md) for current setup. This annotation adds no runtime evidence.
+
 **Chrome prepared-script validation: PASS. Owner acceptance is recommended,
 not declared.** The saved receipt establishes 15 completed native gameplay tics
 across two fresh Workers, six-input command consumption, real movement and
@@ -27,7 +29,7 @@ verified steps, four refused native step requests, and ten embedded Canvas PNGs.
 | Standalone owner PNG | 96,515 bytes; file SHA-256 `408402deab92f00981f70ed2e0e9e4deb2a7d0190f81cbebffb2d9c81c786d8c`; decoded size 640×400. |
 | Final WASM | Browser filename `doom-issue-11.wasm`; 360,156 bytes; SHA-256 `cc86ed8884ec04dbace3c541e8528a9f91839b79816cc79ce988af939d42dcb8`. Both Worker loads match the receipt's expected hash and the existing final `references/doom.wasm/build/issue-11-first-trace/doom.wasm`. |
 | External IWAD | Browser filename `freedoom1.wad`; 28,795,076 bytes; SHA-256 `7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d`. Both loads match local `assets/freedoom-0.13.0/freedoom1.wad` (Freedoom Phase 1). This is not a proprietary Doom shareware IWAD. |
-| Build evidence | Existing [manifest](../references/doom.wasm/build/issue-11-first-trace/evidence/manifest.json), status `BUILD PASS`, started `2026-10-10T19:08:48.668748+00:00`, profile `controlled-title`, diagnostics/fixtures enabled. Build source HEAD `b1cef3ca5e25f489e7965988283c3451aca32203` (`b1cef3c`), clean source status and empty local patch. |
+| Build evidence | Recorded manifest (`references/doom.wasm/build/issue-11-first-trace/evidence/manifest.json`; unavailable locally), status `BUILD PASS`, started `2026-10-10T19:08:48.668748+00:00`, profile `controlled-title`, diagnostics/fixtures enabled. Build source HEAD `b1cef3ca5e25f489e7965988283c3451aca32203` (`b1cef3c`), clean source status and empty local patch. |
 | Corrected harness | HEAD `7c93aa863ccebb481370ef3c72c11acf4686b7fc` (`7c93aa8`), `fix: correct title readiness check in Issue 11 harness`. Only harness/tests differ from build HEAD; native build sources are unchanged. |
 
 The first owner attempt stopped before gameplay because the harness required
@@ -192,8 +194,8 @@ cleanup. This is not a complete deterministic world/replay checksum.
 ## Acceptance recommendation and scoped waiver proposal
 
 **Recommend owner acceptance of the agreed minimal-control prototype scope.**
-The [investigation](doom-issue-11-investigation.md) and supplied implementation
-scope distinguish native input consumption from guaranteed shots/door effects.
+The supplied investigation and implementation scope distinguish native input
+consumption from guaranteed shots/door effects.
 Decisions integration belongs to Milestone 3. The successful Chrome observations
 above are PASS; the following browser coverage remains **INCONCLUSIVE**, not
 silently passed:

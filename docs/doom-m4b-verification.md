@@ -1,5 +1,7 @@
 # M4-B implementation and verification
 
+**Historical record:** the uncommitted status, package versions, copied Worker and Prepare button below describe M4-B at the time. The current app uses an app-owned Vite module Worker and automatic IWAD preparation; see the [app guide](../app/README.md) and [M4-C record](doom-m4c-verification.md). This annotation adds no browser/API evidence.
+
 Date: 2026-10-10. Initial checkout: `cd97907bbaafeb9b16fddbf68df60c38ce07d20b`;
 initial `git status --short` was empty. Implementation is local, uncommitted.
 Historical experiments, C/native sources, and `scripts/build_doom.py` are unchanged.
