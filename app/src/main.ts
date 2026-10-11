@@ -8,14 +8,18 @@ import {
   validateChoice,
   verifyAction,
 } from './decision';
-import rawWorker from './worker-boundary.js?raw';
 import type {
   Counters,
   NativeObservation,
   NativeWork,
   Observation,
-} from './worker-boundary.js';
-import { classicWorkerSource } from './worker-source.js';
+  Operation,
+  Reply,
+  RequestExtra,
+  Results,
+  StatusObservation,
+  Success,
+} from './worker-shared.ts';
 import './style.css';
 
 type Elements = {
@@ -97,39 +101,6 @@ type SdkProbe = {
   decisionsCreateAvailable: true;
   requestsEnabled: true;
 };
-type StatusObservation = Observation & { status: number | null };
-type Results = {
-  'load-i11': Observation & { wasmSha256: string; wadSha256: string };
-  init: StatusObservation;
-  prepare: StatusObservation;
-  snapshot: Observation;
-  render: StatusObservation & {
-    dimensions?: { width: number; height: number };
-    frameSha256?: string;
-  };
-  action: StatusObservation & {
-    mask: number;
-    requestedTics: number;
-    completedTics: number;
-    outcome: 'APPLIED' | 'REFUSED' | 'FAULT';
-    steps: StatusObservation[];
-  };
-};
-type Operation = keyof Results;
-type RequestExtra = {
-  'load-i11': { wasm: ArrayBuffer; wad: ArrayBuffer; expectedWasmHash: string };
-  action: { mask: number; tics: number };
-};
-type Success<O extends Operation> = {
-  ok: true;
-  op: O;
-  elapsedMs: number;
-  result: Results[O];
-  pixels?: ArrayBuffer;
-};
-type Reply<O extends Operation> =
-  | Success<O>
-  | { ok: false; op: O; error?: unknown };
 type Frame = { tic: number; nativeSha256: string; canvasSha256: string };
 type DecisionEntry = {
   number: number;
@@ -183,7 +154,6 @@ type Run = {
   apiController?: AbortController;
   evidence: Evidence;
   worker?: Worker | null;
-  url?: string | null;
   cancel?: ((error: Error) => void) | null;
   last?: Observation;
 };
@@ -245,8 +215,6 @@ function retire(run: Run) {
   $('#key').value = '';
   run.worker?.terminate();
   run.worker = null;
-  if (run.url) URL.revokeObjectURL(run.url);
-  run.url = null;
   run.cancel?.(Error('Worker retired; pending completion unknown.'));
 }
 function passiveCheck(before: Observation, after: Observation) {
@@ -256,7 +224,7 @@ function passiveCheck(before: Observation, after: Observation) {
     'Passive operation changed native work, commands or time.',
   );
 }
-function healthy(result: Observation) {
+function healthy(result: Pick<Observation, 'logs' | 'logsTruncated'>) {
   check(
     !result.logsTruncated && !result.logs?.some((log) => log.kind === 'error'),
     'Native diagnostics reported an error or truncation.',
@@ -469,7 +437,8 @@ async function action(
       : 'Native action incomplete or game no longer ready; reload to restart.',
   );
   assertCurrent(run);
-  run.last = result;
+  // verifyAction.complete established the final native observation and counters.
+  run.last = result as Observation;
 }
 
 const deadlineMs = 10000;
@@ -844,10 +813,9 @@ async function prepare() {
       current === run && run.valid,
       'Preparation invalidated during asset verification.',
     );
-    run.url = URL.createObjectURL(
-      new Blob([classicWorkerSource(rawWorker)], { type: 'text/javascript' }),
-    );
-    run.worker = new Worker(run.url); // Classic Worker; raw function names stay intact.
+    run.worker = new Worker(new URL('./worker.ts', import.meta.url), {
+      type: 'module',
+    });
     const { result: loaded } = await request(
       run,
       'load-i11',

@@ -122,8 +122,9 @@ python3 -m http.server 8000 --bind 127.0.0.1 --directory "$SMOKE_DIR"
 
 Open `http://127.0.0.1:8000/` in Chrome. Use loopback or HTTPS for Web Crypto.
 Relative Vite URLs also support hosting beneath a path prefix. The app uses local
-static assets and one classic Blob Worker. The only CSP change for M4-C permits
-OpenAI API connections; other restrictions remain. The noncredential SDK probe
+static assets and one Vite-packaged ES module Worker. CSP permits same-origin
+Workers and OpenAI API connections. Inspect any Worker response CSP headers as
+well as the page policy. The noncredential SDK probe
 uses rejecting fetch and never invokes `decisions.create`.
 
 1. Confirm SDK **7.32.0** and `decisions.create` available. Inspect Console/Network;
@@ -180,8 +181,9 @@ node --experimental-strip-types app/tests/decision.mjs
 
 `npm --prefix app run lint` checks without writing.
 **`npm --prefix app run format` writes changes** to included files.
-`check` runs TypeScript, Worker integrity, and non-writing Biome lint/format checks
-in sequence, stopping on failure. Builds retain their existing checks and never
+`check` runs DOM and Worker TypeScript checks, static Worker packaging/import
+checks, an offline Worker entry smoke, and non-writing Biome lint/format checks
+in sequence, stopping on failure. Builds retain their asset checks and never
 format source automatically. The tiny offline script uses Node assertions and the
 actual admission/fence, choice validator and receipt verifier. It covers frozen N,
 double admission, stale identities, invalid choices, synthetic 1 → 3 → 8 chains,
@@ -189,10 +191,9 @@ partial/fault/missing receipts and reported-versus-verified mismatches. It does 
 exercise DOM wiring, real SDK calls, real Workers or native WASM execution.
 
 `biome.json` includes app source TypeScript (including `.d.ts`), app-owned
-JavaScript and CSS, `biome.json`, `package.json`, `tsconfig.json`, and
-`vite.config.js`. It force-ignores `src/worker-boundary.js`, `dist/`, `public/`,
-`node_modules/`, and `package-lock.json`. The raw Worker payload is excluded from
-linting, formatting, and writes; its declaration file remains checked. Historical
+JavaScript and CSS, `biome.json`, `package.json`, both TypeScript configs, and
+`vite.config.js`. It force-ignores `dist/`, `public/`, `node_modules/`, and
+`package-lock.json`. The app-owned Worker is checked and formatted normally. Historical
 experiments, vendored engine code, and root scripts are outside this scope.
 
 ```sh
@@ -203,23 +204,25 @@ npm --prefix app run check
 git diff --check
 ```
 
-The Worker is a verbatim app-local copy of
-`experiments/m3-e3/worker-boundary.js`. Vite imports it as raw text; only the exact
-single export wrapper is removed before appending `titleWorker();`. The static
-check compares source bytes with the accepted experiment, validates wrapper
-removal, and parses the classic payload without execution. Normal module imports
-provide the independent main-thread step verifier. The raw payload never uses
-bundler-transformed `Function.prototype.toString()`. Historical experiments and
-native engine semantics are unchanged.
+`src/worker.ts` is the sole app-owned Worker entrypoint, loaded with Vite's literal
+Worker constructor and explicit ES output format. `worker-shared.ts` contains
+receipt types and one native step verifier reused by the Worker and controller;
+importing it starts no Worker. There is no raw-source/Blob assembly or experiment
+file dependency. Historical experiments and native engine semantics are unchanged.
 
-`worker-boundary.js` intentionally remains JavaScript byte-for-byte, because its
-raw text is the classic Blob Worker payload. `worker-source.js` also stays plain
-JavaScript so the Node static check can import it directly. Small adjacent `.d.ts`
-files describe the verifier/receipt and source-wrapper boundaries without
-transpiling or rewriting either runtime file. Worker replies enter as `unknown`;
-the controller checks the operation envelope and uses the preserved Worker's
-declared receipt contract, then retains the native completion/hash/idle checks.
-These declarations do not establish runtime payload validity or browser success.
+`tsconfig.json` checks the DOM controller and shared code; `tsconfig.worker.json`
+checks the Worker and shared code with WebWorker globals. Explicit `.ts` imports
+also resolve in the offline Node strip-types tests. The packaging check parses
+stripped source with Vite's already-installed parser and checks the constructor,
+ES format, CSP and import boundary. The offline entry smoke imports the actual
+modules, checks that only the entry installs a handler, and checks retirement on
+a removed operation, without instantiating WASM or creating a real Worker.
+
+Worker replies enter the controller as `unknown`; it checks the operation
+envelope and uses the shared receipt contract while retaining native
+completion/hash/idle checks. Types, offline checks and production builds do not
+establish Chrome, native gameplay or authenticated API success. Follow the
+owner-run procedure above after separate browser/server and billed-call approval.
 
 ## Licenses and deployment
 

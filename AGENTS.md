@@ -37,8 +37,8 @@ Legacy upstream `all`, `doom`, example, dev-init, clean, and hook targets requir
 
 With dependencies already installed, app checks are:
 
-- `npm --prefix app run check`: TypeScript checking, static Worker integrity, then non-writing Biome lint/format checks.
-- `npm --prefix app run typecheck`: `tsc --noEmit`.
+- `npm --prefix app run check`: DOM and Worker TypeScript checking, static Worker packaging/import checks, offline Worker entry smoke, then non-writing Biome lint/format checks.
+- `npm --prefix app run typecheck`: `tsc --noEmit` for the DOM config and `tsconfig.worker.json`.
 - `npm --prefix app run lint`: `biome lint .`, without writes.
 - `npm --prefix app run format`: `biome format --write .` — **writes files**.
 
@@ -48,7 +48,7 @@ With dependencies already installed, app checks are:
 
 Match the surrounding code. Reference C code uses LLVM clang-format style with two-space indentation; `.clang-format` disables include sorting because ordering matters. Python helpers use snake_case names; the WebAssembly API uses names such as `tickGame` and `reportKeyDown`.
 
-Biome is the app's linter/formatter. **Do not format, convert to TypeScript, or casually transform `app/src/worker-boundary.js`.** It is byte-identical to the accepted `experiments/m3-e3/worker-boundary.js` and supplies the raw-source classic Blob Worker payload. `scripts/check_worker.mjs` checks the copy, narrowly validated export-wrapper removal, and classic payload parsing without execution. Biome excludes this file; adjacent `.d.ts` declarations supply typing. `worker-source.js` also remains JavaScript for direct Node checking. Preserve native initialization, step verification, passive rendering/snapshots, and idle-state contracts.
+Biome is the app's linter/formatter, including the app-owned `app/src/worker.ts`. Vite packages this entry as an ES module Worker; the controller uses the literal `new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })` form. `worker-shared.ts` owns side-effect-free receipt types and the native step verifier used by both contexts. Never import executable Worker startup code into the main thread or serialize functions into Worker source. `scripts/check_worker.mjs` checks the constructor, ES output setting, CSP, and import boundary without executing the Worker. The tiny offline entry smoke checks module imports and unknown-operation retirement without native WASM. Historical experiment files remain intact and are not app build/check dependencies. Preserve native initialization, step verification, passive rendering/snapshots, and idle-state contracts.
 
 Use the smallest useful experiment and Codex for bounded investigations, implementations, and reviews. Keep changes focused and preserve proven engine/Worker behavior. Vendored hooks can download tools or alter tracked files; inspect their effects before running them.
 

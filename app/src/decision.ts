@@ -1,5 +1,5 @@
-import type { Observation } from './worker-boundary.js';
-import { i11VerifyStep } from './worker-boundary.js';
+import type { Observation } from './worker-shared.ts';
+import { i11VerifyStep } from './worker-shared.ts';
 
 export const masks = Object.freeze({
   neutral: 0,
