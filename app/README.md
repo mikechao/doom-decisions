@@ -1,6 +1,8 @@
 # Doom Decisions M4-B
 
-Vanilla JavaScript, Vite **7.3.6**, plain CSS, and official **openai 7.32.0**.
+Vanilla DOM APIs with TypeScript **7.0.2**, Vite **8.3.4**, plain CSS, and official
+**openai 7.32.0**. The HTML entry loads `src/main.ts`; TypeScript checks types
+without emitting JavaScript, and Vite owns bundling.
 M4-B packages/prepares Doom and executes exactly one neutral tic. It makes no
 Decisions request, takes no API key, and has no gameplay loop or stepping UI.
 
@@ -59,7 +61,9 @@ This skips engine compilation and reuses only the current verified M4-B artifact
 Missing files/evidence, changed engine inputs, mismatched bytes, or failed
 interface checks require a full `./build.sh`. A clean checkout has no current
 artifact and cannot use frontend-only mode first. Changed frontend dependencies
-require `npm ci` again. Every failure exits nonzero; an old `app/dist/` may still
+require `npm ci` again. The app build runs `npm run typecheck` before `vite build`
+and retains the staging/output verification; the root wrapper also checks Worker
+packaging. Every failure exits nonzero; an old `app/dist/` may still
 exist after an early failure and is **not** a successful new build. Concurrent
 builds in one checkout are unsupported.
 
@@ -115,9 +119,9 @@ run. Builds/static inspection do not establish Chrome or native runtime success.
 
 ```sh
 bash -n build.sh
-node --check app/src/main.js
+npm --prefix app run typecheck
 node --check scripts/stage_web.mjs
-node scripts/check_worker.mjs
+npm --prefix app run check
 git diff --check
 ```
 
@@ -129,6 +133,15 @@ removal, and parses the classic payload without execution. Normal module imports
 provide the independent main-thread step verifier. The raw payload never uses
 bundler-transformed `Function.prototype.toString()`. Historical experiments and
 native engine semantics are unchanged.
+
+`worker-boundary.js` intentionally remains JavaScript byte-for-byte, because its
+raw text is the classic Blob Worker payload. `worker-source.js` also stays plain
+JavaScript so the Node static check can import it directly. Small adjacent `.d.ts`
+files describe the verifier/receipt and source-wrapper boundaries without
+transpiling or rewriting either runtime file. Worker replies enter as `unknown`;
+the controller checks the operation envelope and uses the preserved Worker's
+declared receipt contract, then retains the native completion/hash/idle checks.
+These declarations do not establish runtime payload validity or browser success.
 
 ## Licenses and deployment
 

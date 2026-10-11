@@ -7,13 +7,15 @@
     "node": "22.20.0"
   },
   "scripts": {
-    "build": "node ../scripts/stage_web.mjs verify public && vite build && node ../scripts/stage_web.mjs verify dist",
+    "build": "node ../scripts/stage_web.mjs verify public && npm run typecheck && vite build && node ../scripts/stage_web.mjs verify dist",
+    "typecheck": "tsc --noEmit",
     "check": "node ../scripts/check_worker.mjs"
   },
   "dependencies": {
     "openai": "7.32.0"
   },
   "devDependencies": {
+    "typescript": "7.0.2",
     "vite": "8.3.4"
   }
 }
