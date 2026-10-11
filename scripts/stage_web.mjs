@@ -32,6 +32,9 @@ function inputs() {
   })));
 }
 function artifact(selected) {
+  const viteVersion = read(path.join(root, 'app/package.json')).devDependencies?.vite;
+  check(typeof viteVersion === 'string' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(viteVersion),
+    'app/package.json devDependencies.vite must be an exact x.y.z version pin.');
   check(selected.inputsSha256 === inputs(), 'Engine inputs changed; run ./build.sh.');
   check(typeof selected.output === 'string' && selected.output.startsWith('engine/doom/build/m4b-runs/'),
     'Current artifact must be an M4-B engine build. Run ./build.sh.');
@@ -55,7 +58,7 @@ function artifact(selected) {
   check(same(inspected, manifest.interface), 'Static interface differs from build receipt.');
   return {bytes, metadata: {profile: manifest.profile, a1Fixtures: true, embeddedIwad: false,
     bytes: bytes.length, sha256: inspected.sha256, engineInputsSha256: selected.inputsSha256,
-    sourceHead: manifest.sources.head, sdkVersion: '7.32.0', viteVersion: '7.3.6',
+    sourceHead: manifest.sources.head, sdkVersion: '7.32.0', viteVersion,
     interface: {imports: inspected.imports, exports: inspected.exports}}};
 }
 function current() {
@@ -98,7 +101,7 @@ try {
   else if (command === 'stage') {
     const selected = output ? {output: path.relative(root, path.resolve(output)), inputsSha256: expected} : current();
     const {bytes, metadata} = artifact(selected);
-    for (const [name, version] of [['openai', '7.32.0'], ['vite', '7.3.6']]) {
+    for (const [name, version] of [['openai', '7.32.0'], ['vite', metadata.viteVersion]]) {
       check(read(path.join(root, 'app/node_modules', name, 'package.json')).version === version,
         `Run npm --prefix app ci; require ${name}@${version}.`);
     }

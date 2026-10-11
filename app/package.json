@@ -3,11 +3,17 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": "22.20.0" },
+  "engines": {
+    "node": "22.20.0"
+  },
   "scripts": {
     "build": "node ../scripts/stage_web.mjs verify public && vite build && node ../scripts/stage_web.mjs verify dist",
     "check": "node ../scripts/check_worker.mjs"
   },
-  "dependencies": { "openai": "7.32.0" },
-  "devDependencies": { "vite": "7.3.6" }
+  "dependencies": {
+    "openai": "7.32.0"
+  },
+  "devDependencies": {
+    "vite": "8.3.4"
+  }
 }
