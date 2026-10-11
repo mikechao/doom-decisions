@@ -117,6 +117,27 @@ run. Builds/static inspection do not establish Chrome or native runtime success.
 
 ## Static checks and source boundary
 
+Biome **2.5.15** is the app's sole linter and formatter, exact-pinned in the
+app-local package and lockfile. Run from the repository root:
+
+```sh
+npm --prefix app run lint
+npm --prefix app run format
+npm --prefix app run check
+```
+
+`lint` checks without writing. **`format` writes changes** to included files.
+`check` runs TypeScript, Worker integrity, and non-writing Biome lint/format checks
+in sequence, stopping on failure. Builds retain their existing checks and never
+format source automatically.
+
+`biome.json` includes app source TypeScript (including `.d.ts`), app-owned
+JavaScript and CSS, `biome.json`, `package.json`, `tsconfig.json`, and
+`vite.config.js`. It force-ignores `src/worker-boundary.js`, `dist/`, `public/`,
+`node_modules/`, and `package-lock.json`. The raw Worker payload is excluded from
+linting, formatting, and writes; its declaration file remains checked. Historical
+experiments, vendored engine code, and root scripts are outside this scope.
+
 ```sh
 bash -n build.sh
 npm --prefix app run typecheck

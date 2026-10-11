@@ -1,12 +1,53 @@
-:root { font: 16px/1.5 system-ui, sans-serif; color: #eee; background: #181818; }
-body { margin: 0; }
-main { max-width: 850px; margin: 2rem auto; padding: 0 1rem; }
-h1 { line-height: 1.2; }
-label { display: block; font-weight: 600; }
-input { max-width: 100%; margin-top: .5rem; }
-button { font: inherit; padding: .5rem 1rem; cursor: pointer; }
-button:disabled { cursor: default; }
-canvas { display: block; width: 640px; max-width: 100%; height: auto; background: #000; }
-pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .85rem; }
-a { color: #9cd0ff; }
-:focus-visible { outline: 3px solid #9cd0ff; outline-offset: 3px; }
+:root {
+  font:
+    16px / 1.5 system-ui,
+    sans-serif;
+  color: #eee;
+  background: #181818;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 850px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+h1 {
+  line-height: 1.2;
+}
+label {
+  display: block;
+  font-weight: 600;
+}
+input {
+  max-width: 100%;
+  margin-top: 0.5rem;
+}
+button {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+}
+canvas {
+  display: block;
+  width: 640px;
+  max-width: 100%;
+  height: auto;
+  background: #000;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+}
+a {
+  color: #9cd0ff;
+}
+:focus-visible {
+  outline: 3px solid #9cd0ff;
+  outline-offset: 3px;
+}
