@@ -26,9 +26,11 @@ type Elements = {
   '#screen': HTMLCanvasElement;
   '#iwad': HTMLInputElement;
   '#key': HTMLInputElement;
+  '#key-state': HTMLParagraphElement;
   '#tics': HTMLInputElement;
   '#next': HTMLButtonElement;
   '#history': HTMLOListElement;
+  '#history-empty': HTMLParagraphElement;
   '#sdk': HTMLParagraphElement;
   '#status': HTMLParagraphElement;
   '#frame': HTMLParagraphElement;
@@ -178,6 +180,133 @@ function assertCurrent(run: Run): asserts run is Run & { worker: Worker } {
     'Game retired; no further native calls.',
   );
 }
+const actionNames: readonly ActionName[] = Object.keys(masks) as ActionName[];
+const percentage = new Intl.NumberFormat('en', {
+  style: 'percent',
+  maximumSignificantDigits: 4,
+});
+function probabilityText(value: number) {
+  // Scientific notation keeps tiny positive values visible instead of showing 0%.
+  return value > 0 && value < 0.000001
+    ? `${(value * 100).toExponential(2)}%`
+    : percentage.format(value);
+}
+function decisionStatus(entry: DecisionEntry) {
+  if (entry.status === 'Complete') {
+    return entry.execution?.complete && entry.result
+      ? 'Completed · verified and rendered'
+      : 'Completion evidence unavailable';
+  }
+  if (entry.action && entry.status === 'Requesting one action')
+    return 'Choice received; checking unchanged game state';
+  return entry.status;
+}
+function choicePending(entry: DecisionEntry) {
+  return (
+    entry.status === 'Capturing current frame' ||
+    entry.status === 'Requesting one action'
+  );
+}
+function createHistoryRow(number: number) {
+  const item = document.createElement('li');
+  item.id = `decision-${number}`;
+  item.value = number;
+  const details = document.createElement('details');
+  const summary = document.createElement('summary');
+  const heading = document.createElement('span');
+  heading.className = 'decision-heading';
+  const latency = document.createElement('span');
+  latency.className = 'decision-latency';
+  const status = document.createElement('span');
+  status.className = 'decision-status';
+  summary.append(heading, latency, status);
+  const content = document.createElement('div');
+  content.className = 'probability-content';
+  const title = document.createElement('p');
+  title.className = 'probability-title';
+  title.textContent = 'Action probabilities';
+  const unavailable = document.createElement('p');
+  unavailable.textContent = 'Action probabilities unavailable.';
+  const probabilities = document.createElement('ul');
+  probabilities.className = 'probabilities';
+  const options = actionNames.map((action) => {
+    const row = document.createElement('li');
+    const label = document.createElement('span');
+    const value = document.createElement('span');
+    value.className = 'probability-value';
+    row.append(label, value);
+    probabilities.append(row);
+    return { action, row, label, value };
+  });
+  const technical = document.createElement('details');
+  technical.className = 'receipt';
+  const technicalSummary = document.createElement('summary');
+  technicalSummary.textContent = 'Technical receipt';
+  const receipt = document.createElement('pre');
+  technical.append(technicalSummary, receipt);
+  content.append(title, unavailable, probabilities, technical);
+  details.append(summary, content);
+  item.append(details);
+  return {
+    item,
+    heading,
+    latency,
+    status,
+    unavailable,
+    probabilities,
+    options,
+    receipt,
+  };
+}
+// Keep disclosure/focus-bearing nodes for the lifetime of each history entry.
+const historyRows = new Map<number, ReturnType<typeof createHistoryRow>>();
+function displayHistory(entries: readonly DecisionEntry[]) {
+  $('#history-empty').hidden = entries.length > 0;
+  for (const entry of entries) {
+    let view = historyRows.get(entry.number);
+    if (!view) {
+      view = createHistoryRow(entry.number);
+      historyRows.set(entry.number, view);
+      $('#history').prepend(view.item);
+    }
+    const pending = choicePending(entry);
+    view.heading.textContent = `#${entry.number} · ${entry.action ?? (pending ? 'Action pending' : 'Action unavailable')}`;
+    view.latency.textContent = ` · API ${entry.latencyMs === null ? (pending ? 'latency pending' : 'latency unavailable') : `${entry.latencyMs} ms`}`;
+    view.status.textContent = decisionStatus(entry);
+    const values = entry.choice?.probabilities;
+    view.unavailable.hidden = !!values;
+    view.probabilities.hidden = !values;
+    if (values) {
+      const sorted = [...values].sort(
+        (a, b) =>
+          b.probability - a.probability ||
+          actionNames.indexOf(a.value) - actionNames.indexOf(b.value),
+      );
+      for (const [index, option] of sorted.entries()) {
+        const node = view.options.find((item) => item.action === option.value);
+        if (!node) continue;
+        const selected = option.value === entry.action;
+        node.label.textContent = `${option.value}${selected ? ' · selected' : ''}`;
+        node.value.textContent = probabilityText(option.probability);
+        node.row.dataset.selected = String(selected);
+        if (view.probabilities.children[index] !== node.row)
+          view.probabilities.insertBefore(
+            node.row,
+            view.probabilities.children[index] ?? null,
+          );
+      }
+    }
+    const execution = entry.execution;
+    view.receipt.textContent = [
+      `Decision ${entry.number}: ${entry.status}`,
+      `Action: ${entry.action ?? 'unavailable'} · human-selected N: ${entry.selectedTics}`,
+      `Native requested / reported / independently verified: ${execution?.requestedTics ?? 'not dispatched'} / ${execution?.reportedCompletedTics ?? 'unknown'} / ${execution?.independentlyVerifiedTics ?? 0}`,
+      `Cumulative verified tic: ${entry.cumulativeVerifiedTics}${execution?.completionUncertain ? ' (lower bound; completion uncertain)' : ''}`,
+      `Observed tic: ${entry.observation?.tic ?? 'unavailable'} · resulting tic: ${entry.result?.tic ?? 'frame unavailable'}`,
+      `API request ID: ${entry.requestId ?? 'unavailable'} · API latency: ${entry.latencyMs === null ? 'unavailable' : `${entry.latencyMs} ms`}`,
+    ].join('\n');
+  }
+}
 function display(run: Run, status?: string) {
   if (current !== run) return;
   if (status) $('#status').textContent = status;
@@ -187,23 +316,10 @@ function display(run: Run, status?: string) {
   $('#tics').disabled = !run.valid || run.phase !== 'ready';
   $('#iwad').disabled = run.phase !== 'unprepared';
   $('#next').setAttribute('aria-busy', String(run.phase === 'busy'));
-  for (const entry of run.evidence.decisions) {
-    let item = document.getElementById(`decision-${entry.number}`);
-    if (!item) {
-      item = document.createElement('li');
-      item.id = `decision-${entry.number}`;
-      $('#history').append(item);
-    }
-    const execution = entry.execution;
-    item.textContent = [
-      `Decision ${entry.number}: ${entry.status}`,
-      `Action: ${entry.action ?? 'unavailable'} · human-selected N: ${entry.selectedTics}`,
-      `Native requested / reported / independently verified: ${execution?.requestedTics ?? 'not dispatched'} / ${execution?.reportedCompletedTics ?? 'unknown'} / ${execution?.independentlyVerifiedTics ?? 0}`,
-      `Cumulative verified tic: ${entry.cumulativeVerifiedTics}${execution?.completionUncertain ? ' (lower bound; completion uncertain)' : ''}`,
-      `Observed tic: ${entry.observation?.tic ?? 'unavailable'} · resulting tic: ${entry.result?.tic ?? 'frame unavailable'}`,
-      `API request ID: ${entry.requestId ?? 'unavailable'} · API latency: ${entry.latencyMs === null ? 'unavailable' : `${entry.latencyMs} ms`}`,
-    ].join('\n');
-  }
+  $('#key-state').textContent = run.client
+    ? 'API client retained in memory; a blank field keeps it. Enter a key to replace it. Authentication is not validated by this indicator.'
+    : 'No API client retained. Enter a key when the game is ready.';
+  displayHistory(run.evidence.decisions);
 }
 function retire(run: Run) {
   run.valid = false;
