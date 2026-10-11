@@ -89,3 +89,136 @@ code, WASM, SDK and existing acceptance assets were unchanged.
 Only sanitized supplied text is recorded. No keys, sensitive headers, raw HARs
 or screenshots are saved. This receipt authorizes no further API calls, commits,
 pushes or GitHub changes.
+
+## Follow-up evidence: instruction-change trials
+
+The first neutral-only trial above is preserved verbatim as historical evidence.
+The following are distinct owner-reported trials, documented from supplied text;
+Codex did not run Chrome, serve the page or call the API for this follow-up.
+
+### Git-verified instruction change
+
+Read-only local Git inspection found HEAD at
+`4e7a3d4ccccda617d8573d079ebdbe75c45d316b` ("Change the instructions to the model"),
+whose parent is the previously reviewed M3-E3 baseline
+`29078483afca2d8dd7b2aaf9fa6b6509475ddb43` ("m3-e3 results"). The exact commit
+diff changes only `questions[0].instructions` in [controller.js](controller.js).
+This results file is tracked and unchanged between those commits; the earlier
+untracked-state description and local hashes above apply to the historical
+inspection, not this follow-up's committed baseline or runtime identity.
+
+Old instructions, quoted from the baseline:
+
+> Choose the next action to explore E1M1 and survive based on the visible frame. The action will persist for exactly six native gameplay tics (about 171 ms), then a new frame is observed. neutral releases all six keys. Do not assume unseen game state.
+
+The revised instructions make exploration and progress toward the exit while
+surviving the primary objective, ask for useful progress from the screenshot,
+prefer forward movement or turning to explore over standing still, and reserve
+`neutral` for waiting with a specific tactical benefit. They retain six gameplay
+tics per action, a subsequent screenshot, and the warning not to assume unseen
+game state.
+
+Git confirms all seven choices and native masks are unchanged: `neutral` 0,
+`forward` 1, `turn_right` 2, `backward` 4, `turn_left` 8, `fire` 16 and `use` 32.
+The execution duration remains fixed at six tics. The request model remains
+`gpt-6-luna`, and the screenshot input and input mapping are unchanged. These are
+source facts; local Git inspection does not independently identify runtime bytes.
+
+### Second neutral-only trial (original instructions; owner-reported)
+
+The owner separately reported another two-decision run under the old
+instructions. Both selections were `neutral`. This is a second trial, distinct
+from the first trial above; its reported RGBA hashes at tics 1, 7 and 13 match
+the first trial's three hashes exactly.
+
+| Field | Decision 1 | Decision 2 |
+| --- | --- | --- |
+| Selected action | `neutral` | `neutral` |
+| SDK request ID | `req_0d1a9430842b4e9aacc3b117e0ad2830` | `req_812d3f560ab44cd2ae034325844c0f44` |
+| Page-reported latency | 664 ms | 262 ms |
+| Reported confidence | 0.35 | 0.39 |
+| Reported probability of `neutral` | 0.44 | 0.48 |
+| Reported probability of `forward` | 0.31 | 0.31 |
+
+Only these selected probabilities were supplied for the second neutral trial;
+they are not a full distribution. The first trial's full response distributions
+were not supplied either.
+
+### Revised-instructions forward trial (owner-reported Chrome page outputs)
+
+The owner supplied the page log and sanitized response JSON and reported two
+real Decisions API calls. Both returned `forward` (native mask 1). The page
+reports each action successfully executed as six independently verified native
+Doom tics and E1M1 rendered at tic 13. "Independently verified" here describes
+the page's native verification pathway, not an independent Codex runtime audit.
+
+| Field | Decision 1 | Decision 2 |
+| --- | --- | --- |
+| Observed rendered tic | 1 | 7 |
+| Selected action / native mask | `forward` / 1 | `forward` / 1 |
+| Fixed action duration | 6 tics | 6 tics |
+| HTTP status / complete parsed body | 200 / yes | 200 / yes |
+| Error/refusal | none | none |
+| SDK request ID | `req_11e5d236a49247b1b527d438c5a7ee9c` | `req_18d1b0501fa64b5399c8acb295ff8fe1` |
+| Page-reported latency | 506 ms | 271 ms |
+| Native requested / reported completed / independently verified tics | 6 / 6 / 6 | 6 / 6 / 6 |
+| Cumulative verified tics | 7 | 13 |
+| Wait state unchanged | true | true |
+| Resulting rendered tic | 7 | 13 |
+| Response model | `gpt-6-luna` | `gpt-6-luna` |
+| Answer type / name | `choice` / `next_action` | `choice` / `next_action` |
+| Confidence | 0.92 | 0.87 |
+| Usage: input / output / total tokens | 498 / 0 / 498 | 498 / 0 / 498 |
+
+Full choice probabilities reported in the revised trial's sanitized responses:
+
+| Action | Decision 1 | Decision 2 |
+| --- | ---: | ---: |
+| `neutral` | 0.02 | 0.04 |
+| `forward` | 0.93 | 0.89 |
+| `turn_right` | 0.01 | 0.02 |
+| `backward` | 0.01 | 0.01 |
+| `turn_left` | 0.01 | 0.02 |
+| `fire` | 0.01 | 0.01 |
+| `use` | 0.01 | 0.01 |
+
+Revised trial RGBA frame checkpoints, copied from the owner-supplied output:
+
+| Tic | SHA-256 | Relationship |
+| --- | --- | --- |
+| 1 | `ea416a166f395e8ed6fb60d3b417a1cacedd9b764f58282892d4e9caae8e5800` | Decision 1 observation; matches both neutral trials' initial hash. |
+| 7 | `989a941fff8967eddb827d87208d3a52afbc509d45a1d6fec151c79981b1e6de` | Decision 1 result and decision 2 observation. |
+| 13 | `148336941d5cc1c088eeb7f36f8ca8087b306bd998ab14a952348bafdccc0890` | Decision 2 result; page reports E1M1 rendered at tic 13. |
+
+### Comparison and follow-up evidence limits
+
+Under the original instructions, two separately recorded neutral-only trials
+returned four `neutral` selections in total. The revised trial returned two
+`forward` selections. Compared with the second neutral trial, the reported
+`forward` probabilities changed from 0.31/0.31 to 0.93/0.89, and `neutral` from
+0.44/0.48 to 0.02/0.04. This is strong single-run, instruction-sensitive
+behavioral evidence. It does not establish statistical significance, a general
+win-rate improvement, or instruction text as the only possible factor in
+nondeterministic outputs. Decision 2 also observes a different frame after the
+first action, so its comparison is not a matched-image instruction-only test.
+
+The page reports native action-consumption verification for two nonzero masks
+and 12 gameplay tics beyond the first neutral tic. Changing RGBA hashes is
+consistent with movement but does not on its own prove player displacement.
+Explicit player-position/angle deltas and direct visual confirmation of
+displacement were not supplied.
+
+For the revised trial, expanded per-tic native records, raw PNGs, full Chrome
+metadata and a screenshot showing displacement were not supplied and remain
+unverified. Exact trial timestamp, Chrome version, visited URL/origin, final
+status text, total SDK create-call count and runtime file hashes were not
+supplied. Request IDs are diagnostic identifiers, not evidence of an
+independently inspected Network panel. The supplied page log and sanitized JSON
+support the reported results; Codex has not independently audited their runtime
+artifacts or observed gameplay.
+
+This follow-up does not independently establish Stop/fault behavior,
+hosted-origin support or indefinite gameplay. It records evidence only and does
+not authorize another trial or constitute Issue #12 acceptance or closure. Only
+sanitized supplied text is included; no keys, auth headers, cookies, HARs or raw
+credential-bearing captures are recorded.
