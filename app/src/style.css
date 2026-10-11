@@ -32,6 +32,38 @@ button {
 button:disabled {
   cursor: default;
 }
+input:disabled,
+button:disabled {
+  opacity: 0.6;
+}
+.controls {
+  margin: 1rem 0;
+}
+.controls input {
+  font: inherit;
+  margin-bottom: 0.75rem;
+}
+#key {
+  width: 28rem;
+}
+#key-note {
+  margin-top: 0;
+  font-size: 0.9rem;
+}
+#tics {
+  width: 5rem;
+  margin-right: 0.75rem;
+}
+#history li {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: #242424;
+}
+#frame {
+  overflow-wrap: anywhere;
+}
 canvas {
   display: block;
   width: 640px;

@@ -1,10 +1,17 @@
-# Doom Decisions M4-B
+# Doom Decisions M4-C
 
 Vanilla DOM APIs with TypeScript **7.0.2**, Vite **8.3.4**, plain CSS, and official
 **openai 7.32.0**. The HTML entry loads `src/main.ts`; TypeScript checks types
 without emitting JavaScript, and Vite owns bundling.
-M4-B packages/prepares Doom and executes exactly one neutral tic. It makes no
-Decisions request, takes no API key, and has no gameplay loop or stepping UI.
+M4-C automatically prepares real E1M1 on local IWAD selection and verifies exactly
+one mandatory neutral first tic. Each **Next Decision** click then makes at most
+one official SDK Decisions request using the current rendered image, executes
+one allowlisted action on the same Worker, and returns to idle. There is no
+autoplay.
+The human owns duration: **Tics per decision** accepts integers **1–20**, initially
+**6**. The captured duration cannot change during a pending decision. The model
+selects only `neutral`, `forward`, `turn_right`, `backward`, `turn_left`, `fire`, or
+`use`; it never selects duration or combined actions.
 
 ## Prerequisites and clean checkout
 
@@ -26,7 +33,9 @@ npm --prefix app ci --no-audit --no-fund
 
 In agent sessions, obtain owner approval before dependency resolution/downloads,
 installation, builds, servers, or browser execution. This requirement comes from
-the M4-B implementation prompt. Source/static checks alone do not verify a build.
+AGENTS.md and the M4-C implementation prompt. Tests/checks also require separate
+execution authorization for this change. Source inspection alone does not verify
+a build.
 
 The default build invokes only `scripts/build_doom.py --profile controlled-title
 --jobs 2 --timeout 120` with fixtures enabled and no embedded WAD. Default tool
@@ -67,69 +76,117 @@ packaging. Every failure exits nonzero; an old `app/dist/` may still
 exist after an early failure and is **not** a successful new build. Concurrent
 builds in one checkout are unsupported.
 
-## Isolated static smoke
+## Temporary browser-direct credentials
+
+Enter a temporary OpenAI API key in the password field before a decision click.
+The app sends it directly to `https://api.openai.com/v1/decisions` using the pinned
+SDK, `gpt-6-luna`, browser opt-in, zero retries, and a 10-second deadline including
+response-body reading. Availability, account access and browser CORS must be
+confirmed in the owner trial; installed SDK types and a successful build do not
+establish authenticated access. See the
+[official Decisions guide](https://developers.openai.com/api/docs/guides/decisions).
+
+The field clears when captured; the SDK client remains only in memory for later
+clicks. An empty field can therefore mean a client is already available. During a
+healthy idle session, enter a replacement key before the next click to replace
+the client without restarting Doom. No key goes into storage, a URL, Worker
+messages, diagnostics, or build artifacts. Page exit or fatal retirement drops
+client references and clears the field. JavaScript cannot securely erase every
+browser heap copy.
+
+This prototype requires trust in the served page, all deployed scripts, the SDK,
+and browser/DevTools access. CSP does not remove that trust requirement. It has
+no account system, backend, proxy, or persistent credential. A deadline/abort does
+not prove that upstream processing or billing stopped.
+
+API failures/refusals/invalid choices dispatch no native action. If a fresh
+snapshot proves the native state unchanged, the game returns to ready for another
+explicit click; there are no automatic retries or fallback actions. Partial or
+uncertain native completion, or failed render verification, retires the Worker:
+**reload to restart**, with no reconstruction or replay. A bad IWAD can be
+corrected before native preparation begins. Once preparation is admitted, the
+picker is locked; changing the selected file never restarts a prepared game.
+There are no Prepare, Stop, Reset or New Game buttons. Refresh starts a new game
+and clears the in-memory credential; it does not resume prior state.
+
+## Owner-run isolated Chrome/API trial (not executed by Codex)
 
 After separate execution approval, copy **only** `app/dist/` to a new temporary
 directory and serve that directory. For example, from the repository root:
 
 ```sh
-SMOKE_DIR=$(mktemp -d /tmp/doom-m4b-smoke.XXXXXX)
+SMOKE_DIR=$(mktemp -d /tmp/doom-m4c-smoke.XXXXXX)
 cp -R app/dist/. "$SMOKE_DIR/"
 python3 -m http.server 8000 --bind 127.0.0.1 --directory "$SMOKE_DIR"
 ```
 
 Open `http://127.0.0.1:8000/` in Chrome. Use loopback or HTTPS for Web Crypto.
-Relative Vite URLs also support hosting beneath a path prefix. The app loads
-only local static files and a classic Blob Worker. CSP permits same-origin
-connections and WASM compilation, blocks external connections, and permits the
-Blob Worker. The SDK probe additionally uses a rejecting fetch implementation;
-it constructs a client with a noncredential placeholder and checks the public
-`decisions.create` method without calling it.
+Relative Vite URLs also support hosting beneath a path prefix. The app uses local
+static assets and one classic Blob Worker. The only CSP change for M4-C permits
+OpenAI API connections; other restrictions remain. The noncredential SDK probe
+uses rejecting fetch and never invokes `decisions.create`.
 
-1. Confirm the page reports SDK **7.32.0** and `decisions.create` available.
-   Inspect Console and Network; record Chrome version, errors, resource URLs,
-   and whether any external/API request occurred. Expected resources are the
-   local HTML, bundled JS/CSS, `doom-build.json`, and `doom.wasm` on preparation.
-2. Select your own known-good **Freedoom 0.13.0 Phase 1** `freedoom1.wad`
-   (28,795,076 bytes; SHA-256
+1. Confirm SDK **7.32.0** and `decisions.create` available. Inspect Console/Network;
+   record Chrome version, errors and local resource URLs. Select known-good local
+   **Freedoom 0.13.0 Phase 1** `freedoom1.wad` (28,795,076 bytes; SHA-256
    `7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d`).
-   Other IWADs are intentionally refused by the preserved proven Worker.
-3. Click **Prepare Doom** once. Expect genuine E1M1 readiness and zero
-   gameplay/native/clock counters before the action, then neutral requested /
-   reported / independently verified **1 / 1 / 1**. Expect a real 640×400 frame
-   and equal native/Canvas RGBA hashes. The mandatory neutral action is the only
-   gameplay action dispatched. No key input drives the engine.
-4. Wait for the idle check to finish (at least five seconds). Expand evidence:
-   repeated snapshots preserve every counter; the passive render changes only
-   render/frame/intercept bookkeeping; all simulation counters remain at 1,
-   native state and the frame hash stay unchanged. No further timer or operation
-   loop runs after this bounded diagnostic. The Worker remains idle.
-5. A successful run disables preparation and the picker; reload for a new game.
-   A failure retires the Worker and permits a fresh preparation. Never retry an
-   uncertain action on the existing game. Keep the displayed receipts and build
-   manifest for review; they contain no key, headers, local IWAD path, or pixels.
+   Selection automatically loads bundled WASM and prepares real E1M1. No API
+   request occurs. Other IWADs are intentionally refused.
+2. Confirm zero gameplay work before the mandatory neutral action and neutral
+   requested / reported / independently verified **1 / 1 / 1** afterward. Expect
+   the real 640×400 frame and matching native/Canvas RGBA hashes at **tic 1**.
+   Wait for the five-second startup idle check to complete. Expand evidence:
+   repeated snapshots preserve every counter and native field; the passive render
+   changes only render/frame/intercept bookkeeping. No keyboard input drives Doom.
+3. Enter a temporary key; set **N1=2**; click **Next Decision** once. Expect exactly
+   one Decisions POST (OPTIONS preflight is separate), action **2 / 2 / 2**,
+   cumulative **tic 3**, a verified resulting frame, and the same Worker/game.
+4. Wait without clicking. Expect no new API request or native tic. Set **N2=5**;
+   click once more. Verify the API observes the actual frame from **tic 3** (its
+   captured checkpoint/hash equals decision 1's result). Expect **5 / 5 / 5**,
+   cumulative **tic 8**, same Worker and initialization counters still one.
+   Network-wait snapshots must be unchanged. Actions may be neutral; motion and
+   differing frame hashes are not requirements.
+5. Inspect accumulating history and advanced evidence for selected N, action,
+   native requested/reported/verified counts, cumulative checkpoint, observation
+   and result RGBA hashes, sanitized request IDs, API latency and honest failures.
+   Missing receipts/timeouts after dispatch are uncertain completion, never proof
+   of zero execution. A verified action with a failed resulting render is not
+   replayed. Refresh to start over.
+
+Keep build/WASM identity, sanitized request IDs, hashes and receipt projections.
+Inspect the current image request locally without exporting secrets, authorization
+headers, raw HARs or unredacted request content. Record owner Console/Network and
+browser observations separately from Codex source inspection. These steps are an
+acceptance procedure, **not evidence of a completed M4-C runtime trial**.
 
 Record the generated WASM size/hash and manifest path. Compare the hash with the
 preflight reference `cc86ed8884ec04dbace3c541e8528a9f91839b79816cc79ce988af939d42dcb8`
 (360,156 bytes), without treating it as a fixed requirement for modified engines.
-See [verification record](../docs/doom-m4b-verification.md) for what was actually
-run. Builds/static inspection do not establish Chrome or native runtime success.
+See the historical [M4-B verification record](../docs/doom-m4b-verification.md)
+for owner-reported baseline results; it does not establish M4-C acceptance.
+Builds/static inspection do not establish Chrome, native or API runtime success.
 
 ## Static checks and source boundary
 
 Biome **2.5.15** is the app's sole linter and formatter, exact-pinned in the
-app-local package and lockfile. Run from the repository root:
+app-local package and lockfile. After separate authorization, run from the
+repository root:
 
 ```sh
-npm --prefix app run lint
-npm --prefix app run format
 npm --prefix app run check
+node --experimental-strip-types app/tests/decision.mjs
 ```
 
-`lint` checks without writing. **`format` writes changes** to included files.
+`npm --prefix app run lint` checks without writing.
+**`npm --prefix app run format` writes changes** to included files.
 `check` runs TypeScript, Worker integrity, and non-writing Biome lint/format checks
 in sequence, stopping on failure. Builds retain their existing checks and never
-format source automatically.
+format source automatically. The tiny offline script uses Node assertions and the
+actual admission/fence, choice validator and receipt verifier. It covers frozen N,
+double admission, stale identities, invalid choices, synthetic 1 → 3 → 8 chains,
+partial/fault/missing receipts and reported-versus-verified mismatches. It does not
+exercise DOM wiring, real SDK calls, real Workers or native WASM execution.
 
 `biome.json` includes app source TypeScript (including `.d.ts`), app-owned
 JavaScript and CSS, `biome.json`, `package.json`, `tsconfig.json`, and

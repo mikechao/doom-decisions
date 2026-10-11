@@ -1,7 +1,14 @@
 import { OpenAI } from 'openai/client';
 import { VERSION } from 'openai/version';
+import type { ActionName, Attempt, Execution, Phase } from './decision';
+import {
+  admitDecision,
+  assertDecision,
+  masks,
+  validateChoice,
+  verifyAction,
+} from './decision';
 import rawWorker from './worker-boundary.js?raw';
-import { i11VerifyStep } from './worker-boundary.js';
 import type {
   Counters,
   NativeObservation,
@@ -14,17 +21,28 @@ import './style.css';
 type Elements = {
   '#screen': HTMLCanvasElement;
   '#iwad': HTMLInputElement;
-  '#prepare': HTMLButtonElement;
+  '#key': HTMLInputElement;
+  '#tics': HTMLInputElement;
+  '#next': HTMLButtonElement;
+  '#history': HTMLOListElement;
   '#sdk': HTMLParagraphElement;
   '#status': HTMLParagraphElement;
   '#frame': HTMLParagraphElement;
   '#evidence': HTMLPreElement;
 };
 // These elements are supplied by the static HTML entry; the Canvas is 640×400.
-const $ = <S extends keyof Elements>(selector: S) =>
-  document.querySelector<Elements[S]>(selector)!;
+const $ = <S extends keyof Elements>(selector: S) => {
+  const element = document.querySelector<Elements[S]>(selector);
+  check(element, `Missing required element ${selector}.`);
+  return element;
+};
 const canvas = $('#screen'),
-  context = canvas.getContext('2d')!;
+  context = canvasContext(canvas);
+function canvasContext(screen: HTMLCanvasElement) {
+  const result = screen.getContext('2d');
+  check(result, 'Canvas 2D context unavailable.');
+  return result;
+}
 function check(ok: unknown, message: string): asserts ok {
   if (!ok) throw Error(message);
 }
@@ -77,7 +95,7 @@ type EngineMetadata = {
 type SdkProbe = {
   version: string;
   decisionsCreateAvailable: true;
-  requestsEnabled: false;
+  requestsEnabled: true;
 };
 type StatusObservation = Observation & { status: number | null };
 type Results = {
@@ -112,12 +130,21 @@ type Success<O extends Operation> = {
 type Reply<O extends Operation> =
   | Success<O>
   | { ok: false; op: O; error?: unknown };
-type NeutralEvidence = {
-  mask: number;
-  requestedTics: number;
-  reportedCompletedTics: number | null;
-  independentlyVerifiedTics: number;
-  completionUncertain: boolean;
+type Frame = { tic: number; nativeSha256: string; canvasSha256: string };
+type DecisionEntry = {
+  number: number;
+  selectedTics: number;
+  status: string;
+  action: ActionName | null;
+  observation: Frame | null;
+  result: Frame | null;
+  execution: Execution | null;
+  cumulativeVerifiedTics: number;
+  requestId: string | null;
+  latencyMs: number | null;
+  http: number | null;
+  waitUnchanged: boolean | null;
+  choice?: ReturnType<typeof validateChoice>;
 };
 type Evidence = {
   sdk: SdkProbe;
@@ -127,7 +154,8 @@ type Evidence = {
     elapsedMs: number;
     result: Results[Operation];
   }[];
-  frames: { tic: number; nativeSha256: string; canvasSha256: string }[];
+  frames: Frame[];
+  decisions: DecisionEntry[];
   activeOperation?: Operation;
   workerError?: string;
   error?: string;
@@ -136,7 +164,7 @@ type Evidence = {
     iwad: { bytes: number; sha256: string };
   };
   beforeNeutral?: { counters: Counters; native: NativeObservation };
-  neutralFirst?: NeutralEvidence;
+  neutralFirst?: Execution;
   idle?: {
     minimumMs: number;
     observedMs: number;
@@ -147,6 +175,12 @@ type Evidence = {
 };
 type Run = {
   valid: boolean;
+  phase: Phase;
+  verifiedTics: number;
+  frame?: Frame;
+  attempt?: Attempt;
+  client?: OpenAI;
+  apiController?: AbortController;
   evidence: Evidence;
   worker?: Worker | null;
   url?: string | null;
@@ -156,6 +190,7 @@ type Run = {
 let engine: EngineMetadata | undefined,
   sdk: SdkProbe | undefined,
   current: Run | undefined;
+let pageExited = false;
 
 function localFetch(name: string, json: true): Promise<unknown>;
 function localFetch(name: string, json?: false): Promise<ArrayBuffer>;
@@ -170,16 +205,44 @@ async function localFetch(name: string, json = false): Promise<unknown> {
 function assertCurrent(run: Run): asserts run is Run & { worker: Worker } {
   check(
     current === run && run.valid && run.worker,
-    'Preparation retired; no further native calls.',
+    'Game retired; no further native calls.',
   );
 }
 function display(run: Run, status?: string) {
   if (current !== run) return;
   if (status) $('#status').textContent = status;
   $('#evidence').textContent = JSON.stringify(run.evidence, null, 2);
+  $('#next').disabled = !run.valid || run.phase !== 'ready';
+  $('#key').disabled = !run.valid || run.phase !== 'ready';
+  $('#tics').disabled = !run.valid || run.phase !== 'ready';
+  $('#iwad').disabled = run.phase !== 'unprepared';
+  $('#next').setAttribute('aria-busy', String(run.phase === 'busy'));
+  for (const entry of run.evidence.decisions) {
+    let item = document.getElementById(`decision-${entry.number}`);
+    if (!item) {
+      item = document.createElement('li');
+      item.id = `decision-${entry.number}`;
+      $('#history').append(item);
+    }
+    const execution = entry.execution;
+    item.textContent = [
+      `Decision ${entry.number}: ${entry.status}`,
+      `Action: ${entry.action ?? 'unavailable'} · human-selected N: ${entry.selectedTics}`,
+      `Native requested / reported / independently verified: ${execution?.requestedTics ?? 'not dispatched'} / ${execution?.reportedCompletedTics ?? 'unknown'} / ${execution?.independentlyVerifiedTics ?? 0}`,
+      `Cumulative verified tic: ${entry.cumulativeVerifiedTics}${execution?.completionUncertain ? ' (lower bound; completion uncertain)' : ''}`,
+      `Observed tic: ${entry.observation?.tic ?? 'unavailable'} · resulting tic: ${entry.result?.tic ?? 'frame unavailable'}`,
+      `API request ID: ${entry.requestId ?? 'unavailable'} · API latency: ${entry.latencyMs === null ? 'unavailable' : `${entry.latencyMs} ms`}`,
+    ].join('\n');
+  }
 }
 function retire(run: Run) {
   run.valid = false;
+  run.phase = 'error';
+  run.attempt = undefined;
+  run.apiController?.abort();
+  run.apiController = undefined;
+  run.client = undefined;
+  $('#key').value = '';
   run.worker?.terminate();
   run.worker = null;
   if (run.url) URL.revokeObjectURL(run.url);
@@ -273,7 +336,11 @@ async function request<O extends Operation>(
       if (error) {
         retire(run);
         reject(error);
-      } else resolve(data!);
+      } else if (data) resolve(data);
+      else {
+        retire(run);
+        reject(Error('Missing Worker completion receipt.'));
+      }
     };
     const timer = setTimeout(
       () =>
@@ -312,7 +379,9 @@ async function request<O extends Operation>(
           result: data.result,
         });
         delete run.evidence.activeOperation;
-        healthy(data.result);
+        // An action fault can still contain independently verifiable completed
+        // steps. The action verifier must evaluate those before rejecting it.
+        if (op !== 'action') healthy(data.result);
         finish(null, data);
       } catch (error) {
         finish(error);
@@ -354,7 +423,7 @@ async function render(run: Run) {
     result.counters.render === before.counters.render + 1 &&
       result.counters.frame === before.counters.frame + 1 &&
       result.counters.netIntercept === before.counters.netIntercept + 5 &&
-      result.counters.gametic === 1,
+      result.counters.gametic === run.verifiedTics,
     'Passive render cadence/tic mismatch.',
   );
   context.putImageData(
@@ -369,18 +438,372 @@ async function render(run: Run) {
     'Canvas pixels differ from native frame.',
   );
   run.last = result;
-  run.evidence.frames.push({
-    tic: 1,
+  run.frame = {
+    tic: run.verifiedTics,
     nativeSha256: result.frameSha256,
     canvasSha256,
-  });
+  };
+  run.evidence.frames.push(run.frame);
   $('#frame').textContent =
-    `E1M1 · tic 1 · 640×400 · RGBA SHA-256 ${canvasSha256}`;
+    `E1M1 · tic ${run.verifiedTics} · 640×400 · RGBA SHA-256 ${canvasSha256}`;
 }
 
-$('#prepare').addEventListener('click', async () => {
-  // Busy/successful runs cannot prepare again. A failed attempt gets a fresh Worker.
-  if (!engine || !sdk || current?.valid) return;
+async function action(
+  run: Run,
+  mask: number,
+  tics: number,
+  before: Observation,
+  record: (evidence: Execution) => void,
+) {
+  // Record uncertainty BEFORE dispatch: a watchdog/missing reply is never zero
+  // executed tics. Successful prefix evidence is retained even on final failure.
+  record(verifyAction(before, mask, tics));
+  const { result } = await request(run, 'action', { mask, tics });
+  const evidence = verifyAction(before, mask, tics, result);
+  record(evidence);
+  run.verifiedTics = evidence.cumulativeVerifiedTics;
+  check(
+    evidence.complete,
+    evidence.completionUncertain
+      ? 'Native action completion uncertain; reload to restart.'
+      : 'Native action incomplete or game no longer ready; reload to restart.',
+  );
+  assertCurrent(run);
+  run.last = result;
+}
+
+const deadlineMs = 10000;
+class DecisionFailure extends Error {}
+const safeRequestId = (value: unknown) =>
+  typeof value === 'string' && /^req_[A-Za-z0-9_-]{1,200}$/.test(value)
+    ? value
+    : null;
+function createClient(apiKey: string) {
+  return new OpenAI({
+    apiKey,
+    baseURL: 'https://api.openai.com/v1',
+    organization: null,
+    project: null,
+    dangerouslyAllowBrowser: true,
+    maxRetries: 0,
+    timeout: deadlineMs,
+    logLevel: 'off',
+    fetchOptions: {
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store',
+      redirect: 'error',
+      referrerPolicy: 'no-referrer',
+    },
+  });
+}
+function fence(run: Run, attempt: Attempt) {
+  assertCurrent(run);
+  assertDecision(run, attempt);
+}
+async function decide(
+  run: Run,
+  attempt: Attempt,
+  entry: DecisionEntry,
+  png: string,
+) {
+  fence(run, attempt);
+  check(run.client, 'A temporary API credential is required.');
+  const controller = new AbortController();
+  run.apiController = controller;
+  const started = performance.now();
+  let timedOut = false;
+  const abortError = () =>
+    new DecisionFailure(
+      timedOut ? 'API deadline exceeded (10 seconds)' : 'API request aborted',
+    );
+  let onAbort = () => {
+    // Replaced synchronously by the Promise executor below.
+  };
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(abortError());
+    controller.signal.addEventListener('abort', onAbort, { once: true });
+  });
+  const deadline = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, deadlineMs);
+  const checkDeadline = () => {
+    if (performance.now() - started >= deadlineMs) {
+      timedOut = true;
+      controller.abort();
+    }
+    if (controller.signal.aborted) throw abortError();
+    fence(run, attempt);
+  };
+  try {
+    checkDeadline();
+    // Both response helpers observe this ONE SDK promise; neither retries nor
+    // another call is used to obtain a request ID or parsed body.
+    const pending = run.client.decisions.create(
+      {
+        model: 'gpt-6-luna',
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: `This is the currently rendered Doom E1M1 frame at verified tic ${entry.observation?.tic}. You have only this image, not full game state.`,
+              },
+              { type: 'input_image', image_url: png },
+            ],
+          },
+        ],
+        questions: [
+          {
+            type: 'choice',
+            name: 'next_action',
+            instructions: `Explore the level and progress toward the exit while surviving. Choose one useful action from the screenshot; moving or turning to explore is generally preferable to standing still. Choose neutral when waiting has a tactical benefit. The human selected exactly ${attempt.tics} gameplay tics for this action. Choose only the action, never its duration. Afterward the game waits for another human click. Do not assume unseen game state.`,
+            choices: Object.keys(masks).map((value) => ({ value })),
+          },
+        ],
+      },
+      { signal: controller.signal, maxRetries: 0, timeout: deadlineMs },
+    );
+    const reading = (async () => {
+      const response = await pending.asResponse();
+      checkDeadline();
+      entry.requestId = safeRequestId(response.headers.get('x-request-id'));
+      entry.http = response.status;
+      const { data, request_id } = await pending.withResponse();
+      checkDeadline();
+      entry.requestId = safeRequestId(request_id) ?? entry.requestId;
+      return data;
+    })();
+    return await Promise.race([reading, cancelled]);
+  } catch (error) {
+    if (error instanceof OpenAI.APIError) {
+      const status = error.status;
+      if (
+        status &&
+        Number.isInteger(status) &&
+        status >= 100 &&
+        status <= 599
+      ) {
+        entry.http = status;
+        entry.requestId = safeRequestId(error.requestID) ?? entry.requestId;
+        const category =
+          status === 401
+            ? 'authentication'
+            : status === 403
+              ? 'permission/access'
+              : status === 429
+                ? 'rate limit/quota'
+                : 'HTTP failure';
+        throw new DecisionFailure(`${category} (${status})`);
+      }
+    }
+    if (controller.signal.aborted) throw abortError();
+    if (error instanceof DecisionFailure) throw error;
+    if (error instanceof SyntaxError)
+      throw new DecisionFailure('Malformed API response JSON');
+    if (error instanceof OpenAI.APIConnectionTimeoutError)
+      throw new DecisionFailure('SDK timeout');
+    if (error instanceof OpenAI.APIConnectionError)
+      throw new DecisionFailure('API connection failure (network/CORS/access)');
+    throw new DecisionFailure('SDK or response-body failure');
+  } finally {
+    clearTimeout(deadline);
+    controller.signal.removeEventListener('abort', onAbort);
+    if (run.apiController === controller) run.apiController = undefined;
+    entry.latencyMs = Math.round(performance.now() - started);
+  }
+}
+
+$('#next').addEventListener('click', async () => {
+  const run = current;
+  if (!run?.valid || run.phase !== 'ready') return;
+  const tics = $('#tics').valueAsNumber;
+  if (!Number.isInteger(tics) || tics < 1 || tics > 20) {
+    display(run, 'Tics per decision must be an integer from 1 to 20.');
+    return;
+  }
+  let key = $('#key').value.trim();
+  if (key) {
+    $('#key').value = '';
+    if (!/^[\x21-\x7e]+$/.test(key)) {
+      key = '';
+      display(
+        run,
+        'Enter a usable temporary API key (no spaces or control characters).',
+      );
+      return;
+    }
+    try {
+      run.client = createClient(key); // Replacement drops the prior client; same Doom run.
+    } catch {
+      display(run, 'Could not create the API client. Enter a replacement key.');
+      return;
+    } finally {
+      key = '';
+    }
+  }
+  if (!run.client) {
+    display(run, 'Enter a temporary OpenAI API key before Next Decision.');
+    return;
+  }
+  // Freeze duration and attempt identity before the first await. The handler
+  // guard, rather than disabled styling alone, prevents overlapping admission.
+  const attempt = admitDecision(run, tics);
+  if (!attempt) return;
+  const entry: DecisionEntry = {
+    number: run.evidence.decisions.length + 1,
+    selectedTics: attempt.tics,
+    status: 'Capturing current frame',
+    action: null,
+    observation: null,
+    result: null,
+    execution: null,
+    cumulativeVerifiedTics: run.verifiedTics,
+    requestId: null,
+    latencyMs: null,
+    http: null,
+    waitUnchanged: null,
+  };
+  run.evidence.decisions.push(entry);
+  display(run, `Decision ${entry.number}: capturing tic ${run.verifiedTics}…`);
+  let observation: Observation | undefined;
+  let canRecover = false;
+  try {
+    observation = await snapshot(run);
+    fence(run, attempt);
+    check(
+      run.frame?.tic === run.verifiedTics &&
+        observation.counters.gametic === run.verifiedTics,
+      'Current rendered/native checkpoint mismatch.',
+    );
+    entry.observation = { ...run.frame };
+    // PNG and RGBA are captured synchronously from the same visible Canvas.
+    const png = canvas.toDataURL('image/png');
+    const rgba = context.getImageData(0, 0, 640, 400).data;
+    check(png.startsWith('data:image/png;base64,'), 'Canvas PNG unavailable.');
+    const hash = await digest(rgba);
+    fence(run, attempt);
+    check(
+      hash === run.frame.nativeSha256,
+      'Observation Canvas/native hash mismatch.',
+    );
+    entry.status = 'Requesting one action';
+    display(
+      run,
+      `Decision ${entry.number}: requesting action for ${attempt.tics} tics…`,
+    );
+    canRecover = true;
+    const data = await decide(run, attempt, entry, png);
+    fence(run, attempt);
+    try {
+      entry.choice = validateChoice(data);
+    } catch (error) {
+      // validateChoice emits only fixed local categories, never response values.
+      throw new DecisionFailure(
+        error instanceof Error ? error.message : 'Invalid choice',
+      );
+    }
+    entry.action = entry.choice.action;
+    canRecover = false;
+    const afterWait = await snapshot(run);
+    fence(run, attempt);
+    check(
+      equal(observation.counters, afterWait.counters) &&
+        equal(observation.native, afterWait.native),
+      'Native state advanced during API wait.',
+    );
+    entry.waitUnchanged = true;
+    entry.status = 'Stepping and verifying';
+    display(
+      run,
+      `Decision ${entry.number}: verifying ${attempt.tics} native tics…`,
+    );
+    // No await between the final identity fence and the one native dispatch.
+    fence(run, attempt);
+    await action(
+      run,
+      masks[entry.action],
+      attempt.tics,
+      afterWait,
+      (evidence) => {
+        entry.execution = evidence;
+        entry.cumulativeVerifiedTics = evidence.cumulativeVerifiedTics;
+      },
+    );
+    fence(run, attempt);
+    entry.status = 'Action verified; rendering';
+    display(
+      run,
+      `Decision ${entry.number}: rendering tic ${run.verifiedTics}…`,
+    );
+    await render(run);
+    fence(run, attempt);
+    check(run.frame, 'Verified frame unavailable.');
+    entry.result = { ...run.frame };
+    entry.status = 'Complete';
+    run.attempt = undefined;
+    run.phase = 'ready';
+    display(
+      run,
+      `Ready at tic ${run.verifiedTics} — click Next Decision for another action.`,
+    );
+  } catch (error) {
+    if (current !== run || pageExited || (run.valid && run.attempt !== attempt))
+      return;
+    if (
+      canRecover &&
+      error instanceof DecisionFailure &&
+      run.valid &&
+      observation
+    ) {
+      try {
+        fence(run, attempt);
+        const unchanged = await snapshot(run);
+        fence(run, attempt);
+        check(
+          equal(observation.counters, unchanged.counters) &&
+            equal(observation.native, unchanged.native),
+          'Native state changed during failed API request.',
+        );
+        entry.waitUnchanged = true;
+        entry.status = `${error.message}; no native action dispatched`;
+        run.attempt = undefined;
+        run.phase = 'ready';
+        display(
+          run,
+          `${entry.status}. Correct the key if needed, then click Next Decision to retry.`,
+        );
+        return;
+      } catch {
+        // Failed passive proof means the game cannot be safely reused.
+      }
+    }
+    entry.status = entry.execution?.complete
+      ? 'Action verified; resulting frame unavailable. Reload to restart.'
+      : entry.execution
+        ? entry.execution.completionUncertain
+          ? 'Native completion uncertain; verified prefix retained. Reload to restart.'
+          : entry.execution.independentlyVerifiedTics === entry.selectedTics
+            ? 'All requested tics consumed; game no longer ready. Reload to restart.'
+            : `Native action refused after ${entry.execution.independentlyVerifiedTics} verified tics. Reload to restart.`
+        : 'Game/observation verification failed; no native action dispatched. Reload to restart.';
+    retire(run);
+    run.evidence.error = entry.status;
+    display(run, entry.status);
+  }
+});
+
+async function prepare() {
+  // Selection is single-flight. Only asset validation failures allow correction.
+  if (
+    pageExited ||
+    !engine ||
+    !sdk ||
+    (current && current.phase !== 'unprepared')
+  )
+    return;
   const file = $('#iwad').files?.[0];
   if (!file) {
     $('#status').textContent = 'Select your local Freedoom Phase 1 IWAD first.';
@@ -388,13 +811,15 @@ $('#prepare').addEventListener('click', async () => {
   }
   const run: Run = {
     valid: true,
-    evidence: { sdk, engine, operations: [], frames: [] },
+    phase: 'preparing',
+    verifiedTics: 0,
+    evidence: { sdk, engine, operations: [], frames: [], decisions: [] },
   };
   current = run;
-  $('#prepare').disabled = $('#iwad').disabled = true;
   context.clearRect(0, 0, 640, 400);
   $('#frame').textContent = 'No frame rendered for this preparation.';
   display(run, 'Preparing fresh E1M1…');
+  let assetValidation = true;
   try {
     check(
       file.size === 28795076,
@@ -408,6 +833,8 @@ $('#prepare').addEventListener('click', async () => {
       current === run && run.valid,
       'Preparation invalidated during asset reading.',
     );
+    check((await digest(wad)) === wadHash, 'Freedoom hash mismatch.');
+    assetValidation = false;
     check(
       wasm.byteLength === engine.bytes &&
         (await digest(wasm)) === engine.sha256,
@@ -448,37 +875,9 @@ $('#prepare').addEventListener('click', async () => {
       counters: before.counters,
       native: before.native,
     };
-    const neutral: NeutralEvidence = {
-      mask: 0,
-      requestedTics: 1,
-      reportedCompletedTics: null,
-      independentlyVerifiedTics: 0,
-      completionUncertain: true,
-    };
-    run.evidence.neutralFirst = neutral;
-    // The only action dispatch in M4-B. Never retry it on this Worker.
-    const { result } = await request(run, 'action', { mask: 0, tics: 1 });
-    neutral.reportedCompletedTics = result.completedTics;
-    check(
-      result.mask === 0 &&
-        result.requestedTics === 1 &&
-        result.completedTics === 1 &&
-        result.steps?.length === 1 &&
-        result.outcome === 'APPLIED' &&
-        result.status === 0,
-      'Neutral action incomplete; retire without retry.',
-    );
-    i11VerifyStep(0, before, result.steps[0]);
-    neutral.independentlyVerifiedTics = 1;
-    check(
-      equal(result.steps[0].counters, result.counters) &&
-        equal(result.steps[0].native, result.native) &&
-        result.native.ready === 1 &&
-        result.counters.gametic === 1,
-      'Neutral action completion mismatch.',
-    );
-    neutral.completionUncertain = false;
-    run.last = result;
+    await action(run, 0, 1, before, (evidence) => {
+      run.evidence.neutralFirst = evidence;
+    });
     await render(run);
     await snapshot(run);
     await snapshot(run);
@@ -510,37 +909,50 @@ $('#prepare').addEventListener('click', async () => {
       before: beforeIdle,
       after: afterIdle,
     };
+    run.phase = 'ready';
     display(
       run,
-      'Prepared E1M1 — neutral tic 1/1/1; snapshots, passive render and five-second idle unchanged.',
+      'Ready at tic 1 — neutral 1/1/1; passive checks unchanged. Enter a temporary key, then Next Decision.',
     );
   } catch (error) {
+    if (pageExited || current !== run) return;
     retire(run);
     run.evidence.error =
       error instanceof Error
         ? error.message.slice(0, 500)
         : 'Preparation failed.';
+    if (assetValidation) run.phase = 'unprepared';
     display(
       run,
-      `Preparation failed: ${run.evidence.error} Select the correct IWAD and retry with a fresh Worker.`,
+      `Preparation failed: ${run.evidence.error} ${assetValidation ? 'Select the correct local IWAD to try again.' : 'Reload to restart.'}`,
     );
-    $('#prepare').disabled = $('#iwad').disabled = false;
   }
-});
+}
+$('#iwad').addEventListener('change', () => void prepare());
 window.addEventListener('pagehide', () => {
+  pageExited = true;
   if (current) retire(current);
+  $('#key').value = '';
+});
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) {
+    $('#iwad').disabled = true;
+    if (current)
+      display(current, 'Game retired on page exit. Reload to restart.');
+    else $('#status').textContent = 'Page exited. Reload to restart.';
+  }
 });
 
 async function initialize() {
   try {
     check(VERSION === '7.32.0', 'Require official OpenAI SDK 7.32.0.');
     const client = new OpenAI({
-      apiKey: 'm4b-placeholder-not-a-credential',
+      apiKey: 'sdk-probe-not-a-credential',
       dangerouslyAllowBrowser: true,
       maxRetries: 0,
       logLevel: 'off',
       fetch: async () => {
-        throw Error('M4-B SDK requests are disabled.');
+        throw Error('SDK availability probe cannot send requests.');
       },
     });
     check(
@@ -550,10 +962,10 @@ async function initialize() {
     sdk = {
       version: VERSION,
       decisionsCreateAvailable: true,
-      requestsEnabled: false,
+      requestsEnabled: true,
     };
     $('#sdk').textContent =
-      `OpenAI SDK ${VERSION} loaded · decisions.create available · requests disabled`;
+      `OpenAI SDK ${VERSION} loaded · decisions.create available · explicit clicks only`;
     const metadata = await localFetch('doom-build.json', true);
     check(
       metadata !== null &&
@@ -575,9 +987,10 @@ async function initialize() {
       'Invalid generated engine identity. Run ./build.sh.',
     );
     engine = metadata as EngineMetadata;
+    if (pageExited) return;
     $('#status').textContent =
-      'Ready — select your local IWAD, then Prepare Doom.';
-    $('#prepare').disabled = false;
+      'Select your local Freedoom Phase 1 IWAD to prepare automatically.';
+    $('#iwad').disabled = false;
   } catch (error) {
     $('#status').textContent =
       `Startup failed: ${error instanceof Error ? error.message.slice(0, 500) : 'SDK/engine loading failed.'}`;
