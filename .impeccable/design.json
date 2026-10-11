@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-11T21:39:34Z",
+  "title": "Design System: Doom Decisions",
+  "extensions": {},
+  "components": [],
+  "narrative": {
+    "northStar": "Quiet game viewer",
+    "overview": "Doom supplies the visual character. Quiet charcoal surroundings, warm readable text, and restrained controls give the framebuffer priority while keeping AI decision history visible as its companion. The human chooses when and how long; the AI chooses the action.\n\nThe interface is compact and calm. Setup and engineering evidence remain accessible without competing with the game, its next decision, or the visible history. Borders describe functional boundaries; decoration and animation do not carry the experience.",
+    "keyCharacteristics": [
+      "Doom first, visible AI history second, with duration and Next Decision immediately accessible.",
+      "Quiet surfaces and simple typography; one restrained primary-action accent.",
+      "Honest decision feedback, accessible inspection, and secondary complete evidence."
+    ],
+    "rules": [
+      {
+        "name": "The Amber Action Rule",
+        "body": "Reserve amber emphasis for Next Decision. Selected probabilities use text weight and an explicit label. Errors, uncertainty, and readiness require words; color alone never communicates state. Additional semantic colors remain unresolved unless they improve comprehension during visual review.",
+        "section": "colors"
+      }
+    ],
+    "dos": [
+      "Do keep Doom dominant and AI history persistently visible beside it or below its controls.",
+      "Do preserve the full framebuffer, readable controls, honest outcomes, and complete secondary evidence.",
+      "Do treat exact styling values as provisional until reviewed in rendered desktop, narrow, short-window, and zoom states."
+    ],
+    "donts": [
+      "Don't introduce a setup rail, heavy cards, industrial ornament, neon, fake terminal/pixel fonts, or gratuitous animation.",
+      "Don't hide AI history as diagnostics, repeat duration in every summary, fabricate probabilities, or confuse confidence with probability.",
+      "Don't alter Worker/native contracts, passive zero-tic behavior, single-click request admission, or credential handling for visual polish. An admitted click makes at most one billable Decisions request; no autoplay, automatic retries, Play/Stop, Reset, or Prepare controls are added in this pass."
+    ]
+  }
+}
