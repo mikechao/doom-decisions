@@ -1,4 +1,5 @@
 /tools/
 /.a0-preflight/
 /assets/
+/references/doom.wasm/build/
 .DS_Store

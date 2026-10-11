@@ -1,5 +1,7 @@
 # Doom/WASM vendor provenance
 
+Current location (2026-10-10 relocation): the actively maintained source is now `engine/doom/`. All 234 tracked files, including local modifications, licenses/notices, and tracked example assets, were relocated without content changes. The import paths, tree IDs, counts, and publication status below are historical records of the original import, not claims about the current tree. Ignored build artifacts remain at `references/doom.wasm/build/`; relocation does not re-establish their binary provenance or redistribution clearance.
+
 The files under `references/doom.wasm/` were imported on **2026-10-08** from [jacobenget/doom.wasm](https://github.com/jacobenget/doom.wasm) at pinned commit **`31cc1af9656a8184830090c4e9f268383f5d7e15`**. This is a direct vendor import of the checked-out source, not a fork, submodule, or patch series. The owner has not yet committed or pushed this root-repository change.
 
 ## Import verification

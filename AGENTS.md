@@ -9,7 +9,7 @@ The goal is to let users watch Doom running in the browser while OpenAI’s deci
 
 ## Project Structure & Module Organization
 
-This repository contains `LICENSE` and the upstream Doom/WASM source vendored as ordinary root-tracked files under `references/doom.wasm/`. The pinned source revision, import check, and asset caveats are recorded in [docs/doom-vendor-provenance.md](docs/doom-vendor-provenance.md). There is no root application; the local build wrapper and fixture checks are described in [docs/doom-build.md](docs/doom-build.md).
+This repository contains `LICENSE` and the upstream Doom/WASM source, with local modifications, vendored as ordinary root-tracked files under `engine/doom/`. This is the source of truth for engine compilation. The pinned source revision, import check, and asset caveats are recorded in [docs/doom-vendor-provenance.md](docs/doom-vendor-provenance.md). There is no root application; the local build wrapper and fixture checks are described in [docs/doom-build.md](docs/doom-build.md).
 
 Inside the vendored source:
 - `src/` contains the C WebAssembly adapter and WAT helpers.
@@ -18,18 +18,22 @@ Inside the vendored source:
 - `utils/` contains Python and Rust build utilities.
 - upstream Makefile targets can create `build/` artifacts, including `doom.wasm`.
 
-Treat changes under `references/doom.wasm/` as ordinary changes in this root repository. Preserve upstream notices and review source changes against the pinned tree recorded in the provenance document. Do not recreate a nested repository or submodule for this source.
+Treat changes under `engine/doom/` as ordinary changes in this root repository. Preserve upstream notices and review source changes against the pinned tree recorded in the provenance document. Do not recreate a nested repository or submodule for this source.
+
+Historical experiments and evidence retain their original paths. Ignored local builds remain under `references/doom.wasm/build/`; do not move or delete them implicitly. New engine build outputs belong under `engine/doom/build/`.
+
+The agreed future layout adds `app/` (vanilla JavaScript + Vite) and a thin root `build.sh` orchestrating engine build → generated WASM staging → Vite build, with optional verified frontend-only reuse. `scripts/build_doom.py` retains responsibility for Doom compilation. The app will automatically load generated/bundled `doom.wasm`; users select the IWAD. These are architectural decisions, not implemented pipelines or verified clean-build/runtime claims; see [M4-A](docs/doom-m4a-investigation.md).
 
 ## Build, Test, and Development Commands
 
-For an independently authorized local build, use the explicit `upstream-shareware` workflow in [docs/doom-build.md](docs/doom-build.md). Make owns the build graph; the Python entrypoint admits local inputs and records evidence. Legacy `all`, `doom`, example, dev-init, clean and hook targets are **not** safe local-only entrypoints and require separate authorization.
+For an independently authorized local build, use `scripts/build_doom.py` with the explicit profile and fresh output described in [docs/doom-build.md](docs/doom-build.md). M4 uses `controlled-title` with fixtures enabled and no embedded WAD; the historical `upstream-shareware` profile embeds an explicitly supplied asset. Make owns the build graph; the Python entrypoint admits local inputs and records evidence. Legacy `all`, `doom`, example, dev-init, clean and hook targets are **not** safe local-only entrypoints and require separate authorization.
 
 The following commands invoke legacy upstream recipes from the vendored source:
 
-- `make -C references/doom.wasm all`: runs the upstream Doom/WASM build and writes under `references/doom.wasm/build/`.
-- `make -C references/doom.wasm run-example_browser`: serve the browser example at `http://127.0.0.1:8000/doom.html`.
-- `make -C references/doom.wasm run-example_native`: launch the native example.
-- `make -C references/doom.wasm run-example_python`: launch the Python example.
+- `make -C engine/doom all`: runs the upstream Doom/WASM build and writes under `engine/doom/build/`.
+- `make -C engine/doom run-example_browser`: serve the browser example at `http://127.0.0.1:8000/doom.html`.
+- `make -C engine/doom run-example_native`: launch the native example.
+- `make -C engine/doom run-example_python`: launch the Python example.
 
 These are not A0 preflight commands. The upstream build can download or embed shareware data, create a Python environment, use Docker, and clone/build Binaryen; example targets may install dependencies or download WAD files. Check the relevant Makefile and README, and obtain the stage-specific authorization before running them. The reference build requires Python 3, Docker, Make, curl, and Git; examples may need additional dependencies.
 

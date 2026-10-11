@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-ENGINE = ROOT / "references/doom.wasm/doomgeneric"
+ENGINE = ROOT / "engine/doom/doomgeneric"
 GAME = (ENGINE / "src/g_game.c").read_text()
 
 

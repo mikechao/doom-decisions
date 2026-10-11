@@ -15,7 +15,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-VENDOR = ROOT / "references/doom.wasm"
+VENDOR = ROOT / "engine/doom"
 MAKE = Path("/usr/bin/make")
 SHAREWARE_SHA256 = "1d7d43be501e67d927e415e0b8f3e29c3bf33075e859721816f652a526cac771"
 _pending_signal = None
@@ -159,7 +159,7 @@ def source_evidence(evidence):
     sources.mkdir()
     patch = sources / "local.patch"
     patch.write_bytes(git_read("diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv", "--",
-                              "references/doom.wasm", "scripts/build_doom.py", "scripts/inspect_doom.mjs"))
+                              "engine/doom", "references/doom.wasm", "scripts/build_doom.py", "scripts/inspect_doom.mjs"))
     for name in ("build_doom.py", "inspect_doom.mjs"):
         shutil.copyfile(ROOT / "scripts" / name, sources / name)
     inputs = [VENDOR / "Makefile", VENDOR / "utils/generate_code_for_embedded_file.py",
@@ -203,7 +203,7 @@ def execute_build(args):
     require(not any(p.is_symlink() for p in [raw_out, *raw_out.parents]), "Output ancestry has symlinks")
     out = safe_path(raw_out)
     require(out.is_relative_to(VENDOR / "build") and out != VENDOR / "build",
-            "Output must be beneath ignored references/doom.wasm/build/")
+            "Output must be beneath ignored engine/doom/build/")
     require(not out.exists(), "Output already exists; choose a new directory")
     controlled = args.profile == "controlled-title"
     require(controlled or not args.without_a1_fixtures,

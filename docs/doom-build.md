@@ -1,5 +1,7 @@
 # Local-only Doom/WASM build
 
+Current source location: `engine/doom/`; `scripts/build_doom.py` remains the engine build entrypoint and new outputs must be beneath `engine/doom/build/`. Historical ignored builds/evidence remain at `references/doom.wasm/build/`, untouched by the source relocation. The shareware workflow below documents that older profile; M4 instead uses the existing `controlled-title` profile with fixtures enabled, no embedded WAD, and a fresh output directory. See [M4-A](doom-m4a-investigation.md) for the proposed shell/frontend handoff and current controlled-profile interface. Neither relocation nor this note establishes a fresh build or runtime result; build execution still requires separate authorization.
+
 Checkpoint 1 implements infrastructure only. Real compilation and two clean
 builds require separate Checkpoint 2 authorization. The historical shareware
 baseline and this profile are **not A1 acceptance**.
@@ -11,7 +13,7 @@ python3 scripts/build_doom.py \
   --profile upstream-shareware \
   --embed-wad assets/doom-shareware-20261009T173326Z-bffb50/DOOM1.WAD \
   --embed-sha256 1d7d43be501e67d927e415e0b8f3e29c3bf33075e859721816f652a526cac771 \
-  --out references/doom.wasm/build/repro-1 \
+  --out engine/doom/build/repro-1 \
   --jobs 2
 ```
 
@@ -31,7 +33,7 @@ checks, not publisher-signature verification or a complete sysroot inventory.
 
 Python validates assets and supplied/resolved paths, invokes Make and Node, and
 writes one result manifest. Assets must be ignored; output must be a new ignored
-directory beneath `references/doom.wasm/build/`, without symlink ancestors.
+directory beneath `engine/doom/build/`, without symlink ancestors.
 There is no clean, overwrite or retry option. Paths permit only ASCII letters,
 digits, `_`, `.`, `/`, `@`, `+` and `-`, excluding Make/shell metacharacters.
 Ambient Make/compiler flags, Node/Python options and credentials are excluded
