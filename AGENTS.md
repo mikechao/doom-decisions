@@ -28,8 +28,16 @@ Older Stage A3/B/C/D full-contract plans and the M4-C investigation are supersed
 Obtain owner approval before dependency installs/downloads, builds, opening a server/browser, Worker/WASM runtime execution, game-asset use, authenticated or billable API calls, commits/pushes, or GitHub mutations. After approval, from the repository root:
 
 - `npm --prefix app ci --no-audit --no-fund`: install locked frontend dependencies.
+- `npm --prefix app run dev`: start ordinary Vite development with the strict CSP.
+- `npm --prefix app run dev:impeccable`: opt into Live-compatible development at `http://127.0.0.1:5173/`; keep it running in a separate terminal. Only Vite `serve` in `impeccable` mode adds the localhost helper (`http://localhost:8400`) to script/connect sources, inline styles, and the Vite HMR WebSocket. Ordinary development and production builds retain the strict policy.
 - `./build.sh`: build a fresh `controlled-title` engine with fixtures enabled and no embedded WAD, stage verified WASM/metadata/notices under ignored `app/public/`, and build `app/dist/` with output verification.
 - `./build.sh --frontend-only`: reuse only the previously verified, locally generated current engine artifact. Missing evidence, changed engine inputs, or mismatched bytes require a full build; **this cannot run first from a fresh checkout**.
+
+**Impeccable Live Mode:** with the opt-in dev server running, send `$impeccable live` in Codex chat. Reuse the existing Vite instance; Live starts a separate helper on port 8400. The user manually opens the app URL, selects an element, requests variants, and chooses Accept or Discard while Codex services the live poll. Generation, Discard restoration, and exit cleanup have been exercised; this is not gameplay/API evidence.
+
+Expect temporary edits to `app/index.html` (picker script, variant markup/styles, and possibly CSP metadata), plus state under `app/.impeccable/live/` and helper-managed ignores in `app/.gitignore`. Keep the source CSP strict; if Live's CSP rewrite conflicts with the Vite adapter, restore the strict meta element while retaining the picker injection, letting the opt-in adapter supply allowances. Never widen the production policy. Live work does not authorize game-asset use, Worker/WASM execution, or authenticated/billable calls; retain the approval requirements above and all gameplay/credential invariants.
+
+On exit, stop the poll and run `.agents/skills/impeccable/scripts/impeccable live-server stop` from the repository root. Verify removal of the picker injection, temporary variant/carbonize wrappers and preview styles, and restoration of the strict source CSP; Discard restores the original selection, while accepted changes must become ordinary source. Inspect the diff before any build or commit. Local configuration/ignored session history may remain. The separately started Vite server stays running until its owner stops it with **Ctrl+C**.
 
 The app automatically loads generated/bundled `doom.wasm` on preparation. The IWAD stays locally user-selected and **must not be staged, bundled, or committed**; the app accepts only the known-good Freedoom 0.13.0 Phase 1 asset documented in [app/README.md](app/README.md).
 
