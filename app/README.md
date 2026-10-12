@@ -10,18 +10,22 @@ one official SDK Decisions request using the current rendered image, executes
 one allowlisted action on the same Worker, and returns to idle. **Start Continuous
 Mode** explicitly authorizes sequential decisions through that same pipeline,
 until Stop, budget exhaustion, a terminal boundary, or a failure.
-The human owns duration: **Tics per decision** accepts integers **1–20**, initially
-**6**. The captured duration cannot change during a pending decision. The model
-selects only `neutral`, `forward`, `turn_right`, `backward`, `turn_left`, `fire`, or
-`use`; it never selects duration or combined actions.
+The human owns duration: **Tics per decision** accepts any **positive JavaScript
+safe integer**, initially **6**. **35 tics = 1 Doom second**: N/35 is simulated
+Doom time, not API or browser wall time. Very large batches may exhaust memory,
+trip the existing 2-second Worker watchdog or native counter guards, and require
+reload; acceptance does not guarantee completion. The captured duration cannot
+change during a pending decision. The model selects only `neutral`, `forward`,
+`turn_right`, `backward`, `turn_left`, `fire`, or `use`; it never selects duration
+or combined actions.
 
 ## Continuous mode
 
 **Max API attempts** defaults to **2** and accepts any positive JavaScript safe
 integer (up to 9,007,199,254,740,991), including 100, 500, or 1000. This is separate
-from the **1–20 tics** bound. Start validates and freezes the budget for that run;
-neither the budget nor credentials are persisted. One unit is charged immediately
-before each `decisions.create` invocation, including failed, refused, invalid,
+from the **tics per decision** duration. Start validates and freezes the budget
+for that run; neither the budget nor credentials are persisted. One unit is charged
+immediately before each `decisions.create` invocation, including failed, refused, invalid,
 timed-out, or canceled calls. Pre-request failures and preparation's neutral tic
 consume no units. There are no refunds, automatic retries, or automatic restarts.
 The status shows attempts used/limit, stop reason, and cumulative verified tics.

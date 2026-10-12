@@ -63,12 +63,12 @@ Execution approval requirements remain in [AGENTS.md](AGENTS.md).
   Continuous Mode** explicitly admits sequential decisions; play never starts
   without user admission. There are no automatic retries or restarts.
 - Continuous Mode freezes a positive JavaScript safe integer API-attempt budget
-  per run, default **2**, separate from the duration bound. Each SDK invocation
+  per run, default **2**, separate from decision duration. Each SDK invocation
   consumes one attempt, including failures and cancellations; preparation and
   pre-request failures consume none. There are no refunds.
-- The human chooses an integer duration of **1–20 tics**, initially **6**. Duration
-  is captured per decision at admission, before asynchronous work. Changes during
-  continuous play affect only later decisions.
+- The human chooses any **positive JavaScript safe integer** of tics, initially
+  **6**. Duration is captured per decision at admission, before asynchronous work.
+  Changes during continuous play affect only later decisions.
 - The model selects one of `neutral`, `forward`, `turn_right`, `backward`,
   `turn_left`, `fire`, or `use`. It never chooses duration or combined actions.
 - Successful decisions retain the same Worker and native game state. Snapshots,

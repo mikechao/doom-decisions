@@ -780,8 +780,11 @@ async function runOneDecision(
   )
     return 'stopped';
   const tics = $('#tics').valueAsNumber;
-  if (!Number.isInteger(tics) || tics < 1 || tics > 20) {
-    display(run, 'Tics per decision must be an integer from 1 to 20.');
+  if (!Number.isSafeInteger(tics) || tics < 1) {
+    display(
+      run,
+      'Tics per decision must be a positive JavaScript safe integer.',
+    );
     return 'not-admitted';
   }
   let key = $('#key').value.trim();

@@ -72,7 +72,7 @@ Use a coherent shape language across controls, disclosures, and optional game/hi
 
 ### Duration and primary action
 
-Group the human-owned integer duration (1–20 tics, default 6) with **Next Decision**. Duration is captured per decision at admission before asynchronous work. Explain that duration belongs to the human and action selection belongs to the AI. The amber button is the strongest UI control. Provisionally target interactive heights of at least 44 CSS px; validate actual touch and keyboard usability.
+Group the human-owned duration (any positive JavaScript safe integer of tics, default 6) with **Next Decision**. Duration is captured per decision at admission before asynchronous work. Explain that duration belongs to the human and action selection belongs to the AI. The amber button is the strongest UI control. Provisionally target interactive heights of at least 44 CSS px; validate actual touch and keyboard usability.
 
 Keep **Max API attempts**, **Start Continuous Mode**, and **Stop** accessible beside the manual controls. Distinguish the frozen per-run attempt budget (default 2) from per-decision duration; edits to duration during continuous play affect later admissions. Keep Stop and cleanup status legible without implying immediate cancellation of native work or remote billing.
 

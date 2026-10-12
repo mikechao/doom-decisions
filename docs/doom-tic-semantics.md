@@ -18,9 +18,10 @@ checks that observed native state stays unchanged during passive operations.
 
 ## How a decision advances the game
 
-The human selects **N = 1–20 tics**. The controller freezes that duration for the
-admitted decision; the model selects the action, not N. The Worker makes up to N
-synchronous controlled steps and verifies each completed step:
+The human selects **N as any positive JavaScript safe integer of tics**. The
+controller freezes that duration for the admitted decision; the model selects
+the action, not N. The Worker makes up to N synchronous controlled steps and
+verifies each completed step:
 
 Selected N → controller/Worker batch → WASM `stepNeutralControlled` →
 `G_A21Step` → `G_TickerContinuation` → `P_Ticker` → committed tic/virtual clock.

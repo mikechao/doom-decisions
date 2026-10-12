@@ -32,10 +32,10 @@ for (const invalidate of [
   await Promise.resolve();
   assert.throws(() => assertDecision(state, token)); // stale dispatch fence
 }
-for (const n of [0, 21, 1.5, NaN]) {
+for (const n of [0, -1, 1.5, 20.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1, '', '20.5']) {
   assert.equal(admitDecision(session(), n), undefined);
 }
-for (const n of [1, 20]) {
+for (const n of [1, 6, 20, 21, 35, 1000, Number.MAX_SAFE_INTEGER]) {
   assert.equal(admitDecision(session(), n).tics, n);
 }
 for (const choice of Object.keys(masks)) {
@@ -96,6 +96,23 @@ assert.equal(first.cumulativeVerifiedTics, 3);
 const second = verifyAction(state(3), 0, 5, receipt(3, 5, 5));
 assert.equal(second.complete, true);
 assert.equal(second.cumulativeVerifiedTics, 8);
+for (const n of [21, 35]) {
+  const verified = verifyAction(state(1), 0, n, receipt(1, n, n));
+  assert.equal(verified.complete, true);
+  assert.equal(verified.independentlyVerifiedTics, n);
+  assert.equal(verified.cumulativeVerifiedTics, 1 + n);
+}
+// Large durations validate using an empty refused receipt, without a large chain.
+for (const n of [1000, Number.MAX_SAFE_INTEGER]) {
+  const verified = verifyAction(state(1), 0, n, receipt(1, n, 0, 'REFUSED'));
+  assert.equal(verified.completionUncertain, false);
+  assert.equal(verified.independentlyVerifiedTics, 0);
+}
+for (const n of [0, -1, 20.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '', '20.5']) {
+  const verified = verifyAction(state(1), 0, n, receipt(1, n, 1));
+  assert.equal(verified.independentlyVerifiedTics, 0);
+  assert.equal(verified.completionUncertain, true);
+}
 const partial = verifyAction(state(3), 0, 5, receipt(3, 5, 2, 'REFUSED'));
 assert.equal(partial.reportedCompletedTics, 2);
 assert.equal(partial.independentlyVerifiedTics, 2);

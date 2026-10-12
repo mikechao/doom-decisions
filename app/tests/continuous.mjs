@@ -75,6 +75,22 @@ function nativeFixture({ base = 1, at = Infinity, signals = {}, trapAt = Infinit
 }
 const execute = (native, n) => i11Action(0, n, mask => native.step(mask), native.observe);
 
+// Worker duration validation uses a passive refusal, never a large tic batch.
+for (const n of [21, 35, 1000, Number.MAX_SAFE_INTEGER]) {
+  let calls = 0;
+  const result = i11Action(0, n, () => { ++calls; return -1; }, () => observation(1));
+  assert.equal(calls, 1);
+  assert.equal(result.completedTics, 0);
+  assert.equal(result.outcome, 'REFUSED');
+  assert.equal(result.reason, undefined);
+}
+for (const n of [0, -1, 1.5, 20.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1, '', '20.5']) {
+  const result = i11Action(0, n, () => assert.fail('Invalid duration dispatched'), () => observation(1));
+  assert.equal(result.completedTics, 0);
+  assert.equal(result.outcome, 'REFUSED');
+  assert.match(result.reason, /Invalid mask\/duration/);
+}
+
 
 // Use the same bounded source-section VM seam as terminal.mjs. All decision,
 // SDK ownership, Stop, and loop logic below comes from production main.ts.
@@ -328,27 +344,27 @@ assert.equal(sdkSuccess.run.evidence.decisions[0].requestId, 'req_fixture');
 // Two admissions, frozen N, retained Worker, previous verified frame observation.
 const chain = fixture({ onCreate(call, nodes) {
   if (call === 1) {
-    nodes.get('#tics').valueAsNumber = 5;
+    nodes.get('#tics').valueAsNumber = 35;
     nodes.get('#budget').valueAsNumber = 1000; // Frozen run budget stays two.
     assert.equal(nodes.get('#tics').disabled, false);
     assert.equal(nodes.get('#budget').disabled, true);
   }
 } });
-chain.nodes.get('#tics').valueAsNumber = 2;
+chain.nodes.get('#tics').valueAsNumber = 21;
 await chain.start();
 const [first, second] = chain.run.evidence.decisions;
-assert.equal(first.selectedTics, 2); assert.equal(second.selectedTics, 5);
-assert.equal(first.result.tic, 3); assert.equal(second.result.tic, 8);
+assert.equal(first.selectedTics, 21); assert.equal(second.selectedTics, 35);
+assert.equal(first.result.tic, 22); assert.equal(second.result.tic, 57);
 assert.deepEqual(first.result, second.observation);
-assert.equal(chain.run.verifiedTics, 8);
+assert.equal(chain.run.verifiedTics, 57);
 assert.equal(chain.run.worker, chain.worker); assert.equal(chain.worker.terminated, false);
 assert.equal(chain.sdkCalls, 2); assert.equal(chain.sdkMax, 1); assert.equal(chain.workerMax, 1);
 assert.equal(chain.run.continuous.limit, 2); assert.equal(chain.run.continuous.used, 2);
 assert.match(chain.run.continuous.reason, /Budget exhausted/);
-assert.match(chain.nodes.get('#continuous-state').textContent, /2 \/ 2.*verified tic 8/);
+assert.match(chain.nodes.get('#continuous-state').textContent, /2 \/ 2.*verified tic 57/);
 assert.equal(chain.run.phase, 'ready'); assert.equal(chain.nodes.get('#next').disabled, false);
 assert.equal(chain.paints, 2);
-assert.match(chain.inputs[1].input[0].content[0].text, /verified tic 3/);
+assert.match(chain.inputs[1].input[0].content[0].text, /verified tic 22/);
 for (const entry of [first, second]) {
   assert.equal(entry.execution.requestedTics, entry.selectedTics);
   assert.equal(entry.execution.reportedCompletedTics, entry.selectedTics);
@@ -358,6 +374,27 @@ for (const entry of [first, second]) {
 await chain.next(); // Manual work after exhaustion does not spend the old budget.
 assert.equal(chain.sdkCalls, 3); assert.equal(chain.run.continuous.used, 2);
 assert.equal(chain.run.worker, chain.worker);
+
+// Controller validation admits large N but an invalid choice prevents dispatch.
+for (const n of [1000, Number.MAX_SAFE_INTEGER]) {
+  const h = fixture({ choice: { answers: [] } });
+  h.nodes.get('#tics').valueAsNumber = n;
+  await h.next();
+  assert.equal(h.sdkCalls, 1); assert.equal(h.native.calls, 0);
+  assert.equal(h.run.evidence.decisions[0].selectedTics, n);
+  assert.equal(h.run.phase, 'ready');
+}
+// An empty number input has valueAsNumber=NaN; no partial-string parsing occurs.
+for (const n of [0, -1, 1.5, 20.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+  for (const mode of ['next', 'start']) {
+    const h = fixture(); h.nodes.get('#tics').valueAsNumber = n;
+    await h[mode]();
+    assert.equal(h.sdkCalls, 0); assert.equal(h.native.calls, 0);
+    assert.equal(h.run.evidence.decisions.length, 0);
+    assert.match(h.nodes.get('#status').textContent, /must be a positive JavaScript safe integer/);
+    if (mode === 'start') assert.equal(h.run.continuous.used, 0);
+  }
+}
 
 // Budget is any positive safe integer; invalid inputs admit no SDK work.
 for (const limit of [1, 20, 100, 500, 1000, Number.MAX_SAFE_INTEGER]) {

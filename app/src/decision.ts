@@ -35,9 +35,8 @@ export function admitDecision(run: Session, tics: number): Attempt | undefined {
     run.attempt ||
     run.terminal ||
     !run.worker ||
-    !Number.isInteger(tics) ||
-    tics < 1 ||
-    tics > 20
+    !Number.isSafeInteger(tics) ||
+    tics < 1
   )
     return;
   const attempt = Object.freeze({ tics, worker: run.worker });
@@ -135,7 +134,7 @@ export function verifyAction(
     terminal: false,
     assessment: null,
   };
-  if (!i11MaskValid(mask) || !Number.isInteger(tics) || tics < 1 || tics > 20)
+  if (!i11MaskValid(mask) || !Number.isSafeInteger(tics) || tics < 1)
     return evidence;
   let last = before;
   const steps = Array.isArray(result.steps) ? result.steps : [];

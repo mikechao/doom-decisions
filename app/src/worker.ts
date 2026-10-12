@@ -43,7 +43,7 @@ export function i11Action(
   let last: Observation | undefined;
   try {
     last = observe();
-    if (!i11MaskValid(mask) || !Number.isInteger(tics) || tics < 1 || tics > 20)
+    if (!i11MaskValid(mask) || !Number.isSafeInteger(tics) || tics < 1)
       return {
         ...last,
         ...action,

@@ -47,7 +47,10 @@
             <div class="controls">
               <div class="duration">
                 <label for="tics">Tics per decision</label>
-                <input id="tics" type="number" min="1" max="20" step="1" value="6" aria-describedby="duration-note" disabled>
+                <div>
+                  <input id="tics" type="number" min="1" step="1" value="6" aria-describedby="tic-rate duration-note" disabled>
+                  <p id="tic-rate" class="help">35 tics = 1 Doom second</p>
+                </div>
               </div>
               <button id="next" type="button" disabled>Next Decision</button>
               <div class="duration budget">
@@ -57,7 +60,7 @@
               <button id="start" type="button" disabled>Start Continuous Mode</button>
               <button id="stop" type="button" disabled>Stop</button>
             </div>
-            <p id="duration-note" class="help">Choose 1–20 tics per decision. Changes during continuous mode apply to the next decision.</p>
+            <p id="duration-note" class="help">Choose a positive JavaScript safe integer of tics per decision. Changes during continuous mode apply to the next decision.</p>
             <p id="continuous-note" class="help">Next Decision requests one action. Start authorizes up to your positive integer API-attempt limit, including failed or canceled calls.</p>
             <p id="continuous-state" role="status" aria-live="polite">Continuous mode stopped · default limit 2 API attempts</p>
           </div>

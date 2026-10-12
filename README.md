@@ -7,8 +7,9 @@ CSS and a modified Doom WASM engine running in an app-owned module Worker.
 Select your local **Freedoom 0.13.0 Phase 1 IWAD** to prepare E1M1 automatically,
 including one mandatory neutral tic without an API request. Each **Next Decision**
 click requests one of seven actions: neutral, forward, turn right, backward,
-turn left, fire or use. You choose **1–20 tics**, initially **6**, captured separately
-for each admitted decision. **Start Continuous Mode** admits sequential decisions
+turn left, fire or use. You choose any **positive JavaScript safe integer** of tics,
+initially **6**, captured separately for each admitted decision.
+**Start Continuous Mode** admits sequential decisions
 with a frozen per-run API-attempt budget: any positive JavaScript safe integer,
 default **2**, including failed or canceled calls. N changes affect later decisions.
 **Stop** closes admission and finishes cleanup or current-action verification.
