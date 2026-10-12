@@ -153,7 +153,7 @@ const controllerSource = stripTypeScriptTypes([
   'let current = initialRun; let pageExited = false;',
   section('function check(', 'const wadHash ='),
   section('const passive = [', 'const work = ['),
-  section('function assertCurrent(', 'const actionNames:'),
+  section('function assertCurrent(', 'const setup ='),
   section('function display(run:', 'function checkPrepared('),
   section('async function request<', 'const deadlineMs ='),
   section('const deadlineMs =', "$('#start').addEventListener"),
