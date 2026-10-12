@@ -1,33 +1,527 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-11T21:39:34Z",
+  "generatedAt": "2026-10-12T22:21:07Z",
   "title": "Design System: Doom Decisions",
-  "extensions": {},
-  "components": [],
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Muted amber",
+        "canonical": "#d2a65b",
+        "tonalRamp": [
+          "oklch(15.00% 0.10670 79.31)",
+          "oklch(26.43% 0.10670 79.31)",
+          "oklch(37.86% 0.10670 79.31)",
+          "oklch(49.29% 0.10670 79.31)",
+          "oklch(60.71% 0.10670 79.31)",
+          "oklch(72.14% 0.10670 79.31)",
+          "oklch(83.57% 0.10670 79.31)",
+          "oklch(95.00% 0.10670 79.31)"
+        ]
+      },
+      "primary-hover": {
+        "role": "primary",
+        "displayName": "Primary hover",
+        "canonical": "#e0b66f",
+        "tonalRamp": [
+          "oklch(15.00% 0.10165 79.64)",
+          "oklch(26.43% 0.10165 79.64)",
+          "oklch(37.86% 0.10165 79.64)",
+          "oklch(49.29% 0.10165 79.64)",
+          "oklch(60.71% 0.10165 79.64)",
+          "oklch(72.14% 0.10165 79.64)",
+          "oklch(83.57% 0.10165 79.64)",
+          "oklch(95.00% 0.10165 79.64)"
+        ]
+      },
+      "primary-active": {
+        "role": "primary",
+        "displayName": "Primary active",
+        "canonical": "#bf944d",
+        "tonalRamp": [
+          "oklch(15.00% 0.10292 78.23)",
+          "oklch(26.43% 0.10292 78.23)",
+          "oklch(37.86% 0.10292 78.23)",
+          "oklch(49.29% 0.10292 78.23)",
+          "oklch(60.71% 0.10292 78.23)",
+          "oklch(72.14% 0.10292 78.23)",
+          "oklch(83.57% 0.10292 78.23)",
+          "oklch(95.00% 0.10292 78.23)"
+        ]
+      },
+      "primary-ink": {
+        "role": "primary",
+        "displayName": "Dark amber ink",
+        "canonical": "#201a10",
+        "tonalRamp": [
+          "oklch(15.00% 0.02047 80.09)",
+          "oklch(26.43% 0.02047 80.09)",
+          "oklch(37.86% 0.02047 80.09)",
+          "oklch(49.29% 0.02047 80.09)",
+          "oklch(60.71% 0.02047 80.09)",
+          "oklch(72.14% 0.02047 80.09)",
+          "oklch(83.57% 0.02047 80.09)",
+          "oklch(95.00% 0.02047 80.09)"
+        ]
+      },
+      "page": {
+        "role": "neutral",
+        "displayName": "Deep charcoal",
+        "canonical": "#151716",
+        "tonalRamp": [
+          "oklch(15.00% 0.00367 164.66)",
+          "oklch(26.43% 0.00367 164.66)",
+          "oklch(37.86% 0.00367 164.66)",
+          "oklch(49.29% 0.00367 164.66)",
+          "oklch(60.71% 0.00367 164.66)",
+          "oklch(72.14% 0.00367 164.66)",
+          "oklch(83.57% 0.00367 164.66)",
+          "oklch(95.00% 0.00367 164.66)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Warm off-white",
+        "canonical": "#e8e3d9",
+        "tonalRamp": [
+          "oklch(15.00% 0.01447 84.58)",
+          "oklch(26.43% 0.01447 84.58)",
+          "oklch(37.86% 0.01447 84.58)",
+          "oklch(49.29% 0.01447 84.58)",
+          "oklch(60.71% 0.01447 84.58)",
+          "oklch(72.14% 0.01447 84.58)",
+          "oklch(83.57% 0.01447 84.58)",
+          "oklch(95.00% 0.01447 84.58)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Sage-gray supporting text",
+        "canonical": "#b2b4aa",
+        "tonalRamp": [
+          "oklch(15.00% 0.01415 115.92)",
+          "oklch(26.43% 0.01415 115.92)",
+          "oklch(37.86% 0.01415 115.92)",
+          "oklch(49.29% 0.01415 115.92)",
+          "oklch(60.71% 0.01415 115.92)",
+          "oklch(72.14% 0.01415 115.92)",
+          "oklch(83.57% 0.01415 115.92)",
+          "oklch(95.00% 0.01415 115.92)"
+        ]
+      },
+      "boundary": {
+        "role": "neutral",
+        "displayName": "Olive boundary",
+        "canonical": "#7f8778",
+        "tonalRamp": [
+          "oklch(15.00% 0.02405 130.18)",
+          "oklch(26.43% 0.02405 130.18)",
+          "oklch(37.86% 0.02405 130.18)",
+          "oklch(49.29% 0.02405 130.18)",
+          "oklch(60.71% 0.02405 130.18)",
+          "oklch(72.14% 0.02405 130.18)",
+          "oklch(83.57% 0.02405 130.18)",
+          "oklch(95.00% 0.02405 130.18)"
+        ]
+      },
+      "focus": {
+        "role": "neutral",
+        "displayName": "Pale blue",
+        "canonical": "#b9d9f4",
+        "tonalRamp": [
+          "oklch(15.00% 0.05067 243.83)",
+          "oklch(26.43% 0.05067 243.83)",
+          "oklch(37.86% 0.05067 243.83)",
+          "oklch(49.29% 0.05067 243.83)",
+          "oklch(60.71% 0.05067 243.83)",
+          "oklch(72.14% 0.05067 243.83)",
+          "oklch(83.57% 0.05067 243.83)",
+          "oklch(95.00% 0.05067 243.83)"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Olive divider",
+        "canonical": "#42483e",
+        "tonalRamp": [
+          "oklch(15.00% 0.01827 132.72)",
+          "oklch(26.43% 0.01827 132.72)",
+          "oklch(37.86% 0.01827 132.72)",
+          "oklch(49.29% 0.01827 132.72)",
+          "oklch(60.71% 0.01827 132.72)",
+          "oklch(72.14% 0.01827 132.72)",
+          "oklch(83.57% 0.01827 132.72)",
+          "oklch(95.00% 0.01827 132.72)"
+        ]
+      },
+      "field": {
+        "role": "neutral",
+        "displayName": "Dark olive field",
+        "canonical": "#20251e",
+        "tonalRamp": [
+          "oklch(15.00% 0.01475 136.71)",
+          "oklch(26.43% 0.01475 136.71)",
+          "oklch(37.86% 0.01475 136.71)",
+          "oklch(49.29% 0.01475 136.71)",
+          "oklch(60.71% 0.01475 136.71)",
+          "oklch(72.14% 0.01475 136.71)",
+          "oklch(83.57% 0.01475 136.71)",
+          "oklch(95.00% 0.01475 136.71)"
+        ]
+      },
+      "field-disabled": {
+        "role": "neutral",
+        "displayName": "Field disabled",
+        "canonical": "#242923",
+        "tonalRamp": [
+          "oklch(15.00% 0.01301 140.46)",
+          "oklch(26.43% 0.01301 140.46)",
+          "oklch(37.86% 0.01301 140.46)",
+          "oklch(49.29% 0.01301 140.46)",
+          "oklch(60.71% 0.01301 140.46)",
+          "oklch(72.14% 0.01301 140.46)",
+          "oklch(83.57% 0.01301 140.46)",
+          "oklch(95.00% 0.01301 140.46)"
+        ]
+      },
+      "setup": {
+        "role": "neutral",
+        "displayName": "Raised olive setup",
+        "canonical": "#2b3128",
+        "tonalRamp": [
+          "oklch(15.00% 0.01788 135.13)",
+          "oklch(26.43% 0.01788 135.13)",
+          "oklch(37.86% 0.01788 135.13)",
+          "oklch(49.29% 0.01788 135.13)",
+          "oklch(60.71% 0.01788 135.13)",
+          "oklch(72.14% 0.01788 135.13)",
+          "oklch(83.57% 0.01788 135.13)",
+          "oklch(95.00% 0.01788 135.13)"
+        ]
+      },
+      "controls": {
+        "role": "neutral",
+        "displayName": "Olive controls",
+        "canonical": "#2e352a",
+        "tonalRamp": [
+          "oklch(15.00% 0.02136 134.15)",
+          "oklch(26.43% 0.02136 134.15)",
+          "oklch(37.86% 0.02136 134.15)",
+          "oklch(49.29% 0.02136 134.15)",
+          "oklch(60.71% 0.02136 134.15)",
+          "oklch(72.14% 0.02136 134.15)",
+          "oklch(83.57% 0.02136 134.15)",
+          "oklch(95.00% 0.02136 134.15)"
+        ]
+      },
+      "secondary-action": {
+        "role": "neutral",
+        "displayName": "Secondary action",
+        "canonical": "#363d30",
+        "tonalRamp": [
+          "oklch(15.00% 0.02389 130.68)",
+          "oklch(26.43% 0.02389 130.68)",
+          "oklch(37.86% 0.02389 130.68)",
+          "oklch(49.29% 0.02389 130.68)",
+          "oklch(60.71% 0.02389 130.68)",
+          "oklch(72.14% 0.02389 130.68)",
+          "oklch(83.57% 0.02389 130.68)",
+          "oklch(95.00% 0.02389 130.68)"
+        ]
+      },
+      "secondary-hover": {
+        "role": "neutral",
+        "displayName": "Secondary hover",
+        "canonical": "#444c3e",
+        "tonalRamp": [
+          "oklch(15.00% 0.02509 131.82)",
+          "oklch(26.43% 0.02509 131.82)",
+          "oklch(37.86% 0.02509 131.82)",
+          "oklch(49.29% 0.02509 131.82)",
+          "oklch(60.71% 0.02509 131.82)",
+          "oklch(72.14% 0.02509 131.82)",
+          "oklch(83.57% 0.02509 131.82)",
+          "oklch(95.00% 0.02509 131.82)"
+        ]
+      },
+      "action-boundary": {
+        "role": "neutral",
+        "displayName": "Action boundary",
+        "canonical": "#81745b",
+        "tonalRamp": [
+          "oklch(15.00% 0.04000 83.62)",
+          "oklch(26.43% 0.04000 83.62)",
+          "oklch(37.86% 0.04000 83.62)",
+          "oklch(49.29% 0.04000 83.62)",
+          "oklch(60.71% 0.04000 83.62)",
+          "oklch(72.14% 0.04000 83.62)",
+          "oklch(83.57% 0.04000 83.62)",
+          "oklch(95.00% 0.04000 83.62)"
+        ]
+      },
+      "action-disabled": {
+        "role": "neutral",
+        "displayName": "Action disabled",
+        "canonical": "#413827",
+        "tonalRamp": [
+          "oklch(15.00% 0.03047 83.06)",
+          "oklch(26.43% 0.03047 83.06)",
+          "oklch(37.86% 0.03047 83.06)",
+          "oklch(49.29% 0.03047 83.06)",
+          "oklch(60.71% 0.03047 83.06)",
+          "oklch(72.14% 0.03047 83.06)",
+          "oklch(83.57% 0.03047 83.06)",
+          "oklch(95.00% 0.03047 83.06)"
+        ]
+      },
+      "action-disabled-ink": {
+        "role": "neutral",
+        "displayName": "Action disabled ink",
+        "canonical": "#c4b493",
+        "tonalRamp": [
+          "oklch(15.00% 0.04849 85.15)",
+          "oklch(26.43% 0.04849 85.15)",
+          "oklch(37.86% 0.04849 85.15)",
+          "oklch(49.29% 0.04849 85.15)",
+          "oklch(60.71% 0.04849 85.15)",
+          "oklch(72.14% 0.04849 85.15)",
+          "oklch(83.57% 0.04849 85.15)",
+          "oklch(95.00% 0.04849 85.15)"
+        ]
+      },
+      "disclosure-hover": {
+        "role": "neutral",
+        "displayName": "Disclosure hover",
+        "canonical": "#353d30",
+        "tonalRamp": [
+          "oklch(15.00% 0.02450 133.45)",
+          "oklch(26.43% 0.02450 133.45)",
+          "oklch(37.86% 0.02450 133.45)",
+          "oklch(49.29% 0.02450 133.45)",
+          "oklch(60.71% 0.02450 133.45)",
+          "oklch(72.14% 0.02450 133.45)",
+          "oklch(83.57% 0.02450 133.45)",
+          "oklch(95.00% 0.02450 133.45)"
+        ]
+      },
+      "history-open": {
+        "role": "neutral",
+        "displayName": "History open",
+        "canonical": "#292f25",
+        "tonalRamp": [
+          "oklch(15.00% 0.01955 132.88)",
+          "oklch(26.43% 0.01955 132.88)",
+          "oklch(37.86% 0.01955 132.88)",
+          "oklch(49.29% 0.01955 132.88)",
+          "oklch(60.71% 0.01955 132.88)",
+          "oklch(72.14% 0.01955 132.88)",
+          "oklch(83.57% 0.01955 132.88)",
+          "oklch(95.00% 0.01955 132.88)"
+        ]
+      },
+      "selected": {
+        "role": "neutral",
+        "displayName": "Selected olive",
+        "canonical": "#3b4533",
+        "tonalRamp": [
+          "oklch(15.00% 0.03251 131.50)",
+          "oklch(26.43% 0.03251 131.50)",
+          "oklch(37.86% 0.03251 131.50)",
+          "oklch(49.29% 0.03251 131.50)",
+          "oklch(60.71% 0.03251 131.50)",
+          "oklch(72.14% 0.03251 131.50)",
+          "oklch(83.57% 0.03251 131.50)",
+          "oklch(95.00% 0.03251 131.50)"
+        ]
+      },
+      "probability": {
+        "role": "neutral",
+        "displayName": "Sage probability fill",
+        "canonical": "#939d89",
+        "tonalRamp": [
+          "oklch(15.00% 0.03088 128.98)",
+          "oklch(26.43% 0.03088 128.98)",
+          "oklch(37.86% 0.03088 128.98)",
+          "oklch(49.29% 0.03088 128.98)",
+          "oklch(60.71% 0.03088 128.98)",
+          "oklch(72.14% 0.03088 128.98)",
+          "oklch(83.57% 0.03088 128.98)",
+          "oklch(95.00% 0.03088 128.98)"
+        ]
+      },
+      "track": {
+        "role": "neutral",
+        "displayName": "Dark olive probability track",
+        "canonical": "#353d31",
+        "tonalRamp": [
+          "oklch(15.00% 0.02302 135.17)",
+          "oklch(26.43% 0.02302 135.17)",
+          "oklch(37.86% 0.02302 135.17)",
+          "oklch(49.29% 0.02302 135.17)",
+          "oklch(60.71% 0.02302 135.17)",
+          "oklch(72.14% 0.02302 135.17)",
+          "oklch(83.57% 0.02302 135.17)",
+          "oklch(95.00% 0.02302 135.17)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline"
+      },
+      "title": {
+        "displayName": "Title"
+      },
+      "body": {
+        "displayName": "Body"
+      },
+      "label": {
+        "displayName": "Label"
+      },
+      "action-label": {
+        "displayName": "Action Label"
+      },
+      "decision-action": {
+        "displayName": "Decision Action"
+      },
+      "supporting": {
+        "displayName": "Supporting"
+      },
+      "metadata": {
+        "displayName": "Metadata"
+      },
+      "evidence": {
+        "displayName": "Evidence"
+      }
+    },
+    "shadows": [
+      {
+        "name": "console",
+        "value": "0 20px 56px #0005",
+        "purpose": "Soft outer lift around the combined game, setup, and history console."
+      }
+    ],
+    "motion": [],
+    "breakpoints": [
+      {
+        "name": "wide",
+        "value": "1168px"
+      },
+      {
+        "name": "narrow-max",
+        "value": "639px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Next Decision",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "One explicitly admitted manual decision.",
+      "html": "<button type=\"button\" class=\"ds-button\">Next Decision</button>",
+      "css": ".ds-button { min-height: 48px; padding: 0.625rem 1.25rem; border: 1px solid #d2a65b; border-radius: 8px; font: 650 1rem/1.5 system-ui, sans-serif; color: #201a10; background: #d2a65b; cursor: pointer; } .ds-button:hover:enabled { background: #e0b66f; } .ds-button:active:enabled { background: #bf944d; } .ds-button:disabled { color: #c4b493; background: #413827; border-color: #81745b; cursor: default; } .ds-button[aria-busy=\"true\"] { cursor: wait; } .ds-button:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; }"
+    },
+    {
+      "name": "Continuous controls",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Start and Stop share the secondary action treatment.",
+      "html": "<button type=\"button\" class=\"ds-button\">Start Continuous Mode</button>",
+      "css": ".ds-button { min-height: 48px; padding: 0.625rem 1.25rem; border: 1px solid #81745b; border-radius: 8px; font: 650 1rem/1.5 system-ui, sans-serif; color: #e8e3d9; background: #363d30; cursor: pointer; } .ds-button:hover:enabled { background: #444c3e; } .ds-button:active:enabled { background: #2e352a; } .ds-button:disabled { color: #c4b493; background: #413827; border-color: #81745b; cursor: default; } .ds-button[aria-busy=\"true\"] { cursor: wait; } .ds-button:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; }"
+    },
+    {
+      "name": "Disabled action",
+      "kind": "button",
+      "refersTo": "button-disabled",
+      "description": "Unavailable actions remain readable.",
+      "html": "<button type=\"button\" class=\"ds-button\" disabled>Next Decision</button>",
+      "css": ".ds-button { min-height: 48px; padding: 0.625rem 1.25rem; border: 1px solid #d2a65b; border-radius: 8px; font: 650 1rem/1.5 system-ui, sans-serif; color: #201a10; background: #d2a65b; cursor: pointer; } .ds-button:hover:enabled { background: #e0b66f; } .ds-button:active:enabled { background: #bf944d; } .ds-button:disabled { color: #c4b493; background: #413827; border-color: #81745b; cursor: default; } .ds-button[aria-busy=\"true\"] { cursor: wait; } .ds-button:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; }"
+    },
+    {
+      "name": "Temporary key field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Empty password field; no credential is supplied or retained in this example.",
+      "html": "<label class=\"ds-field\">Temporary OpenAI API key<input type=\"password\" autocomplete=\"off\" spellcheck=\"false\" autocapitalize=\"off\"></label>",
+      "css": ".ds-field { display: block; font: 600 0.875rem/1.5 system-ui, sans-serif; color: #e8e3d9; } .ds-field input { box-sizing: border-box; display: block; min-height: 44px; max-width: 100%; width: 100%; margin-top: 0.375rem; padding: 0.5rem 0.75rem; border: 1px solid var(--boundary, #7f8778); border-radius: 6px; font: 400 1rem/1.5 system-ui, sans-serif; color: #e8e3d9; background: #20251e; caret-color: var(--focus, #b9d9f4); } .ds-field input:hover:enabled { border-color: #b2b4aa; } .ds-field input:disabled { color: var(--muted, #b2b4aa); background: #242923; } .ds-field input:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; }"
+    },
+    {
+      "name": "Local WAD field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A native local file picker; this isolated example has no game or upload handler.",
+      "html": "<label class=\"ds-field\">Local Freedoom WAD<input type=\"file\" accept=\".wad\"></label>",
+      "css": ".ds-field { display: block; font: 600 0.875rem/1.5 system-ui, sans-serif; color: #e8e3d9; } .ds-field input { box-sizing: border-box; display: block; min-height: 44px; max-width: 100%; width: 100%; margin-top: 0.375rem; padding: 0.5rem 0.75rem; border: 1px solid var(--boundary, #7f8778); border-radius: 6px; font: 400 1rem/1.5 system-ui, sans-serif; color: #e8e3d9; background: #20251e; caret-color: var(--focus, #b9d9f4); } .ds-field input:hover:enabled { border-color: #b2b4aa; } .ds-field input:disabled { color: var(--muted, #b2b4aa); background: #242923; } .ds-field input:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; } .ds-field input[type=\"file\"] { padding: 0.25rem; font-size: 0.875rem; } .ds-field input::file-selector-button { min-height: 36px; margin-right: 0.5rem; padding: 0.25rem 0.75rem; border: 0; border-radius: 3px; font: inherit; color: inherit; background: #394033; cursor: pointer; } .ds-field input:hover:enabled::file-selector-button { background: #484f42; } .ds-field input:disabled::file-selector-button { cursor: default; }"
+    },
+    {
+      "name": "Setup disclosure",
+      "kind": "custom",
+      "refersTo": "setup",
+      "description": "Native disclosure showing the empty-asset summary. The example has no capture, preparation, or collapse controller.",
+      "html": "<details class=\"ds-setup\"><summary><span class=\"ds-setup-title\">Set up Doom</span><span class=\"ds-client\">Temporary OpenAI API key required</span></summary><div class=\"ds-setup-content\">Your Freedoom WAD stays on your computer. The engine loads automatically. Refresh to change the file.</div></details>",
+      "css": ".ds-setup { background: #2b3128; color: #e8e3d9; border-radius: 16px 16px 0 0; border-bottom: 1px solid var(--rule, #42483e); font: 400 1rem/1.5 system-ui, sans-serif; } .ds-setup summary { box-sizing: border-box; display: grid; grid-template-columns: 0.5rem auto minmax(0, 1fr); gap: 0.25rem 0.75rem; align-items: center; min-height: 44px; padding: 1rem 1.5rem; border-radius: 16px 16px 0 0; list-style: none; cursor: pointer; } .ds-setup summary::-webkit-details-marker { display: none; } .ds-setup summary::before { content: \"\"; width: 6px; height: 6px; border-top: 1.5px solid currentColor; border-right: 1.5px solid currentColor; transform: rotate(45deg); } .ds-setup[open] summary::before { transform: rotate(135deg); } .ds-setup summary:hover { background: #353d30; } .ds-setup summary:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; } .ds-setup-title { font-weight: 650; } .ds-client { grid-column: 2 / -1; text-align: right; color: var(--muted, #b2b4aa); font-size: 0.8125rem; } .ds-setup-content { border-top: 1px solid var(--rule, #42483e); padding: 1.25rem 1.5rem 0.75rem; font-size: 0.875rem; color: var(--muted, #b2b4aa); }"
+    },
+    {
+      "name": "Control panel",
+      "kind": "card",
+      "refersTo": "control-panel",
+      "description": "The olive surface groups human-owned duration and actions.",
+      "html": "<div class=\"ds-control-panel\"><div class=\"ds-controls\"><label class=\"ds-field\">Tics per decision<input type=\"number\" min=\"1\" step=\"1\" value=\"6\"></label><button type=\"button\" class=\"ds-button\">Next Decision</button></div></div>",
+      "css": ".ds-field { display: block; font: 600 0.875rem/1.5 system-ui, sans-serif; color: #e8e3d9; } .ds-field input { box-sizing: border-box; display: block; min-height: 44px; max-width: 100%; width: 100%; margin-top: 0.375rem; padding: 0.5rem 0.75rem; border: 1px solid var(--boundary, #7f8778); border-radius: 6px; font: 400 1rem/1.5 system-ui, sans-serif; color: #e8e3d9; background: #20251e; caret-color: var(--focus, #b9d9f4); } .ds-field input:hover:enabled { border-color: #b2b4aa; } .ds-field input:disabled { color: var(--muted, #b2b4aa); background: #242923; } .ds-field input:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; } .ds-button { min-height: 48px; padding: 0.625rem 1.25rem; border: 1px solid #d2a65b; border-radius: 8px; font: 650 1rem/1.5 system-ui, sans-serif; color: #201a10; background: #d2a65b; cursor: pointer; } .ds-button:hover:enabled { background: #e0b66f; } .ds-button:active:enabled { background: #bf944d; } .ds-button:disabled { color: #c4b493; background: #413827; border-color: #81745b; cursor: default; } .ds-button[aria-busy=\"true\"] { cursor: wait; } .ds-button:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; } .ds-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1rem; } .ds-control-panel { padding: 1rem; color: #e8e3d9; background: #2e352a; border-radius: 12px; } .ds-control-panel input { width: 5rem; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Decision history row",
+      "kind": "custom",
+      "refersTo": "history-open",
+      "description": "Illustrative pending row; no gameplay, selection, latency, or probabilities are fabricated.",
+      "html": "<details class=\"ds-history\"><summary><span class=\"ds-decision\"><span class=\"ds-number\">#1</span> Action pending</span><span class=\"ds-latency\">API latency pending</span><span class=\"ds-status\">Requesting one action</span></summary><div class=\"ds-history-content\"><p>Action probabilities</p><p>Action probabilities unavailable.</p></div></details>",
+      "css": ".ds-history { border-bottom: 1px solid var(--rule, #42483e); color: #e8e3d9; font: 400 1rem/1.5 system-ui, sans-serif; } .ds-history[open] { margin-block: 0.25rem; background: #292f25; border-bottom-color: transparent; border-radius: 12px; } .ds-history summary { box-sizing: border-box; display: grid; grid-template-columns: 0.5rem minmax(0, 1fr) auto; gap: 0.375rem 0.625rem; align-items: baseline; min-height: 44px; padding: 1rem 0.5rem; list-style: none; border-radius: 12px; cursor: pointer; } .ds-history[open] summary { padding-inline: 0.875rem; } .ds-history summary::-webkit-details-marker { display: none; } .ds-history summary::before { content: \"\"; width: 6px; height: 6px; border-top: 1.5px solid currentColor; border-right: 1.5px solid currentColor; transform: rotate(45deg); align-self: center; } .ds-history[open] summary::before { transform: rotate(135deg); } .ds-history summary:hover { background: #353d30; } .ds-history summary:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; } .ds-decision { font-size: 1.0625rem; font-weight: 700; letter-spacing: -0.02em; } .ds-number { font-size: 0.8125rem; font-weight: 400; color: var(--muted, #b2b4aa); font-variant-numeric: tabular-nums; } .ds-latency { font-size: 0.75rem; color: var(--muted, #b2b4aa); text-align: right; } .ds-status { grid-column: 2 / -1; color: var(--muted, #b2b4aa); font-size: 0.8125rem; } .ds-history-content { padding: 0.25rem 1rem 0.5rem; font-size: 0.875rem; }"
+    },
+    {
+      "name": "Selected marker",
+      "kind": "chip",
+      "refersTo": "selected-marker",
+      "description": "Explicit selection label used beside the actual model-selected action; no sample action or probability is supplied.",
+      "html": "<span class=\"ds-selected-marker\">Selected</span>",
+      "css": ".ds-selected-marker { display: inline; padding: 0 0.25rem; border: 1px solid #87947c; border-radius: 3px; color: #e8e3d9; font: 600 0.6875rem/1.5 system-ui, sans-serif; }"
+    }
+  ],
   "narrative": {
-    "northStar": "Quiet game viewer",
-    "overview": "Doom supplies the visual character. Quiet charcoal surroundings, warm readable text, and restrained controls give the framebuffer priority while keeping AI decision history visible as its companion. The human chooses when and how long; the AI chooses the action.\n\nThe interface is compact and calm. Setup and engineering evidence remain accessible without competing with the game, its next decision, or the visible history. Borders describe functional boundaries; decoration and animation do not carry the experience.",
+    "northStar": "Doom and its decisions take center stage",
+    "overview": "Doom anchors the visual character. Olive-charcoal surfaces, warm off-white text,\nand a muted amber primary action surround the framebuffer without competing with\nit. System typography keeps instructions direct; visible AI history lets people\nfollow each choice and inspect its outcome. The human chooses when and how long;\nthe AI chooses the action.\n\nThe interface groups setup, game, controls, and history inside one rounded console.\nTonal layers, controlled gradients, a soft outer shadow, and precise disclosure\ndetails give it depth. Setup is prominent during onboarding, secondary during\nplay, and discoverable for intervention or replacement. Framing and game-adjacent\ndetails remain available when they improve hierarchy, cohesion, legibility, or\npersonality; additional effects are not requirements.",
     "keyCharacteristics": [
-      "Doom first, visible AI history second, with duration and Next Decision immediately accessible.",
-      "Quiet surfaces and simple typography; one restrained primary-action accent.",
-      "Honest decision feedback, accessible inspection, and secondary complete evidence."
+      "Doom first, visible AI history second, with duration and manual/continuous controls immediately accessible.",
+      "Olive-charcoal layers, readable system typography, and amber emphasis for Next Decision.",
+      "Honest decision feedback, native disclosures, and complete secondary evidence."
     ],
     "rules": [
       {
         "name": "The Amber Action Rule",
-        "body": "Reserve amber emphasis for Next Decision. Selected probabilities use text weight and an explicit label. Errors, uncertainty, and readiness require words; color alone never communicates state. Additional semantic colors remain unresolved unless they improve comprehension during visual review.",
+        "body": "Reserve amber emphasis for Next Decision. Selected probabilities use text weight and an explicit label. Errors, uncertainty, and readiness require words; color alone never communicates state.",
         "section": "colors"
+      },
+      {
+        "name": "The Native Frame Rule",
+        "body": "Preserve the intrinsic framebuffer (640×400, 8:5) and display it at no more than 640×400 CSS px. Scale down proportionally for available width, keep square corners and pixelated rendering, and preserve the full image and HUD. Never stretch, crop, enlarge, overlay, or repaint it for decoration.",
+        "section": "layout"
       }
     ],
     "dos": [
-      "Do keep Doom dominant and AI history persistently visible beside it or below its controls.",
-      "Do preserve the full framebuffer, readable controls, honest outcomes, and complete secondary evidence.",
-      "Do treat exact styling values as provisional until reviewed in rendered desktop, narrow, short-window, and zoom states."
+      "Do keep Doom dominant and AI history visible beside it or below its controls.",
+      "Do reuse olive-charcoal layers, system typography, and coherent radii; use framing and depth for hierarchy and legibility.",
+      "Do reserve amber emphasis for Next Decision and express selection, readiness, errors, and uncertainty with words.",
+      "Do preserve the full 640×400 framebuffer, its CSS size ceiling, readable controls, and complete secondary evidence.",
+      "Do keep setup prominent until preparation and client capture permit collapse, preserving intervention, user choice, and focus.",
+      "Do distinguish source-derived values and owner-accepted changes from uncollected responsive, accessibility, and runtime evidence."
     ],
     "donts": [
-      "Don't introduce a setup rail, heavy cards, industrial ornament, neon, fake terminal/pixel fonts, or gratuitous animation.",
-      "Don't hide AI history as diagnostics, repeat duration in every summary, fabricate probabilities, or confuse confidence with probability.",
-      "Don't alter Worker/native contracts, passive zero-tic behavior, single-click request admission, or credential handling for visual polish. An admitted click makes at most one billable Decisions request; no autoplay, automatic retries, Play/Stop, Reset, or Prepare controls are added in this pass."
+      "Don't replace persistent history with a setup rail, duplicate the newest result in another card, or hide probabilities as engineering diagnostics.",
+      "Don't show the removed asset placeholder, repeat duration in history summaries, fabricate probabilities, or equate retained credentials with authentication.",
+      "Don't stretch, crop, enlarge, round, decorate over, or repaint the framebuffer.",
+      "Don't collapse setup before verified preparation and client capture, during editing, or over deliberate expansion or recovery.",
+      "Don't alter Worker/native/WASM behavior, passive zero-tic observation, SDK admission/reader cleanup, Stop fences, credentials, or verification contracts for visual work.",
+      "Don't introduce autoplay, automatic retries/restarts, Reset, New Game, or Prepare controls; preserve explicit manual and continuous admission."
     ]
   }
 }

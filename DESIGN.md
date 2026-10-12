@@ -1,6 +1,145 @@
 ---
-name: Doom Decisions
-description: A game-first dark viewer with visible AI decisions and deliberate human control.
+name: "Doom Decisions"
+description: "A game-first dark viewer with visible AI decisions and deliberate human control."
+colors:
+  primary: "#d2a65b"
+  primary-hover: "#e0b66f"
+  primary-active: "#bf944d"
+  primary-ink: "#201a10"
+  page: "#151716"
+  text: "#e8e3d9"
+  muted: "#b2b4aa"
+  boundary: "#7f8778"
+  focus: "#b9d9f4"
+  rule: "#42483e"
+  field: "#20251e"
+  field-disabled: "#242923"
+  setup: "#2b3128"
+  controls: "#2e352a"
+  secondary-action: "#363d30"
+  secondary-hover: "#444c3e"
+  action-boundary: "#81745b"
+  action-disabled: "#413827"
+  action-disabled-ink: "#c4b493"
+  disclosure-hover: "#353d30"
+  history-open: "#292f25"
+  selected: "#3b4533"
+  probability: "#939d89"
+  track: "#353d31"
+typography:
+  headline:
+    fontFamily: "system-ui, sans-serif"
+    fontSize: "1.875rem"
+    fontWeight: 700
+    lineHeight: 1.2
+    letterSpacing: "-0.03em"
+  title:
+    fontFamily: "system-ui, sans-serif"
+    fontSize: "1.25rem"
+    fontWeight: 650
+    lineHeight: 1.3
+    letterSpacing: "-0.02em"
+  body:
+    fontFamily: "system-ui, sans-serif"
+    fontSize: "16px"
+    fontWeight: 400
+    lineHeight: 1.5
+  label:
+    fontFamily: "system-ui, sans-serif"
+    fontSize: "0.875rem"
+    fontWeight: 600
+    lineHeight: 1.5
+  action-label:
+    fontFamily: "system-ui, sans-serif"
+    fontSize: "1rem"
+    fontWeight: 650
+    lineHeight: 1.5
+  decision-action:
+    fontFamily: "system-ui, sans-serif"
+    fontSize: "1.0625rem"
+    fontWeight: 700
+    lineHeight: 1.5
+    letterSpacing: "-0.02em"
+  supporting:
+    fontFamily: "system-ui, sans-serif"
+    fontSize: "0.875rem"
+    fontWeight: 400
+    lineHeight: 1.5
+  metadata:
+    fontFamily: "system-ui, sans-serif"
+    fontSize: "0.8125rem"
+    fontWeight: 400
+    lineHeight: 1.5
+  evidence:
+    fontFamily: "ui-monospace, monospace"
+    fontSize: "0.8125rem"
+    fontWeight: 400
+    lineHeight: 1.6
+rounded:
+  detail: "3px"
+  field: "6px"
+  action: "8px"
+  panel: "12px"
+  console: "16px"
+spacing:
+  micro: "0.25rem"
+  tight: "0.375rem"
+  small: "0.5rem"
+  row: "0.625rem"
+  group: "0.75rem"
+  inset: "0.875rem"
+  base: "1rem"
+  roomy: "1.25rem"
+  section: "1.5rem"
+  outer: "2rem"
+components:
+  button-primary:
+    backgroundColor: "{colors.primary}"
+    textColor: "{colors.primary-ink}"
+    typography: "{typography.action-label}"
+    rounded: "{rounded.action}"
+    padding: "0.625rem 1.25rem"
+  button-primary-hover:
+    backgroundColor: "{colors.primary-hover}"
+  button-primary-active:
+    backgroundColor: "{colors.primary-active}"
+  button-secondary:
+    backgroundColor: "{colors.secondary-action}"
+    textColor: "{colors.text}"
+    typography: "{typography.action-label}"
+    rounded: "{rounded.action}"
+    padding: "0.625rem 1.25rem"
+  button-secondary-hover:
+    backgroundColor: "{colors.secondary-hover}"
+  button-secondary-active:
+    backgroundColor: "{colors.controls}"
+  button-disabled:
+    backgroundColor: "{colors.action-disabled}"
+    textColor: "{colors.action-disabled-ink}"
+  input:
+    backgroundColor: "{colors.field}"
+    textColor: "{colors.text}"
+    typography: "{typography.body}"
+    rounded: "{rounded.field}"
+    padding: "0.5rem 0.75rem"
+  setup:
+    backgroundColor: "{colors.setup}"
+    textColor: "{colors.text}"
+  control-panel:
+    backgroundColor: "{colors.controls}"
+    rounded: "{rounded.panel}"
+    padding: "1rem"
+  history-open:
+    backgroundColor: "{colors.history-open}"
+    rounded: "{rounded.panel}"
+  probability-selected:
+    backgroundColor: "{colors.selected}"
+    textColor: "{colors.text}"
+    rounded: "{rounded.field}"
+  selected-marker:
+    textColor: "{colors.text}"
+    rounded: "{rounded.detail}"
+    padding: "0 0.25rem"
 ---
 
 # Design System: Doom Decisions
@@ -9,120 +148,250 @@ description: A game-first dark viewer with visible AI decisions and deliberate h
 
 **Creative North Star: "Doom and its decisions take center stage"**
 
-Doom anchors the visual character. Readable surroundings and clear controls give the framebuffer priority while keeping AI decision history visible as its companion. The human chooses when and how long; the AI chooses the action.
+Doom anchors the visual character. Olive-charcoal surfaces, warm off-white text,
+and a muted amber primary action surround the framebuffer without competing with
+it. System typography keeps instructions direct; visible AI history lets people
+follow each choice and inspect its outcome. The human chooses when and how long;
+the AI chooses the action.
 
-The interface keeps attention on the game, its next decision, and the visible history. Setup is prominent during onboarding, secondary during gameplay, and always discoverable for intervention or replacement. Cards, panel framing, borders, controlled gradients, subtle depth, graphic emphasis, and tasteful industrial or game-adjacent details are available design tools where they improve hierarchy, cohesion, legibility, or personality. None is mandatory; choose a cohesive treatment rather than adding every effect.
-
-**Status:** Design direction reconciled with the owner's choices after reviewing the second UI polish screenshot. The committed v0.2.0 UI includes explicit Continuous Mode controls and guarded one-time setup collapse, as confirmed by source inspection. The owner-selected direction and native-size canvas ceiling are binding guidance; numerical color, type, spacing, radius, and layout candidates remain **provisional starting hypotheses**, not certified tokens. Frontmatter deliberately omits normative tokens until implementation and visual review establish them.
-
-**Historical observations, not current target rules:** The surviving critique describes the earlier 850px column, light controls, chronological multiline receipts, and substantial setup above the game. It predates the two polish passes. The committed presentation uses dark controls, newest-first expandable AI history, and a 640px canvas ceiling; setup inputs are accessible through a guarded disclosure. The owner's second screenshot review does not establish mobile, zoom, pending/error, or setup-collapse runtime behavior. No new rendered or runtime verification is claimed here.
+The interface groups setup, game, controls, and history inside one rounded console.
+Tonal layers, controlled gradients, a soft outer shadow, and precise disclosure
+details give it depth. Setup is prominent during onboarding, secondary during
+play, and discoverable for intervention or replacement. Framing and game-adjacent
+details remain available when they improve hierarchy, cohesion, legibility, or
+personality; additional effects are not requirements.
 
 **Key Characteristics:**
 
-- Doom first, visible AI history second, with duration, Next Decision, and Continuous Mode controls immediately accessible.
-- Cohesive surfaces and readable typography; clear primary-action emphasis with room for visual personality.
-- Honest decision feedback, accessible inspection, and secondary complete evidence.
+- Doom first, visible AI history second, with duration and manual/continuous controls immediately accessible.
+- Olive-charcoal layers, readable system typography, and amber emphasis for Next Decision.
+- Honest decision feedback, native disclosures, and complete secondary evidence.
 
-Sources: [PRODUCT.md](PRODUCT.md), [completed critique](.impeccable/critique/2026-10-11T21-11-02Z__app-index-html.md), current presentation source, and the owner's subsequent choices. Those choices supersede earlier suggestions for an enlarged canvas, a separate latest-result slot, chronological history, and categorical visual-style restrictions. The setup lifecycle below also supersedes the earlier prohibition on automatic collapse. Implementation stays vanilla TypeScript/Vite with plain CSS in a static app; styled native controls and disclosures remain the baseline. Web Awesome Core remains eligible for a later evidence-driven experiment, not a design requirement.
+**Reference status:** Refreshed from `app/index.html`, `app/src/style.css`,
+`app/src/decision-history.ts`, and setup presentation in `app/src/main.ts` on
+2026-10-12, including the owner's accepted Live copy and alignment changes.
+Frontmatter records implemented values for reuse; it does not certify contrast,
+responsive usability, or browser/gameplay behavior. No browser, build, or runtime
+verification was performed for this refresh. The native-size canvas ceiling,
+setup lifecycle, and first-class history remain accepted guardrails.
+See [PRODUCT.md](PRODUCT.md) for product truth, [AGENTS.md](AGENTS.md) for execution
+constraints, and [app/README.md](app/README.md) for runtime evidence and its limits.
 
 ## Colors
 
-The warm-neutral palette remains a starting direction, with room for cohesive surface variation and controlled gradients. The following candidates are proposals, not extracted implementation tokens; validate actual combinations, including disabled and focus states, before adoption.
+The palette combines olive-tinted charcoal, warm readable text, muted amber, and
+pale blue interaction cues. Frontmatter is the source-derived value reference;
+the names below explain its roles. The sidecar's eight-step OKLCH ramps are
+synthesized panel explorations, not implemented palette scales or new app tokens.
 
-| Role | Provisional candidate | Use |
-|---|---|---|
-| Primary: muted amber | `#D2A65B` | Next Decision background; hover stays within this role. |
-| Primary ink | `#201A10` | Text on the amber action. |
-| Neutral: quiet charcoal | `#191919` | Page and stage surroundings. |
-| Neutral: raised charcoal | `#232323` | Fields and subtle disclosure hover/open treatment. |
-| Neutral: warm off-white | `#E8E3D9` | Primary text and selected-action emphasis. |
-| Neutral: supporting gray | `#ADA79E` | Help, latency, and secondary text. |
-| Neutral: control boundary | `#81786B` | Field boundaries and optional cohesive panel framing. |
-| Interaction: pale blue | `#B9D9F4` | Focus and links; distinct from action emphasis. |
+### Primary
 
-**The Amber Action Rule.** Reserve amber emphasis for Next Decision. Selected probabilities use text weight and an explicit label. Errors, uncertainty, and readiness require words; color alone never communicates state. Additional semantic colors remain unresolved unless they improve comprehension during visual review.
+- **Muted amber** (`primary`, with hover and active variants) makes Next Decision the strongest control.
+- **Dark amber ink** (`primary-ink`) supplies text on the primary button.
+
+### Neutral
+
+- **Deep charcoal** (`page`) anchors the page; the game stage is darker still.
+- **Warm off-white** (`text`) carries main copy, selected actions, and selected probability fills.
+- **Sage-gray supporting text** (`muted`) carries help, latency, and secondary state.
+- **Olive layers** (`setup`, `controls`, `field`, `field-disabled`, `history-open`) distinguish functional regions without another accent.
+- **Action surfaces** (`secondary-action`, `secondary-hover`, `action-boundary`) distinguish Start and Stop from Next Decision.
+- **Muted ochre disabled state** (`action-disabled`, `action-disabled-ink`) keeps unavailable actions readable without opacity-only fading.
+- **Olive boundaries** (`boundary`, `rule`) separate fields, rows, and evidence.
+- **Sage fill and dark olive track** (`probability`, `track`) represent supplied probabilities; the selected row uses `selected` and warm off-white.
+- **Disclosure hover** (`disclosure-hover`) highlights interactive summaries.
+
+### Interaction
+
+- **Pale blue** (`focus`) marks focus rings, links, carets, and selection backgrounds. It is an interaction cue rather than a second action accent.
+
+**The Amber Action Rule.** Reserve amber emphasis for Next Decision. Selected probabilities use text weight and an explicit label. Errors, uncertainty, and readiness require words; color alone never communicates state.
 
 ## Typography
 
-Use `system-ui, sans-serif` for identity, instructions, controls, and history. Use `ui-monospace, monospace` sparingly for hashes, request identifiers, and technical counts. No downloaded font or display-font dependency is required.
+**Interface font:** `system-ui, sans-serif`. **Evidence font:**
+`ui-monospace, monospace`. There is no downloaded font or separate display face.
+Mixed-case labels and a restrained title leave the game dominant. Tabular numerals
+stabilize tic inputs, decision numbers, latency, percentages, and continuous state.
 
-Provisional hierarchy: product title (28–32px, weight 700, line-height 1.2); section title (18–20px, weight 600, line-height 1.3); body and controls (16px, line-height 1.5); supporting text (14px, line-height 1.5). Labels use weight 600. Keep mixed-case labels, readable disabled text, and tabular numerals where useful for latency/percentages. The game remains more prominent than the title.
+| Role | Source-derived treatment | Use |
+|---|---|---|
+| Headline | Frontmatter `headline`; 1.75rem below 640px | Product identity |
+| Title | Frontmatter `title` | AI Decision History heading |
+| Body | Frontmatter `body` | Introductory copy and input text |
+| Label | Frontmatter `label`; setup title uses weight 650 | Setup and duration labels |
+| Action label | Frontmatter `action-label` | Manual and continuous buttons |
+| Decision action | Frontmatter `decision-action` | Action in each history summary |
+| Supporting | Frontmatter `supporting` | Help, notices, probabilities, main status |
+| Metadata | Frontmatter `metadata` | Client state, execution state, compact guidance |
+| Evidence | Frontmatter `evidence` | Wrapped technical receipts |
+
+Latency is smaller (0.75rem); the Selected marker uses 0.6875rem. These describe
+current code, not proof of readability. Trust copy has an 85ch ceiling; the footer
+has a 90ch ceiling. There is no global body measure. Monospace stays with evidence;
+do not add terminal or pixel fonts to surrounding controls.
 
 ## Layout
 
-For this MVP, place compact identity and local IWAD/key setup **above** the main experience. On sufficiently wide screens, pair a dominant left/main game stage with a persistent **AI Decision History** column. That column is never a setup rail. Center Doom inside its available stage; place duration, Next Decision, and persistent operational status immediately beneath it. History remains visible content, not an advanced-evidence disclosure.
+Identity and setup precede the main experience. The centered page shell has a
+maximum border-box width (1184px), side padding (2rem), and vertical margin (2rem).
+The usable console width at that maximum is 1120px. The game region's ceiling
+(688px) includes side padding (1.5rem each), leaving the native 640px canvas.
+Controls and operational status sit beneath the game. History remains visible
+content, followed by advanced evidence and notices.
 
-Narrow order: identity/setup → game → duration/manual/continuous controls/status → AI decision history → advanced evidence → notices. Maintain matching reading and keyboard order. Setup fields stack as needed; controls wrap without squeezed targets. Setup may become a compact expandable summary only under the conditions in Components below; game readiness alone is insufficient.
+| Viewport width | Implemented composition |
+|---|---|
+| At least 1168px | Game region (688px) and flexible history column with a left divider. Four-column setup summary; client status occupies column four and aligns right. |
+| 640–1167px | Game and history stack, each centered with a 688px ceiling. Setup fields remain two equal columns. Client status spans the summary's text columns and aligns right. |
+| Below 640px | Page side padding (1rem), vertical margin (1.25rem), single-column setup fields, game/history padding (1rem), control-panel padding (0.75rem). Summary text occupies column two. Duration labels stack above inputs; Next and Start can grow. |
 
-Provisional sizing hypotheses: shell maximum (1360px), history column (320px), column gap (24px), and two-column starting breakpoint (1120px). Use a small spacing rhythm (4, 8, 12, 16, 24, 32px), with tighter spacing inside a group and larger separation between groups. These are review candidates, not fixed device assumptions; the canvas ceiling below is an owner decision.
+Controls wrap with row/column gaps (0.75rem / 1rem); the attempt-budget group
+begins a new flex row. Setup fields use gaps (0.75rem / 1.5rem). Desktop game and
+history have no separate gutter: internal padding provides separation. Both page
+and history use document scrolling; there is no bounded history scroller.
 
-Fit the stage to available width **and height**, retaining nearby action controls in short windows. Stack when space or zoom makes the companion column impractical. Allow normal page scrolling rather than clipping content. A bounded desktop history scroller is acceptable; prefer page scrolling on narrow screens. Long filenames and technical identifiers wrap without widening the page.
+Frontmatter spacing names describe repeated rem values; they are not existing CSS
+spacing variables. Long filenames, states, and identifiers wrap. Reading and
+keyboard order follow the stacked composition.
 
-Preserve the native framebuffer and intrinsic canvas at **640×400 (8:5)**. Display at up to **640×400 CSS px** on sufficiently spacious desktops; scale down proportionally when width or height is constrained. Never enlarge above native size or change to 640×480. Preserve the uncropped image, complete HUD, and pixel-art presentation. Only CSS display dimensions may change. Pixelated scaling is the intended treatment; fractional downscaling still needs visual inspection. Do not stretch, crop, round off, overlay, or repaint the framebuffer for UI decoration.
+**The Native Frame Rule.** Preserve the intrinsic framebuffer (640×400, 8:5) and display it at no more than 640×400 CSS px. Scale down proportionally for available width, keep square corners and pixelated rendering, and preserve the full image and HUD. Never stretch, crop, enlarge, overlay, or repaint it for decoration.
+
+Current canvas CSS constrains width and uses automatic height, with no
+viewport-height fitting rule. Short windows rely on page scrolling. Height-aware
+fitting, fractional downscaling, narrow layouts, and 200% zoom still need visual
+review before stronger usability claims.
 
 ## Elevation & Depth
 
-Flat tonal separation, cohesive panels or cards, borders, controlled gradients, subtle shadows or glows, and industrial framing are all options. Choose them for the hierarchy, cohesion, legibility, or personality they add to the game-and-decision-history experience. Keep Doom and history central; avoid distracting ornament, excessive layering, or effects that reduce contrast or performance. No effect is a required addition. Any motion must have a clear purpose and respect reduced-motion preferences; pending feedback may use a small text-supported indicator. Do not animate gameplay or imply simulation during waits. Treatments must fit the existing static-app, CSP, and dependency constraints.
+Depth comes from olive tonal layers, two controlled gradients, and one soft console
+shadow. The page uses `radial-gradient(ellipse at 35% 0, #2a3027, #151716 65%)`;
+the console uses `linear-gradient(125deg, #242923, #1c201b)`. Its outer shadow
+(`0 20px 56px #0005`) lifts the experience rather than each row. Dividers organize
+setup, history, status, and receipts. The stage has a dark surface (`#10130f`) and
+fine offset outline (`1px solid #4c5345`, offset `5px`), leaving the image untouched.
+
+There are no authored animation or transition rules. Hover, active, disclosure,
+and pending states change directly. Any future motion must serve an interaction,
+respect reduced-motion preferences, and never imply gameplay during API waits or
+idle observation.
 
 ## Shapes
 
-Use a coherent shape language across controls, disclosures, and optional game/history panel shells. A small control radius (provisionally 4px) remains a candidate, not a restriction on other useful shapes. Badges, framing, and decorative corners may help grouping or emphasis when they remain readable and do not add needless nesting or clutter. Preserve square corners on the complete 8:5 framebuffer; surrounding treatment must not cover or clip it.
+Use gently rounded outer containment and smaller radii inside: console (16px),
+control panel and open history treatment (12px), action buttons (8px), fields and
+selected probability rows (6px), file-picker button, Selected marker, and meters
+(3px). Setup rounds only its top corners to meet the console. The canvas is square
+and unmasked. Controls and fields use thin boundaries (1px).
+
+Native setup/history disclosures use CSS-drawn chevrons (6px, 1.5px strokes),
+rotated when open. Preserve native interaction. Avoid nested decorative containers
+where existing tonal grouping and dividers already explain structure.
 
 ## Components
 
-### Duration and primary action
+### Buttons
 
-Group the human-owned duration (any positive JavaScript safe integer of tics, default 6) with **Next Decision**. Duration is captured per decision at admission before asynchronous work. Explain that duration belongs to the human and action selection belongs to the AI. The amber button is the strongest UI control. Provisionally target interactive heights of at least 44 CSS px; validate actual touch and keyboard usability.
+Confident primary action, quieter continuous controls. Next Decision uses amber
+and dark ink; Start Continuous Mode and Stop use olive and warm text. All use
+minimum height (48px), action radius, weight 650, and padding
+(0.625rem 1.25rem). Hover/active colors are in frontmatter. Below 640px, Next and
+Start reduce horizontal padding (0.75rem). Disabled actions share muted ochre and
+a default cursor. Busy Next Decision uses a wait cursor while retaining its label
+and footprint.
 
-Keep **Max API attempts**, **Start Continuous Mode**, and **Stop** accessible beside the manual controls. Distinguish the frozen per-run attempt budget (default 2) from per-decision duration; edits to duration during continuous play affect later admissions. Keep Stop and cleanup status legible without implying immediate cancellation of native work or remote billing.
+### Inputs and focus
 
-Retain clear hover, focus, disabled, and pending treatments. A provisional focus ring (3px with 3px offset) must stay visible and unclipped. Pending retains its footprint and readable stage text; disabled is legible and distinguishable without relying on faint opacity alone. Keep validation and persistent recovery/fatal explanations close to the controls, without silently editing the duration or triggering requests.
+Dark fields use the field surface, olive boundary, field radius, minimum height
+(44px), and padding (0.5rem 0.75rem). Hover brightens the boundary. Disabled fields
+use the disabled surface and muted text. The file field has padding (0.25rem);
+its native picker button uses minimum height (36px), padding (0.25rem 0.75rem),
+and olive default/hover fills (`#394033` / `#484f42`).
 
-### AI Decision History and probabilities
+Keyboard focus uses a pale-blue outline (3px) with offset (3px). Links use pale
+blue with underline offset (0.2em); carets use the same blue. Selection uses pale
+blue behind dark text (`#191919`). Scrollbars use the boundary color over dark
+olive (`#1d211b`). Retain labels, descriptive help, native semantics, and concise
+live status. Contrast and 200% zoom remain targets, not verified conformance.
 
-Show newest decisions first. Each compact collapsed row exposes **decision number, AI-selected action, API latency, and honest execution state**. Omit duration from summaries. When selection or latency is absent, say pending/unavailable as appropriate; do not imply zero. The newest row provides the latest result; do not duplicate a separate latest-result card.
+### Setup disclosure
 
-Every row supports mouse and native keyboard disclosure. Expansion shows all seven actual validated action probabilities: `neutral`, `forward`, `turn_right`, `backward`, `turn_left`, `fire`, `use`. Sort descending for scanning, using deterministic ties. Show labeled percentages; proportional bars are optional and must represent the supplied values directly. Mark the **actual selected action** with explicit text and weight, even when it is not the highest-probability option. Display confidence separately if present. Never normalize, synthesize, or replace missing/invalid metrics with zeros; say **"Action probabilities unavailable."**
+Prominent before play, compact when safely ready. The summary combines a semibold
+title, selected local filename/state, and right-aligned client state. With no
+selected file, the filename slot is empty and hidden; the old placeholder is
+removed. The label reads **Local Freedoom WAD**. Help reads: “Your Freedoom WAD
+stays on your computer. The engine loads automatically. Refresh to change the
+file.” Shorter labels do not change supported asset identity in the setup guide.
 
-Clearly distinguish pending choice, execution verification, verified execution awaiting a frame, complete verified results, failed requests, and uncertain native completion. Preserve precise recovery wording and verified-prefix evidence. A selected action is not proof of execution; verified execution without a verified resulting frame is not complete success. Readiness alone does not mean the last decision succeeded.
+Preserve the accepted one-time collapse lifecycle: verified preparation, retained
+client, healthy idle readiness, an empty key field, and no focus inside setup must
+all hold. Preparing Doom alone must not hide the key input. Deliberate expansion
+or opened recovery guidance prevents later automatic collapse. Keep unresolved
+problems discoverable and preserve keyboard access, focus, and user choice.
+“API client retained · authentication unverified” never implies authentication.
 
-Keep open rows, keyboard focus, and sensible scroll position stable across status updates and new entries. Do not force scrolling to the newest item while the user inspects older decisions. Keep operational announcements concise; avoid re-announcing the entire history. Empty history states that no AI decisions exist yet; preparation's neutral tic is not an AI decision.
+Preserve masking, capture/clearing, blank-field retention, and replacement
+behavior. Direct-to-OpenAI, page/script trust, and refresh-clears-credentials
+guidance remain discoverable in the handling/trust disclosure. Visual edits must
+not trigger capture, probes, requests, or gameplay to collapse setup.
 
-### Setup lifecycle
+### Duration and continuous controls
 
-**Onboarding prominent, gameplay secondary, replacement always discoverable.** The controller implements one-time automatic collapse in a healthy ready state after verified preparation and API-client capture, with an empty key field and no focus inside setup. User expansion or opened recovery guidance prevents later automatic collapse. Keep labeled local IWAD and temporary BYOK password controls clearly accessible while setup is needed. Preparing Doom alone must not hide the key input still needed for the first API request. Only after Doom is prepared **and the API client has been captured for the session** may setup automatically become a compact, user-expandable summary. Do not trigger credential capture, authentication probes, or an API request merely to collapse setup.
+Group human-owned tics with Next Decision. The tics field is 5rem wide, reducing
+to 4.5rem below 640px; the attempt-budget field is 9rem. Keep duration and the
+separate per-run budget visibly distinct. Preserve explicit Start/Stop, legible
+cleanup status, persistent recovery wording, and disabled/pending meanings.
+Duration changes during a run affect only later admissions. PRODUCT.md and
+AGENTS.md own the admission, cleanup, and verification contracts.
 
-Never collapse while the user is editing or has focus inside setup, or overwrite a deliberate user expansion during subsequent state updates. Provide an obvious keyboard-accessible disclosure with visible focus and an announced expanded/collapsed state; preserve user choice and focus. The compact summary identifies the selected local asset and retained-client state without exposing a credential or implying successful authentication. Keep validation errors, intervention guidance, and recovery instructions visible and make affected controls easy to reveal; do not conceal unresolved setup problems.
+### AI Decision History
 
-Replacement remains discoverable under existing readiness rules: a replacement key can be entered during a healthy idle session before the next explicit click. An invalid IWAD may be corrected before native preparation is admitted; once preparation is admitted, the picker remains locked and changing the asset requires refresh. Disclosure does not unlock controls, restart Doom, or change recovery behavior.
+Compact, newest-first native disclosure rows. Each summary exposes decision
+number, AI-selected action, API latency, and honest execution state; duration
+stays in the receipt. Action type is stronger than metadata. Rows have bottom
+dividers; open rows gain an olive surface and panel radius, with a transparent
+bottom divider. The empty state explains that no AI decisions exist and the
+preparation neutral tic is not an AI decision.
 
-Preserve masking, capture/clearing, and temporary in-memory behavior; never reproduce a real key in documentation, status, storage, logs, or examples. Explain that a cleared field may coexist with a retained client, and that a blank field keeps that client. A retained client is **not proof of successful authentication**. Retain concise direct-to-OpenAI, page/script-trust, and refresh-clears-credentials guidance in the setup flow, with full explanations discoverable when compact. This remains temporary browser-direct BYOK through the official OpenAI Decisions SDK, without a backend/proxy, persistent credential storage, or a claim of production credential security.
+Expansion shows all seven validated action probabilities, descending with
+deterministic ties. Labeled percentages pair with native meters (6px high). The
+actual selected action gets warm text, an olive highlight, and an explicit
+Selected marker, even when another action has higher probability. Confidence is
+separate. Missing/invalid values say **Action probabilities unavailable.** Never
+synthesize, normalize, or substitute zeros for unavailable values.
 
-### Engineering evidence
+Reuse row nodes across updates to preserve open disclosures and focus. Do not
+force scrolling while someone inspects older decisions. Keep pending choice,
+verification, verified execution awaiting a frame, completed results, failure,
+and uncertainty distinct. A selection is not execution; execution without a
+verified resulting frame is not complete success.
 
-Use accessible disclosures for technical receipts and advanced evidence. Preserve selected duration, distinct requested/reported/independently verified tic counts, uncertainty, checkpoints, hashes, request IDs, and operational diagnostics. Keep notices legible. Probability inspection is first-class history content; it is not buried inside engineering evidence.
+### Evidence and status
 
-### Accessibility and interaction states
-
-Retain associated labels, descriptive help, visible focus, semantic headings, and concise live status. Use text as well as color for selection/errors; aim for text contrast of at least 4.5:1, or 3:1 for large text, and distinguishable control boundaries/focus. These are design targets, not a claim of verified conformance. Support 200% zoom, touch, keyboard expansion, and reduced motion without clipped controls or HUD. Error explanations persist long enough to read and identify corrective action; fatal uncertainty retains the reload instruction.
+Technical receipts nest in expanded history; advanced evidence has its own native
+disclosure below the console. Wrapped monospace text exposes duration,
+requested/reported/independently verified tics, verified prefixes, checkpoints,
+hashes, and sanitized request information. Status sits beneath controls with a
+divider and minimum height (3em); busy/error states gain weight 600. Readiness is
+distinct from the last outcome. Fatal uncertainty keeps reload guidance;
+exit-pending wording must not imply E1M2.
 
 ## Do's and Don'ts
 
 ### Do:
 
-- **Do** keep Doom dominant and AI history persistently visible beside it or below its controls.
-- **Do** make setup prominent for onboarding, secondary after preparation and client capture, and discoverable for intervention or replacement without overriding user choice.
-- **Do** use panels, cards, borders, gradients, depth, and decoration selectively when they improve the game-and-history experience; they are options, not a checklist.
-- **Do** preserve the full framebuffer, readable controls, honest outcomes, and complete secondary evidence.
-- **Do** honor the 640×400 CSS px canvas ceiling and treat other numerical styling candidates as provisional until reviewed in rendered desktop, narrow, short-window, and zoom states.
+- **Do** keep Doom dominant and AI history visible beside it or below its controls.
+- **Do** reuse olive-charcoal layers, system typography, and coherent radii; use framing and depth for hierarchy and legibility.
+- **Do** reserve amber emphasis for Next Decision and express selection, readiness, errors, and uncertainty with words.
+- **Do** preserve the full 640×400 framebuffer, its CSS size ceiling, readable controls, and complete secondary evidence.
+- **Do** keep setup prominent until preparation and client capture permit collapse, preserving intervention, user choice, and focus.
+- **Do** distinguish source-derived values and owner-accepted changes from uncollected responsive, accessibility, and runtime evidence.
 
 ### Don't:
 
-- **Don't** displace the persistent history column with a setup rail, let ornament distract from Doom or history, or add effects solely to satisfy a visual-style checklist.
-- **Don't** collapse setup before both preparation and client capture, while the user edits, or over a deliberate expansion; never equate client retention with authentication.
-- **Don't** hide AI history as diagnostics, repeat duration in every summary, fabricate probabilities, or confuse confidence with probability.
-- **Don't** alter Worker/native/WASM contracts, rendering or capture, passive zero-tic behavior, official SDK request boundaries, manual/continuous admission, Stop fences, SDK reader cleanup, or credential handling for visual design. Each admitted decision makes at most one billable Decisions request. Preserve explicit Start/Stop Continuous Mode; do not introduce unsolicited autoplay, automatic retries/restarts, Reset, New Game, or Prepare controls.
-
-## Open visual design decisions
-
-A later Impeccable-led redesign may choose the degree of panel/card framing, surface depth or gradients, industrial/game-adjacent detail, the compact setup summary's composition, and the final palette, type scale, spacing, and responsive breakpoints. Evaluate these together for hierarchy, personality, contrast, performance, and desktop/narrow/short-window/zoom usability. The setup visibility rules, first-class newest-first history, and native-size canvas ceiling are settled constraints rather than open aesthetic questions.
+- **Don't** replace persistent history with a setup rail, duplicate the newest result in another card, or hide probabilities as engineering diagnostics.
+- **Don't** show the removed asset placeholder, repeat duration in history summaries, fabricate probabilities, or equate retained credentials with authentication.
+- **Don't** stretch, crop, enlarge, round, decorate over, or repaint the framebuffer.
+- **Don't** collapse setup before verified preparation and client capture, during editing, or over deliberate expansion or recovery.
+- **Don't** alter Worker/native/WASM behavior, passive zero-tic observation, SDK admission/reader cleanup, Stop fences, credentials, or verification contracts for visual work.
+- **Don't** introduce autoplay, automatic retries/restarts, Reset, New Game, or Prepare controls; preserve explicit manual and continuous admission.
