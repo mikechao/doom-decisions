@@ -43,26 +43,44 @@
           <div class="stage">
             <canvas id="screen" width="640" height="400" role="img" aria-label="Doom E1M1 framebuffer"></canvas>
           </div>
-          <div class="control-bar">
-            <div class="controls">
+          <div class="control-bar control-bar--stacked">
+            <div class="shared-duration">
               <div class="duration">
                 <label for="tics">Tics per decision</label>
-                <div>
-                  <input id="tics" type="number" min="1" step="1" value="6" aria-describedby="tic-rate duration-note" disabled>
-                  <p id="tic-rate" class="help">35 tics = 1 Doom second</p>
-                </div>
+                <input id="tics" type="number" min="1" step="1" value="6" aria-describedby="tic-rate duration-note" disabled>
               </div>
-              <button id="next" type="button" disabled>Next Decision</button>
-              <div class="duration budget">
-                <label for="budget">Max API attempts</label>
-                <input id="budget" type="number" min="1" max="9007199254740991" step="1" value="2" aria-describedby="continuous-note" disabled>
-              </div>
-              <button id="start" type="button" disabled>Start Continuous Mode</button>
-              <button id="stop" type="button" disabled>Stop</button>
+              <p id="tic-rate" class="help">Both modes · 35 tics = 1 Doom second</p>
             </div>
-            <p id="duration-note" class="help">Choose a positive JavaScript safe integer of tics per decision. Changes during continuous mode apply to the next decision.</p>
-            <p id="continuous-note" class="help">Next Decision requests one action. Start authorizes up to your positive integer API-attempt limit, including failed or canceled calls.</p>
-            <p id="continuous-state" role="status" aria-live="polite">Continuous mode stopped · default limit 2 API attempts</p>
+            <div class="control-modes">
+              <section class="control-mode control-mode-manual" aria-labelledby="manual-mode-title">
+                <h3 id="manual-mode-title" class="mode-title">Manual Mode</h3>
+                <div class="mode-fields">
+                  <button id="next" type="button" disabled>Next Decision</button>
+                </div>
+              </section>
+              <section class="control-mode control-mode-continuous" aria-labelledby="continuous-mode-title">
+                <h3 id="continuous-mode-title" class="mode-title">Continuous Mode</h3>
+                <div class="mode-fields">
+                  <div class="duration budget">
+                    <label for="budget">Max API attempts</label>
+                    <input id="budget" type="number" min="1" max="9007199254740991" step="1" value="2" aria-describedby="continuous-note duration-note" disabled>
+                  </div>
+                  <div class="mode-actions">
+                    <button id="start" type="button" disabled>Start Continuous Mode</button>
+                    <button id="stop" type="button" aria-describedby="stop-note" disabled>Stop</button>
+                  </div>
+                </div>
+              </section>
+            </div>
+            <div class="continuous-status">
+              <p id="continuous-state" role="status" aria-live="polite">Continuous mode stopped · default limit 2 API attempts</p>
+            </div>
+            <details class="control-guidance">
+              <summary>Limits &amp; stopping</summary>
+              <p id="duration-note" class="control-guidance-text">Use positive JavaScript safe integers for tics and the attempt budget. Tics set each decision's duration in both modes; changes during a run apply to later decisions. The API-attempt budget is fixed when you choose Start.</p>
+              <p id="continuous-note" class="help control-guidance-text">Budget includes failed and canceled API attempts.</p>
+              <p id="stop-note" class="control-guidance-text">Stop closes admission and waits for API cleanup or current-action and resulting-frame verification. It does not cancel an in-flight operation instantly.</p>
+            </details>
           </div>
           <p id="status" role="status" aria-live="polite">Loading engine identity…</p>
         </section>

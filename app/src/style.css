@@ -312,6 +312,124 @@ canvas {
 #continuous-state {
   font-variant-numeric: tabular-nums;
 }
+.control-bar--stacked {
+  padding: 1rem;
+}
+.control-bar--stacked .shared-duration {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid #42483e;
+}
+.control-bar--stacked .shared-duration .duration {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem 0.75rem;
+}
+.control-bar--stacked .shared-duration label {
+  max-width: 7rem;
+  margin: 0;
+}
+.control-bar--stacked #tics {
+  width: 5rem;
+}
+.control-bar--stacked #tic-rate {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+.control-bar--stacked .control-modes {
+  display: grid;
+  gap: 0.75rem;
+}
+.control-bar--stacked .control-mode {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.control-bar--stacked .mode-title {
+  margin: 0;
+  font:
+    700 0.875rem / 1.5 system-ui,
+    sans-serif;
+}
+.control-bar--stacked .mode-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.625rem;
+  min-width: 0;
+}
+.control-bar--stacked .budget {
+  display: block;
+  flex: 0 1 7rem;
+  min-width: 0;
+}
+.control-bar--stacked .budget label {
+  max-width: none;
+  margin: 0 0 0.25rem;
+}
+.control-bar--stacked #budget {
+  width: 7rem;
+  max-width: 100%;
+}
+.control-bar--stacked .mode-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.625rem;
+}
+.control-bar--stacked #next {
+  width: auto;
+  margin-left: 0;
+  flex-grow: 0;
+}
+.control-bar--stacked #start,
+.control-bar--stacked #stop {
+  flex-grow: 0;
+}
+.control-bar--stacked #next,
+.control-bar--stacked #start,
+.control-bar--stacked #stop {
+  padding-inline: 1rem;
+}
+.control-bar--stacked .continuous-status {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #42483e;
+}
+.control-bar--stacked #continuous-state {
+  margin: 0;
+  color: #e8e3d9;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.control-bar--stacked .control-guidance {
+  margin-top: 0.375rem;
+  color: #b2b4aa;
+  font-size: 0.8125rem;
+}
+.control-guidance > summary {
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.5rem 0;
+}
+.control-guidance-text {
+  margin-top: 0.5rem;
+}
+@media (max-width: 760px) {
+  .control-bar--stacked .control-mode {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.375rem;
+  }
+}
 #status {
   margin-top: 1rem;
   padding-top: 0.875rem;
