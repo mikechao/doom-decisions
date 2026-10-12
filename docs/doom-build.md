@@ -118,9 +118,8 @@ output paths and timestamps; compare final SHA-256 separately. Debug paths and
 `__FILE__` can affect bytes. Procedural reproducibility does not imply byte
 equality; two equal hashes establish equality only for those runs.
 Investigate unexplained differences. Static inspection and builds do not establish
-native or browser runtime behavior. The historical
-[M4-B](doom-m4b-verification.md) and [M4-C](doom-m4c-verification.md) records
-separate owner-observed browser/API evidence from checks and uncollected proof.
+native or browser runtime behavior. The [app guide](../app/README.md#prototype-acceptance-and-evidence)
+separates owner-reported browser/API observations from checks and uncollected proof.
 Historical compiler warnings remain a separate source-review concern.
 
 ## Fixture checks

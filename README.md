@@ -1,15 +1,19 @@
 # Doom Decisions
 
 Watch Doom in the browser while OpenAI's Decisions API chooses the next action.
-The owner-accepted **v0.1.0 MVP** uses vanilla TypeScript, Vite, CSS and a modified
-Doom WASM engine running in an app-owned module Worker.
+The owner-accepted **v0.2.0 Continuous Mode MVP** uses vanilla TypeScript, Vite,
+CSS and a modified Doom WASM engine running in an app-owned module Worker.
 
 Select your local **Freedoom 0.13.0 Phase 1 IWAD** to prepare E1M1 automatically,
 including one mandatory neutral tic without an API request. Each **Next Decision**
 click requests one of seven actions: neutral, forward, turn right, backward,
-turn left, fire or use. You choose **1–20 tics**, initially **6**. The game waits
-between clicks and during API requests; there is no continuous mode. Refresh
-starts a new session.
+turn left, fire or use. You choose **1–20 tics**, initially **6**, captured separately
+for each admitted decision. **Start Continuous Mode** admits sequential decisions
+with a frozen per-run API-attempt budget: any positive JavaScript safe integer,
+default **2**, including failed or canceled calls. N changes affect later decisions.
+**Stop** closes admission and finishes cleanup or current-action verification.
+API waits and idle advance no gameplay; there are no automatic retries or restarts.
+Refresh starts a new session. See [Continuous Mode](app/README.md#continuous-mode).
 
 The IWAD stays local and is not included in the app. The
 [app guide](app/README.md) identifies the exact accepted file and checksum.
@@ -30,8 +34,9 @@ python3 -m http.server 8000 --bind 127.0.0.1 --directory app/dist
 ```
 
 Open `http://127.0.0.1:8000/`, select the IWAD, enter a key and click
-**Next Decision**. The build generates and verifies the bundled engine without
-embedding a WAD. Later frontend-only builds can use `./build.sh --frontend-only`
+**Next Decision**, or set **Max API attempts** and choose **Start Continuous Mode**;
+use **Stop** to end the run. The build generates and verifies the bundled engine
+without embedding a WAD. Later frontend-only builds can use `./build.sh --frontend-only`
 when the existing native artifact and evidence still verify. In agent sessions,
 follow [AGENTS.md](AGENTS.md) for execution approval requirements.
 
@@ -40,10 +45,9 @@ follow [AGENTS.md](AGENTS.md) for execution approval requirements.
 - [App guide](app/README.md): setup, checks, browser procedure and credentials.
 - [Engine build guide](docs/doom-build.md): toolchain, staging and fixture boundaries.
 - [Vendor provenance](docs/doom-vendor-provenance.md): pinned source, licenses and unresolved example-asset rights.
-- [M4-C verification](docs/doom-m4c-verification.md): owner-reported Decisions gameplay and evidence limitations.
-- [M4-B verification](docs/doom-m4b-verification.md): earlier owner-reported native, Canvas and idle checks.
+- [Prototype evidence](app/README.md#prototype-acceptance-and-evidence): owner-reported gameplay and remaining proof gaps.
 
 Automated checks and builds do not establish browser/API runtime success.
-Retired experiments and superseded plans are recoverable from Git history;
-ignored raw evidence is not. Review redistribution rights and corresponding-source
+Retired experiments, historical reports and superseded plans are recoverable
+from Git history; ignored raw evidence is not. Review redistribution rights and corresponding-source
 obligations before public distribution.

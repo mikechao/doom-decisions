@@ -1,9 +1,10 @@
-# Doom Decisions M4-C
+# Doom Decisions app guide
 
-Vanilla DOM APIs with TypeScript **7.0.2**, Vite **8.3.4**, plain CSS, and official
+The owner-accepted **v0.2.0 Continuous Mode MVP** uses vanilla DOM APIs with
+TypeScript **7.0.2**, Vite **8.3.4**, plain CSS, and official
 **openai 7.32.0**. The HTML entry loads `src/main.ts`; TypeScript checks types
 without emitting JavaScript, and Vite owns bundling.
-M4-C automatically prepares real E1M1 on local IWAD selection and verifies exactly
+The app automatically prepares real E1M1 on local IWAD selection and verifies exactly
 one mandatory neutral first tic. Each **Next Decision** click then makes at most
 one official SDK Decisions request using the current rendered image, executes
 one allowlisted action on the same Worker, and returns to idle. **Start Continuous
@@ -47,9 +48,10 @@ Verified death or **E1M1 exit pending** stops at its independently verified pref
 (`N/k/k`) and retires after the terminal frame is verified. Exit pending is not
 completed intermission or permission to advance to E1M2. A verified terminal
 boundary with an unavailable resulting frame is reported separately; the prior
-frame is not terminal imagery. Actual compiled-WASM/browser death and exit-pending
-behavior remains an outstanding acceptance requirement; synthetic tests do not
-establish it.
+frame is not terminal imagery. Prototype acceptance includes owner-observed death
+detection, but independently instrumented browser/WASM terminal evidence remains
+uncollected, including exit-pending and early-prefix proof. Synthetic tests do not
+establish that runtime evidence; see [prototype evidence](#prototype-acceptance-and-evidence).
 
 ## Prerequisites and clean checkout
 
@@ -105,7 +107,7 @@ For subsequent frontend-only changes:
 ./build.sh --frontend-only
 ```
 
-This skips engine compilation and reuses only the current verified M4-B artifact.
+This skips engine compilation and reuses only the current verified native artifact.
 Missing files/evidence, changed engine inputs, mismatched bytes, or failed
 interface checks require a full `./build.sh`. A clean checkout has no current
 artifact and cannot use frontend-only mode first. Changed frontend dependencies
@@ -147,6 +149,28 @@ corrected before native preparation begins. Once preparation is admitted, the
 picker is locked; changing the selected file never restarts a prepared game.
 There are no Prepare, Reset or New Game buttons. Refresh starts a new game
 and clears the in-memory credential; it does not resume prior state.
+
+## Prototype acceptance and evidence
+
+The owner accepted v0.2.0 with known evidence gaps. Prior observations are
+**owner-reported**, not browser/API trials personally run by Codex:
+
+- Earlier Chrome preparation showed real E1M1, neutral-first requested/reported/
+  verified **1/1/1**, matching native/Canvas RGBA hashes, and no simulation
+  advancement during passive snapshots/rendering or five-second startup idle.
+- The accepted manual trial reported **14 successful Decisions API decisions**,
+  with five supplied receipt summaries and a duration change from **6 to 2**.
+  Full Worker-instance/frame linkage, payload hashes, exact network accounting,
+  and instrumented post-decision idle equality were not collected for that trial.
+- The owner subsequently reported real Doom death detection at decision **#48**,
+  with **N=20** and cumulative **tic 961**. This is not independently captured
+  exact Worker/frame linkage or proof of every terminal path.
+
+Controller "independently verified" counts mean receipt rechecking, not an
+independent browser run. Independently instrumented terminal proof, including
+E1M1 exit-pending and early-prefix behavior, remains uncollected. Synthetic offline
+tests and builds do not fill those gaps. Detailed historical reports remain in
+Git history; historical ignored raw artifacts cannot be recovered from Git.
 
 ## Owner-run isolated Chrome/API trial (not executed by Codex)
 
@@ -197,18 +221,15 @@ uses rejecting fetch and never invokes `decisions.create`.
 Keep build/WASM identity, sanitized request IDs, hashes and receipt projections.
 Inspect the current image request locally without exporting secrets, authorization
 headers, raw HARs or unredacted request content. Record owner Console/Network and
-browser observations separately from Codex source inspection. These steps are an
-acceptance procedure, **not evidence of a completed M4-C runtime trial**.
+browser observations separately from Codex source inspection. These steps are a
+verification procedure, **not evidence that this exact sequence was executed**.
 
 Record the generated WASM size/hash and manifest path. Compare the hash with the
 preflight reference `cc86ed8884ec04dbace3c541e8528a9f91839b79816cc79ce988af939d42dcb8`
 (360,156 bytes), without treating it as a fixed requirement for modified engines.
-See the [M4-C verification record](../docs/doom-m4c-verification.md) for the
-owner-reported 14 successful decisions and five supplied receipt summaries,
-including their evidence limits. The historical
-[M4-B verification record](../docs/doom-m4b-verification.md) covers the earlier
-preparation baseline. Neither record establishes uncollected runtime proof.
-Builds/static inspection do not establish Chrome, native or API runtime success.
+See [prototype evidence](#prototype-acceptance-and-evidence) for prior owner reports
+and their limits. Builds/static inspection do not establish Chrome, native or API
+runtime success.
 
 ## Owner-run continuous trial (separate authorization required)
 
@@ -230,9 +251,11 @@ control behavior. If Stop cannot be timed before dispatch, record that gap; a
 completed action is not evidence of pre-dispatch cancellation.
 
 A separately authorized one-attempt API-failure trial should stop without retry
-or native dispatch and retain manual readiness only after passive proof. Real-WASM
-death/E1M1 exit-pending proof remains separate and outstanding. None of these
-browser/API/WASM trials has been executed by Codex for this implementation.
+or native dispatch and retain manual readiness only after passive proof.
+Independently instrumented terminal proof, including E1M1 exit-pending and
+early-prefix behavior, remains separate and uncollected despite the owner's
+reported death observation. None of these browser/API/WASM trials has been
+executed by Codex for this implementation.
 
 ## Static checks and source boundary
 
@@ -307,4 +330,4 @@ including bundled vendor notices. Existing source copyright/notices stay in
 No IWAD is shipped. Inclusion of licenses alone does not establish redistribution
 compliance. Review GPL corresponding-source/build-provenance obligations,
 third-party notices, and unresolved vendored asset rights **before public
-deployment**. This milestone performs no publication or redistribution review.
+deployment**. This guide does not establish publication or redistribution clearance.

@@ -13,17 +13,17 @@ Doom anchors the visual character. Readable surroundings and clear controls give
 
 The interface keeps attention on the game, its next decision, and the visible history. Setup is prominent during onboarding, secondary during gameplay, and always discoverable for intervention or replacement. Cards, panel framing, borders, controlled gradients, subtle depth, graphic emphasis, and tasteful industrial or game-adjacent details are available design tools where they improve hierarchy, cohesion, legibility, or personality. None is mandatory; choose a cohesive treatment rather than adding every effect.
 
-**Status:** Design direction reconciled with the owner's choices after reviewing the second UI polish screenshot. Setup collapse below is **intended future behavior, not implemented behavior**. The owner-selected direction and native-size canvas ceiling are binding guidance; numerical color, type, spacing, radius, and layout candidates remain **provisional starting hypotheses**, not certified tokens. Frontmatter deliberately omits normative tokens until implementation and visual review establish them.
+**Status:** Design direction reconciled with the owner's choices after reviewing the second UI polish screenshot. The committed v0.2.0 UI includes explicit Continuous Mode controls and guarded one-time setup collapse, as confirmed by source inspection. The owner-selected direction and native-size canvas ceiling are binding guidance; numerical color, type, spacing, radius, and layout candidates remain **provisional starting hypotheses**, not certified tokens. Frontmatter deliberately omits normative tokens until implementation and visual review establish them.
 
-**Historical observations, not current target rules:** The saved investigation and critique describe the earlier 850px column, light controls, chronological multiline receipts, and substantial setup above the game. They predate the two polish passes. The current uncommitted presentation uses dark controls, newest-first expandable AI history, and a 640px canvas ceiling; setup inputs remain exposed. The owner's second screenshot review does not establish mobile, zoom, pending/error, or future setup-collapse behavior. No new rendered or runtime verification is claimed here.
+**Historical observations, not current target rules:** The surviving critique describes the earlier 850px column, light controls, chronological multiline receipts, and substantial setup above the game. It predates the two polish passes. The committed presentation uses dark controls, newest-first expandable AI history, and a 640px canvas ceiling; setup inputs are accessible through a guarded disclosure. The owner's second screenshot review does not establish mobile, zoom, pending/error, or setup-collapse runtime behavior. No new rendered or runtime verification is claimed here.
 
 **Key Characteristics:**
 
-- Doom first, visible AI history second, with duration and Next Decision immediately accessible.
+- Doom first, visible AI history second, with duration, Next Decision, and Continuous Mode controls immediately accessible.
 - Cohesive surfaces and readable typography; clear primary-action emphasis with room for visual personality.
 - Honest decision feedback, accessible inspection, and secondary complete evidence.
 
-Sources: [PRODUCT.md](PRODUCT.md), [UI investigation](docs/doom-ui-polish-investigation.md), [completed critique](.impeccable/critique/2026-10-11T21-11-02Z__app-index-html.md), current presentation source, and the owner's subsequent choices. Those choices supersede earlier suggestions for an enlarged canvas, a separate latest-result slot, chronological history, and categorical visual-style restrictions. The setup lifecycle below also supersedes the earlier prohibition on automatic collapse. Implementation stays vanilla TypeScript/Vite with plain CSS in a static app; styled native controls and disclosures remain the baseline. Web Awesome Core remains eligible for a later evidence-driven experiment, not a design requirement.
+Sources: [PRODUCT.md](PRODUCT.md), [completed critique](.impeccable/critique/2026-10-11T21-11-02Z__app-index-html.md), current presentation source, and the owner's subsequent choices. Those choices supersede earlier suggestions for an enlarged canvas, a separate latest-result slot, chronological history, and categorical visual-style restrictions. The setup lifecycle below also supersedes the earlier prohibition on automatic collapse. Implementation stays vanilla TypeScript/Vite with plain CSS in a static app; styled native controls and disclosures remain the baseline. Web Awesome Core remains eligible for a later evidence-driven experiment, not a design requirement.
 
 ## Colors
 
@@ -52,7 +52,7 @@ Provisional hierarchy: product title (28–32px, weight 700, line-height 1.2); s
 
 For this MVP, place compact identity and local IWAD/key setup **above** the main experience. On sufficiently wide screens, pair a dominant left/main game stage with a persistent **AI Decision History** column. That column is never a setup rail. Center Doom inside its available stage; place duration, Next Decision, and persistent operational status immediately beneath it. History remains visible content, not an advanced-evidence disclosure.
 
-Narrow order: identity/setup → game → duration/Next Decision/status → AI decision history → advanced evidence → notices. Maintain matching reading and keyboard order. Setup fields stack as needed; controls wrap without squeezed targets. In the intended future lifecycle, setup may become a compact expandable summary only under the conditions in Components below; game readiness alone is insufficient.
+Narrow order: identity/setup → game → duration/manual/continuous controls/status → AI decision history → advanced evidence → notices. Maintain matching reading and keyboard order. Setup fields stack as needed; controls wrap without squeezed targets. Setup may become a compact expandable summary only under the conditions in Components below; game readiness alone is insufficient.
 
 Provisional sizing hypotheses: shell maximum (1360px), history column (320px), column gap (24px), and two-column starting breakpoint (1120px). Use a small spacing rhythm (4, 8, 12, 16, 24, 32px), with tighter spacing inside a group and larger separation between groups. These are review candidates, not fixed device assumptions; the canvas ceiling below is an owner decision.
 
@@ -72,7 +72,9 @@ Use a coherent shape language across controls, disclosures, and optional game/hi
 
 ### Duration and primary action
 
-Group the human-owned integer duration (1–20 tics, default 6) with **Next Decision**. Duration is captured at click admission before asynchronous work. Explain that duration belongs to the human and action selection belongs to the AI. The amber button is the strongest UI control. Provisionally target interactive heights of at least 44 CSS px; validate actual touch and keyboard usability.
+Group the human-owned integer duration (1–20 tics, default 6) with **Next Decision**. Duration is captured per decision at admission before asynchronous work. Explain that duration belongs to the human and action selection belongs to the AI. The amber button is the strongest UI control. Provisionally target interactive heights of at least 44 CSS px; validate actual touch and keyboard usability.
+
+Keep **Max API attempts**, **Start Continuous Mode**, and **Stop** accessible beside the manual controls. Distinguish the frozen per-run attempt budget (default 2) from per-decision duration; edits to duration during continuous play affect later admissions. Keep Stop and cleanup status legible without implying immediate cancellation of native work or remote billing.
 
 Retain clear hover, focus, disabled, and pending treatments. A provisional focus ring (3px with 3px offset) must stay visible and unclipped. Pending retains its footprint and readable stage text; disabled is legible and distinguishable without relying on faint opacity alone. Keep validation and persistent recovery/fatal explanations close to the controls, without silently editing the duration or triggering requests.
 
@@ -86,9 +88,9 @@ Clearly distinguish pending choice, execution verification, verified execution a
 
 Keep open rows, keyboard focus, and sensible scroll position stable across status updates and new entries. Do not force scrolling to the newest item while the user inspects older decisions. Keep operational announcements concise; avoid re-announcing the entire history. Empty history states that no AI decisions exist yet; preparation's neutral tic is not an AI decision.
 
-### Setup lifecycle (intended future behavior)
+### Setup lifecycle
 
-**Onboarding prominent, gameplay secondary, replacement always discoverable.** This lifecycle is design intent for a future implementation; automatic setup collapse is not present in the current polish. Keep labeled local IWAD and temporary BYOK password controls clearly accessible while setup is needed. Preparing Doom alone must not hide the key input still needed for the first API request. Only after Doom is prepared **and the API client has been captured for the session** may setup automatically become a compact, user-expandable summary. Do not trigger credential capture, authentication probes, or an API request merely to collapse setup.
+**Onboarding prominent, gameplay secondary, replacement always discoverable.** The controller implements one-time automatic collapse in a healthy ready state after verified preparation and API-client capture, with an empty key field and no focus inside setup. User expansion or opened recovery guidance prevents later automatic collapse. Keep labeled local IWAD and temporary BYOK password controls clearly accessible while setup is needed. Preparing Doom alone must not hide the key input still needed for the first API request. Only after Doom is prepared **and the API client has been captured for the session** may setup automatically become a compact, user-expandable summary. Do not trigger credential capture, authentication probes, or an API request merely to collapse setup.
 
 Never collapse while the user is editing or has focus inside setup, or overwrite a deliberate user expansion during subsequent state updates. Provide an obvious keyboard-accessible disclosure with visible focus and an announced expanded/collapsed state; preserve user choice and focus. The compact summary identifies the selected local asset and retained-client state without exposing a credential or implying successful authentication. Keep validation errors, intervention guidance, and recovery instructions visible and make affected controls easy to reveal; do not conceal unresolved setup problems.
 
@@ -119,7 +121,7 @@ Retain associated labels, descriptive help, visible focus, semantic headings, an
 - **Don't** displace the persistent history column with a setup rail, let ornament distract from Doom or history, or add effects solely to satisfy a visual-style checklist.
 - **Don't** collapse setup before both preparation and client capture, while the user edits, or over a deliberate expansion; never equate client retention with authentication.
 - **Don't** hide AI history as diagnostics, repeat duration in every summary, fabricate probabilities, or confuse confidence with probability.
-- **Don't** alter Worker/native/WASM contracts, rendering or capture, passive zero-tic behavior, official SDK request boundaries, single-click request admission, or credential handling for visual design. An admitted click makes at most one billable Decisions request; no autoplay, automatic retries, Play/Stop, Reset, New Game, or Prepare controls are added.
+- **Don't** alter Worker/native/WASM contracts, rendering or capture, passive zero-tic behavior, official SDK request boundaries, manual/continuous admission, Stop fences, SDK reader cleanup, or credential handling for visual design. Each admitted decision makes at most one billable Decisions request. Preserve explicit Start/Stop Continuous Mode; do not introduce unsolicited autoplay, automatic retries/restarts, Reset, New Game, or Prepare controls.
 
 ## Open visual design decisions
 
