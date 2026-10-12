@@ -14,39 +14,53 @@
       <h1>Doom Decisions</h1>
       <p>Watch real Doom. You choose the duration; AI chooses one action per click.</p>
     </header>
-    <div class="setup">
-      <div>
-        <label for="iwad">Local Freedoom 0.13.0 Phase 1 IWAD</label>
-        <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
-        <p id="asset-note" class="help">Use your own freedoom1.wad. It stays local; the engine loads automatically.</p>
-      </div>
-      <div>
-        <label for="key">Temporary OpenAI API key</label>
-        <input id="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="key-state key-note" disabled>
-        <p id="key-state" class="help">No API client retained. Enter a key when the game is ready.</p>
-        <p id="key-note" class="help">Sent directly to OpenAI. Trust this page and its scripts. The field clears on capture; the client stays in memory. Enter a replacement before a later click to correct it.</p>
-      </div>
-    </div>
-    <div class="experience">
-      <section class="game" aria-label="Doom game and controls">
-        <div class="stage">
-          <canvas id="screen" width="640" height="400" role="img" aria-label="Doom E1M1 framebuffer"></canvas>
-        </div>
-        <div class="controls">
-          <div class="duration">
-            <label for="tics">Tics per decision</label>
-            <input id="tics" type="number" min="1" max="20" step="1" value="6" aria-describedby="duration-note" disabled>
+    <div class="console">
+      <details id="setup" class="setup" open>
+        <summary>
+          <span id="setup-title">Set up Doom</span>
+          <span id="setup-asset">Local Freedoom Phase 1 IWAD</span>
+          <span id="setup-client">Temporary OpenAI API key required</span>
+        </summary>
+        <div class="setup-content">
+          <div>
+            <label for="iwad">Local Freedoom 0.13.0 Phase 1 IWAD</label>
+            <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
+            <p id="asset-note" class="help">Your freedoom1.wad stays local; the engine loads automatically. Once preparation starts, refresh to change the file.</p>
           </div>
-          <button id="next" type="button" disabled>Next Decision</button>
+          <div>
+            <label for="key">Temporary OpenAI API key</label>
+            <input id="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="key-state key-note" disabled>
+            <p id="key-state" class="help">No client in memory. Enter a key when the game is ready.</p>
+          </div>
+          <details class="setup-details">
+            <summary>Temporary key: handling &amp; trust</summary>
+            <p id="key-note" class="help">Sent directly to OpenAI. Trust this page and its scripts. The field clears on capture; the client stays in memory. A blank field keeps it. Enter a replacement before a later click to correct it. Refresh clears in-memory credentials.</p>
+          </details>
         </div>
-        <p id="duration-note" class="help">Choose 1–20 tics. The game waits between clicks.</p>
-        <p id="status" role="status" aria-live="polite">Loading engine identity…</p>
-      </section>
-      <section class="history-panel" aria-labelledby="history-title">
-        <h2 id="history-title">AI Decision History</h2>
-        <p id="history-empty" class="help">No AI decisions yet. Preparation's neutral tic is not an AI decision.</p>
-        <ol id="history" aria-label="AI Decision History" reversed></ol>
-      </section>
+      </details>
+      <div class="experience">
+        <section class="game" aria-label="Doom game and controls">
+          <div class="stage">
+            <canvas id="screen" width="640" height="400" role="img" aria-label="Doom E1M1 framebuffer"></canvas>
+          </div>
+          <div class="control-bar">
+            <div class="controls">
+              <div class="duration">
+                <label for="tics">Tics per decision</label>
+                <input id="tics" type="number" min="1" max="20" step="1" value="6" aria-describedby="duration-note" disabled>
+              </div>
+              <button id="next" type="button" disabled>Next Decision</button>
+            </div>
+            <p id="duration-note" class="help">Choose 1–20 tics. One API request per click. The game waits between clicks.</p>
+          </div>
+          <p id="status" role="status" aria-live="polite">Loading engine identity…</p>
+        </section>
+        <section class="history-panel" aria-labelledby="history-title">
+          <h2 id="history-title">AI Decision History</h2>
+          <p id="history-empty" class="help">No AI decisions yet. Preparation's neutral tic is not an AI decision.</p>
+          <ol id="history" aria-label="AI Decision History" reversed></ol>
+        </section>
+      </div>
     </div>
     <details class="advanced">
       <summary>Advanced evidence: preparation, decisions and frame hashes</summary>

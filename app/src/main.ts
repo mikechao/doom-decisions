@@ -27,6 +27,10 @@ type Elements = {
   '#iwad': HTMLInputElement;
   '#key': HTMLInputElement;
   '#key-state': HTMLParagraphElement;
+  '#setup': HTMLDetailsElement;
+  '#setup-title': HTMLSpanElement;
+  '#setup-asset': HTMLSpanElement;
+  '#setup-client': HTMLSpanElement;
   '#tics': HTMLInputElement;
   '#next': HTMLButtonElement;
   '#history': HTMLOListElement;
@@ -207,6 +211,63 @@ function choicePending(entry: DecisionEntry) {
     entry.status === 'Requesting one action'
   );
 }
+const setup = $('#setup');
+let setupAutoCollapsed = false;
+let setupUserExpanded = false;
+let setupRecoveryOpen = false;
+let setupNeedsAttention = false;
+setup.querySelector('summary')?.addEventListener('click', () => {
+  // Native mouse and keyboard activation clicks before toggling open.
+  if (!setup.open) setupUserExpanded = true;
+});
+function displaySetup(run: Run, reveal = false) {
+  const prepared =
+    run.valid &&
+    (run.phase === 'ready' || run.phase === 'busy') &&
+    !!run.evidence.neutralFirst?.complete &&
+    !!run.frame;
+  const file = $('#iwad').files?.[0];
+  $('#setup-title').textContent = prepared ? 'Setup & key' : 'Set up Doom';
+  $('#setup-asset').textContent = file
+    ? `${file.name} · ${prepared ? 'prepared' : 'selected'}`
+    : 'Local Freedoom Phase 1 IWAD';
+  $('#setup-client').textContent = run.client
+    ? 'API client retained · authentication unverified'
+    : 'Temporary OpenAI API key required';
+  const latest = run.evidence.decisions.at(-1);
+  const needsAttention =
+    reveal ||
+    !run.valid ||
+    run.phase === 'unprepared' ||
+    (run.phase === 'ready' && latest && latest.status !== 'Complete');
+  if (needsAttention && (!setupNeedsAttention || reveal)) {
+    // Recovery guidance stays open for inspection; do not auto-hide it later.
+    setupRecoveryOpen = true;
+    setup.open = true;
+  } else if (
+    !needsAttention &&
+    !setupAutoCollapsed &&
+    !setupUserExpanded &&
+    !setupRecoveryOpen &&
+    setup.open &&
+    prepared &&
+    run.client &&
+    run.phase === 'ready' &&
+    !setup.contains(document.activeElement) &&
+    !$('#key').value
+  ) {
+    // Only an actual automatic collapse consumes this one-time transition.
+    // Later user expansion needs no inferred intent or queued toggle tracking.
+    setupAutoCollapsed = true;
+    setup.open = false;
+  }
+  setupNeedsAttention = !!needsAttention;
+}
+setup.addEventListener('focusout', () => {
+  queueMicrotask(() => {
+    if (current) displaySetup(current);
+  });
+});
 function createHistoryRow(number: number) {
   const item = document.createElement('li');
   item.id = `decision-${number}`;
@@ -215,6 +276,12 @@ function createHistoryRow(number: number) {
   const summary = document.createElement('summary');
   const heading = document.createElement('span');
   heading.className = 'decision-heading';
+  const decisionNumber = document.createElement('span');
+  decisionNumber.className = 'decision-number';
+  decisionNumber.textContent = `#${number}`;
+  const action = document.createElement('span');
+  action.className = 'decision-action';
+  heading.append(decisionNumber, action);
   const latency = document.createElement('span');
   latency.className = 'decision-latency';
   const status = document.createElement('span');
@@ -232,29 +299,45 @@ function createHistoryRow(number: number) {
   const options = actionNames.map((action) => {
     const row = document.createElement('li');
     const label = document.createElement('span');
+    label.className = 'probability-label';
+    const name = document.createElement('span');
+    const selected = document.createElement('span');
+    selected.className = 'probability-selected';
+    selected.textContent = 'Selected';
+    selected.hidden = true;
+    label.append(name, selected);
     const value = document.createElement('span');
     value.className = 'probability-value';
-    row.append(label, value);
+    const bar = document.createElement('meter');
+    bar.className = 'probability-bar';
+    bar.min = 0;
+    bar.max = 1;
+    bar.setAttribute('aria-hidden', 'true');
+    row.append(label, value, bar);
     probabilities.append(row);
-    return { action, row, label, value };
+    return { action, row, name, selected, value, bar };
   });
+  const confidence = document.createElement('p');
+  confidence.className = 'decision-confidence';
+  confidence.hidden = true;
   const technical = document.createElement('details');
   technical.className = 'receipt';
   const technicalSummary = document.createElement('summary');
   technicalSummary.textContent = 'Technical receipt';
   const receipt = document.createElement('pre');
   technical.append(technicalSummary, receipt);
-  content.append(title, unavailable, probabilities, technical);
+  content.append(title, unavailable, probabilities, confidence, technical);
   details.append(summary, content);
   item.append(details);
   return {
     item,
-    heading,
+    action,
     latency,
     status,
     unavailable,
     probabilities,
     options,
+    confidence,
     receipt,
   };
 }
@@ -270,8 +353,9 @@ function displayHistory(entries: readonly DecisionEntry[]) {
       $('#history').prepend(view.item);
     }
     const pending = choicePending(entry);
-    view.heading.textContent = `#${entry.number} · ${entry.action ?? (pending ? 'Action pending' : 'Action unavailable')}`;
-    view.latency.textContent = ` · API ${entry.latencyMs === null ? (pending ? 'latency pending' : 'latency unavailable') : `${entry.latencyMs} ms`}`;
+    view.action.textContent =
+      entry.action ?? (pending ? 'Action pending' : 'Action unavailable');
+    view.latency.textContent = `API ${entry.latencyMs === null ? (pending ? 'latency pending' : 'latency unavailable') : `${entry.latencyMs} ms`}`;
     view.status.textContent = decisionStatus(entry);
     const values = entry.choice?.probabilities;
     view.unavailable.hidden = !!values;
@@ -286,8 +370,10 @@ function displayHistory(entries: readonly DecisionEntry[]) {
         const node = view.options.find((item) => item.action === option.value);
         if (!node) continue;
         const selected = option.value === entry.action;
-        node.label.textContent = `${option.value}${selected ? ' · selected' : ''}`;
+        node.name.textContent = option.value;
+        node.selected.hidden = !selected;
         node.value.textContent = probabilityText(option.probability);
+        node.bar.value = option.probability;
         node.row.dataset.selected = String(selected);
         if (view.probabilities.children[index] !== node.row)
           view.probabilities.insertBefore(
@@ -296,6 +382,12 @@ function displayHistory(entries: readonly DecisionEntry[]) {
           );
       }
     }
+    const confidence = entry.choice?.confidence;
+    view.confidence.hidden = confidence === null || confidence === undefined;
+    view.confidence.textContent =
+      confidence === null || confidence === undefined
+        ? ''
+        : `API confidence: ${probabilityText(confidence)}`;
     const execution = entry.execution;
     view.receipt.textContent = [
       `Decision ${entry.number}: ${entry.status}`,
@@ -307,9 +399,10 @@ function displayHistory(entries: readonly DecisionEntry[]) {
     ].join('\n');
   }
 }
-function display(run: Run, status?: string) {
+function display(run: Run, status?: string, revealSetup = false) {
   if (current !== run) return;
   if (status) $('#status').textContent = status;
+  $('#status').dataset.phase = run.phase;
   $('#evidence').textContent = JSON.stringify(run.evidence, null, 2);
   $('#next').disabled = !run.valid || run.phase !== 'ready';
   $('#key').disabled = !run.valid || run.phase !== 'ready';
@@ -317,9 +410,10 @@ function display(run: Run, status?: string) {
   $('#iwad').disabled = run.phase !== 'unprepared';
   $('#next').setAttribute('aria-busy', String(run.phase === 'busy'));
   $('#key-state').textContent = run.client
-    ? 'API client retained in memory; a blank field keeps it. Enter a key to replace it. Authentication is not validated by this indicator.'
-    : 'No API client retained. Enter a key when the game is ready.';
+    ? 'Client in memory; blank keeps it. Authentication unverified.'
+    : 'No client in memory. Enter a key when the game is ready.';
   displayHistory(run.evidence.decisions);
+  displaySetup(run, revealSetup);
 }
 function retire(run: Run) {
   run.valid = false;
@@ -717,20 +811,29 @@ $('#next').addEventListener('click', async () => {
       display(
         run,
         'Enter a usable temporary API key (no spaces or control characters).',
+        true,
       );
       return;
     }
     try {
       run.client = createClient(key); // Replacement drops the prior client; same Doom run.
     } catch {
-      display(run, 'Could not create the API client. Enter a replacement key.');
+      display(
+        run,
+        'Could not create the API client. Enter a replacement key.',
+        true,
+      );
       return;
     } finally {
       key = '';
     }
   }
   if (!run.client) {
-    display(run, 'Enter a temporary OpenAI API key before Next Decision.');
+    display(
+      run,
+      'Enter a temporary OpenAI API key before Next Decision.',
+      true,
+    );
     return;
   }
   // Freeze duration and attempt identity before the first await. The handler
