@@ -1,5 +1,5 @@
-import type { Observation } from './worker-shared.ts';
-import { i11VerifyStep } from './worker-shared.ts';
+import type { E1M1Assessment, Observation } from './worker-shared.ts';
+import { assessE1M1, i11MaskValid, i11VerifyStep } from './worker-shared.ts';
 
 export const masks = Object.freeze({
   neutral: 0,
@@ -11,13 +11,20 @@ export const masks = Object.freeze({
   use: 32,
 });
 export type ActionName = keyof typeof masks;
-export type Phase = 'unprepared' | 'preparing' | 'ready' | 'busy' | 'error';
+export type Phase =
+  | 'unprepared'
+  | 'preparing'
+  | 'ready'
+  | 'busy'
+  | 'terminal'
+  | 'error';
 export type Attempt = Readonly<{ tics: number; worker: object }>;
 type Session = {
   valid: boolean;
   phase: Phase;
   worker?: object | null;
   attempt?: Attempt;
+  terminal?: E1M1Assessment;
 };
 
 // Synchronous admission and identity fencing are shared with the offline cases.
@@ -26,6 +33,7 @@ export function admitDecision(run: Session, tics: number): Attempt | undefined {
     !run.valid ||
     run.phase !== 'ready' ||
     run.attempt ||
+    run.terminal ||
     !run.worker ||
     !Number.isInteger(tics) ||
     tics < 1 ||
@@ -101,6 +109,8 @@ export type Execution = {
   cumulativeVerifiedTics: number;
   completionUncertain: boolean;
   complete: boolean;
+  terminal: boolean;
+  assessment: E1M1Assessment | null;
 };
 export function verifyAction(
   before: Observation,
@@ -122,13 +132,22 @@ export function verifyAction(
     cumulativeVerifiedTics: before.counters.gametic,
     completionUncertain: true,
     complete: false,
+    terminal: false,
+    assessment: null,
   };
+  if (!i11MaskValid(mask) || !Number.isInteger(tics) || tics < 1 || tics > 20)
+    return evidence;
   let last = before;
   const steps = Array.isArray(result.steps) ? result.steps : [];
   // Evaluate the completed prefix BEFORE checking the outer outcome/diagnostics.
   // Refusal status -1 is passive in i11VerifyStep; it must never count as a tic.
   for (const step of steps) {
     try {
+      if (
+        evidence.independentlyVerifiedTics === tics ||
+        assessE1M1(last).kind !== 'alive'
+      )
+        break;
       if (record(step).status !== 0) break;
       i11VerifyStep(mask, last, step);
       if (
@@ -149,6 +168,7 @@ export function verifyAction(
       last = step;
       evidence.independentlyVerifiedTics++;
       evidence.cumulativeVerifiedTics++;
+      evidence.assessment = assessE1M1(last);
     } catch {
       break;
     }
@@ -171,12 +191,25 @@ export function verifyAction(
     result.outcome === 'APPLIED' &&
     result.status === 0 &&
     evidence.independentlyVerifiedTics === tics;
-  evidence.complete = fullyApplied && record(result.native).ready === 1;
+  evidence.complete = fullyApplied && evidence.assessment?.kind === 'alive';
+  const knownBoundary =
+    consistent &&
+    result.status === 0 &&
+    evidence.independentlyVerifiedTics > 0 &&
+    ((result.outcome === 'TERMINAL' &&
+      evidence.assessment?.kind === 'terminal') ||
+      (result.outcome === 'INELIGIBLE' &&
+        evidence.assessment?.kind === 'unsupported'));
+  evidence.terminal = knownBoundary && result.outcome === 'TERMINAL';
   const knownRefusal =
     consistent &&
     result.outcome === 'REFUSED' &&
     result.status === -1 &&
     evidence.independentlyVerifiedTics < tics;
-  evidence.completionUncertain = !(fullyApplied || knownRefusal);
+  evidence.completionUncertain = !(
+    fullyApplied ||
+    knownRefusal ||
+    knownBoundary
+  );
   return evidence;
 }

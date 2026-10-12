@@ -104,6 +104,53 @@ export interface Observation {
   logsTruncated?: boolean;
 }
 
+export type E1M1Assessment = {
+  kind: 'alive' | 'terminal' | 'unsupported';
+  tic: number;
+  dead: boolean;
+  exitPending: boolean;
+};
+
+// Modified-engine enums: GS_LEVEL=0, PST_LIVE=0, PST_DEAD=1,
+// ga_nothing=0, ga_completed=6, sk_medium=2. This reads no native state itself.
+// Callers establish the observation/step evidence before using it as an outcome.
+export function assessE1M1(observation: Observation): E1M1Assessment {
+  const p = observation.native;
+  const assessment: E1M1Assessment = {
+    kind: 'unsupported',
+    tic: observation.counters.gametic,
+    dead: p.playerstate === 1,
+    exitPending: p.gameaction === 6,
+  };
+  const living =
+    p.playerstate === 0 &&
+    Number.isSafeInteger(p.health) &&
+    p.health > 0 &&
+    p.liveActor === 1;
+  const dead = assessment.dead && p.health === 0 && p.liveActor === 0;
+  if (
+    !Number.isSafeInteger(assessment.tic) ||
+    assessment.tic < 0 ||
+    p.loadComplete !== 1 ||
+    p.resources !== 1 ||
+    p.contributorsValid !== 1 ||
+    p.gamestate !== 0 ||
+    p.episode !== 1 ||
+    p.map !== 1 ||
+    p.skill !== 2 ||
+    (p.gameaction !== 0 && !assessment.exitPending) ||
+    (!living && !dead)
+  )
+    return assessment;
+  if (assessment.dead || assessment.exitPending) {
+    if (p.ready === 0 && p.gameEligible === 0) assessment.kind = 'terminal';
+  } else if (p.ready === 1 && p.gameEligible === 1) {
+    assessment.kind = 'alive';
+  }
+  // Coexisting signals stay separate; contradictions retain raw flags as unsupported.
+  return assessment;
+}
+
 export type StatusObservation = Observation & { status: number | null };
 export type Results = {
   'load-i11': Observation & {
@@ -128,7 +175,7 @@ export type Results = {
     mask: number;
     requestedTics: number;
     completedTics: number;
-    outcome: 'APPLIED' | 'REFUSED' | 'FAULT';
+    outcome: 'APPLIED' | 'TERMINAL' | 'INELIGIBLE' | 'REFUSED' | 'FAULT';
     steps: StatusObservation[];
     reason?: string;
     currentTic?: 'UNKNOWN';

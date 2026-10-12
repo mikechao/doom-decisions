@@ -72,6 +72,9 @@ function state(n) {
     native: {
       ...Object.fromEntries(work.map((key) => [key, n])),
       ready: 1, virtualMs: Math.floor(n * 1000 / 35), buildTick: n - 1,
+      loadComplete: 1, resources: 1, liveActor: 1, gameEligible: 1,
+      gamestate: 0, gameaction: 0, episode: 1, map: 1, skill: 2,
+      playerstate: 0, health: 100,
       turnheld: 0, keyUp: 0, keyRight: 0, keyDown: 0, keyLeft: 0, keyFire: 0,
       keyUse: 0, installEqual: 1, entryEqual: 1, actorEqual: 1,
       contributorsValid: 1, usedown: 0, dclicktime: n, dclicktime2: n,
@@ -132,6 +135,8 @@ const ended = verifyAction(state(3), 0, 1, endedGame);
 assert.equal(ended.independentlyVerifiedTics, 1);
 assert.equal(ended.complete, false);
 assert.equal(ended.completionUncertain, false); // consumed tics, unusable game
+assert.equal(ended.terminal, false); // ready=0 does not prove death/exit
+assert.equal(ended.assessment.kind, 'unsupported');
 const refusedStep = receipt(3, 1, 1);
 refusedStep.steps[0] = { ...state(3), status: -1 };
 assert.equal(verifyAction(state(3), 0, 1, refusedStep).independentlyVerifiedTics, 0);

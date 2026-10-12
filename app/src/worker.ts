@@ -7,7 +7,7 @@ import type {
   Request,
   Results,
 } from './worker-shared.ts';
-import { i11MaskValid, i11VerifyStep } from './worker-shared.ts';
+import { assessE1M1, i11MaskValid, i11VerifyStep } from './worker-shared.ts';
 
 // The staged controlled-title ABI is checked before this typed boundary is used.
 type NativeInstance = WebAssembly.Instance & {
@@ -23,7 +23,7 @@ type NativeInstance = WebAssembly.Instance & {
   };
 };
 
-function i11Action(
+export function i11Action(
   mask: number,
   tics: number,
   step: (mask: number) => number,
@@ -49,6 +49,15 @@ function i11Action(
         ...action,
         reason: 'Invalid mask/duration; no native call',
       };
+    if (
+      assessE1M1(last).kind !== 'alive' ||
+      (last.counters.gametic === 0 && mask !== 0)
+    )
+      return {
+        ...last,
+        ...action,
+        reason: 'Native state/input ineligible; no native call',
+      };
     for (let i = 0; i < tics; ++i) {
       const status = step(mask);
       const after = { status, ...observe() };
@@ -57,6 +66,14 @@ function i11Action(
       action.steps.push(after);
       action.completedTics++;
       last = after;
+      const assessment = assessE1M1(after);
+      if (assessment.kind !== 'alive')
+        return {
+          ...after,
+          ...action,
+          outcome: assessment.kind === 'terminal' ? 'TERMINAL' : 'INELIGIBLE',
+          status: 0,
+        }; // The entered tic completed; never dispatch a k+1 step or release tic.
     }
     // Expiration does not release via another tic. Next accepted action replaces all keys.
     return { ...last, ...action, outcome: 'APPLIED', status: 0 };

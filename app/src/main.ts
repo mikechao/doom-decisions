@@ -10,6 +10,7 @@ import {
 } from './decision';
 import type {
   Counters,
+  E1M1Assessment,
   NativeObservation,
   NativeWork,
   Observation,
@@ -162,6 +163,7 @@ type Run = {
   worker?: Worker | null;
   cancel?: ((error: Error) => void) | null;
   last?: Observation;
+  terminal?: E1M1Assessment;
 };
 let engine: EngineMetadata | undefined,
   sdk: SdkProbe | undefined,
@@ -415,9 +417,9 @@ function display(run: Run, status?: string, revealSetup = false) {
   displayHistory(run.evidence.decisions);
   displaySetup(run, revealSetup);
 }
-function retire(run: Run) {
+function retire(run: Run, phase: 'error' | 'terminal' = 'error') {
   run.valid = false;
-  run.phase = 'error';
+  run.phase = phase;
   run.attempt = undefined;
   run.apiController?.abort();
   run.apiController = undefined;
@@ -426,6 +428,20 @@ function retire(run: Run) {
   run.worker?.terminate();
   run.worker = null;
   run.cancel?.(Error('Worker retired; pending completion unknown.'));
+}
+function terminalStatus(execution: Execution) {
+  const assessment = execution.assessment;
+  check(
+    execution.terminal && assessment?.kind === 'terminal',
+    'Missing verified terminal boundary.',
+  );
+  const signals = [
+    assessment.dead ? 'Player dead' : '',
+    assessment.exitPending ? 'Level exit triggered (exit pending)' : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return `${signals} at tic ${assessment.tic}; ${execution.independentlyVerifiedTics} of ${execution.requestedTics} tics verified`;
 }
 function passiveCheck(before: Observation, after: Observation) {
   check(
@@ -496,6 +512,10 @@ async function request<O extends Operation>(
 ): Promise<Success<O>> {
   const [extra = {}, transfer = []] = args;
   assertCurrent(run);
+  check(
+    op !== 'action' || !run.terminal,
+    'Terminal game; no further native gameplay.',
+  );
   check(!run.cancel, 'Overlapping Worker operation refused.');
   run.evidence.activeOperation = op;
   display(run);
@@ -604,11 +624,14 @@ async function render(run: Run) {
       result.counters.gametic === run.verifiedTics,
     'Passive render cadence/tic mismatch.',
   );
-  context.putImageData(
-    new ImageData(new Uint8ClampedArray(pixels), 640, 400),
-    0,
-    0,
+  const rgba = new Uint8ClampedArray(pixels);
+  const pixelSha256 = await digest(rgba);
+  assertCurrent(run);
+  check(
+    pixelSha256 === result.frameSha256,
+    'Returned pixels differ from native frame.',
   );
+  context.putImageData(new ImageData(rgba, 640, 400), 0, 0);
   const canvasSha256 = await digest(context.getImageData(0, 0, 640, 400).data);
   assertCurrent(run);
   check(
@@ -641,14 +664,19 @@ async function action(
   record(evidence);
   run.verifiedTics = evidence.cumulativeVerifiedTics;
   check(
-    evidence.complete,
+    evidence.complete || evidence.terminal,
     evidence.completionUncertain
       ? 'Native action completion uncertain; reload to restart.'
       : 'Native action incomplete or game no longer ready; reload to restart.',
   );
   assertCurrent(run);
-  // verifyAction.complete established the final native observation and counters.
+  // Verification established this boundary, including a known terminal prefix.
   run.last = result as Observation;
+  if (evidence.terminal) {
+    check(evidence.assessment, 'Missing terminal assessment.');
+    run.terminal = evidence.assessment;
+  }
+  return evidence;
 }
 
 const deadlineMs = 10000;
@@ -687,6 +715,7 @@ async function decide(
   png: string,
 ) {
   fence(run, attempt);
+  check(!run.terminal, 'Terminal game; no further Decisions requests.');
   check(run.client, 'A temporary API credential is required.');
   const controller = new AbortController();
   run.apiController = controller;
@@ -910,7 +939,7 @@ $('#next').addEventListener('click', async () => {
     );
     // No await between the final identity fence and the one native dispatch.
     fence(run, attempt);
-    await action(
+    const execution = await action(
       run,
       masks[entry.action],
       attempt.tics,
@@ -921,7 +950,9 @@ $('#next').addEventListener('click', async () => {
       },
     );
     fence(run, attempt);
-    entry.status = 'Action verified; rendering';
+    entry.status = execution.terminal
+      ? 'Terminal tic verified; rendering'
+      : 'Action verified; rendering';
     display(
       run,
       `Decision ${entry.number}: rendering tic ${run.verifiedTics}…`,
@@ -930,6 +961,12 @@ $('#next').addEventListener('click', async () => {
     fence(run, attempt);
     check(run.frame, 'Verified frame unavailable.');
     entry.result = { ...run.frame };
+    if (execution.terminal) {
+      entry.status = `${terminalStatus(execution)}; frame retained.`;
+      retire(run, 'terminal');
+      display(run, `${entry.status} Reload to start a new session.`);
+      return;
+    }
     entry.status = 'Complete';
     run.attempt = undefined;
     run.phase = 'ready';
@@ -968,15 +1005,19 @@ $('#next').addEventListener('click', async () => {
         // Failed passive proof means the game cannot be safely reused.
       }
     }
-    entry.status = entry.execution?.complete
-      ? 'Action verified; resulting frame unavailable. Reload to restart.'
-      : entry.execution
-        ? entry.execution.completionUncertain
-          ? 'Native completion uncertain; verified prefix retained. Reload to restart.'
-          : entry.execution.independentlyVerifiedTics === entry.selectedTics
-            ? 'All requested tics consumed; game no longer ready. Reload to restart.'
-            : `Native action refused after ${entry.execution.independentlyVerifiedTics} verified tics. Reload to restart.`
-        : 'Game/observation verification failed; no native action dispatched. Reload to restart.';
+    entry.status = entry.execution?.terminal
+      ? `${terminalStatus(entry.execution)}; terminal frame unavailable. Reload to restart.`
+      : entry.execution?.complete
+        ? 'Action verified; resulting frame unavailable. Reload to restart.'
+        : entry.execution
+          ? entry.execution.completionUncertain
+            ? 'Native completion uncertain; verified prefix retained. Reload to restart.'
+            : entry.execution.assessment?.kind === 'unsupported'
+              ? 'Unsupported native state; verified prefix retained. Reload to restart.'
+              : entry.execution.independentlyVerifiedTics === entry.selectedTics
+                ? 'All requested tics consumed; game no longer ready. Reload to restart.'
+                : `Native action refused after ${entry.execution.independentlyVerifiedTics} verified tics. Reload to restart.`
+          : 'Game/observation verification failed; no native action dispatched. Reload to restart.';
     retire(run);
     run.evidence.error = entry.status;
     display(run, entry.status);
@@ -1062,10 +1103,18 @@ async function prepare() {
       counters: before.counters,
       native: before.native,
     };
-    await action(run, 0, 1, before, (evidence) => {
+    const neutral = await action(run, 0, 1, before, (evidence) => {
       run.evidence.neutralFirst = evidence;
     });
     await render(run);
+    if (neutral.terminal) {
+      retire(run, 'terminal');
+      display(
+        run,
+        `${terminalStatus(neutral)}; frame retained. Reload to start a new session.`,
+      );
+      return;
+    }
     await snapshot(run);
     await snapshot(run);
     await render(run); // One passive render demonstrates isolation, never another action.
