@@ -100,8 +100,12 @@ summary:hover {
   overflow-wrap: anywhere;
   font-size: 0.875rem;
 }
+#setup-asset:empty {
+  display: none;
+}
 #setup-client {
   grid-column: 2 / -1;
+  text-align: right;
   color: var(--muted);
   font-size: 0.8125rem;
 }
@@ -521,8 +525,7 @@ a {
     grid-template-columns: 0.5rem auto minmax(0, 1fr) minmax(0, 1.2fr);
   }
   #setup-client {
-    grid-column: auto;
-    text-align: right;
+    grid-column: 4;
   }
 }
 @media (max-width: 1167px) {

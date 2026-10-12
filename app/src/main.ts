@@ -227,7 +227,7 @@ function displaySetup(run: Run, reveal = false) {
   $('#setup-title').textContent = prepared ? 'Setup & key' : 'Set up Doom';
   $('#setup-asset').textContent = file
     ? `${file.name} · ${prepared ? 'prepared' : 'selected'}`
-    : 'Local Freedoom Phase 1 IWAD';
+    : '';
   $('#setup-client').textContent = run.client
     ? 'API client retained · authentication unverified'
     : 'Temporary OpenAI API key required';
