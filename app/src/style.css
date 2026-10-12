@@ -240,9 +240,19 @@ canvas {
   margin: 0;
   font-variant-numeric: tabular-nums;
 }
-#next {
+#budget {
+  width: 9rem;
+  max-width: 100%;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.budget {
+  flex-basis: 100%;
+}
+#next,
+#start,
+#stop {
   min-height: 48px;
-  margin-left: auto;
   padding: 0.625rem 1.25rem;
   border-radius: 8px;
   font-weight: 650;
@@ -251,13 +261,32 @@ canvas {
   border-color: #d2a65b;
   cursor: pointer;
 }
+#next {
+  margin-left: auto;
+}
+#start,
+#stop {
+  color: #e8e3d9;
+  background: #363d30;
+  border-color: #81745b;
+}
 #next:hover:enabled {
   background: #e0b66f;
+}
+#start:hover:enabled,
+#stop:hover:enabled {
+  background: #444c3e;
 }
 #next:active:enabled {
   background: #bf944d;
 }
-#next:disabled {
+#start:active:enabled,
+#stop:active:enabled {
+  background: #2e352a;
+}
+#next:disabled,
+#start:disabled,
+#stop:disabled {
   color: #c4b493;
   background: #413827;
   border-color: #81745b;
@@ -269,6 +298,15 @@ canvas {
 #duration-note {
   margin-top: 0.625rem;
   font-size: 0.8125rem;
+}
+#continuous-note,
+#continuous-state {
+  margin-top: 0.625rem;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+#continuous-state {
+  font-variant-numeric: tabular-nums;
 }
 #status {
   margin-top: 1rem;
@@ -532,6 +570,13 @@ a {
     width: 4.5rem;
   }
   #next {
+    flex-grow: 1;
+    padding-inline: 0.75rem;
+  }
+  .budget label {
+    max-width: none;
+  }
+  #start {
     flex-grow: 1;
     padding-inline: 0.75rem;
   }

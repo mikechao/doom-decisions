@@ -34,6 +34,10 @@ type Elements = {
   '#setup-client': HTMLSpanElement;
   '#tics': HTMLInputElement;
   '#next': HTMLButtonElement;
+  '#start': HTMLButtonElement;
+  '#stop': HTMLButtonElement;
+  '#budget': HTMLInputElement;
+  '#continuous-state': HTMLParagraphElement;
   '#history': HTMLOListElement;
   '#history-empty': HTMLParagraphElement;
   '#sdk': HTMLParagraphElement;
@@ -159,12 +163,29 @@ type Run = {
   attempt?: Attempt;
   client?: OpenAI;
   apiController?: AbortController;
+  sdkRead?: Promise<void>;
+  continuous?: ContinuousRun;
   evidence: Evidence;
   worker?: Worker | null;
   cancel?: ((error: Error) => void) | null;
   last?: Observation;
   terminal?: E1M1Assessment;
 };
+type ContinuousRun = {
+  active: boolean;
+  stopRequested: boolean;
+  dispatched: boolean;
+  readonly limit: number;
+  used: number;
+  reason: string;
+};
+type DecisionOutcome =
+  | 'completed'
+  | 'not-admitted'
+  | 'api-failure'
+  | 'stopped'
+  | 'terminal'
+  | 'retired';
 let engine: EngineMetadata | undefined,
   sdk: SdkProbe | undefined,
   current: Run | undefined;
@@ -406,9 +427,33 @@ function display(run: Run, status?: string, revealSetup = false) {
   if (status) $('#status').textContent = status;
   $('#status').dataset.phase = run.phase;
   $('#evidence').textContent = JSON.stringify(run.evidence, null, 2);
-  $('#next').disabled = !run.valid || run.phase !== 'ready';
-  $('#key').disabled = !run.valid || run.phase !== 'ready';
-  $('#tics').disabled = !run.valid || run.phase !== 'ready';
+  const continuous = run.continuous;
+  const ready =
+    run.valid &&
+    run.phase === 'ready' &&
+    !run.terminal &&
+    !run.sdkRead &&
+    !continuous?.active;
+  $('#next').disabled = !ready;
+  $('#start').disabled = !ready;
+  $('#budget').disabled = !ready;
+  $('#key').disabled = !ready;
+  $('#stop').disabled = !continuous?.active || continuous.stopRequested;
+  $('#tics').disabled = !(
+    ready ||
+    (run.valid && continuous?.active && !continuous.stopRequested)
+  );
+  const continuousStatus = continuous?.active
+    ? continuous.stopRequested
+      ? continuous.dispatched
+        ? 'Stopping after current decision'
+        : 'Stopping before native dispatch'
+      : 'Running'
+    : continuous
+      ? `${run.phase === 'terminal' ? 'Terminal' : 'Stopped'}: ${continuous.reason}`
+      : 'Continuous mode stopped';
+  $('#continuous-state').textContent =
+    `${continuousStatus}${continuous ? ` · API attempts ${continuous.used} / ${continuous.limit}` : ''} · verified tic ${run.verifiedTics}${run.sdkRead ? ' · waiting for API response cleanup' : ''}`;
   $('#iwad').disabled = run.phase !== 'unprepared';
   $('#next').setAttribute('aria-busy', String(run.phase === 'busy'));
   $('#key-state').textContent = run.client
@@ -681,6 +726,7 @@ async function action(
 
 const deadlineMs = 10000;
 class DecisionFailure extends Error {}
+class DecisionStopped extends Error {}
 const safeRequestId = (value: unknown) =>
   typeof value === 'string' && /^req_[A-Za-z0-9_-]{1,200}$/.test(value)
     ? value
@@ -713,10 +759,12 @@ async function decide(
   attempt: Attempt,
   entry: DecisionEntry,
   png: string,
+  continuous?: ContinuousRun,
 ) {
   fence(run, attempt);
   check(!run.terminal, 'Terminal game; no further Decisions requests.');
   check(run.client, 'A temporary API credential is required.');
+  check(!run.sdkRead, 'Previous SDK response still pending.');
   const controller = new AbortController();
   run.apiController = controller;
   const started = performance.now();
@@ -732,6 +780,8 @@ async function decide(
     onAbort = () => reject(abortError());
     controller.signal.addEventListener('abort', onAbort, { once: true });
   });
+  // A synchronous SDK failure can happen before the response race is installed.
+  void cancelled.catch(() => {});
   const deadline = setTimeout(() => {
     timedOut = true;
     controller.abort();
@@ -746,6 +796,11 @@ async function decide(
   };
   try {
     checkDeadline();
+    if (continuous) {
+      if (continuous.stopRequested) throw new DecisionStopped();
+      check(continuous.used < continuous.limit, 'Continuous budget exhausted.');
+      continuous.used++;
+    }
     // Both response helpers observe this ONE SDK promise; neither retries nor
     // another call is used to obtain a request ID or parsed body.
     const pending = run.client.decisions.create(
@@ -767,19 +822,49 @@ async function decide(
           {
             type: 'choice',
             name: 'next_action',
-            instructions: `Explore the level and progress toward the exit while surviving. Choose one useful action from the screenshot; moving or turning to explore is generally preferable to standing still. Choose neutral when waiting has a tactical benefit. The human selected exactly ${attempt.tics} gameplay tics for this action. Choose only the action, never its duration. Afterward the game waits for another human click. Do not assume unseen game state.`,
+            instructions: `Explore the level and progress toward the exit while surviving. Choose one useful action from the screenshot; moving or turning to explore is generally preferable to standing still. Choose neutral when waiting has a tactical benefit. The human selected exactly ${attempt.tics} gameplay tics for this action. Choose only the action, never its duration. The game advances only through verified actions admitted by manual steps or explicitly started continuous mode; API waits do not advance gameplay. Do not assume unseen game state.`,
             choices: Object.keys(masks).map((value) => ({ value })),
           },
         ],
       },
       { signal: controller.signal, maxRetries: 0, timeout: deadlineMs },
     );
-    const reading = (async () => {
+    // Observe the public raw Response BEFORE starting SDK parsing. In 7.32.0,
+    // withResponse() can reject on Abort/timeout while response.text() still runs.
+    // Delegate the exact read and all decoding/error/response selection to the SDK.
+    let bodyRead: Promise<void> | undefined;
+    let restoreText: (() => void) | undefined;
+    const headers = Promise.resolve().then(async () => {
       const response = await pending.asResponse();
+      const text = response.text;
+      response.text = () => {
+        const reading = text.call(response);
+        bodyRead = reading.then(
+          () => {},
+          () => {},
+        );
+        return reading;
+      };
+      restoreText = () => {
+        response.text = text;
+      };
+      return response;
+    });
+    const body = headers.then(() => pending.withResponse());
+    const drained = Promise.allSettled([headers, body]).then(async () => {
+      await bodyRead; // Settlement of the actual reader, including late rejection.
+      restoreText?.();
+      if (run.sdkRead === drained) run.sdkRead = undefined;
+      display(run);
+    });
+    run.sdkRead = drained;
+    display(run);
+    const reading = (async () => {
+      const response = await headers;
       checkDeadline();
       entry.requestId = safeRequestId(response.headers.get('x-request-id'));
       entry.http = response.status;
-      const { data, request_id } = await pending.withResponse();
+      const { data, request_id } = await body;
       checkDeadline();
       entry.requestId = safeRequestId(request_id) ?? entry.requestId;
       return data;
@@ -808,7 +893,8 @@ async function decide(
       }
     }
     if (controller.signal.aborted) throw abortError();
-    if (error instanceof DecisionFailure) throw error;
+    if (error instanceof DecisionFailure || error instanceof DecisionStopped)
+      throw error;
     if (error instanceof SyntaxError)
       throw new DecisionFailure('Malformed API response JSON');
     if (error instanceof OpenAI.APIConnectionTimeoutError)
@@ -824,13 +910,32 @@ async function decide(
   }
 }
 
-$('#next').addEventListener('click', async () => {
-  const run = current;
-  if (!run?.valid || run.phase !== 'ready') return;
+async function runOneDecision(
+  run: Run,
+  continuous?: ContinuousRun,
+): Promise<DecisionOutcome> {
+  if (
+    current !== run ||
+    pageExited ||
+    !run.valid ||
+    run.phase !== 'ready' ||
+    run.attempt ||
+    run.terminal ||
+    run.sdkRead ||
+    (run.continuous?.active && run.continuous !== continuous)
+  )
+    return 'not-admitted';
+  if (
+    continuous &&
+    (run.continuous !== continuous ||
+      !continuous.active ||
+      continuous.stopRequested)
+  )
+    return 'stopped';
   const tics = $('#tics').valueAsNumber;
   if (!Number.isInteger(tics) || tics < 1 || tics > 20) {
     display(run, 'Tics per decision must be an integer from 1 to 20.');
-    return;
+    return 'not-admitted';
   }
   let key = $('#key').value.trim();
   if (key) {
@@ -842,7 +947,7 @@ $('#next').addEventListener('click', async () => {
         'Enter a usable temporary API key (no spaces or control characters).',
         true,
       );
-      return;
+      return 'not-admitted';
     }
     try {
       run.client = createClient(key); // Replacement drops the prior client; same Doom run.
@@ -852,7 +957,7 @@ $('#next').addEventListener('click', async () => {
         'Could not create the API client. Enter a replacement key.',
         true,
       );
-      return;
+      return 'not-admitted';
     } finally {
       key = '';
     }
@@ -860,15 +965,20 @@ $('#next').addEventListener('click', async () => {
   if (!run.client) {
     display(
       run,
-      'Enter a temporary OpenAI API key before Next Decision.',
+      'Enter a temporary OpenAI API key before requesting decisions.',
       true,
     );
-    return;
+    return 'not-admitted';
   }
   // Freeze duration and attempt identity before the first await. The handler
   // guard, rather than disabled styling alone, prevents overlapping admission.
   const attempt = admitDecision(run, tics);
-  if (!attempt) return;
+  if (!attempt) return 'not-admitted';
+  if (continuous) continuous.dispatched = false;
+  const dispatchFence = () => {
+    fence(run, attempt);
+    if (continuous?.stopRequested) throw new DecisionStopped();
+  };
   const entry: DecisionEntry = {
     number: run.evidence.decisions.length + 1,
     selectedTics: attempt.tics,
@@ -895,6 +1005,7 @@ $('#next').addEventListener('click', async () => {
         observation.counters.gametic === run.verifiedTics,
       'Current rendered/native checkpoint mismatch.',
     );
+    dispatchFence();
     entry.observation = { ...run.frame };
     // PNG and RGBA are captured synchronously from the same visible Canvas.
     const png = canvas.toDataURL('image/png');
@@ -906,14 +1017,15 @@ $('#next').addEventListener('click', async () => {
       hash === run.frame.nativeSha256,
       'Observation Canvas/native hash mismatch.',
     );
+    dispatchFence();
     entry.status = 'Requesting one action';
     display(
       run,
       `Decision ${entry.number}: requesting action for ${attempt.tics} tics…`,
     );
     canRecover = true;
-    const data = await decide(run, attempt, entry, png);
-    fence(run, attempt);
+    const data = await decide(run, attempt, entry, png, continuous);
+    dispatchFence();
     try {
       entry.choice = validateChoice(data);
     } catch (error) {
@@ -938,7 +1050,8 @@ $('#next').addEventListener('click', async () => {
       `Decision ${entry.number}: verifying ${attempt.tics} native tics…`,
     );
     // No await between the final identity fence and the one native dispatch.
-    fence(run, attempt);
+    dispatchFence();
+    if (continuous) continuous.dispatched = true;
     const execution = await action(
       run,
       masks[entry.action],
@@ -965,25 +1078,34 @@ $('#next').addEventListener('click', async () => {
       entry.status = `${terminalStatus(execution)}; frame retained.`;
       retire(run, 'terminal');
       display(run, `${entry.status} Reload to start a new session.`);
-      return;
+      return 'terminal';
     }
     entry.status = 'Complete';
     run.attempt = undefined;
     run.phase = 'ready';
     display(
       run,
-      `Ready at tic ${run.verifiedTics} — click Next Decision for another action.`,
+      continuous
+        ? `Decision verified and rendered at tic ${run.verifiedTics}.`
+        : `Ready at tic ${run.verifiedTics} — click Next Decision for another action.`,
     );
+    return 'completed';
   } catch (error) {
     if (current !== run || pageExited || (run.valid && run.attempt !== attempt))
-      return;
+      return 'retired';
     if (
-      canRecover &&
-      error instanceof DecisionFailure &&
+      ((canRecover && error instanceof DecisionFailure) ||
+        error instanceof DecisionStopped) &&
       run.valid &&
       observation
     ) {
       try {
+        fence(run, attempt);
+        entry.status = run.sdkRead
+          ? 'Waiting for API response cleanup; no native action dispatched'
+          : 'Checking unchanged native state';
+        display(run, entry.status);
+        await run.sdkRead;
         fence(run, attempt);
         const unchanged = await snapshot(run);
         fence(run, attempt);
@@ -993,14 +1115,18 @@ $('#next').addEventListener('click', async () => {
           'Native state changed during failed API request.',
         );
         entry.waitUnchanged = true;
-        entry.status = `${error.message}; no native action dispatched`;
+        const stopped =
+          error instanceof DecisionStopped || continuous?.stopRequested;
+        entry.status = `${stopped ? 'Stopped by user' : error.message}; no native action dispatched`;
         run.attempt = undefined;
         run.phase = 'ready';
         display(
           run,
-          `${entry.status}. Correct the key if needed, then click Next Decision to retry.`,
+          stopped
+            ? `${entry.status}. Ready at tic ${run.verifiedTics}.`
+            : `${entry.status}. Correct the key if needed, then click Next Decision to retry.`,
         );
-        return;
+        return stopped ? 'stopped' : 'api-failure';
       } catch {
         // Failed passive proof means the game cannot be safely reused.
       }
@@ -1021,8 +1147,81 @@ $('#next').addEventListener('click', async () => {
     retire(run);
     run.evidence.error = entry.status;
     display(run, entry.status);
+    return 'retired';
+  } finally {
+    if (continuous) continuous.dispatched = false;
   }
+}
+
+async function startContinuous() {
+  const run = current;
+  if (
+    !run?.valid ||
+    pageExited ||
+    run.phase !== 'ready' ||
+    run.attempt ||
+    run.terminal ||
+    run.sdkRead ||
+    run.continuous?.active
+  )
+    return;
+  const limit = $('#budget').valueAsNumber;
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    display(run, 'Max API attempts must be a positive safe integer.');
+    $('#budget').focus();
+    return;
+  }
+  const continuous: ContinuousRun = {
+    active: true,
+    stopRequested: false,
+    dispatched: false,
+    limit,
+    used: 0,
+    reason: '',
+  };
+  run.continuous = continuous; // Ownership is acquired before the first await.
+  display(run);
+  try {
+    while (continuous.used < continuous.limit && !continuous.stopRequested) {
+      const outcome = await runOneDecision(run, continuous);
+      if (outcome !== 'completed') {
+        continuous.reason =
+          outcome === 'not-admitted'
+            ? 'Admission failed; correct the inputs before starting again'
+            : (run.evidence.decisions.at(-1)?.status ?? outcome);
+        return;
+      }
+      if (continuous.used < continuous.limit && !continuous.stopRequested)
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    continuous.reason = continuous.stopRequested
+      ? 'Stopped by user'
+      : 'Budget exhausted';
+  } finally {
+    continuous.active = false;
+    display(run);
+  }
+}
+
+function stopContinuous() {
+  const run = current;
+  const continuous = run?.continuous;
+  if (!run || !continuous?.active || continuous.stopRequested) return;
+  continuous.stopRequested = true;
+  if (!continuous.dispatched) run.apiController?.abort();
+  display(
+    run,
+    continuous.dispatched
+      ? 'Stopping after current decision.'
+      : 'Stopping before native dispatch; checking unchanged game state.',
+  );
+}
+
+$('#next').addEventListener('click', () => {
+  if (current) return runOneDecision(current);
 });
+$('#start').addEventListener('click', startContinuous);
+$('#stop').addEventListener('click', stopContinuous);
 
 async function prepare() {
   // Selection is single-flight. Only asset validation failures allow correction.
@@ -1201,7 +1400,7 @@ async function initialize() {
       requestsEnabled: true,
     };
     $('#sdk').textContent =
-      `OpenAI SDK ${VERSION} loaded · decisions.create available · explicit clicks only`;
+      `OpenAI SDK ${VERSION} loaded · decisions.create available · manual steps or explicitly started continuous mode`;
     const metadata = await localFetch('doom-build.json', true);
     check(
       metadata !== null &&

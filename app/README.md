@@ -6,12 +6,50 @@ without emitting JavaScript, and Vite owns bundling.
 M4-C automatically prepares real E1M1 on local IWAD selection and verifies exactly
 one mandatory neutral first tic. Each **Next Decision** click then makes at most
 one official SDK Decisions request using the current rendered image, executes
-one allowlisted action on the same Worker, and returns to idle. There is no
-autoplay.
+one allowlisted action on the same Worker, and returns to idle. **Start Continuous
+Mode** explicitly authorizes sequential decisions through that same pipeline,
+until Stop, budget exhaustion, a terminal boundary, or a failure.
 The human owns duration: **Tics per decision** accepts integers **1–20**, initially
 **6**. The captured duration cannot change during a pending decision. The model
 selects only `neutral`, `forward`, `turn_right`, `backward`, `turn_left`, `fire`, or
 `use`; it never selects duration or combined actions.
+
+## Continuous mode
+
+**Max API attempts** defaults to **2** and accepts any positive JavaScript safe
+integer (up to 9,007,199,254,740,991), including 100, 500, or 1000. This is separate
+from the **1–20 tics** bound. Start validates and freezes the budget for that run;
+neither the budget nor credentials are persisted. One unit is charged immediately
+before each `decisions.create` invocation, including failed, refused, invalid,
+timed-out, or canceled calls. Pre-request failures and preparation's neutral tic
+consume no units. There are no refunds, automatic retries, or automatic restarts.
+The status shows attempts used/limit, stop reason, and cumulative verified tics.
+Another explicit Start is required after exhaustion.
+
+Each iteration captures N separately at admission. You can edit N during a
+continuous wait; this affects only later decisions. Ordinary successes preserve
+the Worker/game and observe the preceding verified resulting frame. Only a fully
+verified action and resulting frame permit another iteration. Manual Next Decision
+is locked while a continuous run owns admission or cleanup.
+
+**Stop** before native dispatch closes future admission, best-effort aborts the
+SDK operation, ignores late choices, and proves unchanged native state before
+returning to manual readiness. An underlying SDK response/read must settle before
+any new request is admitted, even if Abort is ignored. A never-settling read leaves
+controls locked with a waiting status; Abort does not prove remote processing or
+billing stopped. Stop after native dispatch says **Stopping after current decision**
+and finishes receipt and resulting-frame verification. It cannot interrupt or roll
+back a synchronous native tic/batch. A healthy verified result preserves manual
+play; unsupported state, uncertain completion, or unverifiable frames retire the
+session and require reload.
+
+Verified death or **E1M1 exit pending** stops at its independently verified prefix
+(`N/k/k`) and retires after the terminal frame is verified. Exit pending is not
+completed intermission or permission to advance to E1M2. A verified terminal
+boundary with an unavailable resulting frame is reported separately; the prior
+frame is not terminal imagery. Actual compiled-WASM/browser death and exit-pending
+behavior remains an outstanding acceptance requirement; synthetic tests do not
+establish it.
 
 ## Prerequisites and clean checkout
 
@@ -79,7 +117,7 @@ builds in one checkout are unsupported.
 
 ## Temporary browser-direct credentials
 
-Enter a temporary OpenAI API key in the password field before a decision click.
+Enter a temporary OpenAI API key in the password field before Next Decision or Start.
 The app sends it directly to `https://api.openai.com/v1/decisions` using the pinned
 SDK, `gpt-6-luna`, browser opt-in, zero retries, and a 10-second deadline including
 response-body reading. Availability, account access and browser CORS must be
@@ -107,7 +145,7 @@ uncertain native completion, or failed render verification, retires the Worker:
 **reload to restart**, with no reconstruction or replay. A bad IWAD can be
 corrected before native preparation begins. Once preparation is admitted, the
 picker is locked; changing the selected file never restarts a prepared game.
-There are no Prepare, Stop, Reset or New Game buttons. Refresh starts a new game
+There are no Prepare, Reset or New Game buttons. Refresh starts a new game
 and clears the in-memory credential; it does not resume prior state.
 
 ## Owner-run isolated Chrome/API trial (not executed by Codex)
@@ -172,6 +210,30 @@ including their evidence limits. The historical
 preparation baseline. Neither record establishes uncollected runtime proof.
 Builds/static inspection do not establish Chrome, native or API runtime success.
 
+## Owner-run continuous trial (separate authorization required)
+
+After an authorized build and isolated Chrome setup above, explicitly authorize a
+**two-attempt** continuous run. Select N=2, Start, and change N to 5 during the first
+API wait. Confirm receipts **2/2/2** then **5/5/5**, cumulative tics **3** then **8**,
+and decision 2's observation checkpoint/hash equal to decision 1's verified result.
+Record the persistent DevTools Worker target, initialization counters, local
+observation payload, and exactly two Decisions POSTs (preflight is separate).
+Expect **Budget exhausted, 2/2**, no third call, and manual readiness.
+
+Separately authorize **one further attempt**, set the budget to 1, Start, and Stop
+while its API response is pending. Confirm no late native action, no replacement
+request while response cleanup remains pending, unchanged native checkpoint, and
+manual readiness only after cleanup/passive proof. This trial admits at most three
+potentially paid requests. Also record native-counter equality during SDK waits
+and an idle interval, Console/Network observations, and keyboard/narrow-screen
+control behavior. If Stop cannot be timed before dispatch, record that gap; a
+completed action is not evidence of pre-dispatch cancellation.
+
+A separately authorized one-attempt API-failure trial should stop without retry
+or native dispatch and retain manual readiness only after passive proof. Real-WASM
+death/E1M1 exit-pending proof remains separate and outstanding. None of these
+browser/API/WASM trials has been executed by Codex for this implementation.
+
 ## Static checks and source boundary
 
 Biome **2.5.15** is the app's sole linter and formatter, exact-pinned in the
@@ -181,6 +243,8 @@ repository root:
 ```sh
 npm --prefix app run check
 node --experimental-strip-types app/tests/decision.mjs
+node --experimental-strip-types app/tests/terminal.mjs
+node --experimental-strip-types app/tests/continuous.mjs
 ```
 
 `npm --prefix app run lint` checks without writing.
@@ -193,6 +257,12 @@ actual admission/fence, choice validator and receipt verifier. It covers frozen 
 double admission, stale identities, invalid choices, synthetic 1 → 3 → 8 chains,
 partial/fault/missing receipts and reported-versus-verified mismatches. It does not
 exercise DOM wiring, real SDK calls, real Workers or native WASM execution.
+The terminal and continuous tests use production controller source in a VM with
+mocked DOM, SDK, Worker responses, and native receipts. They cover sequential
+frame checkpoints, per-admission N, request/budget ownership, Stop before/after
+dispatch, ignored Abort with delayed success/rejection, timeout cleanup, API
+failure without retry, and terminal/unsupported/uncertain boundaries. They are
+separate commands, not included in `npm run check`, and prove no real runtime behavior.
 
 `biome.json` includes app source TypeScript (including `.d.ts`), app-owned
 JavaScript and CSS, `biome.json`, `package.json`, both TypeScript configs, and

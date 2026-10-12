@@ -156,7 +156,7 @@ const controllerSource = stripTypeScriptTypes([
   section('function assertCurrent(', 'const actionNames:'),
   section('function display(run:', 'function checkPrepared('),
   section('async function request<', 'const deadlineMs ='),
-  section('const deadlineMs =', 'async function prepare()'),
+  section('const deadlineMs =', "$('#start').addEventListener"),
   '({ retire, request, decide })',
 ].join('\n'));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');

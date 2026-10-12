@@ -12,7 +12,7 @@
   <main>
     <header>
       <h1>Doom Decisions</h1>
-      <p>Watch real Doom. You choose the duration; AI chooses one action per click.</p>
+      <p>Watch real Doom. You choose the duration; AI chooses one action at a time.</p>
     </header>
     <div class="console">
       <details id="setup" class="setup" open>
@@ -50,8 +50,16 @@
                 <input id="tics" type="number" min="1" max="20" step="1" value="6" aria-describedby="duration-note" disabled>
               </div>
               <button id="next" type="button" disabled>Next Decision</button>
+              <div class="duration budget">
+                <label for="budget">Max API attempts</label>
+                <input id="budget" type="number" min="1" max="9007199254740991" step="1" value="2" aria-describedby="continuous-note" disabled>
+              </div>
+              <button id="start" type="button" disabled>Start Continuous Mode</button>
+              <button id="stop" type="button" disabled>Stop</button>
             </div>
-            <p id="duration-note" class="help">Choose 1–20 tics. One API request per click. The game waits between clicks.</p>
+            <p id="duration-note" class="help">Choose 1–20 tics per decision. Changes during continuous mode apply to the next decision.</p>
+            <p id="continuous-note" class="help">Next Decision requests one action. Start authorizes up to your positive integer API-attempt limit, including failed or canceled calls.</p>
+            <p id="continuous-state" role="status" aria-live="polite">Continuous mode stopped · default limit 2 API attempts</p>
           </div>
           <p id="status" role="status" aria-live="polite">Loading engine identity…</p>
         </section>
@@ -69,7 +77,7 @@
       <pre id="evidence">Not prepared.</pre>
     </details>
     <footer>
-      <p>No autoplay. Preparation uses one explicit neutral tic and no API request. Snapshots, rendering and idle time advance zero gameplay tics. Refresh to start a new game and clear in-memory credentials.</p>
+      <p>Continuous mode starts only when you choose Start. Preparation uses one explicit neutral tic and no API request. Snapshots, rendering and idle time advance zero gameplay tics. Refresh to start a new game and clear in-memory credentials.</p>
       <p>Engine: <a href="./notices/doom-LICENSE.txt">GPL license</a> · SDK: <a href="./notices/openai/LICENSE">Apache license</a>.
         Review redistribution and corresponding source obligations before public deployment.</p>
     </footer>
