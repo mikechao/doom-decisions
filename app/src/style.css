@@ -325,13 +325,26 @@ canvas {
   font-weight: 600;
 }
 .history-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: min(42rem, 75dvh);
   border-top: 1px solid var(--rule);
+}
+.history-panel > h2,
+#history-empty {
+  flex-shrink: 0;
 }
 #history-empty {
   margin-top: 1rem;
   padding-block: 0.5rem;
 }
 #history {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
   list-style: none;
   padding: 0;
   margin: 1rem 0 0;
@@ -518,6 +531,10 @@ a {
     grid-template-columns: 688px minmax(0, 1fr);
   }
   .history-panel {
+    /* The game determines row height; history fills it without growing it. */
+    contain: size;
+    align-self: stretch;
+    max-height: none;
     border-top: 0;
     border-left: 1px solid var(--rule);
   }
