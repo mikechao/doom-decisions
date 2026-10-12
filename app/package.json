@@ -7,6 +7,8 @@
     "node": "22.20.0"
   },
   "scripts": {
+    "dev": "vite",
+    "dev:impeccable": "vite --mode impeccable --host 127.0.0.1 --port 5173 --strictPort",
     "build": "node ../scripts/stage_web.mjs verify public && npm run typecheck && vite build && node ../scripts/stage_web.mjs verify dist",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "lint": "biome lint .",
