@@ -33,7 +33,6 @@ type Elements = {
   '#setup': HTMLElement;
   '#setup-title': HTMLHeadingElement;
   '#setup-asset': HTMLSpanElement;
-  '#setup-client': HTMLSpanElement;
   '#tics': HTMLInputElement;
   '#next': HTMLButtonElement;
   '#start': HTMLButtonElement;
@@ -223,9 +222,6 @@ function displaySetupStatus(run: Run) {
   $('#setup-asset').textContent = file
     ? `${file.name} · ${prepared ? 'prepared' : 'selected'}`
     : '';
-  $('#setup-client').textContent = run.client
-    ? 'API client retained · authentication unverified'
-    : 'Temporary OpenAI API key required';
 }
 const displayHistory = createDecisionHistory(
   $('#history'),

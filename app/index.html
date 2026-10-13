@@ -26,13 +26,12 @@
               <label for="iwad">Local Freedoom WAD</label>
               <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
               <span id="setup-asset"></span>
-              <p id="asset-note" class="help">Your Freedoom WAD stays on your computer. The engine loads automatically. Refresh to change the file.</p>
+              <p id="asset-note" class="help">Stays local. Selection prepares automatically. Refresh to change a prepared WAD.</p>
             </div>
             <div>
               <label for="key">Temporary OpenAI API key</label>
               <input id="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="key-state key-note" disabled>
               <p id="key-state" class="help">No client in memory. Enter a key when the game is ready.</p>
-              <span id="setup-client">Temporary OpenAI API key required</span>
             </div>
             <details class="setup-details">
               <summary>Temporary key: handling &amp; trust</summary>
@@ -78,15 +77,19 @@
         </div>
         <section class="latest-outcome" aria-labelledby="outcome-title">
           <h3 id="outcome-title">Latest Outcome</h3>
-          <p class="outcome-heading">
-            <span id="outcome-number" hidden></span>
-            <span id="outcome-action">No AI decisions yet.</span>
-          </p>
-          <p id="outcome-evidence" hidden></p>
-          <div class="game-status">
-            <p id="status" role="status" aria-live="polite">Loading engine identity…</p>
-            <div class="continuous-status">
-              <p id="continuous-state" role="status" aria-live="polite">Continuous mode stopped · default limit 2 API attempts</p>
+          <div class="outcome-content">
+            <div class="outcome-feature">
+              <p class="outcome-heading">
+                <span id="outcome-number" hidden></span>
+                <span id="outcome-action">No AI decisions yet.</span>
+              </p>
+              <p id="outcome-evidence" hidden></p>
+            </div>
+            <div class="game-status">
+              <p id="status" role="status" aria-live="polite">Loading engine identity…</p>
+              <div class="continuous-status">
+                <p id="continuous-state" role="status" aria-live="polite">Continuous mode stopped · default limit 2 API attempts</p>
+              </div>
             </div>
           </div>
         </section>

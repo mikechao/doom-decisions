@@ -98,21 +98,18 @@ header > p {
 }
 .setup-content {
   display: grid;
-  gap: 1.25rem;
-  margin-top: 1rem;
+  gap: 0.875rem;
+  margin-top: 0.75rem;
 }
-#setup-asset,
-#setup-client {
+#setup-asset {
   display: block;
   margin-top: 0.375rem;
   overflow-wrap: anywhere;
   font-size: 0.8125rem;
+  line-height: 1.4;
 }
 #setup-asset:empty {
   display: none;
-}
-#setup-client {
-  color: var(--muted);
 }
 label {
   display: block;
@@ -120,7 +117,7 @@ label {
   font-weight: 500;
 }
 .setup-content > div:first-child {
-  padding: 0.75rem;
+  padding: 0.625rem;
   border: 1px solid var(--rule);
 }
 label[for="iwad"] {
@@ -191,6 +188,7 @@ footer,
 .setup-details,
 .control-guidance {
   font-size: 0.8125rem;
+  line-height: 1.45;
 }
 .setup .help {
   margin-top: 0.375rem;
@@ -216,8 +214,8 @@ summary:hover {
   font-weight: 500;
 }
 .control-bar {
-  margin-top: 1rem;
-  padding-top: 1rem;
+  margin-top: 0.75rem;
+  padding-top: 0.875rem;
   border-top: 1px solid var(--rule);
 }
 .manual-controls,
@@ -228,7 +226,7 @@ summary:hover {
   min-width: 0;
 }
 .manual-controls {
-  margin-top: 1rem;
+  margin-top: 0.75rem;
 }
 .duration {
   display: grid;
@@ -245,8 +243,8 @@ summary:hover {
   margin-top: 0.375rem;
 }
 .continuous-group {
-  margin-top: 1.25rem;
-  padding-top: 1rem;
+  margin-top: 1rem;
+  padding-top: 0.875rem;
   border-top: 1px solid var(--rule);
 }
 #next,
@@ -347,6 +345,7 @@ canvas {
   image-rendering: pixelated;
 }
 .latest-outcome {
+  container-type: inline-size;
   max-width: 640px;
   margin: 1.25rem auto 0;
   padding: 1rem;
@@ -355,12 +354,19 @@ canvas {
   overflow-wrap: anywhere;
 }
 .latest-outcome > h3 {
-  margin: 0 0 1rem;
+  margin: 0 0 0.875rem;
   font-family: var(--display);
   font-size: 0.8125rem;
   font-weight: 400;
   letter-spacing: 0.22em;
   text-transform: uppercase;
+}
+.outcome-content {
+  display: grid;
+  gap: 1rem;
+}
+.outcome-content > * {
+  min-width: 0;
 }
 .outcome-heading {
   display: flex;
@@ -394,22 +400,38 @@ canvas {
   font-variant-numeric: tabular-nums;
 }
 .game-status {
-  margin-top: 1rem;
   padding-top: 1rem;
   border-top: 1px solid var(--rule);
 }
 #status {
   font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--muted);
 }
 #status[data-phase="busy"],
 #status[data-phase="error"] {
+  color: var(--ivory);
   font-weight: 600;
 }
 .continuous-status {
-  margin-top: 0.75rem;
+  margin-top: 0.5rem;
   color: var(--muted);
   font-size: 0.8125rem;
   font-variant-numeric: tabular-nums;
+}
+@container (min-width: 34rem) {
+  .outcome-content {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 1.25rem;
+  }
+  .game-status {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 0 0 1.25rem;
+    border-top: 0;
+    border-left: 1px solid var(--rule);
+  }
 }
 .history-panel {
   display: flex;
@@ -456,8 +478,8 @@ canvas {
 }
 #history > li > details > summary::before {
   content: "";
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-top: 1.5px solid currentColor;
   border-right: 1.5px solid currentColor;
   transform: rotate(45deg);
@@ -476,10 +498,10 @@ canvas {
 }
 #history > li > details > summary {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 0.5rem;
-  gap: 0.375rem 0.75rem;
+  grid-template-columns: minmax(0, 4.5rem) minmax(0, 1fr) 0.625rem;
+  gap: 0.25rem 0.875rem;
   align-items: start;
-  padding: 1.25rem 0.25rem;
+  padding: 1.5rem 0.375rem;
   list-style: none;
 }
 .decision-heading {
@@ -488,10 +510,10 @@ canvas {
 .decision-number {
   grid-column: 1;
   grid-row: 1 / 4;
-  max-width: 4ch;
+  min-width: 0;
   color: var(--ivory);
   font-family: var(--display);
-  font-size: 2.5rem;
+  font-size: 3rem;
   font-weight: 600;
   line-height: 1.1;
   letter-spacing: -0.025em;
@@ -505,7 +527,7 @@ canvas {
   grid-row: 1;
   min-width: 0;
   font-family: var(--display);
-  font-size: 1.75rem;
+  font-size: 1.875rem;
   font-weight: 500;
   line-height: 1.2;
   letter-spacing: -0.015em;
@@ -514,8 +536,10 @@ canvas {
   background: #1c2117;
 }
 .decision-latency {
+  min-width: 0;
   color: var(--muted);
   font-size: 0.75rem;
+  line-height: 1.5;
   font-variant-numeric: tabular-nums;
   grid-column: 2;
   grid-row: 3;
@@ -523,7 +547,9 @@ canvas {
 .decision-status {
   grid-column: 2;
   grid-row: 2;
-  font-size: 0.8125rem;
+  min-width: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
   color: var(--muted);
 }
 .probability-content {
