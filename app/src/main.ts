@@ -9,6 +9,7 @@ import {
   verifyAction,
 } from './decision';
 import { createDecisionHistory } from './decision-history';
+import { projectLatestOutcome } from './latest-outcome';
 import type {
   Counters,
   E1M1Assessment,
@@ -41,6 +42,9 @@ type Elements = {
   '#continuous-state': HTMLParagraphElement;
   '#history': HTMLOListElement;
   '#history-empty': HTMLParagraphElement;
+  '#outcome-number': HTMLSpanElement;
+  '#outcome-action': HTMLSpanElement;
+  '#outcome-evidence': HTMLParagraphElement;
   '#sdk': HTMLParagraphElement;
   '#status': HTMLParagraphElement;
   '#frame': HTMLParagraphElement;
@@ -265,6 +269,15 @@ function display(run: Run, status?: string) {
     ? 'Client in memory; blank keeps it. Authentication unverified.'
     : 'No client in memory. Enter a key when the game is ready.';
   displayHistory(run.evidence.decisions);
+  const outcome = projectLatestOutcome(
+    run.evidence.decisions.at(-1),
+    run.frame,
+  );
+  $('#outcome-number').textContent = outcome.number;
+  $('#outcome-number').hidden = !outcome.number;
+  $('#outcome-action').textContent = outcome.action;
+  $('#outcome-evidence').textContent = outcome.evidence;
+  $('#outcome-evidence').hidden = !outcome.evidence;
   displaySetupStatus(run);
 }
 function retire(run: Run, phase: 'error' | 'terminal' = 'error') {

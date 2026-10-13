@@ -346,15 +346,59 @@ canvas {
   background: #000;
   image-rendering: pixelated;
 }
-.game-status {
+.latest-outcome {
   max-width: 640px;
   margin: 1.25rem auto 0;
   padding: 1rem;
   border: 1px solid var(--rule);
+  background: #171b12;
   overflow-wrap: anywhere;
 }
+.latest-outcome > h3 {
+  margin: 0 0 1rem;
+  font-family: var(--display);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+.outcome-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1rem;
+  font-family: var(--display);
+  font-size: clamp(2.25rem, 4vw, 3rem);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+.outcome-heading > span {
+  min-width: 0;
+  max-width: 100%;
+}
+#outcome-number {
+  color: var(--amber);
+  font-size: 1.2em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+#outcome-number[hidden] + #outcome-action {
+  font-size: 0.75em;
+  color: var(--muted);
+}
+#outcome-evidence {
+  margin-top: 0.75rem;
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+.game-status {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
 #status {
-  min-height: 3em;
   font-size: 0.875rem;
 }
 #status[data-phase="busy"],

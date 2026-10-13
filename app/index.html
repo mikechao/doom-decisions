@@ -76,12 +76,20 @@
         <div class="stage">
           <canvas id="screen" width="640" height="400" role="img" aria-label="Doom E1M1 framebuffer"></canvas>
         </div>
-        <div class="game-status">
-          <p id="status" role="status" aria-live="polite">Loading engine identity…</p>
-          <div class="continuous-status">
-            <p id="continuous-state" role="status" aria-live="polite">Continuous mode stopped · default limit 2 API attempts</p>
+        <section class="latest-outcome" aria-labelledby="outcome-title">
+          <h3 id="outcome-title">Latest Outcome</h3>
+          <p class="outcome-heading">
+            <span id="outcome-number" hidden></span>
+            <span id="outcome-action">No AI decisions yet.</span>
+          </p>
+          <p id="outcome-evidence" hidden></p>
+          <div class="game-status">
+            <p id="status" role="status" aria-live="polite">Loading engine identity…</p>
+            <div class="continuous-status">
+              <p id="continuous-state" role="status" aria-live="polite">Continuous mode stopped · default limit 2 API attempts</p>
+            </div>
           </div>
-        </div>
+        </section>
       </section>
       <section class="history-panel" aria-labelledby="history-title">
         <h2 id="history-title">AI Decision History</h2>
