@@ -1,0 +1,357 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-13T20:58:04Z",
+  "title": "Design System: Doom Decisions — AI Broadcast",
+  "extensions": {
+    "colorMeta": {
+      "page": {
+        "role": "neutral",
+        "displayName": "Olive Black",
+        "canonical": "#10120e",
+        "tonalRamp": [
+          "oklch(15.000% 0.00863 129.012)",
+          "oklch(26.429% 0.00863 129.012)",
+          "oklch(37.857% 0.00863 129.012)",
+          "oklch(49.286% 0.00863 129.012)",
+          "oklch(60.714% 0.00863 129.012)",
+          "oklch(72.143% 0.00863 129.012)",
+          "oklch(83.571% 0.00863 129.012)",
+          "oklch(95.000% 0.00863 129.012)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Console Charcoal",
+        "canonical": "#13160f",
+        "tonalRamp": [
+          "oklch(15.000% 0.01440 126.577)",
+          "oklch(26.429% 0.01440 126.577)",
+          "oklch(37.857% 0.01440 126.577)",
+          "oklch(49.286% 0.01440 126.577)",
+          "oklch(60.714% 0.01440 126.577)",
+          "oklch(72.143% 0.01440 126.577)",
+          "oklch(83.571% 0.01440 126.577)",
+          "oklch(95.000% 0.01440 126.577)"
+        ]
+      },
+      "ivory": {
+        "role": "neutral",
+        "displayName": "Warm Ivory",
+        "canonical": "#efe5d2",
+        "tonalRamp": [
+          "oklch(15.000% 0.02751 83.536)",
+          "oklch(26.429% 0.02751 83.536)",
+          "oklch(37.857% 0.02751 83.536)",
+          "oklch(49.286% 0.02751 83.536)",
+          "oklch(60.714% 0.02751 83.536)",
+          "oklch(72.143% 0.02751 83.536)",
+          "oklch(83.571% 0.02751 83.536)",
+          "oklch(95.000% 0.02751 83.536)"
+        ]
+      },
+      "amber": {
+        "role": "primary",
+        "displayName": "Broadcast Amber",
+        "canonical": "#f5b94f",
+        "tonalRamp": [
+          "oklch(15.000% 0.13888 78.737)",
+          "oklch(26.429% 0.13888 78.737)",
+          "oklch(37.857% 0.13888 78.737)",
+          "oklch(49.286% 0.13888 78.737)",
+          "oklch(60.714% 0.13888 78.737)",
+          "oklch(72.143% 0.13888 78.737)",
+          "oklch(83.571% 0.13888 78.737)",
+          "oklch(95.000% 0.13888 78.737)"
+        ]
+      },
+      "light-action": {
+        "role": "neutral",
+        "displayName": "Pale Action Ivory",
+        "canonical": "#d9ccb0",
+        "tonalRamp": [
+          "oklch(15.000% 0.04033 86.055)",
+          "oklch(26.429% 0.04033 86.055)",
+          "oklch(37.857% 0.04033 86.055)",
+          "oklch(49.286% 0.04033 86.055)",
+          "oklch(60.714% 0.04033 86.055)",
+          "oklch(72.143% 0.04033 86.055)",
+          "oklch(83.571% 0.04033 86.055)",
+          "oklch(95.000% 0.04033 86.055)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Dark Olive Ink",
+        "canonical": "#191b14",
+        "tonalRamp": [
+          "oklch(15.000% 0.01358 120.492)",
+          "oklch(26.429% 0.01358 120.492)",
+          "oklch(37.857% 0.01358 120.492)",
+          "oklch(49.286% 0.01358 120.492)",
+          "oklch(60.714% 0.01358 120.492)",
+          "oklch(72.143% 0.01358 120.492)",
+          "oklch(83.571% 0.01358 120.492)",
+          "oklch(95.000% 0.01358 120.492)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Stone",
+        "canonical": "#b6b4a8",
+        "tonalRamp": [
+          "oklch(15.000% 0.01689 99.067)",
+          "oklch(26.429% 0.01689 99.067)",
+          "oklch(37.857% 0.01689 99.067)",
+          "oklch(49.286% 0.01689 99.067)",
+          "oklch(60.714% 0.01689 99.067)",
+          "oklch(72.143% 0.01689 99.067)",
+          "oklch(83.571% 0.01689 99.067)",
+          "oklch(95.000% 0.01689 99.067)"
+        ]
+      },
+      "boundary": {
+        "role": "neutral",
+        "displayName": "Boundary Olive",
+        "canonical": "#7f8778",
+        "tonalRamp": [
+          "oklch(15.000% 0.02405 130.184)",
+          "oklch(26.429% 0.02405 130.184)",
+          "oklch(37.857% 0.02405 130.184)",
+          "oklch(49.286% 0.02405 130.184)",
+          "oklch(60.714% 0.02405 130.184)",
+          "oklch(72.143% 0.02405 130.184)",
+          "oklch(83.571% 0.02405 130.184)",
+          "oklch(95.000% 0.02405 130.184)"
+        ]
+      },
+      "focus": {
+        "role": "interaction",
+        "displayName": "Ice-blue Focus",
+        "canonical": "#b9d9f4",
+        "tonalRamp": [
+          "oklch(15.000% 0.05067 243.833)",
+          "oklch(26.429% 0.05067 243.833)",
+          "oklch(37.857% 0.05067 243.833)",
+          "oklch(49.286% 0.05067 243.833)",
+          "oklch(60.714% 0.05067 243.833)",
+          "oklch(72.143% 0.05067 243.833)",
+          "oklch(83.571% 0.05067 243.833)",
+          "oklch(95.000% 0.05067 243.833)"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Quiet Rule",
+        "canonical": "#4b4e40",
+        "tonalRamp": [
+          "oklch(15.000% 0.02285 117.224)",
+          "oklch(26.429% 0.02285 117.224)",
+          "oklch(37.857% 0.02285 117.224)",
+          "oklch(49.286% 0.02285 117.224)",
+          "oklch(60.714% 0.02285 117.224)",
+          "oklch(72.143% 0.02285 117.224)",
+          "oklch(83.571% 0.02285 117.224)",
+          "oklch(95.000% 0.02285 117.224)"
+        ]
+      },
+      "probability": {
+        "role": "neutral",
+        "displayName": "Probability Sage",
+        "canonical": "#939d89",
+        "tonalRamp": [
+          "oklch(15.000% 0.03088 128.976)",
+          "oklch(26.429% 0.03088 128.976)",
+          "oklch(37.857% 0.03088 128.976)",
+          "oklch(49.286% 0.03088 128.976)",
+          "oklch(60.714% 0.03088 128.976)",
+          "oklch(72.143% 0.03088 128.976)",
+          "oklch(83.571% 0.03088 128.976)",
+          "oklch(95.000% 0.03088 128.976)"
+        ]
+      },
+      "track": {
+        "role": "neutral",
+        "displayName": "Dark Track",
+        "canonical": "#353d31",
+        "tonalRamp": [
+          "oklch(15.000% 0.02302 135.170)",
+          "oklch(26.429% 0.02302 135.170)",
+          "oklch(37.857% 0.02302 135.170)",
+          "oklch(49.286% 0.02302 135.170)",
+          "oklch(60.714% 0.02302 135.170)",
+          "oklch(72.143% 0.02302 135.170)",
+          "oklch(83.571% 0.02302 135.170)",
+          "oklch(95.000% 0.02302 135.170)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Identity",
+        "purpose": "Doom Decisions heading; locally hosted Oswald."
+      },
+      "game-heading": {
+        "displayName": "Game view",
+        "purpose": "Sentence-case Game view heading; retain this wording."
+      },
+      "section-label": {
+        "displayName": "Section label",
+        "purpose": "Small uppercase Oswald section headings with wide tracking."
+      },
+      "outcome": {
+        "displayName": "Latest Outcome",
+        "purpose": "Latest action feature; verification language remains evidence-dependent."
+      },
+      "body": {
+        "displayName": "Reading",
+        "purpose": "System-font baseline for readable instructions and status."
+      },
+      "help": {
+        "displayName": "Help",
+        "purpose": "Smaller system-font guidance; denser rail text is documented in prose."
+      },
+      "receipt": {
+        "displayName": "Technical receipt",
+        "purpose": "Wrapped monospace execution evidence."
+      }
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": [
+      {
+        "name": "compact-gutters-max",
+        "value": "639px"
+      },
+      {
+        "name": "rail-two-columns-min",
+        "value": "760px"
+      },
+      {
+        "name": "rail-two-columns-max",
+        "value": "1279px"
+      },
+      {
+        "name": "console-three-columns-min",
+        "value": "1280px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Next Decision",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary manual-admission style preview. No handler or readiness logic is attached; application enablement remains controller-owned.",
+      "html": "<button class=\"ds-next\" type=\"button\">Next Decision</button>",
+      "css": ".ds-next { width: 100%; min-width: 0; max-width: 100%; min-height: 50px; padding: 0.625rem 0.5rem; border: 1px solid var(--amber, #f5b94f); border-radius: 2px; font-family: var(--display, \"Oswald\", \"Arial Narrow\", \"Helvetica Neue\", sans-serif); font-size: 1.25rem; font-weight: 500; line-height: 1.25; color: var(--ink, #191b14); background: var(--amber, #f5b94f); cursor: pointer; } .ds-next { min-height: 56px; font-size: 1.5rem; } .ds-next:hover:enabled { background: #ffca70; border-color: #ffca70; } .ds-next:active:enabled { background: #dda139; } .ds-next:disabled { color: #a29f92; background: #2b2d25; border-color: #55594b; cursor: default; } .ds-next[aria-busy=\"true\"] { cursor: wait; } .ds-next:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; }"
+    },
+    {
+      "name": "Start Continuous Mode",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Secondary pale-ivory admission button. This static preview does not start a run.",
+      "html": "<button class=\"ds-start\" type=\"button\">Start Continuous Mode</button>",
+      "css": ".ds-start { width: 100%; min-width: 0; max-width: 100%; min-height: 50px; padding: 0.625rem 0.5rem; border: 1px solid var(--amber, #f5b94f); border-radius: 2px; font-family: var(--display, \"Oswald\", \"Arial Narrow\", \"Helvetica Neue\", sans-serif); font-size: 1.25rem; font-weight: 500; line-height: 1.25; color: var(--ink, #191b14); background: var(--amber, #f5b94f); cursor: pointer; } .ds-start { background: var(--light-action, #d9ccb0); border-color: var(--light-action, #d9ccb0); } .ds-start:hover:enabled { background: var(--ivory, #efe5d2); border-color: var(--ivory, #efe5d2); } .ds-start:active:enabled { background: #c4b594; } .ds-start:disabled { color: #a29f92; background: #2b2d25; border-color: #55594b; cursor: default; } .ds-start:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; }"
+    },
+    {
+      "name": "Stop",
+      "kind": "button",
+      "refersTo": "button-stop",
+      "description": "Outlined stop button style. In the app it is enabled only while an active run can accept a Stop request; it never promises instant cancellation.",
+      "html": "<button class=\"ds-stop\" type=\"button\">Stop</button>",
+      "css": ".ds-stop { width: 100%; min-width: 0; max-width: 100%; min-height: 50px; padding: 0.625rem 0.5rem; border: 1px solid var(--amber, #f5b94f); border-radius: 2px; font-family: var(--display, \"Oswald\", \"Arial Narrow\", \"Helvetica Neue\", sans-serif); font-size: 1.25rem; font-weight: 500; line-height: 1.25; color: var(--ink, #191b14); background: var(--amber, #f5b94f); cursor: pointer; } .ds-stop { color: var(--ivory, #efe5d2); background: transparent; border-color: var(--boundary, #7f8778); } .ds-stop:hover:enabled { background: #30352a; } .ds-stop:active:enabled { background: #20251b; } .ds-stop:disabled { color: #a29f92; background: #2b2d25; border-color: #55594b; cursor: default; } .ds-stop:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; }"
+    },
+    {
+      "name": "Temporary API key",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Native password field with the implemented initial memory message. This documentation preview does not capture or store credentials.",
+      "html": "<label class=\"ds-key-label\" for=\"ds-key\">Temporary OpenAI API key</label><input class=\"ds-key\" id=\"ds-key\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\" autocapitalize=\"off\" aria-describedby=\"ds-key-state\" disabled><p class=\"ds-key-state\" id=\"ds-key-state\">No client in memory. Enter a key when the game is ready.</p>",
+      "css": ".ds-key-label { display: block; color: var(--ivory, #efe5d2); font-family: var(--display, \"Oswald\", \"Arial Narrow\", \"Helvetica Neue\", sans-serif); font-size: 0.8125rem; font-weight: 400; letter-spacing: 0.12em; text-transform: uppercase; } .ds-key { width: 100%; min-width: 0; min-height: 44px; max-width: 100%; margin-top: 0.375rem; padding: 0.5rem 0.625rem; border: 1px solid var(--boundary, #7f8778); border-radius: 2px; font: 16px/1.5 system-ui, sans-serif; color: var(--ivory, #efe5d2); background: #10120e; caret-color: var(--focus, #b9d9f4); } .ds-key:enabled:hover { border-color: #b2b4aa; } .ds-key:disabled { color: var(--muted, #b6b4a8); background: #242923; } .ds-key:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; } .ds-key-state { margin: 0.375rem 0 0; color: var(--muted, #b6b4a8); font: 0.8125rem/1.45 system-ui, sans-serif; }"
+    },
+    {
+      "name": "Tics per decision",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Native numeric duration field, showing the implemented default. Positive safe-integer validation and admission capture belong to the application controller.",
+      "html": "<div class=\"ds-duration\"><label class=\"ds-duration-label\" for=\"ds-tics\">Tics per decision</label><input class=\"ds-tics\" id=\"ds-tics\" type=\"number\" min=\"1\" step=\"1\" value=\"6\" aria-describedby=\"ds-tic-rate\" disabled></div><p class=\"ds-tic-rate\" id=\"ds-tic-rate\">Both modes · 35 tics = 1 Doom second</p>",
+      "css": ".ds-tics { width: 100%; min-width: 0; min-height: 44px; max-width: 100%; margin-top: 0.375rem; padding: 0.5rem 0.625rem; border: 1px solid var(--boundary, #7f8778); border-radius: 2px; font: 16px/1.5 system-ui, sans-serif; color: var(--ivory, #efe5d2); background: #10120e; caret-color: var(--focus, #b9d9f4); } .ds-tics:enabled:hover { border-color: #b2b4aa; } .ds-tics:disabled { color: var(--muted, #b6b4a8); background: #242923; } .ds-tics:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; } .ds-duration { display: grid; gap: 0.375rem; align-items: center; } .ds-duration-label { display: block; color: var(--ivory, #efe5d2); font: 500 0.875rem/1.5 system-ui, sans-serif; } .ds-tics { margin: 0; font-size: 1.125rem; font-variant-numeric: tabular-nums; } .ds-tic-rate { margin: 0.375rem 0 0; color: var(--muted, #b6b4a8); font: 0.8125rem/1.45 system-ui, sans-serif; }"
+    },
+    {
+      "name": "Local Freedoom WAD",
+      "kind": "input",
+      "description": "Initial native file-selection presentation. Disabled in the documentation preview; no WAD is selected, read, or prepared.",
+      "html": "<div class=\"ds-wad-container\"><label class=\"ds-wad-label\" for=\"ds-iwad\">Local Freedoom WAD</label><input class=\"ds-iwad\" id=\"ds-iwad\" type=\"file\" accept=\".wad\" aria-describedby=\"ds-asset-note\" disabled><p class=\"ds-asset-note\" id=\"ds-asset-note\">Stays local. Selection prepares automatically. Refresh to change a prepared WAD.</p></div>",
+      "css": ".ds-wad-container { padding: 0.625rem; border: 1px solid var(--rule, #4b4e40); } .ds-wad-label { display: block; color: var(--ivory, #efe5d2); font-family: var(--display, \"Oswald\", \"Arial Narrow\", \"Helvetica Neue\", sans-serif); font-size: 1.125rem; font-weight: 500; line-height: 1.35; } .ds-iwad { width: 100%; min-width: 0; min-height: 44px; max-width: 100%; margin-top: 0.375rem; padding: 0.5rem 0.625rem; border: 1px solid var(--boundary, #7f8778); border-radius: 2px; font: 16px/1.5 system-ui, sans-serif; color: var(--ivory, #efe5d2); background: #10120e; caret-color: var(--focus, #b9d9f4); } .ds-iwad:enabled:hover { border-color: #b2b4aa; } .ds-iwad:disabled { color: var(--muted, #b6b4a8); background: #242923; } .ds-iwad:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; } .ds-iwad { padding: 0.25rem; font-size: 0.8125rem; } .ds-iwad::file-selector-button { min-height: 36px; margin-right: 0.5rem; padding: 0.25rem 0.5rem; border: 0; border-radius: 1px; font: inherit; color: inherit; background: #343a2e; cursor: pointer; } .ds-iwad:disabled::file-selector-button { cursor: default; } .ds-iwad:enabled:hover::file-selector-button { background: #484f42; } .ds-asset-note { margin: 0.375rem 0 0; color: var(--muted, #b6b4a8); font: 0.8125rem/1.45 system-ui, sans-serif; }"
+    },
+    {
+      "name": "Limits & stopping disclosure",
+      "kind": "custom",
+      "description": "Native guidance disclosure with the implemented text. Hover/focus remain usable without JavaScript.",
+      "html": "<details class=\"ds-guidance\"><summary class=\"ds-guidance-summary\">Limits &amp; stopping</summary><p class=\"ds-guidance-text\">Use positive JavaScript safe integers for tics and the attempt budget. Tics set each decision's duration in both modes; changes during a run apply to later decisions. The API-attempt budget is fixed when you choose Start.</p><p class=\"ds-guidance-text\">Budget includes failed and canceled API attempts.</p><p class=\"ds-guidance-text\">Stop closes admission and waits for API cleanup or current-action and resulting-frame verification. It does not cancel an in-flight operation instantly.</p></details>",
+      "css": ".ds-guidance { margin-top: 0.5rem; color: var(--muted, #b6b4a8); font: 0.8125rem/1.45 system-ui, sans-serif; } .ds-guidance-summary { min-height: 44px; padding: 0.625rem 0; cursor: pointer; overflow-wrap: anywhere; color: var(--ivory, #efe5d2); } .ds-guidance-summary:hover { background: #23271d; } .ds-guidance-summary:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; } .ds-guidance-text { margin: 0.5rem 0 0; }"
+    },
+    {
+      "name": "Latest Outcome — initial state",
+      "kind": "card",
+      "description": "Actual initial presentation with no AI decision or verification claim. Runtime action/tic/frame evidence is deliberately absent from this static preview.",
+      "html": "<section class=\"ds-outcome\" aria-labelledby=\"ds-outcome-title\"><h3 class=\"ds-outcome-title\" id=\"ds-outcome-title\">Latest Outcome</h3><div class=\"ds-outcome-content\"><div class=\"ds-outcome-feature\"><p class=\"ds-outcome-heading\"><span class=\"ds-outcome-empty\">No AI decisions yet.</span></p></div><div class=\"ds-game-status\"><p class=\"ds-status\">Loading engine identity…</p><p class=\"ds-continuous\">Continuous mode stopped · default limit 2 API attempts</p></div></div></section>",
+      "css": ".ds-outcome { container-type: inline-size; max-width: 640px; margin: 1.25rem auto 0; padding: 1rem; border: 1px solid var(--rule, #4b4e40); background: #171b12; color: var(--ivory, #efe5d2); overflow-wrap: anywhere; } .ds-outcome-title { margin: 0 0 0.875rem; font-family: var(--display, \"Oswald\", \"Arial Narrow\", \"Helvetica Neue\", sans-serif); font-size: 0.8125rem; font-weight: 400; letter-spacing: 0.22em; text-transform: uppercase; } .ds-outcome-content { display: grid; gap: 1rem; } .ds-outcome-content > * { min-width: 0; } .ds-outcome-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 1rem; margin: 0; font-family: var(--display, \"Oswald\", \"Arial Narrow\", \"Helvetica Neue\", sans-serif); font-size: clamp(2.25rem, 4vw, 3rem); font-weight: 500; line-height: 1.15; letter-spacing: -0.025em; } .ds-outcome-empty { min-width: 0; max-width: 100%; font-size: 0.75em; color: var(--muted, #b6b4a8); } .ds-game-status { padding-top: 1rem; border-top: 1px solid var(--rule, #4b4e40); } .ds-status { margin: 0; color: var(--muted, #b6b4a8); font: 0.875rem/1.6 system-ui, sans-serif; } .ds-continuous { margin: 0.5rem 0 0; color: var(--muted, #b6b4a8); font: 0.8125rem/1.5 system-ui, sans-serif; font-variant-numeric: tabular-nums; } @container (min-width: 34rem) { .ds-outcome-content { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 1.25rem; } .ds-game-status { display: flex; flex-direction: column; justify-content: center; padding: 0 0 0 1.25rem; border-top: 0; border-left: 1px solid var(--rule, #4b4e40); } }"
+    },
+    {
+      "name": "Decision history — empty state",
+      "kind": "custom",
+      "description": "Actual empty history, not sample completed decisions. Runtime rows remain newest first and preserve all entries; their action, probability, confidence, and receipt data are controller-owned.",
+      "html": "<section class=\"ds-history-panel\" aria-labelledby=\"ds-history-title\"><h2 class=\"ds-history-title\" id=\"ds-history-title\">AI Decision History</h2><p class=\"ds-history-order\">Newest first</p><p class=\"ds-history-empty\">No AI decisions yet. Preparation's neutral tic is not an AI decision.</p><ol class=\"ds-history\" aria-label=\"AI Decision History\" reversed tabindex=\"0\"></ol></section>",
+      "css": ".ds-history-panel { display: flex; flex-direction: column; min-height: 0; max-height: min(42rem, 75dvh); padding: 1.25rem 1rem; border-top: 1px solid var(--rule, #4b4e40); color: var(--ivory, #efe5d2); background: var(--surface, #13160f); } .ds-history-title { margin: 0; flex-shrink: 0; font-family: var(--display, \"Oswald\", \"Arial Narrow\", \"Helvetica Neue\", sans-serif); font-size: 0.8125rem; font-weight: 400; line-height: 1.5; letter-spacing: 0.22em; text-transform: uppercase; } .ds-history-order { margin: 0.375rem 0 0; flex-shrink: 0; color: var(--muted, #b6b4a8); font: 0.8125rem/1.5 system-ui, sans-serif; } .ds-history-empty { margin: 1.25rem 0 0; padding-block: 1.5rem; border-block: 1px solid var(--rule, #4b4e40); flex-shrink: 0; font: 0.875rem/1.7 system-ui, sans-serif; } .ds-history { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; scrollbar-color: var(--boundary, #7f8778) #1d211b; list-style: none; padding: 0; margin: 1rem 0 0; border-top: 1px solid var(--rule, #4b4e40); } .ds-history:empty { margin-top: 0; border-top: 0; } .ds-history:focus-visible { outline: 3px solid var(--focus, #b9d9f4); outline-offset: 3px; } @media (min-width: 1280px) { .ds-history-panel { height: min(42rem, 75dvh); border-top: 0; border-left: 1px solid var(--rule, #4b4e40); } }"
+    },
+    {
+      "name": "Selected probability tag",
+      "kind": "chip",
+      "description": "Noninteractive textual marker used only for the actual selected action in expanded probability detail. This isolated style preview contains no metric or gameplay result.",
+      "html": "<span class=\"ds-selected\">Selected</span>",
+      "css": ".ds-selected { padding: 0 0.25rem; border: 1px solid #87947c; border-radius: 3px; color: var(--ivory, #efe5d2); font: 600 0.6875rem/1.5 system-ui, sans-serif; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "AI Broadcast",
+    "overview": "AI Broadcast frames Doom Decisions as a restrained viewing console: near-black olive and charcoal surfaces, warm ivory text, amber action accents, and condensed display typography. The persistent setup and control rail, game stage, and complete decision history make watching, admitting actions, and inspecting evidence part of one interface.\n\nThe game image remains the visual center. Readable system text carries setup instructions, operational status, and receipts; Oswald gives identity, actions, and decision numbers their hierarchy. Thin rules and tonal changes organize dense information, while native disclosures keep technical detail available.",
+    "keyCharacteristics": [
+      "Olive-black surfaces, thin borders, warm ivory text, and selective amber emphasis.",
+      "Locally hosted Oswald for display roles; system sans-serif for reading.",
+      "Persistent session controls, an uncropped pixelated game view, and complete newest-first history.",
+      "Evidence-aware outcomes and explicit pending, stopping, unavailable, and terminal states."
+    ],
+    "rules": [
+      {
+        "name": "Evidence Before Emphasis",
+        "body": "Amber identifies the primary action and latest decision number; color alone never establishes completion, readiness, authentication, or game health.",
+        "section": "colors"
+      },
+      {
+        "name": "Readable Evidence",
+        "body": "Use the system body stack for instructions and operational detail, and monospace for technical receipts. Keep condensed display type for identity, headings, actions, and decision numbers.",
+        "section": "typography"
+      },
+      {
+        "name": "Rules Before Shadows",
+        "body": "Separate resting surfaces with thin borders, spacing, and tonal changes. Preserve the implemented flat treatment.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do retain “Game view” and the complete 640×400 framebuffer, full HUD, 8:5 proportions, 640×400 CSS display ceiling, and pixelated rendering.",
+      "Do keep WAD/key inputs, human duration, manual admission, continuous Start/Stop, and the independent attempt budget available in the session rail.",
+      "Do preserve every decision entry, newest first, with truthful status, optional validated metrics, technical receipts, and advanced evidence.",
+      "Do distinguish requested, reported, and independently verified tics, verified prefixes, resulting frames, and the currently displayed frame.",
+      "Do retain native disclosures, visible keyboard focus, meaningful labels, and readable body text when extending the interface."
+    ],
+    "donts": [
+      "Don't promote the concept image's gameplay, fabricated decision results, loaded indicators, or ornamental effects into implemented features.",
+      "Don't substitute “E1M1” for “Game view”, enlarge or crop the canvas, hide its HUD, smooth its pixels, or stretch its proportions.",
+      "Don't replace pending, stopping, failed, unavailable, uncertain, or terminal evidence with a generic success or ready indicator.",
+      "Don't truncate history, invent probability/confidence values, or imply that API confidence proves native execution.",
+      "Don't add Prepare, Reset, or New Game controls, automatic starts or restarts, fake telemetry, credential persistence, or production security claims."
+    ]
+  }
+}
