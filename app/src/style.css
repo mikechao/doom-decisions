@@ -50,6 +50,22 @@ header p {
   margin-top: 0.5rem;
   color: var(--muted);
 }
+main.page-flush {
+  margin-top: 0;
+}
+.page-flush > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 2rem;
+  margin-bottom: 1.25rem;
+}
+:where(.page-flush) > header p {
+  flex: 0 1 36rem;
+  margin-top: 0;
+  max-width: 65ch;
+}
 .console {
   background: linear-gradient(125deg, #242923, #1c201b);
   border-radius: 16px;
