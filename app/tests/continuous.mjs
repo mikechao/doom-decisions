@@ -8,6 +8,7 @@ import { runInNewContext } from 'node:vm';
 import { OpenAI } from 'openai/client';
 import { VERSION } from 'openai/version';
 import { admitDecision, assertDecision, masks, validateChoice, verifyAction } from '../src/decision.ts';
+import { projectLatestOutcome } from '../src/latest-outcome.ts';
 import { assessE1M1 } from '../src/worker-shared.ts';
 
 // Import the actual finite action helper without instantiating its native module.
@@ -102,9 +103,9 @@ function section(start, end) {
 }
 const controllerSource = stripTypeScriptTypes([
   'let current = initialRun; let pageExited = false;',
-  section('function check(', 'const wadHash ='),
+  section('function check(', 'const passive = ['),
   section('const passive = [', 'const work = ['),
-  section('function assertCurrent(', 'const setup ='),
+  section('function assertCurrent(', 'const displayHistory ='),
   section('function display(run:', 'function checkPrepared('),
   section('async function request<', 'const deadlineMs ='),
   section('const deadlineMs =', 'async function prepare()'),
@@ -267,7 +268,7 @@ function fixture(options = {}) {
       getImageData: () => ({ data: new Uint8ClampedArray(painted) }),
     },
     ImageData: class { constructor(data) { this.data = data; } },
-    displayHistory() {}, displaySetup() {},
+    displayHistory() {}, projectLatestOutcome,
     OpenAI: realSdk ? OpenAI : { APIError: MockAPIError, APIConnectionError: MockAPIError, APIConnectionTimeoutError: MockAPIError },
   });
   return {
