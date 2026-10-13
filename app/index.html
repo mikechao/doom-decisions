@@ -13,9 +13,8 @@
     <header>
       <div class="identity">
         <h1>Doom Decisions</h1>
-        <p class="broadcast-label">AI Broadcast</p>
+        <p class="broadcast-label">Watch real Doom. You choose the duration. AI chooses one action at a time.</p>
       </div>
-      <p>Watch real Doom. You choose the duration; AI chooses one action at a time.</p>
     </header>
     <div class="console">
       <div class="session-rail">
@@ -26,12 +25,12 @@
               <label for="iwad">Local Freedoom WAD</label>
               <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
               <span id="setup-asset"></span>
-              <p id="asset-note" class="help">Stays local. Selection prepares automatically. Refresh to change a prepared WAD.</p>
+              <p id="asset-note" class="help">Local Only • Refresh to change</p>
             </div>
             <div>
               <label for="key">Temporary OpenAI API key</label>
               <input id="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="key-state key-note" disabled>
-              <p id="key-state" class="help">No client in memory. Enter a key when the game is ready.</p>
+              <p id="key-state" class="help">Client in memory • Refresh clears it</p>
             </div>
             <details class="setup-details">
               <summary>Temporary key: handling &amp; trust</summary>

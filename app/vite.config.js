@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
 const strictCsp =
-  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; worker-src 'self'; connect-src 'self' https://api.openai.com; base-uri 'none'; form-action 'none'";
+  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'self' https://api.openai.com; base-uri 'none'; form-action 'none'";
 // Installed Impeccable setup: HTTP scripts/SSE and inline styles; Vite: HMR.
 // Reconfirm the helper's actual origin before starting a Live trial.
 const impeccableCsp = strictCsp

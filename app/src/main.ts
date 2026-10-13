@@ -263,7 +263,7 @@ function display(run: Run, status?: string) {
   $('#next').setAttribute('aria-busy', String(run.phase === 'busy'));
   $('#key-state').textContent = run.client
     ? 'Client in memory; blank keeps it. Authentication unverified.'
-    : 'No client in memory. Enter a key when the game is ready.';
+    : 'Client in memory • Refresh clears it';
   displayHistory(run.evidence.decisions);
   const outcome = projectLatestOutcome(
     run.evidence.decisions.at(-1),
