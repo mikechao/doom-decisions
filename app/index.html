@@ -43,24 +43,19 @@
           <div class="stage">
             <canvas id="screen" width="640" height="400" role="img" aria-label="Doom E1M1 framebuffer"></canvas>
           </div>
-          <div class="control-bar control-bar--stacked">
-            <div class="shared-duration">
-              <div class="duration">
-                <label for="tics">Tics per decision</label>
-                <input id="tics" type="number" min="1" step="1" value="6" aria-describedby="tic-rate duration-note" disabled>
-              </div>
-              <p id="tic-rate" class="help">Both modes · 35 tics = 1 Doom second</p>
-            </div>
-            <div class="control-modes">
-              <section class="control-mode control-mode-manual" aria-labelledby="manual-mode-title">
-                <h3 id="manual-mode-title" class="mode-title">Manual Mode</h3>
-                <div class="mode-fields">
-                  <button id="next" type="button" disabled>Next Decision</button>
+          <div class="control-bar control-bar--compact">
+            <div class="compact-layout">
+              <div class="shared-duration">
+                <div class="duration">
+                  <label for="tics">Tics per decision</label>
+                  <input id="tics" type="number" min="1" step="1" value="6" aria-describedby="tic-rate duration-note" disabled>
                 </div>
-              </section>
-              <section class="control-mode control-mode-continuous" aria-labelledby="continuous-mode-title">
-                <h3 id="continuous-mode-title" class="mode-title">Continuous Mode</h3>
-                <div class="mode-fields">
+                <p id="tic-rate" class="help">Both modes · 35 tics = 1 Doom second</p>
+              </div>
+              <div class="compact-modes">
+                <button id="next" type="button" disabled>Next Decision</button>
+                <div class="continuous-group" role="group" aria-labelledby="continuous-mode-title">
+                  <h2 id="continuous-mode-title" class="compact-mode-title">Continuous Mode</h2>
                   <div class="duration budget">
                     <label for="budget">Max API attempts</label>
                     <input id="budget" type="number" min="1" max="9007199254740991" step="1" value="2" aria-describedby="continuous-note duration-note" disabled>
@@ -70,7 +65,7 @@
                     <button id="stop" type="button" aria-describedby="stop-note" disabled>Stop</button>
                   </div>
                 </div>
-              </section>
+              </div>
             </div>
             <div class="continuous-status">
               <p id="continuous-state" role="status" aria-live="polite">Continuous mode stopped · default limit 2 API attempts</p>
