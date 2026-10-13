@@ -9,82 +9,86 @@
   <script type="module" src="./src/main.ts"></script>
 </head>
 <body>
-  <main class="page-flush">
+  <main>
     <header>
-      <h1>Doom Decisions</h1>
+      <div class="identity">
+        <h1>Doom Decisions</h1>
+        <p class="broadcast-label">AI Broadcast</p>
+      </div>
       <p>Watch real Doom. You choose the duration; AI chooses one action at a time.</p>
     </header>
     <div class="console">
-      <details id="setup" class="setup" open>
-        <summary>
-          <span id="setup-title">Set up Doom</span>
-          <span id="setup-asset"></span>
-          <span id="setup-client">Temporary OpenAI API key required</span>
-        </summary>
-        <div class="setup-content">
-          <div>
-            <label for="iwad">Local Freedoom WAD</label>
-            <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
-            <p id="asset-note" class="help">Your Freedoom WAD stays on your computer. The engine loads automatically. Refresh to change the file.</p>
-          </div>
-          <div>
-            <label for="key">Temporary OpenAI API key</label>
-            <input id="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="key-state key-note" disabled>
-            <p id="key-state" class="help">No client in memory. Enter a key when the game is ready.</p>
-          </div>
-          <details class="setup-details">
-            <summary>Temporary key: handling &amp; trust</summary>
-            <p id="key-note" class="help">Sent directly to OpenAI. Trust this page and its scripts. The field clears on capture; the client stays in memory. A blank field keeps it. Enter a replacement before a later click to correct it. Refresh clears in-memory credentials.</p>
-          </details>
-        </div>
-      </details>
-      <div class="experience">
-        <section class="game" aria-label="Doom game and controls">
-          <div class="stage">
-            <canvas id="screen" width="640" height="400" role="img" aria-label="Doom E1M1 framebuffer"></canvas>
-          </div>
-          <div class="control-bar control-bar--compact">
-            <div class="compact-layout">
-              <div class="shared-duration">
-                <div class="duration">
-                  <label for="tics">Tics per decision</label>
-                  <input id="tics" type="number" min="1" step="1" value="6" aria-describedby="tic-rate duration-note" disabled>
-                </div>
-                <p id="tic-rate" class="help">Both modes · 35 tics = 1 Doom second</p>
-              </div>
-              <div class="compact-modes">
-                <button id="next" type="button" disabled>Next Decision</button>
-                <div class="continuous-group" role="group" aria-labelledby="continuous-mode-title">
-                  <h2 id="continuous-mode-title" class="compact-mode-title">Continuous Mode</h2>
-                  <div class="duration budget">
-                    <label for="budget">Max API attempts</label>
-                    <input id="budget" type="number" min="1" max="9007199254740991" step="1" value="2" aria-describedby="continuous-note duration-note" disabled>
-                  </div>
-                  <div class="mode-actions">
-                    <button id="start" type="button" disabled>Start Continuous Mode</button>
-                    <button id="stop" type="button" aria-describedby="stop-note" disabled>Stop</button>
-                  </div>
-                </div>
-              </div>
+      <div class="session-rail">
+        <section id="setup" class="setup" aria-labelledby="setup-title">
+          <h2 id="setup-title">Set up Doom</h2>
+          <div class="setup-content">
+            <div>
+              <label for="iwad">Local Freedoom WAD</label>
+              <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
+              <span id="setup-asset"></span>
+              <p id="asset-note" class="help">Your Freedoom WAD stays on your computer. The engine loads automatically. Refresh to change the file.</p>
             </div>
-            <div class="continuous-status">
-              <p id="continuous-state" role="status" aria-live="polite">Continuous mode stopped · default limit 2 API attempts</p>
+            <div>
+              <label for="key">Temporary OpenAI API key</label>
+              <input id="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="key-state key-note" disabled>
+              <p id="key-state" class="help">No client in memory. Enter a key when the game is ready.</p>
+              <span id="setup-client">Temporary OpenAI API key required</span>
             </div>
-            <details class="control-guidance">
-              <summary>Limits &amp; stopping</summary>
-              <p id="duration-note" class="control-guidance-text">Use positive JavaScript safe integers for tics and the attempt budget. Tics set each decision's duration in both modes; changes during a run apply to later decisions. The API-attempt budget is fixed when you choose Start.</p>
-              <p id="continuous-note" class="help control-guidance-text">Budget includes failed and canceled API attempts.</p>
-              <p id="stop-note" class="control-guidance-text">Stop closes admission and waits for API cleanup or current-action and resulting-frame verification. It does not cancel an in-flight operation instantly.</p>
+            <details class="setup-details">
+              <summary>Temporary key: handling &amp; trust</summary>
+              <p id="key-note" class="help">Sent directly to OpenAI. Trust this page and its scripts. The field clears on capture; the client stays in memory. A blank field keeps it. Enter a replacement before a later click to correct it. Refresh clears in-memory credentials.</p>
             </details>
           </div>
-          <p id="status" role="status" aria-live="polite">Loading engine identity…</p>
         </section>
-        <section class="history-panel" aria-labelledby="history-title">
-          <h2 id="history-title">AI Decision History</h2>
-          <p id="history-empty" class="help">No AI decisions yet. Preparation's neutral tic is not an AI decision.</p>
-          <ol id="history" aria-label="AI Decision History" reversed tabindex="0"></ol>
+        <section class="control-bar" aria-labelledby="controls-title">
+          <h2 id="controls-title">Decision controls</h2>
+          <div class="manual-controls">
+            <div class="shared-duration">
+              <div class="duration">
+                <label for="tics">Tics per decision</label>
+                <input id="tics" type="number" min="1" step="1" value="6" aria-describedby="tic-rate duration-note" disabled>
+              </div>
+              <p id="tic-rate" class="help">Both modes · 35 tics = 1 Doom second</p>
+            </div>
+            <button id="next" type="button" disabled>Next Decision</button>
+          </div>
+          <div class="continuous-group" role="group" aria-labelledby="continuous-mode-title">
+            <h2 id="continuous-mode-title">Continuous Mode</h2>
+            <div class="duration budget">
+              <label for="budget">Max API attempts</label>
+              <input id="budget" type="number" min="1" max="9007199254740991" step="1" value="2" aria-describedby="continuous-note duration-note" disabled>
+            </div>
+            <div class="mode-actions">
+              <button id="start" type="button" disabled>Start Continuous Mode</button>
+              <button id="stop" type="button" aria-describedby="stop-note" disabled>Stop</button>
+            </div>
+          </div>
+          <details class="control-guidance">
+            <summary>Limits &amp; stopping</summary>
+            <p id="duration-note" class="control-guidance-text">Use positive JavaScript safe integers for tics and the attempt budget. Tics set each decision's duration in both modes; changes during a run apply to later decisions. The API-attempt budget is fixed when you choose Start.</p>
+            <p id="continuous-note" class="help control-guidance-text">Budget includes failed and canceled API attempts.</p>
+            <p id="stop-note" class="control-guidance-text">Stop closes admission and waits for API cleanup or current-action and resulting-frame verification. It does not cancel an in-flight operation instantly.</p>
+          </details>
         </section>
       </div>
+      <section class="game" aria-labelledby="game-title">
+        <h2 id="game-title">Game view</h2>
+        <div class="stage">
+          <canvas id="screen" width="640" height="400" role="img" aria-label="Doom E1M1 framebuffer"></canvas>
+        </div>
+        <div class="game-status">
+          <p id="status" role="status" aria-live="polite">Loading engine identity…</p>
+          <div class="continuous-status">
+            <p id="continuous-state" role="status" aria-live="polite">Continuous mode stopped · default limit 2 API attempts</p>
+          </div>
+        </div>
+      </section>
+      <section class="history-panel" aria-labelledby="history-title">
+        <h2 id="history-title">AI Decision History</h2>
+        <p class="history-order help">Newest first</p>
+        <p id="history-empty" class="help">No AI decisions yet. Preparation's neutral tic is not an AI decision.</p>
+        <ol id="history" aria-label="AI Decision History" reversed tabindex="0"></ol>
+      </section>
     </div>
     <details class="advanced">
       <summary>Advanced evidence: preparation, decisions and frame hashes</summary>

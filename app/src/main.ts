@@ -29,8 +29,8 @@ type Elements = {
   '#iwad': HTMLInputElement;
   '#key': HTMLInputElement;
   '#key-state': HTMLParagraphElement;
-  '#setup': HTMLDetailsElement;
-  '#setup-title': HTMLSpanElement;
+  '#setup': HTMLElement;
+  '#setup-title': HTMLHeadingElement;
   '#setup-asset': HTMLSpanElement;
   '#setup-client': HTMLSpanElement;
   '#tics': HTMLInputElement;
@@ -208,16 +208,7 @@ function assertCurrent(run: Run): asserts run is Run & { worker: Worker } {
     'Game retired; no further native calls.',
   );
 }
-const setup = $('#setup');
-let setupAutoCollapsed = false;
-let setupUserExpanded = false;
-let setupRecoveryOpen = false;
-let setupNeedsAttention = false;
-setup.querySelector('summary')?.addEventListener('click', () => {
-  // Native mouse and keyboard activation clicks before toggling open.
-  if (!setup.open) setupUserExpanded = true;
-});
-function displaySetup(run: Run, reveal = false) {
+function displaySetupStatus(run: Run) {
   const prepared =
     run.valid &&
     (run.phase === 'ready' || run.phase === 'busy') &&
@@ -231,45 +222,12 @@ function displaySetup(run: Run, reveal = false) {
   $('#setup-client').textContent = run.client
     ? 'API client retained · authentication unverified'
     : 'Temporary OpenAI API key required';
-  const latest = run.evidence.decisions.at(-1);
-  const needsAttention =
-    reveal ||
-    !run.valid ||
-    run.phase === 'unprepared' ||
-    (run.phase === 'ready' && latest && latest.status !== 'Complete');
-  if (needsAttention && (!setupNeedsAttention || reveal)) {
-    // Recovery guidance stays open for inspection; do not auto-hide it later.
-    setupRecoveryOpen = true;
-    setup.open = true;
-  } else if (
-    !needsAttention &&
-    !setupAutoCollapsed &&
-    !setupUserExpanded &&
-    !setupRecoveryOpen &&
-    setup.open &&
-    prepared &&
-    run.client &&
-    run.phase === 'ready' &&
-    !setup.contains(document.activeElement) &&
-    !$('#key').value
-  ) {
-    // Only an actual automatic collapse consumes this one-time transition.
-    // Later user expansion needs no inferred intent or queued toggle tracking.
-    setupAutoCollapsed = true;
-    setup.open = false;
-  }
-  setupNeedsAttention = !!needsAttention;
 }
-setup.addEventListener('focusout', () => {
-  queueMicrotask(() => {
-    if (current) displaySetup(current);
-  });
-});
 const displayHistory = createDecisionHistory(
   $('#history'),
   $('#history-empty'),
 );
-function display(run: Run, status?: string, revealSetup = false) {
+function display(run: Run, status?: string) {
   if (current !== run) return;
   if (status) $('#status').textContent = status;
   $('#status').dataset.phase = run.phase;
@@ -307,7 +265,7 @@ function display(run: Run, status?: string, revealSetup = false) {
     ? 'Client in memory; blank keeps it. Authentication unverified.'
     : 'No client in memory. Enter a key when the game is ready.';
   displayHistory(run.evidence.decisions);
-  displaySetup(run, revealSetup);
+  displaySetupStatus(run);
 }
 function retire(run: Run, phase: 'error' | 'terminal' = 'error') {
   run.valid = false;
@@ -795,18 +753,13 @@ async function runOneDecision(
       display(
         run,
         'Enter a usable temporary API key (no spaces or control characters).',
-        true,
       );
       return 'not-admitted';
     }
     try {
       run.client = createClient(key); // Replacement drops the prior client; same Doom run.
     } catch {
-      display(
-        run,
-        'Could not create the API client. Enter a replacement key.',
-        true,
-      );
+      display(run, 'Could not create the API client. Enter a replacement key.');
       return 'not-admitted';
     } finally {
       key = '';
@@ -816,7 +769,6 @@ async function runOneDecision(
     display(
       run,
       'Enter a temporary OpenAI API key before requesting decisions.',
-      true,
     );
     return 'not-admitted';
   }
