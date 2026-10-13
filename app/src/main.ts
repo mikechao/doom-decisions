@@ -9,6 +9,13 @@ import {
   verifyAction,
 } from './decision';
 import { createDecisionHistory } from './decision-history';
+import { buildDefaultDecisionRequest } from './decision-request.ts';
+import {
+  createClient,
+  DecisionFailure,
+  DecisionStopped,
+  requestDecision,
+} from './decisions-api.ts';
 import { projectLatestOutcome } from './latest-outcome';
 import type {
   Counters,
@@ -544,32 +551,6 @@ async function action(
   return evidence;
 }
 
-const deadlineMs = 10000;
-class DecisionFailure extends Error {}
-class DecisionStopped extends Error {}
-const safeRequestId = (value: unknown) =>
-  typeof value === 'string' && /^req_[A-Za-z0-9_-]{1,200}$/.test(value)
-    ? value
-    : null;
-function createClient(apiKey: string) {
-  return new OpenAI({
-    apiKey,
-    baseURL: 'https://api.openai.com/v1',
-    organization: null,
-    project: null,
-    dangerouslyAllowBrowser: true,
-    maxRetries: 0,
-    timeout: deadlineMs,
-    logLevel: 'off',
-    fetchOptions: {
-      mode: 'cors',
-      credentials: 'omit',
-      cache: 'no-store',
-      redirect: 'error',
-      referrerPolicy: 'no-referrer',
-    },
-  });
-}
 function fence(run: Run, attempt: Attempt) {
   assertCurrent(run);
   assertDecision(run, attempt);
@@ -585,149 +566,35 @@ async function decide(
   check(!run.terminal, 'Terminal game; no further Decisions requests.');
   check(run.client, 'A temporary API credential is required.');
   check(!run.sdkRead, 'Previous SDK response still pending.');
-  const controller = new AbortController();
-  run.apiController = controller;
-  const started = performance.now();
-  let timedOut = false;
-  const abortError = () =>
-    new DecisionFailure(
-      timedOut ? 'API deadline exceeded (10 seconds)' : 'API request aborted',
-    );
-  let onAbort = () => {
-    // Replaced synchronously by the Promise executor below.
-  };
-  const cancelled = new Promise<never>((_resolve, reject) => {
-    onAbort = () => reject(abortError());
-    controller.signal.addEventListener('abort', onAbort, { once: true });
-  });
-  // A synchronous SDK failure can happen before the response race is installed.
-  void cancelled.catch(() => {});
-  const deadline = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, deadlineMs);
-  const checkDeadline = () => {
-    if (performance.now() - started >= deadlineMs) {
-      timedOut = true;
-      controller.abort();
-    }
-    if (controller.signal.aborted) throw abortError();
-    fence(run, attempt);
-  };
-  try {
-    checkDeadline();
-    if (continuous) {
-      if (continuous.stopRequested) throw new DecisionStopped();
-      check(continuous.used < continuous.limit, 'Continuous budget exhausted.');
-      continuous.used++;
-    }
-    // Both response helpers observe this ONE SDK promise; neither retries nor
-    // another call is used to obtain a request ID or parsed body.
-    const pending = run.client.decisions.create(
-      {
-        model: 'gpt-6-luna',
-        input: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'input_text',
-                text: `This is the currently rendered Doom E1M1 frame at verified tic ${entry.observation?.tic}. You have only this image, not full game state.`,
-              },
-              { type: 'input_image', image_url: png },
-            ],
-          },
-        ],
-        questions: [
-          {
-            type: 'choice',
-            name: 'next_action',
-            instructions: `Explore the level and progress toward the exit while surviving. Choose one useful action from the screenshot; moving or turning to explore is generally preferable to standing still. Choose neutral when waiting has a tactical benefit. The human selected exactly ${attempt.tics} gameplay tics for this action. Choose only the action, never its duration. The game advances only through verified actions admitted by manual steps or explicitly started continuous mode; API waits do not advance gameplay. Do not assume unseen game state.`,
-            choices: Object.keys(masks).map((value) => ({ value })),
-          },
-        ],
+  check(entry.observation, 'Verified observation required.');
+  // Preserve the latency/deadline origin before synchronous request construction.
+  const startedAt = performance.now();
+  const preparedRequest = buildDefaultDecisionRequest(
+    entry.observation.tic,
+    attempt.tics,
+    png,
+  );
+  return requestDecision(
+    run.client,
+    preparedRequest,
+    run,
+    entry,
+    {
+      assertFresh: () => fence(run, attempt),
+      beforeCreate: () => {
+        if (continuous) {
+          if (continuous.stopRequested) throw new DecisionStopped();
+          check(
+            continuous.used < continuous.limit,
+            'Continuous budget exhausted.',
+          );
+          continuous.used++;
+        }
       },
-      { signal: controller.signal, maxRetries: 0, timeout: deadlineMs },
-    );
-    // Observe the public raw Response BEFORE starting SDK parsing. In 7.32.0,
-    // withResponse() can reject on Abort/timeout while response.text() still runs.
-    // Delegate the exact read and all decoding/error/response selection to the SDK.
-    let bodyRead: Promise<void> | undefined;
-    let restoreText: (() => void) | undefined;
-    const headers = Promise.resolve().then(async () => {
-      const response = await pending.asResponse();
-      const text = response.text;
-      response.text = () => {
-        const reading = text.call(response);
-        bodyRead = reading.then(
-          () => {},
-          () => {},
-        );
-        return reading;
-      };
-      restoreText = () => {
-        response.text = text;
-      };
-      return response;
-    });
-    const body = headers.then(() => pending.withResponse());
-    const drained = Promise.allSettled([headers, body]).then(async () => {
-      await bodyRead; // Settlement of the actual reader, including late rejection.
-      restoreText?.();
-      if (run.sdkRead === drained) run.sdkRead = undefined;
-      display(run);
-    });
-    run.sdkRead = drained;
-    display(run);
-    const reading = (async () => {
-      const response = await headers;
-      checkDeadline();
-      entry.requestId = safeRequestId(response.headers.get('x-request-id'));
-      entry.http = response.status;
-      const { data, request_id } = await body;
-      checkDeadline();
-      entry.requestId = safeRequestId(request_id) ?? entry.requestId;
-      return data;
-    })();
-    return await Promise.race([reading, cancelled]);
-  } catch (error) {
-    if (error instanceof OpenAI.APIError) {
-      const status = error.status;
-      if (
-        status &&
-        Number.isInteger(status) &&
-        status >= 100 &&
-        status <= 599
-      ) {
-        entry.http = status;
-        entry.requestId = safeRequestId(error.requestID) ?? entry.requestId;
-        const category =
-          status === 401
-            ? 'authentication'
-            : status === 403
-              ? 'permission/access'
-              : status === 429
-                ? 'rate limit/quota'
-                : 'HTTP failure';
-        throw new DecisionFailure(`${category} (${status})`);
-      }
-    }
-    if (controller.signal.aborted) throw abortError();
-    if (error instanceof DecisionFailure || error instanceof DecisionStopped)
-      throw error;
-    if (error instanceof SyntaxError)
-      throw new DecisionFailure('Malformed API response JSON');
-    if (error instanceof OpenAI.APIConnectionTimeoutError)
-      throw new DecisionFailure('SDK timeout');
-    if (error instanceof OpenAI.APIConnectionError)
-      throw new DecisionFailure('API connection failure (network/CORS/access)');
-    throw new DecisionFailure('SDK or response-body failure');
-  } finally {
-    clearTimeout(deadline);
-    controller.signal.removeEventListener('abort', onAbort);
-    if (run.apiController === controller) run.apiController = undefined;
-    entry.latencyMs = Math.round(performance.now() - started);
-  }
+      onReadStateChange: () => display(run),
+    },
+    startedAt,
+  );
 }
 
 async function runOneDecision(

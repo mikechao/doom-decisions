@@ -8,6 +8,7 @@ import { runInNewContext } from 'node:vm';
 import { OpenAI } from 'openai/client';
 import { VERSION } from 'openai/version';
 import { admitDecision, assertDecision, masks, validateChoice, verifyAction } from '../src/decision.ts';
+import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
 import { projectLatestOutcome } from '../src/latest-outcome.ts';
 import { assessE1M1 } from '../src/worker-shared.ts';
 
@@ -94,21 +95,26 @@ for (const n of [0, -1, 1.5, 20.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INT
 
 
 // Use the same bounded source-section VM seam as terminal.mjs. All decision,
-// SDK ownership, Stop, and loop logic below comes from production main.ts.
+// SDK ownership, Stop, and loop logic below comes from production source.
 const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
 function section(start, end) {
   const first = main.indexOf(start), last = main.indexOf(end, first);
   assert.ok(first >= 0 && last > first, `Controller source markers: ${start}`);
   return main.slice(first, last);
 }
+// Keep the production executor in this VM's clock/error realm so the existing
+// deterministic deadline controls and SDK classifications remain exercised.
+const executorSource = readFileSync(new URL('../src/decisions-api.ts', import.meta.url), 'utf8')
+  .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
 const controllerSource = stripTypeScriptTypes([
   'let current = initialRun; let pageExited = false;',
   section('function check(', 'const passive = ['),
   section('const passive = [', 'const work = ['),
   section('function assertCurrent(', 'const displayHistory ='),
   section('function display(run:', 'function checkPrepared('),
-  section('async function request<', 'const deadlineMs ='),
-  section('const deadlineMs =', 'async function prepare()'),
+  executorSource,
+  section('async function request<', 'function fence('),
+  section('function fence(', 'async function prepare()'),
   '({ retire, request, decide, runOneDecision, startContinuous, stopContinuous })',
 ].join('\n'));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -246,6 +252,11 @@ function fixture(options = {}) {
   $('#tics'); $('#budget');
   const api = runInNewContext(controllerSource, {
     initialRun, $, admitDecision, assertDecision, masks, validateChoice, verifyAction,
+    buildDefaultDecisionRequest(...args) {
+      options.onBuild?.(initialRun, ...args);
+      if (options.buildError) throw Error('Synthetic request construction failure');
+      return buildDefaultDecisionRequest(...args);
+    },
     crypto: { subtle: { digest(...args) {
       ++digests;
       if (digests === options.holdDigest) {
@@ -293,6 +304,32 @@ function fixture(options = {}) {
     get parserSettled() { return parserSettled; }, get parserError() { return parserError; },
   };
 }
+
+// The prepared boundary remains synchronous: construction sees the uncharged
+// budget and frozen inputs, then the invocation sees exactly one charge.
+const boundaryEvents = [];
+const boundary = fixture({
+  onBuild(run, tic, n, png) {
+    boundaryEvents.push('build');
+    assert.equal(run.continuous.used, 0);
+    assert.equal(tic, 1); assert.equal(n, 2);
+    assert.equal(png, 'data:image/png;base64,fixture');
+    queueMicrotask(() => boundaryEvents.push('microtask'));
+  },
+  onCreate() {
+    boundaryEvents.push('create');
+    assert.equal(boundary.run.continuous.used, 1);
+  },
+});
+boundary.nodes.get('#tics').valueAsNumber = 2;
+boundary.nodes.get('#budget').valueAsNumber = 1;
+await boundary.start();
+assert.deepEqual(boundaryEvents, ['build', 'create', 'microtask']);
+const buildFailure = fixture({ buildError: true });
+await buildFailure.start();
+assert.equal(buildFailure.sdkCalls, 0);
+assert.equal(buildFailure.run.continuous.used, 0);
+assert.equal(buildFailure.native.calls, 0);
 
 // P1: actual pinned SDK helper rejection is NOT actual body-reader settlement.
 assert.equal(VERSION, '7.32.0');

@@ -1,11 +1,12 @@
 // Synthetic receipts and controlled controller responses only. No real Worker,
-// WASM, DOM, WAD, SDK import, network, or game execution. Run separately after approval.
+// WASM, DOM, WAD, network, or game execution. Run separately after approval.
 import assert from 'node:assert/strict';
 import { createHash, webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import { admitDecision, assertDecision, masks, validateChoice, verifyAction } from '../src/decision.ts';
+import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
 import { projectLatestOutcome } from '../src/latest-outcome.ts';
 import { assessE1M1 } from '../src/worker-shared.ts';
 
@@ -150,14 +151,19 @@ function section(start, end) {
   assert.ok(first >= 0 && last > first, `Controller source markers: ${start}`);
   return main.slice(first, last);
 }
+// Keep the production executor in this VM's clock/error realm so the existing
+// deterministic deadline controls and SDK classifications remain exercised.
+const executorSource = readFileSync(new URL('../src/decisions-api.ts', import.meta.url), 'utf8')
+  .replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
 const controllerSource = stripTypeScriptTypes([
   'let current = initialRun; let pageExited = false;',
   section('function check(', 'const passive = ['),
   section('const passive = [', 'const work = ['),
   section('function assertCurrent(', 'const displayHistory ='),
   section('function display(run:', 'function checkPrepared('),
-  section('async function request<', 'const deadlineMs ='),
-  section('const deadlineMs =', "$('#start').addEventListener"),
+  executorSource,
+  section('async function request<', 'function fence('),
+  section('function fence(', "$('#start').addEventListener"),
   '({ retire, request, decide })',
 ].join('\n'));
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -231,7 +237,7 @@ function controllerFixture(native, { delayed = false, badFrame = false } = {}) {
   $('#tics');
   class MockAPIError extends Error {}
   const api = runInNewContext(controllerSource, {
-    initialRun, $, admitDecision, assertDecision, masks, validateChoice, verifyAction,
+    initialRun, $, buildDefaultDecisionRequest, admitDecision, assertDecision, masks, validateChoice, verifyAction,
     crypto: webcrypto, AbortController, setTimeout, clearTimeout, performance: { now: () => 0 },
     canvas: { toDataURL: () => 'data:image/png;base64,fixture' },
     context: {
