@@ -4,7 +4,7 @@ Watch Doom in the browser while OpenAI's Decisions API chooses the next action.
 The owner-accepted **v0.2.0 Continuous Mode MVP** uses vanilla TypeScript, Vite,
 CSS and a modified Doom WASM engine running in an app-owned module Worker.
 
-Select your local **Freedoom 0.13.0 Phase 1 IWAD** to prepare E1M1 automatically,
+Select your local **Doom IWAD** to attempt E1M1 preparation automatically,
 including one mandatory neutral tic without an API request. Each **Next Decision**
 click requests one of seven actions: neutral, forward, turn right, backward,
 turn left, fire or use. You choose any **positive JavaScript safe integer** of tics,
@@ -16,8 +16,10 @@ default **2**, including failed or canceled calls. N changes affect later decisi
 API waits and idle advance no gameplay; there are no automatic retries or restarts.
 Refresh starts a new session. See [Continuous Mode](app/README.md#continuous-mode).
 
-The IWAD stays local and is not included in the app. The
-[app guide](app/README.md) identifies the exact accepted file and checksum.
+The IWAD stays local and is not bundled or redistributed. Selection is best-effort:
+the controlled engine expects compatible Doom E1M1 data and may reject other files.
+Freedoom 0.13.0 Phase 1 and the owner's local Doom shareware `DOOM1.WAD` have worked
+in owner-run trials. See [local IWAD support and limitations](app/README.md#local-iwad-support).
 Supply your own OpenAI API key in the browser: calls go directly to OpenAI,
 and credentials remain in memory for the session. This temporary BYOK prototype
 requires trust in the served page and its scripts; it is not a production

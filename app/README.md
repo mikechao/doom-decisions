@@ -19,6 +19,28 @@ change during a pending decision. The model selects only `neutral`, `forward`,
 `turn_right`, `backward`, `turn_left`, `fire`, or `use`; it never selects duration
 or combined actions.
 
+## Local IWAD support
+
+Select a user-provided **Local Doom IWAD**, between **12 and 33,554,432 bytes
+(32 MiB), inclusive**. The browser checks size before reading; the Worker checks
+the received size independently before WASM compilation. Both hash the actual
+bytes and require matching digests for that preparation, without a fixed WAD
+size/hash identity allowlist. WASM size/hash/interface verification is unchanged.
+
+Compatibility is **best-effort**: native IWAD/header/directory/resource checks and
+controlled Doom E1M1 preparation must succeed, including the single neutral tic,
+frame/Canvas verification and passive/idle proofs. Freedoom **0.13.0 Phase 1** and
+the owner's local Doom shareware **DOOM1.WAD** have worked in owner-run trials.
+This does not promise support for Doom II, PWADs, mods or every IWAD variant.
+No WAD is bundled, staged, uploaded or redistributed. Initial size/read errors allow
+selection retry; failed WASM verification or Worker/native work requires reload.
+
+Native lump consumers still have unchecked malformed-input paths. Worker isolation,
+retirement and the existing two-second request watchdog provide best-effort failure
+containment, not a memory-safety guarantee for arbitrary/untrusted files. Browser
+fetch/read/hash work before Worker creation has no application deadline. Parser
+hardening and an end-to-end preparation deadline are outside this prototype change.
+
 ## Continuous mode
 
 **Max API attempts** defaults to **2** and accepts any positive JavaScript safe
@@ -162,6 +184,12 @@ The owner accepted v0.2.0 with known evidence gaps. Prior observations are
 - Earlier Chrome preparation showed real E1M1, neutral-first requested/reported/
   verified **1/1/1**, matching native/Canvas RGBA hashes, and no simulation
   advancement during passive snapshots/rendering or five-second startup idle.
+- During the temporary identity-gate bypass, the owner reported shareware
+  `DOOM1.WAD` loading with the complete original HUD and multiple AI forward
+  decisions (reported screenshot: decision #6, verified tic 73), using the existing
+  WASM. The file's exact identity was not independently inspected by Codex. This
+  is compatibility evidence for that local file, not universal IWAD support or
+  a browser verification of the permanent admission patch.
 - The accepted manual trial reported **14 successful Decisions API decisions**,
   with five supplied receipt summaries and a duration change from **6 to 2**.
   Full Worker-instance/frame linkage, payload hashes, exact network accounting,
@@ -178,13 +206,12 @@ Git history; historical ignored raw artifacts cannot be recovered from Git.
 
 ## Owner-run isolated Chrome/API trial (not executed by Codex)
 
-After separate execution approval, copy **only** `app/dist/` to a new temporary
-directory and serve that directory. For example, from the repository root:
+After separate build/runtime approval, run `./build.sh --frontend-only` if the
+current verified native artifact can be reused, then serve **only** `app/dist/`.
+From the repository root:
 
 ```sh
-SMOKE_DIR=$(mktemp -d /tmp/doom-m4c-smoke.XXXXXX)
-cp -R app/dist/. "$SMOKE_DIR/"
-python3 -m http.server 8000 --bind 127.0.0.1 --directory "$SMOKE_DIR"
+python3 -m http.server 8000 --bind 127.0.0.1 --directory app/dist
 ```
 
 Open `http://127.0.0.1:8000/` in Chrome. Use loopback or HTTPS for Web Crypto.
@@ -199,7 +226,11 @@ uses rejecting fetch and never invokes `decisions.create`.
    **Freedoom 0.13.0 Phase 1** `freedoom1.wad` (28,795,076 bytes; SHA-256
    `7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d`).
    Selection automatically loads bundled WASM and prepares real E1M1. No API
-   request occurs. Other IWADs are intentionally refused.
+   request occurs. This is a known-working example, not a required identity pin.
+   Repeat in a fresh page session with the owner's local shareware `DOOM1.WAD`,
+   leaving the key blank; require the same preparation proofs and complete HUD.
+   Invalid/incompatible input must not produce an admitted gameplay session;
+   retain its exact error. Do not use hostile files as a safety test.
 2. Confirm zero gameplay work before the mandatory neutral action and neutral
    requested / reported / independently verified **1 / 1 / 1** afterward. Expect
    the real 640×400 frame and matching native/Canvas RGBA hashes at **tic 1**.
@@ -270,6 +301,7 @@ repository root:
 ```sh
 npm --prefix app run check
 node --experimental-strip-types app/tests/decision.mjs
+node --experimental-strip-types app/tests/iwad.mjs
 node --experimental-strip-types app/tests/terminal.mjs
 node --experimental-strip-types app/tests/continuous.mjs
 ```
@@ -290,6 +322,12 @@ frame checkpoints, per-admission N, request/budget ownership, Stop before/after
 dispatch, ignored Abort with delayed success/rejection, timeout cleanup, API
 failure without retry, and terminal/unsupported/uncertain boundaries. They are
 separate commands, not included in `npm run check`, and prove no real runtime behavior.
+Their current VM extraction uses stale source markers and needs a separate narrow
+repair before they can supply regression evidence for this change.
+`iwad.mjs` uses synthetic buffers and mocked platform/native boundaries to cover
+size admission, per-selection digest agreement, WASM integrity and failed
+initialization. It executes no real Worker/WASM and loads no game asset; it does
+not establish successful browser preparation or malicious-input safety.
 
 `biome.json` includes app source TypeScript (including `.d.ts`), app-owned
 JavaScript and CSS, `biome.json`, `package.json`, both TypeScript configs, and

@@ -40,18 +40,21 @@ distinct parts of the experience.
 ## Operating Context
 
 The owner-accepted v0.2.0 Continuous Mode MVP is a standalone static browser app.
-The user selects their own local Freedoom 0.13.0 Phase 1 IWAD, supplies an OpenAI API key, chooses a
+The user selects their own local Doom IWAD, supplies an OpenAI API key, chooses a
 duration, and clicks **Next Decision** for one action or **Start Continuous Mode**
 for sequential decisions within a per-run API-attempt budget. **Stop** closes
 admission and finishes cleanup or current-action verification. The IWAD stays
 local and is never packaged with the app; the generated engine loads automatically.
+IWAD compatibility is best-effort and requires the controlled engine's verified
+Doom E1M1 preparation. Freedoom Phase 1 and the owner's shareware file have been
+owner-tested; universal WAD compatibility and malicious-input safety are not established.
 
 Browser-direct API calls use the official OpenAI SDK. Credentials stay in memory
 for the session. This temporary BYOK architecture requires trust in the served
 page and its scripts; it does not establish production credential security.
 Refresh starts a fresh game and clears in-memory credentials.
 
-Current setup, supported asset identity, credential behavior, and authorized
+Current setup, local IWAD limitations, credential behavior, and authorized
 browser verification procedures are documented in [app/README.md](app/README.md).
 Execution approval requirements remain in [AGENTS.md](AGENTS.md).
 

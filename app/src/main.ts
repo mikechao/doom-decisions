@@ -23,6 +23,11 @@ import type {
   StatusObservation,
   Success,
 } from './worker-shared.ts';
+import {
+  IWAD_MAX_BYTES,
+  IWAD_MIN_BYTES,
+  IWAD_SIZE_ERROR,
+} from './worker-shared.ts';
 import './style.css';
 
 type Elements = {
@@ -72,8 +77,6 @@ const digest = async (bytes: BufferSource) =>
     new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
     (byte) => byte.toString(16).padStart(2, '0'),
   ).join('');
-const wadHash =
-  '7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d';
 const passive = [
   'wasiInit',
   'cInit',
@@ -318,8 +321,11 @@ function healthy(result: Pick<Observation, 'logs' | 'logsTruncated'>) {
 function checkPrepared(op: 'init' | 'prepare', result: StatusObservation) {
   healthy(result);
   check(
-    result.status === 0 &&
-      work.every((k) => result.native[k] === 0) &&
+    result.status === 0,
+    `Native ${op} failed (status ${result.status}); this IWAD may be incompatible.`,
+  );
+  check(
+    work.every((k) => result.native[k] === 0) &&
       (
         [
           'nativeBuild',
@@ -1045,7 +1051,7 @@ async function prepare() {
     return;
   const file = $('#iwad').files?.[0];
   if (!file) {
-    $('#status').textContent = 'Select your local Freedoom Phase 1 IWAD first.';
+    $('#status').textContent = 'Select your local Doom IWAD first.';
     return;
   }
   const run: Run = {
@@ -1061,8 +1067,8 @@ async function prepare() {
   let assetValidation = true;
   try {
     check(
-      file.size === 28795076,
-      'Require the known-good Freedoom 0.13.0 Phase 1 IWAD (28,795,076 bytes).',
+      file.size >= IWAD_MIN_BYTES && file.size <= IWAD_MAX_BYTES,
+      IWAD_SIZE_ERROR,
     );
     const [wasm, wad] = await Promise.all([
       localFetch('doom.wasm'),
@@ -1072,7 +1078,7 @@ async function prepare() {
       current === run && run.valid,
       'Preparation invalidated during asset reading.',
     );
-    check((await digest(wad)) === wadHash, 'Freedoom hash mismatch.');
+    const selectedWadHash = await digest(wad);
     assetValidation = false;
     check(
       wasm.byteLength === engine.bytes &&
@@ -1094,7 +1100,7 @@ async function prepare() {
     );
     check(
       loaded.wasmSha256 === engine.sha256 &&
-        loaded.wadSha256 === wadHash &&
+        loaded.wadSha256 === selectedWadHash &&
         Object.values(loaded.counters).every((value) => value === 0),
       'Asset identity/pre-init counters mismatch.',
     );
@@ -1170,7 +1176,7 @@ async function prepare() {
     if (assetValidation) run.phase = 'unprepared';
     display(
       run,
-      `Preparation failed: ${run.evidence.error} ${assetValidation ? 'Select the correct local IWAD to try again.' : 'Reload to restart.'}`,
+      `Preparation failed: ${run.evidence.error} ${assetValidation ? 'Select a local IWAD to retry preparation.' : 'Reload to restart.'}`,
     );
   }
 }
@@ -1235,7 +1241,7 @@ async function initialize() {
     engine = metadata as EngineMetadata;
     if (pageExited) return;
     $('#status').textContent =
-      'Select your local Freedoom Phase 1 IWAD to prepare automatically.';
+      'Select your local Doom IWAD to attempt E1M1 preparation automatically.';
     $('#iwad').disabled = false;
   } catch (error) {
     $('#status').textContent =

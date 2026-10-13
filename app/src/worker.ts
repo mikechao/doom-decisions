@@ -7,7 +7,14 @@ import type {
   Request,
   Results,
 } from './worker-shared.ts';
-import { assessE1M1, i11MaskValid, i11VerifyStep } from './worker-shared.ts';
+import {
+  assessE1M1,
+  i11MaskValid,
+  i11VerifyStep,
+  IWAD_MAX_BYTES,
+  IWAD_MIN_BYTES,
+  IWAD_SIZE_ERROR,
+} from './worker-shared.ts';
 
 // The staged controlled-title ABI is checked before this typed boundary is used.
 type NativeInstance = WebAssembly.Instance & {
@@ -110,8 +117,6 @@ const counterNames = [
   'virtualTicks',
   'titleReady',
 ] as const;
-const wadHash =
-  '7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d';
 let instance: NativeInstance;
 let memory: WebAssembly.Memory;
 let wad: Uint8Array<ArrayBuffer>;
@@ -311,12 +316,15 @@ self.onmessage = async ({ data }: MessageEvent<Request>) => {
     if (data.op === 'load-i11') {
       check(!instance, 'Already loaded');
       check(data.wasm.byteLength <= 16 * 1024 * 1024, 'Oversized WASM');
-      check(data.wad.byteLength === 28795076, 'Unexpected Freedoom length');
+      check(
+        data.wad.byteLength >= IWAD_MIN_BYTES &&
+          data.wad.byteLength <= IWAD_MAX_BYTES,
+        IWAD_SIZE_ERROR,
+      );
       const [wasmSha256, wadSha256] = await Promise.all([
         hash(data.wasm),
         hash(data.wad),
       ]);
-      check(wadSha256 === wadHash, 'Freedoom hash mismatch');
       wad = new Uint8Array(data.wad);
       check(
         wasmSha256 === data.expectedWasmHash,

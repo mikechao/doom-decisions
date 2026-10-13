@@ -19,7 +19,9 @@ fingerprint and exact WASM bytes/interface before staging `doom.wasm`, sanitized
 `doom-build.json` and license notices in ignored `app/public/`. Vite packages the
 app-owned `app/src/worker.ts` as an ES module Worker and copies static assets to
 `app/dist/`; emitted WASM identity and absence of `.wad` files are checked.
-The browser reads only the user's locally selected Freedoom Phase 1 IWAD.
+The browser reads the user's locally selected IWAD; none is shipped. Best-effort
+compatibility requires verified Doom E1M1 preparation; see the
+[local IWAD support boundary](../app/README.md#local-iwad-support).
 
 `./build.sh --frontend-only` reuses the artifact selected by
 `engine/doom/build/m4b-current.json`. It never compiles the engine or falls back

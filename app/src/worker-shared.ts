@@ -1,4 +1,10 @@
-// Shared native receipts and verification only; importing this module starts no Worker.
+// Shared admission bounds and native receipts; importing this module starts no Worker.
+// Match AdmitExternalWad() in engine/doom/src/doom_wasm.c.
+export const IWAD_MIN_BYTES = 12;
+export const IWAD_MAX_BYTES = 32 * 1024 * 1024;
+export const IWAD_SIZE_ERROR =
+  'Local IWAD must be 12–33,554,432 bytes (32 MiB maximum).';
+
 export type Counters = Record<
   | 'wasiInit'
   | 'cInit'
