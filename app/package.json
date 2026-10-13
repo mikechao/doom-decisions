@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "lint": "biome lint .",
     "format": "biome format --write .",
+    "test": "vitest run",
     "check": "npm run typecheck && node ../scripts/check_worker.mjs && node --experimental-strip-types tests/worker-entry.mjs && biome check ."
   },
   "dependencies": {
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "typescript": "7.0.2",
-    "vite": "8.3.4"
+    "vite": "8.3.4",
+    "vitest": "5.0.4"
   }
 }
