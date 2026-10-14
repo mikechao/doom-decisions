@@ -99,14 +99,14 @@ export async function requestDecision(
     // Observe the public raw Response BEFORE starting SDK parsing. In 7.32.0,
     // withResponse() can reject on Abort/timeout while response.text() still runs.
     // Delegate the exact read and all decoding/error/response selection to the SDK.
-    let bodyRead: Promise<void> | undefined;
+    let readerSettlement: Promise<void> | undefined;
     let restoreText: (() => void) | undefined;
     const headers = Promise.resolve().then(async () => {
       const response = await pending.asResponse();
       const text = response.text;
       response.text = () => {
         const reading = text.call(response);
-        bodyRead = reading.then(
+        readerSettlement = reading.then(
           () => {},
           () => {},
         );
@@ -118,15 +118,17 @@ export async function requestDecision(
       return response;
     });
     const body = headers.then(() => pending.withResponse());
-    const drained = Promise.allSettled([headers, body]).then(async () => {
-      await bodyRead; // Settlement of the actual reader, including late rejection.
+    // Result cancellation does not release sdkRead.
+    // Wait for both SDK helpers and the actual reader before clearing ownership.
+    const readCleanup = Promise.allSettled([headers, body]).then(async () => {
+      await readerSettlement; // Settlement of the actual reader, including late rejection.
       restoreText?.();
-      if (lifecycle.sdkRead === drained) lifecycle.sdkRead = undefined;
+      if (lifecycle.sdkRead === readCleanup) lifecycle.sdkRead = undefined;
       hooks.onReadStateChange();
     });
-    lifecycle.sdkRead = drained;
+    lifecycle.sdkRead = readCleanup;
     hooks.onReadStateChange();
-    const reading = (async () => {
+    const responseData = (async () => {
       const response = await headers;
       checkDeadline();
       diagnostics.requestId = safeRequestId(
@@ -139,7 +141,7 @@ export async function requestDecision(
         safeRequestId(request_id) ?? diagnostics.requestId;
       return data;
     })();
-    return await Promise.race([reading, cancelled]);
+    return await Promise.race([responseData, cancelled]);
   } catch (error) {
     if (error instanceof OpenAI.APIError) {
       const status = error.status;
