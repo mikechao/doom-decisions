@@ -905,7 +905,7 @@ export function createSessionController(ports: SessionBrowserPorts) {
       if (pageExited) return;
       ports.present({
         status:
-          'Select your local Doom IWAD to attempt E1M1 preparation automatically.',
+          'Select your local Doom IWAD to attempt Doom preparation automatically.',
         iwadEnabled: true,
       });
     } catch (error) {

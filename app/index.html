@@ -26,7 +26,7 @@
               <label for="iwad">Local Doom IWAD</label>
               <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
               <span id="setup-asset"></span>
-              <p id="asset-note" class="help">Local Only • 32 MiB max • Refresh to change</p>
+              <p id="asset-note" class="help">Local Only • Refresh to change</p>
             </div>
             <div>
               <label for="key">Temporary OpenAI API key</label>
@@ -45,9 +45,9 @@
             <div class="shared-duration">
               <div class="duration">
                 <label for="tics">Tics per decision</label>
+                <p id="tic-rate" class="help">Both modes · 35 tics = 1 Doom second</p>
                 <input id="tics" type="number" min="1" step="1" value="6" aria-describedby="tic-rate duration-note" disabled>
               </div>
-              <p id="tic-rate" class="help">Both modes · 35 tics = 1 Doom second</p>
             </div>
             <button id="next" type="button" disabled>Next Decision</button>
           </div>
@@ -114,8 +114,7 @@
     </details>
     <footer>
       <p>Continuous mode starts only when you choose Start. Preparation uses one explicit neutral tic and no API request. Snapshots, rendering and idle time advance zero gameplay tics. Refresh to start a new game and clear in-memory credentials.</p>
-      <p>Engine: <a href="./notices/doom-LICENSE.txt">GPL license</a> · SDK: <a href="./notices/openai/LICENSE">Apache license</a> · Font: <a href="./font-notices/oswald/OFL.txt">Oswald · SIL OFL 1.1</a>.
-        Review redistribution and corresponding source obligations before public deployment.</p>
+      <p>Engine: <a href="./notices/doom-LICENSE.txt">GPL license</a> · SDK: <a href="./notices/openai/LICENSE">Apache license</a> · Font: <a href="./font-notices/oswald/OFL.txt">Oswald · SIL OFL 1.1</a>.</p>
     </footer>
   </main>
 </body>

@@ -114,10 +114,6 @@ label {
   font-size: 0.875rem;
   font-weight: 500;
 }
-.setup-content > div:first-child {
-  padding: 0.625rem;
-  border: 1px solid var(--rule);
-}
 label[for="iwad"] {
   font-family: var(--display);
   font-size: 1.125rem;
@@ -684,6 +680,10 @@ pre {
 footer {
   margin-top: 1.5rem;
   max-width: 90ch;
+}
+footer > p:first-child {
+  width: min(calc(100vw - 3rem), 82rem);
+  max-width: none;
 }
 footer p + p {
   margin-top: 0.75rem;
