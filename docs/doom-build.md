@@ -153,33 +153,15 @@ After cleanup, the owner will rerun `./build.sh` followed by
 `./build.sh --frontend-only`; changed fingerprint inputs require a fresh full build
 first. Agent execution still requires the approvals in `AGENTS.md`.
 
-## Optional Python checks
+## Verification coverage
 
-The standalone inspector tests use synthetic WASM bytes and the existing Node
-inspector, without native builds, game assets or instantiation. The five tests
-retain valid/invalid interface checks, both profiles and fixture-disabled cases:
-
-```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -p 'test_inspect_doom.py' -v
-node --check scripts/inspect_doom.mjs
-git diff --check
-```
-
-These tests do not execute Make or validate admission/closeout, process cleanup,
-two-build reproducibility or browser gameplay. Running either Python suite requires
-separate test authorization; neither is a prerequisite for the supported build.
-
-The eight native contract tests are separate:
-
-```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -p 'test_a21_contracts.py' -v
-```
-
-They inspect current native source and compile temporary fixtures with
-`/usr/bin/clang`, including deliberate trap cases. They do not rebuild the
-production WASM engine, run Chrome or call the Decisions API. The retired
-experiment-harness tests have been removed; recorded historical test counts
-in results documents describe their original checkpoints.
+The optional Python native-contract and synthetic WASM inspector test suites are
+retired. Their independent stepping/timer/source-contract and positive/negative
+WASM regression coverage is intentionally removed, not replaced by successful
+builds or the direct inspector invocation. `scripts/inspect_doom.mjs` still verifies
+the actual generated WASM during closeout and staging. The app's offline Vitest
+suite remains available through the
+[app checks](../app/README.md#offline-tests-static-checks-and-source-boundary).
 
 ## Historical embedded-shareware profile
 

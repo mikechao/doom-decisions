@@ -42,10 +42,9 @@ use **Stop** to end the run. The build generates and verifies the bundled engine
 without embedding a WAD. Later frontend-only builds can use `./build.sh --frontend-only`
 when the existing native artifact and evidence still verify. In agent sessions,
 follow [AGENTS.md](AGENTS.md) for execution approval requirements.
-The supported fresh build and local preview require no Python; independent
-inspector/native tests and upstream utilities still use it. The owner reports
-successful full/frontend-only builds and Ctrl+C stopping compilation in a macOS
-terminal; there is no global build timeout.
+The supported fresh build and local preview require no Python; upstream utilities
+still use it. The owner reports successful full/frontend-only builds and Ctrl+C
+stopping compilation in a macOS terminal; there is no global build timeout.
 
 ## Source and evidence
 

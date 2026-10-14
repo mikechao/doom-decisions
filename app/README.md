@@ -107,8 +107,6 @@ staging, with `controlled-title`, fixtures enabled, two jobs and no embedded WAD
 Default tool locations are `tools/wasi-sdk-24.0` and `tools/binaryen-119/bin`;
 optional `WASI_SDK` and `BINARYEN_BIN` environment variables select provisioned tools.
 Node and npm come from PATH. No owner-specific absolute path is hard-coded.
-Independent Python inspector/native tests remain separate from the build; see the
-[build guide](../docs/doom-build.md#optional-python-checks).
 
 Each build uses a new `engine/doom/build/m4b-runs/run.*/engine/` directory;
 failed attempts and their evidence are retained. A deterministic ignored
