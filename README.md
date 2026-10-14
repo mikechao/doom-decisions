@@ -33,7 +33,7 @@ From the repository root:
 ```sh
 npm --prefix app ci --no-audit --no-fund
 ./build.sh
-python3 -m http.server 8000 --bind 127.0.0.1 --directory app/dist
+(cd app && ./node_modules/.bin/vite preview --host 127.0.0.1 --port 8000 --strictPort)
 ```
 
 Open `http://127.0.0.1:8000/`, select the IWAD, enter a key and click
@@ -42,6 +42,10 @@ use **Stop** to end the run. The build generates and verifies the bundled engine
 without embedding a WAD. Later frontend-only builds can use `./build.sh --frontend-only`
 when the existing native artifact and evidence still verify. In agent sessions,
 follow [AGENTS.md](AGENTS.md) for execution approval requirements.
+The supported fresh build and local preview require no Python; independent
+inspector/native tests and upstream utilities still use it. The owner reports
+successful full/frontend-only builds and Ctrl+C stopping compilation in a macOS
+terminal; there is no global build timeout.
 
 ## Source and evidence
 

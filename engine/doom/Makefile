@@ -21,7 +21,7 @@ $(error Unsupported BUILD_PROFILE)
 endif
 LOCAL_ONLY := 1
 ifneq ($(MAKECMDGOALS),local-build)
-$(error Local mode accepts only local-build; use scripts/build_doom.py)
+$(error Local mode accepts only local-build; use ./build.sh from the repository root)
 endif
 else
 all: doom

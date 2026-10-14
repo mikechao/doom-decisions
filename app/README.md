@@ -81,10 +81,10 @@ establish that runtime evidence; see [prototype evidence](#prototype-acceptance-
 
 ## Prerequisites and clean checkout
 
-Provision tools yourself; the build never installs them. The existing engine
-wrapper requires Python **3.14.4**, Node **22.20.0** on PATH, POSIX process groups,
+Provision tools yourself; the build never installs them. The supported engine
+build requires Bash (macOS **3.2** syntax), Node **22.20.0**/npm on PATH,
 GNU Make **3.81** at `/usr/bin/make`, WASI SDK **24.0** (Clang/LLD 18.1.2),
-Binaryen **119**, Git, and 512 MiB free space. See
+Binaryen **119**, and Git. Python is not required for a fresh build or preview. See
 [engine build documentation](../docs/doom-build.md) for the wrapper's constraints.
 Its tested host is macOS; the Bash entrypoint does not establish support for
 other hosts whose Make/tool versions differ. Paths passed to the engine wrapper
@@ -102,26 +102,35 @@ authorizations. Obtain owner approval before dependency resolution/downloads,
 installation, builds, servers, browser execution or billable API calls.
 Source inspection alone does not verify a build.
 
-The default build invokes only `scripts/build_doom.py --profile controlled-title
---jobs 2 --timeout 120` with fixtures enabled and no embedded WAD. Default tool
-locations are `tools/wasi-sdk-24.0` and `tools/binaryen-119/bin`; optional `PYTHON`,
-`WASI_SDK`, and `BINARYEN_BIN` environment variables select provisioned tools.
+The default build uses Node admission, foreground Make, Node closeout and verified
+staging, with `controlled-title`, fixtures enabled, two jobs and no embedded WAD.
+Default tool locations are `tools/wasi-sdk-24.0` and `tools/binaryen-119/bin`;
+optional `WASI_SDK` and `BINARYEN_BIN` environment variables select provisioned tools.
 Node and npm come from PATH. No owner-specific absolute path is hard-coded.
+Independent Python inspector/native tests remain separate from the build; see the
+[build guide](../docs/doom-build.md#optional-python-checks).
 
 Each build uses a new `engine/doom/build/m4b-runs/run.*/engine/` directory;
 failed attempts and their evidence are retained. A deterministic ignored
 `engine/doom/build/m4b-current.json` selects the current successful engine output.
 It records that output's relative path and a hash of engine inputs, including
-unignored additions/deletions, compiler wrapper, and inspector. It deliberately
-does not require the repository HEAD to stay unchanged for frontend-only work.
+unignored additions/deletions, `build.sh`, Node build/staging helpers and inspector.
+It deliberately does not require the repository HEAD to stay unchanged for frontend-only work.
 The original build manifest remains beside the engine artifact. Keep it for
 source/toolchain provenance; it is not published with private host paths.
+Admission writes a pending receipt; only successful Make followed by closeout's
+source/tool rechecks and WASM inspection permits a success receipt. Pending output
+is rejected. The new receipt schema requires one full build before reusing an old
+Python-generated cache; no old artifacts are deleted or silently adopted.
 
 The handoff rechecks the successful manifest, controlled profile, enabled
 fixtures, absent embedded IWAD, bytes/hash, source-input fingerprint, and typed
 interface with `scripts/inspect_doom.mjs`. It stages `doom.wasm`, a sanitized
 `doom-build.json`, and licenses under ignored `app/public/`. Vite copies these
 to `app/dist/`; the handoff verifies the emitted bytes and refuses `.wad` files.
+Staging verifies the candidate and `public` before atomically selecting current.
+Current certifies the native engine; a later failed frontend build still exits
+nonzero and does not certify a fresh `dist`.
 Generated app/native outputs and installed dependencies are ignored. Historical
 ignored builds are never selected as fallback inputs; old `references/doom.wasm/build/`
 receipts cited in evidence records are unavailable in this checkout. Tracked
@@ -142,6 +151,15 @@ and retains the staging/output verification; the root wrapper also checks Worker
 packaging. Every failure exits nonzero; an old `app/dist/` may still
 exist after an early failure and is **not** a successful new build. Concurrent
 builds in one checkout are unsupported.
+
+Make runs in the foreground with no global timeout or process-tree supervisor.
+The owner reports successful full and frontend-only builds with the same WASM
+SHA-256, verified fixture-enabled WASM and `public`/`dist`, no bundled IWAD, and
+Ctrl+C stopping compilation in a macOS terminal. These are owner-run observations;
+the deliberate compilation-failure experiment was skipped for this milestone.
+Shell INT/TERM traps exit rather than continue; they do not guarantee descendant
+cleanup when only the wrapper receives a signal. A hung tool may require manual intervention. The old
+512 MiB disk-space admission check and output-size accounting are omitted.
 
 ## Temporary browser-direct credentials
 
@@ -211,7 +229,7 @@ current verified native artifact can be reused, then serve **only** `app/dist/`.
 From the repository root:
 
 ```sh
-python3 -m http.server 8000 --bind 127.0.0.1 --directory app/dist
+(cd app && ./node_modules/.bin/vite preview --host 127.0.0.1 --port 8000 --strictPort)
 ```
 
 Open `http://127.0.0.1:8000/` in Chrome. Use loopback or HTTPS for Web Crypto.
@@ -343,6 +361,7 @@ Vendored engine code and root scripts are outside this scope.
 ```sh
 bash -n build.sh
 npm --prefix app run typecheck
+node --check scripts/build_engine.mjs
 node --check scripts/stage_web.mjs
 npm --prefix app run check
 git diff --check

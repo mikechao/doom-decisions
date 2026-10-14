@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Foreground terminal cancellation only; no process-tree supervisor.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd "$ROOT"
 fail() { echo "Build refused: $*" >&2; exit 1; }
@@ -12,16 +15,25 @@ node scripts/check_worker.mjs
 if [[ "$MODE" == --frontend-only ]]; then
   node scripts/stage_web.mjs stage
 else
-  PYTHON_BIN=${PYTHON:-python3}
-  command -v "$PYTHON_BIN" >/dev/null || fail 'Missing Python; use Python 3.14.4 (or set PYTHON).'
-  INPUTS=$(node scripts/stage_web.mjs inputs)
   mkdir -p engine/doom/build/m4b-runs
   RUN=$(mktemp -d "$ROOT/engine/doom/build/m4b-runs/run.XXXXXX")
-  "$PYTHON_BIN" scripts/build_doom.py --profile controlled-title --jobs 2 --timeout 120 \
-    --out "$RUN/engine" --node "$(command -v node)" \
-    --wasi-sdk "${WASI_SDK:-$ROOT/tools/wasi-sdk-24.0}" \
-    --binaryen-bin "${BINARYEN_BIN:-$ROOT/tools/binaryen-119/bin}"
-  node scripts/stage_web.mjs stage "$RUN/engine" "$INPUTS"
+  OUT="$RUN/engine"
+  ADMISSION=$(node scripts/build_engine.mjs admit "$OUT" \
+    "${WASI_SDK:-$ROOT/tools/wasi-sdk-24.0}" \
+    "${BINARYEN_BIN:-$ROOT/tools/binaryen-119/bin}")
+  IFS=$'\t' read -r TOKEN SDK BINARYEN <<< "$ADMISSION"
+  # Admission canonicalizes paths. Keep inherited Make/compiler flags and secrets out.
+  if env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin LC_ALL=C TZ=UTC \
+    TMPDIR="$OUT/tmp" BINARYEN_CORES=2 \
+    /usr/bin/make -C "$ROOT/engine/doom" -rR -j2 VERBOSE=1 \
+    BUILD_PROFILE=controlled-title A1_FIXTURES=1 LOCAL_ADMITTED=1 \
+    OUTPUT_DIR="$OUT" LOCAL_WASI_SDK="$SDK" LOCAL_BINARYEN_BIN="$BINARYEN" local-build; then
+    printf '%s\n' "$TOKEN" > "$OUT/evidence/make-pass"
+    node scripts/build_engine.mjs closeout "$OUT" "$TOKEN"
+  else
+    exit "$?"
+  fi
+  node scripts/stage_web.mjs stage "$OUT"
 fi
 npm --prefix app run build
 echo 'Static app ready: app/dist/ (no IWAD).'
