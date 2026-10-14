@@ -1,5 +1,8 @@
 import { OpenAI } from 'openai/client';
-import type { DecisionCreateParams } from 'openai/resources/decisions';
+import type {
+  Decision,
+  DecisionCreateParams,
+} from 'openai/resources/decisions';
 
 const deadlineMs = 10000;
 export class DecisionFailure extends Error {}
@@ -50,7 +53,7 @@ export async function requestDecision(
   diagnostics: DecisionDiagnostics,
   hooks: DecisionHooks,
   startedAt: number,
-): Promise<unknown> {
+): Promise<Decision> {
   const controller = new AbortController();
   lifecycle.apiController = controller;
   let timedOut = false;
