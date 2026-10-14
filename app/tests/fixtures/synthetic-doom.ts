@@ -1,56 +1,49 @@
 // Synthetic neutral-only Doom observations and Worker results; no WASM or assets.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import type {
+  Counters,
+  NativeObservation,
+  Observation,
+  Operation,
+  Request,
+  Results,
+} from '../../src/worker-shared.ts';
 
 // Import the actual finite action helper without instantiating its native module.
 const previousSelf = Object.getOwnPropertyDescriptor(globalThis, 'self');
-export let i11Action;
+const workerGlobal: { self?: object } = globalThis;
+export let i11Action: typeof import('../../src/worker.ts').i11Action;
 try {
-  globalThis.self = {};
+  workerGlobal.self = {};
   ({ i11Action } = await import('../../src/worker.ts'));
 } finally {
   if (previousSelf) Object.defineProperty(globalThis, 'self', previousSelf);
-  else delete globalThis.self;
+  else delete workerGlobal.self;
 }
 
-const work = [
-  'build',
-  'install',
-  'liveEntry',
-  'world',
-  'status',
-  'automap',
-  'hud',
-  'menu',
-  'outer',
-];
-const ticks = [
-  'nativeBuild',
-  'playerEntry',
-  'worldComplete',
-  'outerComplete',
-  'gametic',
-  'leveltime',
-  'virtualTicks',
-];
-export function observation(n) {
-  const command = Object.fromEntries(
-    [
-      'forwardmove',
-      'sidemove',
-      'angleturn',
-      'chatchar',
-      'buttons',
-      'consistancy',
-      'buttons2',
-      'inventory',
-      'lookfly',
-      'arti',
-    ].map((key) => [key, 0]),
-  );
+export function observation(n: number): Observation {
+  const command = {
+    forwardmove: 0,
+    sidemove: 0,
+    angleturn: 0,
+    chatchar: 0,
+    buttons: 0,
+    consistancy: 0,
+    buttons2: 0,
+    inventory: 0,
+    lookfly: 0,
+    arti: 0,
+  } satisfies NativeObservation['built'];
   return {
     counters: {
-      ...Object.fromEntries(ticks.map((key) => [key, n])),
+      nativeBuild: n,
+      playerEntry: n,
+      worldComplete: n,
+      outerComplete: n,
+      gametic: n,
+      leveltime: n,
+      virtualTicks: n,
       wasiInit: 1,
       cInit: 1,
       engineCreate: 1,
@@ -63,9 +56,17 @@ export function observation(n) {
       netBody: 0,
       wipeEntry: 0,
       demoLoad: 0,
-    },
+    } satisfies Counters,
     native: {
-      ...Object.fromEntries(work.map((key) => [key, n])),
+      build: n,
+      install: n,
+      liveEntry: n,
+      world: n,
+      status: n,
+      automap: n,
+      hud: n,
+      menu: n,
+      outer: n,
       ready: 1,
       loadComplete: 1,
       resources: 1,
@@ -98,13 +99,36 @@ export function observation(n) {
       dclicks: 0,
       dclickstate2: 0,
       dclicks2: 0,
+      // Stable synthetic geometry/player state, not measured Doom values.
+      vertexes: 1,
+      lines: 1,
+      sectors: 1,
+      segs: 1,
+      subsectors: 1,
+      nodes: 1,
+      x: 0,
+      y: 0,
+      angle: 0,
+      momx: 0,
+      momy: 0,
+      rndindex: 0,
+      prndindex: 0,
+      reactiontime: 0,
+      flags: 0,
       built: command,
       entered: { ...command },
-    },
+    } satisfies NativeObservation,
   };
 }
 // Preparation starts at zero gameplay tics and zero passive renders.
-export function preparationResult(op) {
+export function preparationResult(op: 'init'): Results['init'];
+export function preparationResult(op: 'prepare'): Results['prepare'];
+export function preparationResult(
+  op: 'init' | 'prepare',
+): Results['init'] | Results['prepare'];
+export function preparationResult(
+  op: 'init' | 'prepare',
+): Results['init'] | Results['prepare'] {
   const result = observation(0);
   Object.assign(result.counters, {
     render: 0,
@@ -112,11 +136,9 @@ export function preparationResult(op) {
     netIntercept: 0,
     titleReady: op === 'init' ? 1 : 0,
   });
-  return {
-    ...result,
-    status: 0,
-    ...(op === 'prepare' ? { outcome: 'APPLIED' } : {}),
-  };
+  return op === 'prepare'
+    ? ({ ...result, status: 0, outcome: 'APPLIED' } satisfies Results['prepare'])
+    : ({ ...result, status: 0 } satisfies Results['init']);
 }
 export const death = {
   ready: 0,
@@ -131,6 +153,11 @@ export function nativeFixture({
   at = Infinity,
   signals = {},
   trapAt = Infinity,
+}: {
+  base?: number;
+  at?: number;
+  signals?: Partial<NativeObservation>;
+  trapAt?: number;
 } = {}) {
   let current = base === 0 ? preparationResult('prepare') : observation(base),
     calls = 0;
@@ -139,7 +166,7 @@ export function nativeFixture({
       return calls;
     },
     observe: () => structuredClone(current),
-    step(mask) {
+    step(mask: number) {
       assert.equal(
         mask,
         0,
@@ -149,7 +176,7 @@ export function nativeFixture({
       if (calls === trapAt) throw Error('Synthetic trap; current tic unknown');
       const prior = current;
       current = observation(prior.counters.gametic + 1);
-      for (const key of ['render', 'frame', 'netIntercept'])
+      for (const key of ['render', 'frame', 'netIntercept'] as const)
         current.counters[key] = prior.counters[key];
       if (calls === at) Object.assign(current.native, signals);
       return 0;
@@ -162,11 +189,13 @@ export function nativeFixture({
     },
   };
 }
-export const execute = (native, n) =>
+type NativeFixture = ReturnType<typeof nativeFixture>;
+export const execute = (native: NativeFixture, n: number): Results['action'] =>
   i11Action(0, n, (mask) => native.step(mask), native.observe);
 
-export const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
-export function pixels(tic) {
+export const sha = (bytes: Uint8Array | Uint8ClampedArray): string =>
+  createHash('sha256').update(bytes).digest('hex');
+export function pixels(tic: number) {
   const rgba = new Uint8ClampedArray(1024000);
   rgba[0] = tic;
   rgba[4] = tic + 1;
@@ -175,40 +204,53 @@ export function pixels(tic) {
 
 // Build only the synthetic operation result. Each suite retains its own dispatch,
 // hold controls, reply cloning, microtask delivery, and transport accounting.
+type Faults = {
+  corruptSnapshot?: boolean;
+  badReceipt?: boolean;
+  badFrame?: boolean;
+};
+export function workerResult<O extends Operation>(
+  native: NativeFixture,
+  data: Request & { op: O },
+  faults?: Faults,
+): { result: Results[O]; frame?: Uint8ClampedArray } | undefined;
 export function workerResult(
-  native,
-  data,
+  native: NativeFixture,
+  data: Request,
   { corruptSnapshot = false, badReceipt = false, badFrame = false } = {},
 ) {
-  let result, frame;
   if (data.op === 'load-i11') {
-    result = {
+    const counters = observation(0).counters;
+    for (const key of Object.keys(counters) as (keyof Counters)[])
+      counters[key] = 0;
+    const result: Results['load-i11'] = {
       ...preparationResult('init'),
-      counters: Object.fromEntries(
-        Object.keys(observation(0).counters).map((key) => [key, 0]),
-      ),
+      counters,
       wasmSha256: sha(new Uint8Array(data.wasm)),
       wadSha256: sha(new Uint8Array(data.wad)),
       imports: [],
       exports: [],
     };
+    return { result, frame: undefined };
   } else if (data.op === 'init' || data.op === 'prepare') {
-    result = preparationResult(data.op);
+    return { result: preparationResult(data.op), frame: undefined };
   } else if (data.op === 'snapshot') {
-    result = native.observe();
+    const result: Results['snapshot'] = native.observe();
     if (corruptSnapshot) result.native.health--;
+    return { result, frame: undefined };
   } else if (data.op === 'action') {
-    result = execute(native, data.tics);
+    const result: Results['action'] = execute(native, data.tics);
     if (badReceipt) result.completedTics++;
+    return { result, frame: undefined };
   } else if (data.op === 'render') {
-    result = native.render();
-    frame = pixels(result.counters.gametic);
-    result = {
-      ...result,
+    const rendered = native.render();
+    const frame = pixels(rendered.counters.gametic);
+    const result: Results['render'] = {
+      ...rendered,
       status: 0,
       dimensions: { width: 640, height: 400 },
       frameSha256: badFrame ? '0'.repeat(64) : sha(frame),
     };
+    return { result, frame };
   } else return;
-  return { result, frame };
 }

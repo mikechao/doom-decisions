@@ -10,7 +10,7 @@
     "dev": "vite",
     "dev:impeccable": "vite --mode impeccable --host 127.0.0.1 --port 5173 --strictPort",
     "build": "node ../scripts/stage_web.mjs verify public && npm run typecheck && vite build && node ../scripts/stage_web.mjs verify dist",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json && tsc --noEmit -p tsconfig.fixtures.json",
     "lint": "biome lint .",
     "format": "biome format --write .",
     "test": "vitest run",

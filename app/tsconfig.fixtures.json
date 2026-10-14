@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.worker.json",
+  "include": [
+    "tests/fixtures/synthetic-doom.ts",
+    "tests/fixtures/synthetic-doom.node.d.ts"
+  ]
+}
