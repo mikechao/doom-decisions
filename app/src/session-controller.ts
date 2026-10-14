@@ -839,10 +839,7 @@ export function createSessionController(ports: SessionBrowserPorts) {
         after: afterIdle,
       };
       run.phase = 'ready';
-      display(
-        run,
-        'Ready at tic 1 — neutral 1/1/1; passive checks unchanged. Enter a temporary key, then Next Decision.',
-      );
+      display(run, 'Ready at tic 1 — neutral 1/1/1; passive checks unchanged.');
     } catch (error) {
       if (pageExited || current !== run) return;
       retire(run);

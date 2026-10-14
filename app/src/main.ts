@@ -1,4 +1,5 @@
 import { createDecisionHistory } from './decision-history';
+import { deriveDecisionControls } from './decision-controls';
 import { projectLatestOutcome } from './latest-outcome';
 import {
   createSessionController,
@@ -14,6 +15,7 @@ type Elements = {
   '#setup': HTMLElement;
   '#setup-title': HTMLHeadingElement;
   '#setup-asset': HTMLSpanElement;
+  '#control-prerequisite': HTMLParagraphElement;
   '#tics': HTMLInputElement;
   '#next': HTMLButtonElement;
   '#start': HTMLButtonElement;
@@ -68,6 +70,27 @@ const displayHistory = createDecisionHistory(
   $('#history'),
   $('#history-empty'),
 );
+type SessionRunPresentation = NonNullable<SessionPresentation['session']>;
+let latestSession: SessionRunPresentation | undefined;
+function updateControlAvailability(run: SessionRunPresentation | undefined) {
+  const readiness = deriveDecisionControls(
+    run,
+    $('#key').value.trim().length > 0,
+  );
+  const prerequisite = $('#control-prerequisite');
+  prerequisite.textContent = readiness.bannerText ?? '';
+  prerequisite.hidden = readiness.bannerText === null;
+  $('#next').disabled = !readiness.buttonsEnabled;
+  $('#start').disabled = !readiness.buttonsEnabled;
+  if (!run) return;
+  const sessionReady = run.controls.ready;
+  $('#budget').disabled = !sessionReady;
+  $('#key').disabled = !sessionReady;
+  $('#stop').disabled = !run.controls.stop;
+  $('#tics').disabled = !run.controls.tics;
+  $('#iwad').disabled = !run.controls.iwad;
+  $('#next').setAttribute('aria-busy', String(run.phase === 'busy'));
+}
 function display(view: SessionPresentation) {
   if (view.sdkStatus !== undefined) $('#sdk').textContent = view.sdkStatus;
   if (view.frameStatus !== undefined)
@@ -76,17 +99,12 @@ function display(view: SessionPresentation) {
   const status = view.status;
   if (status) $('#status').textContent = status;
   const run = view.session;
+  if (run) latestSession = run;
+  updateControlAvailability(latestSession);
   if (!run) return;
   $('#status').dataset.phase = run.phase;
   $('#evidence').textContent = JSON.stringify(run.evidence, null, 2);
   const continuous = run.continuous;
-  const ready = run.controls.ready;
-  $('#next').disabled = !ready;
-  $('#start').disabled = !ready;
-  $('#budget').disabled = !ready;
-  $('#key').disabled = !ready;
-  $('#stop').disabled = !run.controls.stop;
-  $('#tics').disabled = !run.controls.tics;
   const continuousStatus = continuous?.active
     ? continuous.stopRequested
       ? continuous.dispatched
@@ -98,8 +116,6 @@ function display(view: SessionPresentation) {
       : 'Continuous mode stopped';
   $('#continuous-state').textContent =
     `${continuousStatus}${continuous ? ` · API attempts ${continuous.used} / ${continuous.limit}` : ''} · verified tic ${run.verifiedTics}${run.waitingForSdk ? ' · waiting for API response cleanup' : ''}`;
-  $('#iwad').disabled = !run.controls.iwad;
-  $('#next').setAttribute('aria-busy', String(run.phase === 'busy'));
   $('#key-state').textContent = run.hasClient
     ? 'Client in memory; blank keeps it. Authentication unverified.'
     : 'Client in memory • Refresh clears it';
@@ -142,6 +158,11 @@ const controller = createSessionController({
   clearCanvas: () => context.clearRect(0, 0, 640, 400),
   present: display,
 });
+const syncCredentialReadiness = () => {
+  updateControlAvailability(latestSession);
+};
+$('#key').addEventListener('input', syncCredentialReadiness);
+$('#key').addEventListener('change', syncCredentialReadiness);
 $('#next').addEventListener('click', () => controller.next());
 $('#start').addEventListener('click', () =>
   controller.startContinuous($('#budget').valueAsNumber),

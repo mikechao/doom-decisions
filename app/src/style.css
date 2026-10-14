@@ -300,6 +300,30 @@ summary:hover {
 #next[aria-busy="true"] {
   cursor: wait;
 }
+.control-bar--amber-gate > h2 {
+  color: var(--amber);
+}
+.control-bar--amber-gate > .control-prerequisite {
+  grid-column: 1 / -1;
+  margin: 0.625rem 0 0.75rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--amber);
+  color: var(--ink);
+  background: var(--amber);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.control-bar--amber-gate .continuous-group {
+  border-top-color: var(--boundary);
+}
+.control-bar--amber-gate #next:disabled,
+.control-bar--amber-gate #start:disabled,
+.control-bar--amber-gate #stop:disabled {
+  color: var(--muted);
+  border-color: var(--boundary);
+  background: var(--surface);
+}
 .control-guidance {
   margin-top: 0.5rem;
   color: var(--muted);

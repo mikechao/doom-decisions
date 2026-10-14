@@ -12,6 +12,10 @@ it('initializes, prepares, and completes one verified decision through ordinary 
   const { controller, native, worker, ops } = h;
   try {
     const prepared = await h.prepare();
+    assert.equal(
+      h.view.status,
+      'Ready at tic 1 — neutral 1/1/1; passive checks unchanged.',
+    );
     assert.equal(await controller.next(), 'completed');
     const completed = h.view.session;
     const entry = completed.evidence.decisions[0];
