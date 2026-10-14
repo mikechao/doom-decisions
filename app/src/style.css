@@ -94,6 +94,9 @@ header {
 .session-rail {
   padding: 1.25rem 1rem;
 }
+:where(.setup > summary) > h2 {
+  display: inline;
+}
 .setup-content {
   display: grid;
   gap: 0.875rem;
@@ -196,6 +199,7 @@ summary {
 summary:hover {
   background: #23271d;
 }
+.setup > summary,
 .setup-details summary,
 .control-guidance > summary {
   padding-inline: 0;

@@ -12,8 +12,7 @@ type Elements = {
   '#iwad': HTMLInputElement;
   '#key': HTMLInputElement;
   '#key-state': HTMLParagraphElement;
-  '#setup': HTMLElement;
-  '#setup-title': HTMLHeadingElement;
+  '#setup': HTMLDetailsElement;
   '#setup-asset': HTMLSpanElement;
   '#control-prerequisite': HTMLParagraphElement;
   '#tics': HTMLInputElement;
@@ -61,7 +60,6 @@ async function localFetch(name: string, json = false): Promise<unknown> {
 function displaySetupStatus(run: NonNullable<SessionPresentation['session']>) {
   const prepared = run.prepared;
   const file = $('#iwad').files?.[0];
-  $('#setup-title').textContent = prepared ? 'Setup & key' : 'Set up Doom';
   $('#setup-asset').textContent = file
     ? `${file.name} · ${prepared ? 'prepared' : 'selected'}`
     : '';
@@ -72,6 +70,23 @@ const displayHistory = createDecisionHistory(
 );
 type SessionRunPresentation = NonNullable<SessionPresentation['session']>;
 let latestSession: SessionRunPresentation | undefined;
+let setupAutoCollapseDone = false;
+let keyCommitted = false;
+let setupPointerActive = false;
+function collapseCompletedSetup(
+  focusTarget: Node | null = document.activeElement,
+) {
+  if (
+    setupAutoCollapseDone ||
+    setupPointerActive ||
+    $('#setup').contains(focusTarget) ||
+    !latestSession?.prepared ||
+    !(latestSession.hasClient || (keyCommitted && $('#key').value.trim()))
+  )
+    return;
+  setupAutoCollapseDone = true;
+  $('#setup').open = false;
+}
 function updateControlAvailability(run: SessionRunPresentation | undefined) {
   const readiness = deriveDecisionControls(
     run,
@@ -101,6 +116,7 @@ function display(view: SessionPresentation) {
   const run = view.session;
   if (run) latestSession = run;
   updateControlAvailability(latestSession);
+  collapseCompletedSetup();
   if (!run) return;
   $('#status').dataset.phase = run.phase;
   $('#evidence').textContent = JSON.stringify(run.evidence, null, 2);
@@ -161,8 +177,48 @@ const controller = createSessionController({
 const syncCredentialReadiness = () => {
   updateControlAvailability(latestSession);
 };
-$('#key').addEventListener('input', syncCredentialReadiness);
-$('#key').addEventListener('change', syncCredentialReadiness);
+$('#key').addEventListener('input', () => {
+  keyCommitted = false;
+  syncCredentialReadiness();
+});
+const commitKeyEdit = (event: Event) => {
+  keyCommitted = $('#key').value.trim().length > 0;
+  syncCredentialReadiness();
+  // Keep setup open when focus moves into its credential-handling disclosure.
+  // During focusout, activeElement can be body; relatedTarget is the destination.
+  collapseCompletedSetup(
+    event.type === 'focusout'
+      ? ((event as FocusEvent).relatedTarget as Node | null)
+      : document.activeElement,
+  );
+};
+$('#key').addEventListener('change', commitKeyEdit);
+$('#setup').addEventListener('focusout', commitKeyEdit);
+// A summary click also covers native keyboard activation. Any deliberate toggle
+// hands disclosure ownership to the user, including before setup is complete.
+$('#setup')
+  .querySelector('summary')
+  ?.addEventListener('click', () => {
+    setupAutoCollapseDone = true;
+  });
+// Blur/change can run between pointerdown and click. Keep the rail still until
+// the click has reached its target (including Next/Start), then collapse once.
+// A gesture without a click leaves it open until the next click or cancellation.
+document.addEventListener(
+  'pointerdown',
+  () => {
+    setupPointerActive = true;
+  },
+  true,
+);
+document.addEventListener('click', () => {
+  setupPointerActive = false;
+  collapseCompletedSetup();
+});
+document.addEventListener('pointercancel', () => {
+  setupPointerActive = false;
+  collapseCompletedSetup();
+});
 $('#next').addEventListener('click', () => controller.next());
 $('#start').addEventListener('click', () =>
   controller.startContinuous($('#budget').valueAsNumber),
