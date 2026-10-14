@@ -306,7 +306,7 @@ npm --prefix app run check
 
 `npm --prefix app run lint` checks without writing.
 **`npm --prefix app run format` writes changes** to included files.
-`test` runs the complete offline application regression suite: all eight
+`test` runs the complete offline application regression suite: all nine
 `tests/*.test.ts` files in the default Node environment, with isolated files and
 serial cases within each file. No additional Vitest configuration is needed.
 `check` runs DOM and Worker TypeScript checks, static Worker packaging/import
@@ -317,14 +317,18 @@ asset checks and never format source automatically.
 The suite covers whole-body request fidelity and fresh request trees; admission,
 frozen N, stale fences, choice validation and receipt accounting; Latest Outcome
 truth gates; pinned SDK transport, deadlines, charging and helper/underlying-reader
-ownership; and passive Worker imports/unknown-operation retirement. IWAD,
+ownership; and passive Worker imports/unknown-operation retirement. The ordinary-import
+`session-controller.test.ts` initializes the real controller, prepares synthetic
+receipts through neutral 1/1/1 and passive/idle checks, and completes one verified
+SDK decision with local fake transport and native/Canvas hash agreement. IWAD,
 terminal and continuous tests retain source extraction, Node type stripping and
 VM contexts with mocked DOM, SDK, Worker responses and native receipts. They
 cover synthetic size/digest admission, initialization failures, sequential frame
 checkpoints, request/budget ownership, Stop before/after dispatch, delayed
 success/rejection, timeout cleanup, failures without retry, and terminal/unsupported/
-uncertain boundaries. These source markers currently pass; extraction remains
-fragile when production source changes.
+uncertain boundaries. These legacy loaders now read the moved controller and (for terminal/continuous)
+the browser renderer; their prepared-state and VM Error/timer seams remain for
+Stage 3. Extraction remains fragile when production source changes.
 
 All fixtures are synthetic/offline. They use no game assets and demonstrate no
 real Chrome, paid Decisions API, native Doom/WASM or live gameplay correctness,
@@ -344,6 +348,15 @@ npm --prefix app run check
 git diff --check
 ```
 
+`src/session-controller.ts` is inert on import and construction. Its factory owns
+session/attempt identity, readiness, preparation/proofs, decisions, continuous
+admission, Stop/SDK reader cleanup, recovery and retirement. Explicit commands
+start work. `src/main.ts` composes DOM rendering, synchronous input and Canvas
+ports, local resource fetch, the Worker factory and page events. Presentation
+receives detached read-only evidence and controller-decided controls, never mutable
+session state, clients or cancellation hooks. Canvas ports return pixels; the
+controller checks their digests and native receipts between the session fences.
+
 `src/worker.ts` is the sole app-owned Worker entrypoint, loaded with Vite's literal
 Worker constructor and explicit ES output format. `worker-shared.ts` contains
 receipt types and one native step verifier reused by the Worker and controller;
@@ -351,7 +364,7 @@ importing it starts no Worker. There is no raw-source/Blob assembly or experimen
 file dependency. Retired experiments are available in Git history; native engine
 semantics are unchanged.
 
-`tsconfig.json` checks the DOM controller and shared code; `tsconfig.worker.json`
+`tsconfig.json` checks the browser entry, session controller and shared code; `tsconfig.worker.json`
 checks the Worker and shared code with WebWorker globals. Explicit `.ts` imports
 also resolve in the Vitest tests. The packaging check parses
 stripped source with Vite's already-installed parser and checks the constructor,

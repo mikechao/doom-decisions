@@ -29,10 +29,23 @@ import {
   workerResult,
 } from './fixtures/synthetic-doom.ts';
 
-// Exercise the actual controller functions and click orchestration in a VM.
-// Source sections avoid loading main's asset/SDK startup. No production extraction
-// or alternate orchestration is introduced; presentation and platform objects are mocks.
-const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+// Exercise the moved production controller and browser renderer in one VM realm.
+// These legacy cases start at a prepared checkpoint; ordinary-import lifecycle
+// coverage lives in session-controller.test.ts. No controller copy is retained.
+const main = readFileSync(
+  new URL('../src/session-controller.ts', import.meta.url),
+  'utf8',
+);
+const browser = readFileSync(
+  new URL('../src/main.ts', import.meta.url),
+  'utf8',
+);
+function browserSection(start, end) {
+  const first = browser.indexOf(start),
+    last = browser.indexOf(end, first);
+  assert.ok(first >= 0 && last > first, `Browser source markers: ${start}`);
+  return browser.slice(first, last);
+}
 function section(start, end) {
   const first = main.indexOf(start),
     last = main.indexOf(end, first);
@@ -68,15 +81,29 @@ const controllerSource = stripTypeScriptTypes(
       ${observationChecksSource}
       return { passiveCheck, healthy, checkPrepared };
     })();`,
-    section('function assertCurrent(', 'const displayHistory ='),
-    section('function display(run:', 'async function request<'),
+    `const presentBrowser = (() => {
+      ${browserSection('function displaySetupStatus(', 'const displayHistory =')}
+      ${browserSection('function display(view:', 'const controller =')}
+      return display;
+    })();`,
+    `const ports = {
+      readTics: () => $('#tics').valueAsNumber,
+      takeKey: () => { const key = $('#key').value.trim(); if (key) $('#key').value = ''; return key; },
+      clearKey: () => { $('#key').value = ''; },
+      focusBudget: () => $('#budget').focus(),
+      capture: () => ({ png: canvas.toDataURL('image/png'), rgba: context.getImageData(0,0,640,400).data }),
+      paintAndReadback: (rgba) => { context.putImageData(new ImageData(rgba,640,400),0,0); return context.getImageData(0,0,640,400).data; },
+      present: presentBrowser,
+    };`,
+    section('function assertCurrent(', 'async function request<'),
     executorSource,
     `const { requestWorker } = (() => {
       ${workerRequestSource}
       return { requestWorker };
     })();`,
     section('async function request<', 'function fence('),
-    section('function fence(', "$('#start').addEventListener"),
+    section('function fence(', 'async function prepare('),
+    `$('#next').addEventListener('click', () => runOneDecision(current));`,
     '({ retire, request, decide })',
   ].join('\n'),
 );
@@ -183,6 +210,7 @@ function controllerFixture(native, { delayed = false, badFrame = false } = {}) {
   class MockAPIError extends Error {}
   const api = runInNewContext(controllerSource, {
     initialRun,
+    structuredClone,
     $,
     buildDefaultDecisionRequest,
     admitDecision,

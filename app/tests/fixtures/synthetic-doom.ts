@@ -103,6 +103,21 @@ export function observation(n) {
     },
   };
 }
+// Preparation starts at zero gameplay tics and zero passive renders.
+export function preparationResult(op) {
+  const result = observation(0);
+  Object.assign(result.counters, {
+    render: 0,
+    frame: 0,
+    netIntercept: 0,
+    titleReady: op === 'init' ? 1 : 0,
+  });
+  return {
+    ...result,
+    status: 0,
+    ...(op === 'prepare' ? { outcome: 'APPLIED' } : {}),
+  };
+}
 export const death = {
   ready: 0,
   gameEligible: 0,
@@ -117,7 +132,7 @@ export function nativeFixture({
   signals = {},
   trapAt = Infinity,
 } = {}) {
-  let current = observation(base),
+  let current = base === 0 ? preparationResult('prepare') : observation(base),
     calls = 0;
   return {
     get calls() {
@@ -166,7 +181,20 @@ export function workerResult(
   { corruptSnapshot = false, badReceipt = false, badFrame = false } = {},
 ) {
   let result, frame;
-  if (data.op === 'snapshot') {
+  if (data.op === 'load-i11') {
+    result = {
+      ...preparationResult('init'),
+      counters: Object.fromEntries(
+        Object.keys(observation(0).counters).map((key) => [key, 0]),
+      ),
+      wasmSha256: sha(new Uint8Array(data.wasm)),
+      wadSha256: sha(new Uint8Array(data.wad)),
+      imports: [],
+      exports: [],
+    };
+  } else if (data.op === 'init' || data.op === 'prepare') {
+    result = preparationResult(data.op);
+  } else if (data.op === 'snapshot') {
     result = native.observe();
     if (corruptSnapshot) result.native.health--;
   } else if (data.op === 'action') {

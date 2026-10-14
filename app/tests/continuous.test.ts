@@ -31,9 +31,22 @@ import {
   workerResult,
 } from './fixtures/synthetic-doom.ts';
 
-// Use the same bounded source-section VM seam as terminal.test.ts. All decision,
+// Use the moved controller and browser presentation through bounded VM seams. All decision,
 // SDK ownership, Stop, and loop logic below comes from production source.
-const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+const main = readFileSync(
+  new URL('../src/session-controller.ts', import.meta.url),
+  'utf8',
+);
+const browser = readFileSync(
+  new URL('../src/main.ts', import.meta.url),
+  'utf8',
+);
+function browserSection(start, end) {
+  const first = browser.indexOf(start),
+    last = browser.indexOf(end, first);
+  assert.ok(first >= 0 && last > first, `Browser source markers: ${start}`);
+  return browser.slice(first, last);
+}
 function section(start, end) {
   const first = main.indexOf(start),
     last = main.indexOf(end, first);
@@ -69,15 +82,31 @@ const controllerSource = stripTypeScriptTypes(
       ${observationChecksSource}
       return { passiveCheck, healthy, checkPrepared };
     })();`,
-    section('function assertCurrent(', 'const displayHistory ='),
-    section('function display(run:', 'async function request<'),
+    `const presentBrowser = (() => {
+      ${browserSection('function displaySetupStatus(', 'const displayHistory =')}
+      ${browserSection('function display(view:', 'const controller =')}
+      return display;
+    })();`,
+    `const ports = {
+      readTics: () => $('#tics').valueAsNumber,
+      takeKey: () => { const key = $('#key').value.trim(); if (key) $('#key').value = ''; return key; },
+      clearKey: () => { $('#key').value = ''; },
+      focusBudget: () => $('#budget').focus(),
+      capture: () => ({ png: canvas.toDataURL('image/png'), rgba: context.getImageData(0,0,640,400).data }),
+      paintAndReadback: (rgba) => { context.putImageData(new ImageData(rgba,640,400),0,0); return context.getImageData(0,0,640,400).data; },
+      present: presentBrowser,
+    };`,
+    section('function assertCurrent(', 'async function request<'),
     executorSource,
     `const { requestWorker } = (() => {
       ${workerRequestSource}
       return { requestWorker };
     })();`,
     section('async function request<', 'function fence('),
-    section('function fence(', 'async function prepare()'),
+    section('function fence(', 'async function prepare('),
+    `$('#next').addEventListener('click', () => runOneDecision(current));`,
+    `$('#start').addEventListener('click', () => startContinuous($('#budget').valueAsNumber));
+     $('#stop').addEventListener('click', stopContinuous);`,
     '({ retire, request, decide, runOneDecision, startContinuous, stopContinuous })',
   ].join('\n'),
 );
@@ -286,6 +315,7 @@ function fixture(options = {}) {
   $('#budget');
   const api = runInNewContext(controllerSource, {
     initialRun,
+    structuredClone,
     $,
     admitDecision,
     assertDecision,
@@ -990,11 +1020,11 @@ describe('continuous', () => {
     assert.equal(preparation.calls, 1);
     assert.equal(preparation.observe().counters.gametic, 1);
     assert.match(
-      section('async function prepare()', "$('#iwad').addEventListener"),
+      section('async function prepare(', 'async function initialize()'),
       /action\(run, 0, 1, before/,
     );
     assert.doesNotMatch(
-      section('async function prepare()', "$('#iwad').addEventListener"),
+      section('async function prepare(', 'async function initialize()'),
       /decide\(|runOneDecision\(/,
     );
     assert.equal(assessE1M1(observation(1)).kind, 'alive');

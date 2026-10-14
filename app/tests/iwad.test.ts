@@ -16,7 +16,10 @@ import {
 
 const sha = (bytes) =>
   createHash('sha256').update(new Uint8Array(bytes)).digest('hex');
-const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+const main = readFileSync(
+  new URL('../src/session-controller.ts', import.meta.url),
+  'utf8',
+);
 const worker = readFileSync(
   new URL('../src/worker.ts', import.meta.url),
   'utf8',
@@ -44,11 +47,9 @@ const controllerSource = stripTypeScriptTypes(
       return { passiveCheck, healthy, checkPrepared };
     })();`,
     section(main, 'function retire(', 'function terminalStatus('),
-    section(main, 'async function prepare()', "$('#iwad').addEventListener"),
-    '({ prepare, get run() { return current; } })',
-  ]
-    .join('\n')
-    .replaceAll('import.meta.url', "'http://fixture.invalid/'"),
+    section(main, 'async function prepare(', 'async function initialize()'),
+    `({ prepare: () => prepare($('#iwad').files?.[0]), get run() { return current; } })`,
+  ].join('\n'),
 );
 const wasmBytes = new Uint8Array([1, 2, 3]).buffer;
 const smallWad = new ArrayBuffer(IWAD_MIN_BYTES);
@@ -89,21 +90,29 @@ function browserFixture(size, wad = smallWad, options = {}) {
     sdk: {},
     crypto: webcrypto,
     $: (selector) => nodes.get(selector),
-    context: { clearRect() {} },
-    display: (_run, status) => statuses.push(status),
-    localFetch: async () => {
-      ++fetches;
-      return wasmBytes;
-    },
-    Worker: class {
-      constructor() {
+    ports: {
+      clearCanvas() {},
+      clearKey() {
+        nodes.get('#key').value = '';
+      },
+      present(view) {
+        if (view.frameStatus)
+          nodes.get('#frame').textContent = view.frameStatus;
+      },
+      localFetch: async () => {
+        ++fetches;
+        return wasmBytes;
+      },
+      createWorker() {
         ++constructions;
-      }
-      terminate() {
-        terminated = true;
-      }
+        return {
+          terminate() {
+            terminated = true;
+          },
+        };
+      },
     },
-    URL, // The VM uses an inert URL base in place of import.meta.url.
+    display: (_run, status) => statuses.push(status),
     request: async (_run, op) => {
       ops.push(op);
       if (op === 'load-i11')
