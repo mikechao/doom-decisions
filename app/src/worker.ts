@@ -3,9 +3,11 @@ import type {
   Dimensions,
   NativeObservation,
   Observation,
+  Operation,
   Reply,
   Request,
   Results,
+  Success,
 } from './worker-shared.ts';
 import {
   assessE1M1,
@@ -312,7 +314,11 @@ self.onmessage = async ({ data }: MessageEvent<Request>) => {
   const started = performance.now();
   let nativeExecuting = false;
   try {
-    let result: Results[keyof Results], pixels: ArrayBuffer | undefined;
+    // Keep each operation/result pair correlated through the shared send path.
+    let completion: {
+      [O in Operation]: Pick<Success<O>, 'op' | 'result'>;
+    }[Operation];
+    let pixels: ArrayBuffer | undefined;
     if (data.op === 'load-i11') {
       check(!instance, 'Already loaded');
       check(data.wasm.byteLength <= 16 * 1024 * 1024, 'Oversized WASM');
@@ -360,36 +366,48 @@ self.onmessage = async ({ data }: MessageEvent<Request>) => {
         imports,
       )) as NativeInstance;
       memory = instance.exports.memory;
-      result = {
-        wasmSha256,
-        wadSha256,
-        imports: WebAssembly.Module.imports(module),
-        exports: WebAssembly.Module.exports(module),
-        ...observations(),
+      completion = {
+        op: data.op,
+        result: {
+          wasmSha256,
+          wadSha256,
+          imports: WebAssembly.Module.imports(module),
+          exports: WebAssembly.Module.exports(module),
+          ...observations(),
+        },
       };
     } else if (data.op === 'init') {
       nativeExecuting = true;
       const status = instance.exports.initControlled();
       nativeExecuting = false;
-      result = { status, ...observations(), dimensions, logs, logsTruncated };
+      completion = {
+        op: data.op,
+        result: { status, ...observations(), dimensions, logs, logsTruncated },
+      };
     } else if (data.op === 'action') {
-      result = i11Action(
-        data.mask,
-        data.tics,
-        (mask) => instance.exports.stepNeutralControlled(mask),
-        () => ({ ...observations(), logs: [...logs], logsTruncated }),
-      );
+      completion = {
+        op: data.op,
+        result: i11Action(
+          data.mask,
+          data.tics,
+          (mask) => instance.exports.stepNeutralControlled(mask),
+          () => ({ ...observations(), logs: [...logs], logsTruncated }),
+        ),
+      };
     } else if (data.op === 'prepare') {
       nativeExecuting = true;
       const status = instance.exports.prepareE1M1Controlled();
       nativeExecuting = false;
       check(status === 0 || status === -1, 'Unexpected native status');
-      result = {
-        status,
-        outcome: status === 0 ? 'APPLIED' : 'REFUSED',
-        ...observations(),
-        logs,
-        logsTruncated,
+      completion = {
+        op: data.op,
+        result: {
+          status,
+          outcome: status === 0 ? 'APPLIED' : 'REFUSED',
+          ...observations(),
+          logs,
+          logsTruncated,
+        },
       };
     } else if (data.op === 'render') {
       nativeExecuting = true;
@@ -416,21 +434,22 @@ self.onmessage = async ({ data }: MessageEvent<Request>) => {
         pixels = frame.buffer;
         pendingFrame = undefined;
       }
-      result = rendered;
+      completion = { op: data.op, result: rendered };
     } else if (data.op === 'snapshot') {
-      result = observations(); // Read only; no init, display or tick call.
+      // Read only; no init, display or tick call.
+      completion = { op: data.op, result: observations() };
     } else throw Error('Unknown operation');
     self.postMessage(
       {
         ok: true,
-        op: data.op,
+        ...completion,
         elapsedMs: performance.now() - started,
-        result,
         pixels,
       } satisfies Reply,
       pixels ? [pixels] : [],
     );
-    if ('outcome' in result && result.outcome === 'FAULT') self.close();
+    if ('outcome' in completion.result && completion.result.outcome === 'FAULT')
+      self.close();
   } catch (error) {
     self.postMessage({
       ok: false,

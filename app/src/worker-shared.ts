@@ -194,12 +194,14 @@ export type RequestExtra = {
   action: { mask: number; tics: number };
 };
 export type Success<O extends Operation = Operation> = {
-  ok: true;
-  op: O;
-  elapsedMs: number;
-  result: Results[O];
-  pixels?: ArrayBuffer;
-};
+  [K in O]: {
+    ok: true;
+    op: K;
+    elapsedMs: number;
+    result: Results[K];
+    pixels?: ArrayBuffer;
+  };
+}[O];
 export type Reply<O extends Operation = Operation> =
   | Success<O>
   | (Partial<Observation> & {
