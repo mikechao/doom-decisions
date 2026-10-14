@@ -292,42 +292,43 @@ early-prefix behavior, remains separate and uncollected despite the owner's
 reported death observation. None of these browser/API/WASM trials has been
 executed by Codex for this implementation.
 
-## Static checks and source boundary
+## Offline tests, static checks and source boundary
 
 Biome **2.5.15** is the app's sole linter and formatter, exact-pinned in the
-app-local package and lockfile. After separate authorization, run from the
-repository root:
+app-local package and lockfile. Vitest **5.0.4** is the exact-pinned application
+test runner. With dependencies already installed and offline test execution
+separately authorized, run either command from the repository root:
 
 ```sh
+npm --prefix app test
 npm --prefix app run check
-node --experimental-strip-types app/tests/decision.mjs
-node --experimental-strip-types app/tests/iwad.mjs
-node --experimental-strip-types app/tests/terminal.mjs
-node --experimental-strip-types app/tests/continuous.mjs
 ```
 
 `npm --prefix app run lint` checks without writing.
 **`npm --prefix app run format` writes changes** to included files.
+`test` runs the complete offline application regression suite: all eight
+`tests/*.test.ts` files in the default Node environment, with isolated files and
+serial cases within each file. No additional Vitest configuration is needed.
 `check` runs DOM and Worker TypeScript checks, static Worker packaging/import
-checks, an offline Worker entry smoke, and non-writing Biome lint/format checks
-in sequence, stopping on failure. Builds retain their asset checks and never
-format source automatically. The tiny offline script uses Node assertions and the
-actual admission/fence, choice validator and receipt verifier. It covers frozen N,
-double admission, stale identities, invalid choices, synthetic 1 → 3 → 8 chains,
-partial/fault/missing receipts and reported-versus-verified mismatches. It does not
-exercise DOM wiring, real SDK calls, real Workers or native WASM execution.
-The terminal and continuous tests use production controller source in a VM with
-mocked DOM, SDK, Worker responses, and native receipts. They cover sequential
-frame checkpoints, per-admission N, request/budget ownership, Stop before/after
-dispatch, ignored Abort with delayed success/rejection, timeout cleanup, API
-failure without retry, and terminal/unsupported/uncertain boundaries. They are
-separate commands, not included in `npm run check`, and prove no real runtime behavior.
-Their current VM extraction uses stale source markers and needs a separate narrow
-repair before they can supply regression evidence for this change.
-`iwad.mjs` uses synthetic buffers and mocked platform/native boundaries to cover
-size admission, per-selection digest agreement, WASM integrity and failed
-initialization. It executes no real Worker/WASM and loads no game asset; it does
-not establish successful browser preparation or malicious-input safety.
+checks, that complete suite once (including Worker-entry smoke), and non-writing
+Biome lint/format checks in sequence, stopping on failure. Builds retain their
+asset checks and never format source automatically.
+
+The suite covers whole-body request fidelity and fresh request trees; admission,
+frozen N, stale fences, choice validation and receipt accounting; Latest Outcome
+truth gates; pinned SDK transport, deadlines, charging and helper/underlying-reader
+ownership; and passive Worker imports/unknown-operation retirement. IWAD,
+terminal and continuous tests retain source extraction, Node type stripping and
+VM contexts with mocked DOM, SDK, Worker responses and native receipts. They
+cover synthetic size/digest admission, initialization failures, sequential frame
+checkpoints, request/budget ownership, Stop before/after dispatch, delayed
+success/rejection, timeout cleanup, failures without retry, and terminal/unsupported/
+uncertain boundaries. These source markers currently pass; extraction remains
+fragile when production source changes.
+
+All fixtures are synthetic/offline. They use no game assets and demonstrate no
+real Chrome, paid Decisions API, native Doom/WASM or live gameplay correctness,
+successful browser preparation, or malicious-IWAD safety.
 
 `biome.json` includes app source TypeScript (including `.d.ts`), app-owned
 JavaScript and CSS, `biome.json`, `package.json`, both TypeScript configs, and
@@ -352,7 +353,7 @@ semantics are unchanged.
 
 `tsconfig.json` checks the DOM controller and shared code; `tsconfig.worker.json`
 checks the Worker and shared code with WebWorker globals. Explicit `.ts` imports
-also resolve in the offline Node strip-types tests. The packaging check parses
+also resolve in the Vitest tests. The packaging check parses
 stripped source with Vite's already-installed parser and checks the constructor,
 ES format, CSP and import boundary. The offline entry smoke imports the actual
 modules, checks that only the entry installs a handler, and checks retirement on

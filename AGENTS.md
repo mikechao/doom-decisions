@@ -17,7 +17,7 @@ Continuous Mode freezes a positive safe-integer **per-run SDK-attempt budget, de
 ## Project Structure & Module Organization
 
 - `engine/doom/`: locally modified upstream Doom/WASM source, tracked as ordinary root-repository files and the source of truth for compilation. `src/` holds the adapter/WAT helpers; `doomgeneric/` holds the engine. Do not recreate a nested repository or submodule. See [vendor provenance](docs/doom-vendor-provenance.md).
-- `app/`: static browser application using vanilla TypeScript and DOM APIs, plain CSS, and an app-local `package-lock.json`. Exact pins in `app/package.json`: TypeScript **7.0.2**, Vite **8.3.4**, official OpenAI SDK **7.32.0**, Biome **2.5.15**. No React or Tailwind.
+- `app/`: static browser application using vanilla TypeScript and DOM APIs, plain CSS, and an app-local `package-lock.json`. Exact pins in `app/package.json`: TypeScript **7.0.2**, Vite **8.3.4**, official OpenAI SDK **7.32.0**, Biome **2.5.15**, Vitest **5.0.4**. No React or Tailwind.
 - `build.sh`: thin engine → verified staging → Vite build wrapper. `scripts/build_doom.py` owns compilation admission/evidence; `scripts/inspect_doom.mjs` checks the WASM interface; `scripts/stage_web.mjs` verifies/stages artifacts; `scripts/check_worker.mjs` protects Worker packaging.
 - `README.md` is the project entry point; `app/README.md` is the setup/run guide. `docs/` retains build/provenance references. Historical reports, retired experiments and superseded plans are recoverable from Git history. Do not silently move or delete ignored assets/artifacts, including any historical `references/doom.wasm/build/` outputs. New engine outputs belong under `engine/doom/build/`.
 
@@ -51,12 +51,13 @@ Legacy upstream `all`, `doom`, example, dev-init, clean, and hook targets requir
 
 With dependencies already installed, app checks are:
 
-- `npm --prefix app run check`: DOM and Worker TypeScript checking, static Worker packaging/import checks, offline Worker entry smoke, then non-writing Biome lint/format checks.
+- `npm --prefix app run check`: DOM and Worker TypeScript checking, static Worker packaging/import checks, the complete Vitest offline application regression suite (including Worker-entry smoke), then non-writing Biome lint/format checks. Requires offline test authorization and runs the suite once.
+- `npm --prefix app test`: the complete offline application regression suite in eight `app/tests/*.test.ts` files under Vitest's default Node environment and file isolation. Requires offline test authorization; no separate legacy Node test commands remain.
 - `npm --prefix app run typecheck`: `tsc --noEmit` for the DOM config and `tsconfig.worker.json`.
 - `npm --prefix app run lint`: `biome lint .`, without writes.
 - `npm --prefix app run format`: `biome format --write .` — **writes files**.
 
-After separate test authorization, run the dedicated Node suites with `node --experimental-strip-types app/tests/decision.mjs`, `node --experimental-strip-types app/tests/terminal.mjs`, and `node --experimental-strip-types app/tests/continuous.mjs`. **`check` does not run these three suites**; its Worker-entry smoke is separate. These offline suites exercise admission/receipts and controller behavior with synthetic or mocked state, including the pinned SDK with rejecting/delayed offline transport; they do not establish real browser/API/WASM behavior.
+After separate offline test authorization, use `npm --prefix app test` or `npm --prefix app run check`. The suite covers request construction, admission/receipts, presentation, SDK lifecycle, Worker-entry imports/retirement, IWAD admission, terminal outcomes, and continuous controller behavior. Fixtures are synthetic/offline, including the pinned SDK with fake rejecting/delayed transport; they do not demonstrate real Chrome, paid Decisions API, native Doom/WASM, or live gameplay correctness. IWAD, terminal, and continuous tests retain bounded source extraction, Node type stripping, and VM contexts with mocked platform/native boundaries; source-marker fragility remains a limitation. Cases run serially within each file; keep global replacements scoped with reliable cleanup and retain file isolation.
 
 Read-only inspection and non-writing syntax/diff checks include `git status --short`, `git diff`, `git diff --check`, `rg`, `bash -n build.sh`, and `node --check scripts/stage_web.mjs`. Honor task-specific execution limits; a documentation-only task does not authorize tests or runtime execution.
 
@@ -72,7 +73,7 @@ Preserve `worker: { format: 'es' }` and the CSP in `app/index.html`: same-origin
 
 Preserve pre-dispatch session/attempt/Stop fences, no overlapping native requests, native-state verification, and observation/resulting-frame checkpoint and native/Canvas hash verification. Requested tics, Worker-reported consumption, and controller-verified tics are separate evidence; retain verified prefixes and terminal/uncertainty handling. Only fully verified actions and resulting frames permit another continuous iteration. Never treat uncertain completion as success or replay a consumed action.
 
-**OpenAI SDK 7.32.0 reader ownership is mandatory:** `asResponse()`/`withResponse()` helpers and the actual underlying `response.text()` reader can settle at different times. Keep admission locked until both helpers and the underlying reader settle, including Abort/timeout cases; a never-settling read keeps controls locked. Do not weaken this by moving or simplifying cancellation/reader code in `app/src/main.ts`; `app/tests/continuous.mjs` covers the helper/reader race. Abort does not prove remote processing or billing stopped. Never copy credentials into logs, artifacts, history, or prompts.
+**OpenAI SDK 7.32.0 reader ownership is mandatory:** `asResponse()`/`withResponse()` helpers and the actual underlying `response.text()` reader can settle at different times. Keep admission locked until both helpers and the underlying reader settle, including Abort/timeout cases; a never-settling read keeps controls locked. Preserve cancellation/reader lifecycle code in `app/src/decisions-api.ts` and admission/Stop/native-dispatch ownership in `app/src/main.ts`; `app/tests/decisions-api.test.ts` and `app/tests/continuous.test.ts` cover the helper/reader race. Abort does not prove remote processing or billing stopped. Never copy credentials into logs, artifacts, history, or prompts.
 
 Use the smallest useful experiment and Codex for bounded investigations, implementations, and reviews. Keep changes focused and preserve proven engine/Worker behavior. Vendored hooks can download tools or alter tracked files; inspect their effects before running them.
 
