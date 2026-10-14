@@ -17,18 +17,13 @@ import {
   requestDecision,
 } from './decisions-api.ts';
 import { projectLatestOutcome } from './latest-outcome';
-import {
-  checkPrepared,
-  healthy,
-  passiveCheck,
-} from './native-observation-checks.ts';
+import { checkPrepared, passiveCheck } from './native-observation-checks.ts';
 import type {
   Counters,
   E1M1Assessment,
   NativeObservation,
   Observation,
   Operation,
-  Reply,
   RequestExtra,
   Results,
   Success,
@@ -38,6 +33,7 @@ import {
   IWAD_MIN_BYTES,
   IWAD_SIZE_ERROR,
 } from './worker-shared.ts';
+import { requestWorker } from './worker-request.ts';
 import './style.css';
 
 type Elements = {
@@ -292,7 +288,6 @@ async function request<O extends Operation>(
     ? [extra: RequestExtra[O], transfer?: Transferable[]]
     : [extra?: undefined, transfer?: Transferable[]]
 ): Promise<Success<O>> {
-  const [extra = {}, transfer = []] = args;
   assertCurrent(run);
   check(
     op !== 'action' || !run.terminal,
@@ -301,78 +296,16 @@ async function request<O extends Operation>(
   check(!run.cancel, 'Overlapping Worker operation refused.');
   run.evidence.activeOperation = op;
   display(run);
-  const worker = run.worker;
-  return new Promise<Success<O>>((resolve, reject) => {
-    let settled = false;
-    const finish = (
-      ...outcome: [error: unknown] | [error: null, data: Success<O>]
-    ) => {
-      const [error, data] = outcome;
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      worker.onmessage = worker.onerror = worker.onmessageerror = null;
-      run.cancel = null;
-      if (error) {
-        retire(run);
-        reject(error);
-      } else if (data) resolve(data);
-      else {
-        retire(run);
-        reject(Error('Missing Worker completion receipt.'));
-      }
-    };
-    const timer = setTimeout(
-      () =>
-        finish(Error(`${op} watchdog expired (2000 ms); completion unknown.`)),
-      2000,
-    );
-    run.cancel = (error) => finish(error);
-    worker.onerror = () =>
-      finish(Error(`${op} Worker fault; completion unknown.`));
-    worker.onmessageerror = () =>
-      finish(Error(`${op} Worker reply unreadable; completion unknown.`));
-    worker.onmessage = ({ data: incoming }: MessageEvent<unknown>) => {
-      try {
-        assertCurrent(run);
-        check(
-          incoming !== null &&
-            typeof incoming === 'object' &&
-            'op' in incoming &&
-            incoming.op === op,
-          'Unexpected Worker reply; completion unknown.',
-        );
-        // The exact bundled Worker owns this receipt shape. This assertion is a
-        // protocol contract, not payload validation; native checks below still run.
-        const data = incoming as Reply<O>;
-        if (!data.ok) {
-          // The Worker has no credential; retain only its bounded diagnostic.
-          run.evidence.workerError =
-            typeof data.error === 'string'
-              ? data.error.slice(0, 500)
-              : 'Worker operation failed.';
-          throw Error(run.evidence.workerError);
-        }
-        run.evidence.operations.push({
-          op,
-          elapsedMs: data.elapsedMs,
-          result: data.result,
-        });
-        delete run.evidence.activeOperation;
-        // An action fault can still contain independently verifiable completed
-        // steps. The action verifier must evaluate those before rejecting it.
-        if (op !== 'action') healthy(data.result);
-        finish(null, data);
-      } catch (error) {
-        finish(error);
-      }
-    };
-    try {
-      worker.postMessage({ op, ...extra }, transfer);
-    } catch {
-      finish(Error(`${op} dispatch failed; completion unknown.`));
-    }
-  });
+  return requestWorker(
+    run.worker,
+    run,
+    op,
+    {
+      assertCurrent: () => assertCurrent(run),
+      retire: () => retire(run),
+    },
+    ...args,
+  );
 }
 async function snapshot(run: Run) {
   const before = run.last;

@@ -190,6 +190,12 @@ const observationChecksSource = stripTypeScriptTypes(
     'utf8',
   ),
 ).replace(/^export /gm, '');
+// Keep Worker callbacks and failures in the same VM Error/timer realm.
+const workerRequestSource = stripTypeScriptTypes(
+  readFileSync(new URL('../src/worker-request.ts', import.meta.url), 'utf8'),
+)
+  .replace(/^import .*;\n/gm, '')
+  .replace(/^export /gm, '');
 const controllerSource = stripTypeScriptTypes(
   [
     'let current = initialRun; let pageExited = false;',
@@ -201,6 +207,10 @@ const controllerSource = stripTypeScriptTypes(
     section('function assertCurrent(', 'const displayHistory ='),
     section('function display(run:', 'async function request<'),
     executorSource,
+    `const { requestWorker } = (() => {
+      ${workerRequestSource}
+      return { requestWorker };
+    })();`,
     section('async function request<', 'function fence('),
     section('function fence(', "$('#start').addEventListener"),
     '({ retire, request, decide })',
