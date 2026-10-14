@@ -2,7 +2,7 @@
 // WASM, DOM, WAD, network, or game execution. Run offline after approval.
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { createHash, webcrypto } from 'node:crypto';
+import { webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext } from 'node:vm';
@@ -17,153 +17,17 @@ import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
 import { projectLatestOutcome } from '../src/latest-outcome.ts';
 import { assessE1M1 } from '../src/worker-shared.ts';
 
-// Import the actual finite action helper without instantiating its native module.
-const previousSelf = Object.getOwnPropertyDescriptor(globalThis, 'self');
-let i11Action;
-try {
-  globalThis.self = {};
-  ({ i11Action } = await import('../src/worker.ts'));
-} finally {
-  if (previousSelf) Object.defineProperty(globalThis, 'self', previousSelf);
-  else delete globalThis.self;
-}
-
-const work = [
-  'build',
-  'install',
-  'liveEntry',
-  'world',
-  'status',
-  'automap',
-  'hud',
-  'menu',
-  'outer',
-];
-const ticks = [
-  'nativeBuild',
-  'playerEntry',
-  'worldComplete',
-  'outerComplete',
-  'gametic',
-  'leveltime',
-  'virtualTicks',
-];
-function observation(n) {
-  const command = Object.fromEntries(
-    [
-      'forwardmove',
-      'sidemove',
-      'angleturn',
-      'chatchar',
-      'buttons',
-      'consistancy',
-      'buttons2',
-      'inventory',
-      'lookfly',
-      'arti',
-    ].map((key) => [key, 0]),
-  );
-  return {
-    counters: {
-      ...Object.fromEntries(ticks.map((key) => [key, n])),
-      wasiInit: 1,
-      cInit: 1,
-      engineCreate: 1,
-      titlePrepare: 1,
-      titleReady: 0,
-      render: 2,
-      frame: 2,
-      netIntercept: 10,
-      schedulerEntry: 0,
-      netBody: 0,
-      wipeEntry: 0,
-      demoLoad: 0,
-    },
-    native: {
-      ...Object.fromEntries(work.map((key) => [key, n])),
-      ready: 1,
-      loadComplete: 1,
-      resources: 1,
-      liveActor: 1,
-      gameEligible: 1,
-      gamestate: 0,
-      gameaction: 0,
-      episode: 1,
-      map: 1,
-      skill: 2,
-      playerstate: 0,
-      health: 100,
-      virtualMs: Math.floor((n * 1000) / 35),
-      buildTick: n - 1,
-      turnheld: 0,
-      keyUp: 0,
-      keyRight: 0,
-      keyDown: 0,
-      keyLeft: 0,
-      keyFire: 0,
-      keyUse: 0,
-      installEqual: 1,
-      entryEqual: 1,
-      actorEqual: 1,
-      contributorsValid: 1,
-      usedown: 0,
-      dclicktime: n,
-      dclicktime2: n,
-      dclickstate: 0,
-      dclicks: 0,
-      dclickstate2: 0,
-      dclicks2: 0,
-      built: command,
-      entered: { ...command },
-    },
-  };
-}
-const death = {
-  ready: 0,
-  gameEligible: 0,
-  playerstate: 1,
-  health: 0,
-  liveActor: 0,
-};
-const exit = { ready: 0, gameEligible: 0, gameaction: 6 };
-function nativeFixture({
-  base = 1,
-  at = Infinity,
-  signals = {},
-  trapAt = Infinity,
-} = {}) {
-  let current = observation(base),
-    calls = 0;
-  return {
-    get calls() {
-      return calls;
-    },
-    observe: () => structuredClone(current),
-    step(mask) {
-      assert.equal(
-        mask,
-        0,
-        'This synthetic fixture implements only neutral input',
-      );
-      ++calls;
-      if (calls === trapAt) throw Error('Synthetic trap; current tic unknown');
-      const prior = current;
-      current = observation(prior.counters.gametic + 1);
-      for (const key of ['render', 'frame', 'netIntercept'])
-        current.counters[key] = prior.counters[key];
-      if (calls === at) Object.assign(current.native, signals);
-      return 0;
-    },
-    render() {
-      ++current.counters.render;
-      ++current.counters.frame;
-      current.counters.netIntercept += 5;
-      return this.observe();
-    },
-  };
-}
-const execute = (native, n) =>
-  i11Action(0, n, (mask) => native.step(mask), native.observe);
+import {
+  death,
+  execute,
+  exit,
+  i11Action,
+  nativeFixture,
+  observation,
+  pixels,
+  sha,
+  workerResult,
+} from './fixtures/synthetic-doom.ts';
 
 // Exercise the actual controller functions and click orchestration in a VM.
 // Source sections avoid loading main's asset/SDK startup. No production extraction
@@ -216,13 +80,6 @@ const controllerSource = stripTypeScriptTypes(
     '({ retire, request, decide })',
   ].join('\n'),
 );
-const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
-function pixels(tic) {
-  const rgba = new Uint8ClampedArray(1024000);
-  rgba[0] = tic;
-  rgba[4] = tic + 1;
-  return rgba;
-}
 function deferred() {
   let resolve;
   const promise = new Promise((done) => {
@@ -278,19 +135,9 @@ function controllerFixture(native, { delayed = false, badFrame = false } = {}) {
     postMessage(data) {
       assert.equal(this.terminated, false);
       ops.push(data.op);
-      let result, frame;
-      if (data.op === 'snapshot') result = native.observe();
-      else if (data.op === 'action') result = execute(native, data.tics);
-      else if (data.op === 'render') {
-        result = native.render();
-        frame = pixels(result.counters.gametic);
-        result = {
-          ...result,
-          status: 0,
-          dimensions: { width: 640, height: 400 },
-          frameSha256: badFrame ? '0'.repeat(64) : sha(frame),
-        };
-      } else assert.fail(`Unexpected mock operation ${data.op}`);
+      const output = workerResult(native, data, { badFrame });
+      if (!output) assert.fail(`Unexpected mock operation ${data.op}`);
+      const { result, frame } = output;
       queueMicrotask(() =>
         this.onmessage?.({
           data: {
