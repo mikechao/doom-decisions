@@ -1,10 +1,12 @@
 import type { ActionName, Execution } from './decision';
 import { masks } from './decision';
+import type { DecisionStage } from './session-controller';
 
 // Presentation reads the controller's entries without owning or mutating evidence.
 type HistoryEntry = Readonly<{
   number: number;
   selectedTics: number;
+  stage: DecisionStage;
   status: string;
   action: ActionName | null;
   observation: Readonly<{ tic: number }> | null;
@@ -45,20 +47,22 @@ function probabilityText(value: number) {
     : percentage.format(value);
 }
 function decisionStatus(entry: HistoryEntry) {
-  if (entry.status === 'Complete') {
+  if (entry.stage === 'completed') {
     return entry.execution?.complete && entry.result
       ? 'Completed · verified and rendered'
       : 'Completion evidence unavailable';
   }
-  if (entry.action && entry.status === 'Requesting one action')
+  if (entry.action && entry.stage === 'requesting')
     return 'Choice received; checking unchanged game state';
   return entry.status;
 }
-function choicePending(entry: HistoryEntry) {
-  return (
-    entry.status === 'Capturing current frame' ||
-    entry.status === 'Requesting one action'
-  );
+export function projectDecisionHistorySummary(entry: HistoryEntry) {
+  const pending = entry.stage === 'capturing' || entry.stage === 'requesting';
+  return {
+    action: entry.action ?? (pending ? 'Action pending' : 'Action unavailable'),
+    latency: `API ${entry.latencyMs === null ? (pending ? 'latency pending' : 'latency unavailable') : `${entry.latencyMs} ms`}`,
+    status: decisionStatus(entry),
+  };
 }
 function createHistoryRow(number: number) {
   const item = document.createElement('li');
@@ -148,11 +152,10 @@ export function createDecisionHistory(
         historyRows.set(entry.number, view);
         history.prepend(view.item);
       }
-      const pending = choicePending(entry);
-      view.action.textContent =
-        entry.action ?? (pending ? 'Action pending' : 'Action unavailable');
-      view.latency.textContent = `API ${entry.latencyMs === null ? (pending ? 'latency pending' : 'latency unavailable') : `${entry.latencyMs} ms`}`;
-      view.status.textContent = decisionStatus(entry);
+      const summary = projectDecisionHistorySummary(entry);
+      view.action.textContent = summary.action;
+      view.latency.textContent = summary.latency;
+      view.status.textContent = summary.status;
       const values = entry.choice?.probabilities;
       view.unavailable.hidden = !!values;
       view.probabilities.hidden = !values;

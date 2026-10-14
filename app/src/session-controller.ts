@@ -55,9 +55,19 @@ type SdkProbe = {
   requestsEnabled: true;
 };
 type Frame = { tic: number; nativeSha256: string; canvasSha256: string };
+// Presentation progress only; never proof of execution, cleanup or readiness.
+export type DecisionStage =
+  | 'capturing'
+  | 'requesting'
+  | 'stepping'
+  | 'rendering'
+  | 'completed'
+  | 'cleanup'
+  | 'ended';
 type DecisionEntry = {
   number: number;
   selectedTics: number;
+  stage: DecisionStage;
   status: string;
   action: ActionName | null;
   observation: Frame | null;
@@ -228,6 +238,11 @@ export function createSessionController(ports: SessionBrowserPorts) {
     run.worker?.terminate();
     run.worker = null;
     run.cancel?.(Error('Worker retired; pending completion unknown.'));
+    const entry = run.evidence.decisions.at(-1);
+    // Retirement can bypass attempt finalization (for example, page exit).
+    // Completed historical results remain completed after their session retires.
+    if (entry && entry.stage !== 'completed' && entry.stage !== 'ended')
+      entry.stage = 'ended';
   }
   function terminalStatus(execution: Execution) {
     const assessment = execution.assessment;
@@ -476,6 +491,7 @@ export function createSessionController(ports: SessionBrowserPorts) {
     const entry: DecisionEntry = {
       number: run.evidence.decisions.length + 1,
       selectedTics: attempt.tics,
+      stage: 'capturing',
       status: 'Capturing current frame',
       action: null,
       observation: null,
@@ -517,6 +533,7 @@ export function createSessionController(ports: SessionBrowserPorts) {
         'Observation Canvas/native hash mismatch.',
       );
       dispatchFence();
+      entry.stage = 'requesting';
       entry.status = 'Requesting one action';
       display(
         run,
@@ -543,6 +560,7 @@ export function createSessionController(ports: SessionBrowserPorts) {
         'Native state advanced during API wait.',
       );
       entry.waitUnchanged = true;
+      entry.stage = 'stepping';
       entry.status = 'Stepping and verifying';
       display(
         run,
@@ -562,6 +580,7 @@ export function createSessionController(ports: SessionBrowserPorts) {
         },
       );
       fence(run, attempt);
+      entry.stage = 'rendering';
       entry.status = execution.terminal
         ? 'Terminal tic verified; rendering'
         : 'Action verified; rendering';
@@ -574,11 +593,13 @@ export function createSessionController(ports: SessionBrowserPorts) {
       check(run.frame, 'Verified frame unavailable.');
       entry.result = { ...run.frame };
       if (execution.terminal) {
+        entry.stage = 'ended';
         entry.status = `${terminalStatus(execution)}; frame retained.`;
         retire(run, 'terminal');
         display(run, `${entry.status} Reload to start a new session.`);
         return 'terminal';
       }
+      entry.stage = 'completed';
       entry.status = 'Complete';
       run.attempt = undefined;
       run.phase = 'ready';
@@ -604,6 +625,7 @@ export function createSessionController(ports: SessionBrowserPorts) {
       ) {
         try {
           fence(run, attempt);
+          entry.stage = 'cleanup';
           entry.status = run.sdkRead
             ? 'Waiting for API response cleanup; no native action dispatched'
             : 'Checking unchanged native state';
@@ -620,6 +642,7 @@ export function createSessionController(ports: SessionBrowserPorts) {
           entry.waitUnchanged = true;
           const stopped =
             error instanceof DecisionStopped || continuous?.stopRequested;
+          entry.stage = 'ended';
           entry.status = `${stopped ? 'Stopped by user' : error.message}; no native action dispatched`;
           run.attempt = undefined;
           run.phase = 'ready';
@@ -634,6 +657,7 @@ export function createSessionController(ports: SessionBrowserPorts) {
           // Failed passive proof means the game cannot be safely reused.
         }
       }
+      entry.stage = 'ended';
       entry.status = entry.execution?.terminal
         ? `${terminalStatus(entry.execution)}; terminal frame unavailable. Reload to restart.`
         : entry.execution?.complete

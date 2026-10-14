@@ -23,6 +23,7 @@ const pending = {
   number: 27,
   selectedTics: 21,
   action: null,
+  stage: 'capturing',
   status: 'Capturing current frame',
   observation: frame(1),
   result: null,
@@ -32,6 +33,7 @@ const pending = {
 const completed = {
   ...pending,
   action: 'turn_left',
+  stage: 'completed',
   status: 'Complete',
   result: frame(22),
   cumulativeVerifiedTics: 22,
@@ -54,6 +56,7 @@ const noVerifiedOutcome = (outcome) => {
 
 const terminal = {
   ...completed,
+  stage: 'ended',
   status: 'Player dead at tic 3; frame retained.',
   result: frame(3),
   cumulativeVerifiedTics: 3,
@@ -83,35 +86,51 @@ describe('latest-outcome', () => {
       evidence: 'Capturing current frame',
     });
     assert.equal(
-      project({ ...pending, status: 'Requesting one action' }).action,
+      project({
+        ...pending,
+        stage: 'requesting',
+        status: 'Requesting one action',
+      }).action,
       'Action pending',
     );
     assert.equal(
-      project({ ...pending, status: 'Requesting one action', action: 'use' })
-        .evidence,
+      project({
+        ...pending,
+        stage: 'requesting',
+        status: 'Requesting one action',
+        action: 'use',
+      }).evidence,
       'Choice received; checking unchanged game state',
     );
 
-    for (const status of [
-      'Stepping and verifying',
-      'Action verified; rendering',
-      'Waiting for API response cleanup; no native action dispatched',
-      'Checking unchanged native state',
-      'Stopped by user; no native action dispatched',
-      'authentication (401); no native action dispatched',
-      'Game/observation verification failed; no native action dispatched. Reload to restart.',
+    for (const [stage, status] of [
+      ['stepping', 'Stepping and verifying'],
+      ['rendering', 'Action verified; rendering'],
+      [
+        'cleanup',
+        'Waiting for API response cleanup; no native action dispatched',
+      ],
+      ['cleanup', 'Checking unchanged native state'],
+      ['ended', 'Stopped by user; no native action dispatched'],
+      ['ended', 'authentication (401); no native action dispatched'],
+      [
+        'ended',
+        'Game/observation verification failed; no native action dispatched. Reload to restart.',
+      ],
     ]) {
-      const outcome = project({ ...pending, status });
+      const outcome = project({ ...pending, stage, status });
       assert.equal(outcome.number, '#27');
       assert.equal(outcome.evidence, status);
       noVerifiedOutcome(outcome);
     }
     // Even a fully verified action and a painted/matching frame cannot shortcut stage.
-    for (const status of [
-      'Stepping and verifying',
-      'Action verified; rendering',
+    for (const [stage, status] of [
+      ['stepping', 'Stepping and verifying'],
+      ['rendering', 'Action verified; rendering'],
     ]) {
-      noVerifiedOutcome(project({ ...completed, status }, completed.result));
+      noVerifiedOutcome(
+        project({ ...completed, stage, status }, completed.result),
+      );
     }
     assert.deepEqual(project(completed, completed.result), {
       number: '#27',
@@ -207,15 +226,21 @@ describe('latest-outcome', () => {
   });
 
   it('withholds frame verification during terminal rendering or frame failure', async () => {
-    for (const status of [
-      'Terminal tic verified; rendering',
-      'Player dead at tic 3; terminal frame unavailable. Reload to restart.',
+    for (const [stage, status] of [
+      ['rendering', 'Terminal tic verified; rendering'],
+      [
+        'ended',
+        'Player dead at tic 3; terminal frame unavailable. Reload to restart.',
+      ],
     ]) {
-      const outcome = project({ ...terminal, status, result: null }, frame(1));
+      const outcome = project(
+        { ...terminal, stage, status, result: null },
+        frame(1),
+      );
       assert.match(outcome.evidence, /2 of 21 tics verified/);
       assert.match(
         outcome.evidence,
-        status.includes('rendering')
+        stage === 'rendering'
           ? /Verifying resulting frame/
           : /Resulting frame unavailable/,
       );
@@ -244,5 +269,77 @@ describe('latest-outcome', () => {
     );
     assert.match(uncertain.evidence, /Reload/);
     noVerifiedOutcome(uncertain);
+  });
+
+  it('uses stages and evidence even when status copy is rewritten or names another stage', () => {
+    for (const status of [
+      'Copy revised for clarity',
+      'Complete',
+      'Capturing current frame',
+      'Requesting one action',
+      'Stepping and verifying',
+      'Terminal tic verified; rendering',
+    ]) {
+      for (const stage of ['capturing', 'requesting']) {
+        const outcome = project({ ...pending, stage, status });
+        assert.equal(outcome.action, 'Action pending');
+        assert.equal(outcome.evidence, status);
+        noVerifiedOutcome(outcome);
+      }
+      assert.equal(
+        project({ ...pending, stage: 'requesting', action: 'use', status })
+          .evidence,
+        'Choice received; checking unchanged game state',
+      );
+      assert.deepEqual(
+        project({ ...completed, status }, completed.result),
+        project(completed, completed.result),
+      );
+      assert.equal(
+        project({ ...completed, result: null, status }).evidence,
+        'Completion evidence unavailable',
+      );
+      for (const stage of ['stepping', 'rendering', 'cleanup', 'ended']) {
+        assert.equal(
+          project({ ...pending, stage, status }).action,
+          'Action unavailable',
+        );
+        noVerifiedOutcome(
+          project({ ...completed, stage, status }, completed.result),
+        );
+      }
+      for (const stage of ['rendering', 'ended']) {
+        const outcome = project({ ...terminal, stage, result: null, status });
+        assert.match(outcome.evidence, /2 of 21 tics verified/);
+        assert.match(
+          outcome.evidence,
+          stage === 'rendering'
+            ? /Verifying resulting frame/
+            : /Resulting frame unavailable/,
+        );
+        noVerifiedOutcome(outcome);
+      }
+      for (const stage of ['stepping', 'ended']) {
+        const outcome = project({
+          ...terminal,
+          stage,
+          status,
+          result: null,
+          execution: {
+            ...terminal.execution,
+            terminal: false,
+            completionUncertain: true,
+          },
+        });
+        assert.equal(
+          outcome.evidence,
+          status +
+            (stage === 'stepping'
+              ? ''
+              : ' · At least 2 tics verified (lower bound; native completion uncertain)'),
+        );
+        noVerifiedOutcome(outcome);
+      }
+    }
   });
 });

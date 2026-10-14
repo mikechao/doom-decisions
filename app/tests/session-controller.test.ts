@@ -32,6 +32,7 @@ it('initializes, prepares, and completes one verified decision through ordinary 
     assert.equal(completed.controls.ready, true);
     assert.equal(completed.waitingForSdk, false);
     assert.equal(entry.status, 'Complete');
+    assert.equal(entry.stage, 'completed');
     assert.equal(entry.waitUnchanged, true);
     assert.equal(entry.execution.complete, true);
     assert.equal(entry.execution.independentlyVerifiedTics, 6);
@@ -66,6 +67,9 @@ it('initializes, prepares, and completes one verified decision through ordinary 
       0,
       'Presentation data is detached',
     );
+    controller.close();
+    controller.restore(true);
+    assert.equal(h.view.session.evidence.decisions[0].stage, 'completed');
   } finally {
     controller.close();
   }

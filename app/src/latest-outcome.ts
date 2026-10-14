@@ -1,4 +1,5 @@
 import type { ActionName, Execution } from './decision';
+import type { DecisionStage } from './session-controller';
 
 type Frame = Readonly<{
   tic: number;
@@ -8,6 +9,7 @@ type Frame = Readonly<{
 type OutcomeEntry = Readonly<{
   number: number;
   selectedTics: number;
+  stage: DecisionStage;
   status: string;
   action: ActionName | null;
   observation: Frame | null;
@@ -60,13 +62,13 @@ export function projectLatestOutcome(
         : 'Resulting frame verified · Displayed frame unavailable';
 
   let evidence =
-    entry.status === 'Complete'
+    entry.stage === 'completed'
       ? 'Completion evidence unavailable'
-      : entry.action && entry.status === 'Requesting one action'
+      : entry.action && entry.stage === 'requesting'
         ? 'Choice received; checking unchanged game state'
         : entry.status;
   if (
-    entry.status === 'Complete' &&
+    entry.stage === 'completed' &&
     entry.action &&
     execution?.complete &&
     !execution.terminal &&
@@ -91,14 +93,11 @@ export function projectLatestOutcome(
       .join(' · ');
     const resultingFrame = verifiedResult
       ? frameEvidence
-      : entry.status === 'Terminal tic verified; rendering'
+      : entry.stage === 'rendering'
         ? 'Verifying resulting frame'
         : 'Resulting frame unavailable';
     evidence = `${terminal} · ${verified} of ${entry.selectedTics} tics verified · ${resultingFrame}. Reload to restart.`;
-  } else if (
-    execution?.completionUncertain &&
-    entry.status !== 'Stepping and verifying'
-  ) {
+  } else if (execution?.completionUncertain && entry.stage !== 'stepping') {
     evidence += ` · At least ${verified} tics verified (lower bound; native completion uncertain)`;
   }
 
@@ -107,8 +106,7 @@ export function projectLatestOutcome(
     action: entry.action
       ? entry.action[0].toUpperCase() +
         entry.action.slice(1).replaceAll('_', ' ')
-      : entry.status === 'Capturing current frame' ||
-          entry.status === 'Requesting one action'
+      : entry.stage === 'capturing' || entry.stage === 'requesting'
         ? 'Action pending'
         : 'Action unavailable',
     evidence,

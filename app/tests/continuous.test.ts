@@ -139,7 +139,7 @@ describe('continuous', () => {
               'Real helper rejected before underlying reader settled',
             );
             await checkpoint(() =>
-              h.view.session.evidence.decisions[0].status.includes('Waiting'),
+              h.view.session.evidence.decisions[0].stage === 'cleanup',
             );
             assert.equal(h.view.session.waitingForSdk, true);
             assert.equal(h.view.session.phase, 'busy');
@@ -149,9 +149,16 @@ describe('continuous', () => {
             assert.equal(h.sdkCalls, 1);
             assert.equal(h.gameCalls, 0);
             if (!manual) assert.equal(h.view.session.continuous.used, 1);
+            const cleanupProof = h.hold('snapshot');
             if (lateReject) h.rejectBody();
             else h.releaseBody();
+            await cleanupProof.waiting;
+            assert.equal(h.view.session.waitingForSdk, false);
+            assert.equal(h.view.session.evidence.decisions[0].stage, 'cleanup');
+            assert.equal(h.view.session.controls.ready, false);
+            cleanupProof.release();
             await work;
+            assert.equal(h.view.session.evidence.decisions[0].stage, 'ended');
             assert.equal(h.readerPending, false);
             assert.equal(h.transportActive, 0);
             assert.equal(h.view.session.waitingForSdk, false);
@@ -395,6 +402,14 @@ describe('continuous', () => {
         const hold = h.hold('snapshot', occurrence);
         const work = h.start();
         await hold.waiting;
+        assert.equal(
+          h.view.session.evidence.decisions[0].stage,
+          occurrence === 1 ? 'capturing' : 'requesting',
+        );
+        assert.equal(
+          h.view.session.evidence.decisions[0].action,
+          occurrence === 1 ? null : 'neutral',
+        );
         const before = h.native.observe();
         h.stop();
         await h.next();
@@ -407,6 +422,7 @@ describe('continuous', () => {
         assert.equal(h.gameCalls, 0);
         assert.equal(h.view.session.phase, 'ready');
         assert.equal(h.view.session.evidence.decisions[0].waitUnchanged, true);
+        assert.equal(h.view.session.evidence.decisions[0].stage, 'ended');
       });
   });
 
@@ -417,6 +433,10 @@ describe('continuous', () => {
         const work = h.start();
         await hold.waiting;
         assert.equal(h.workerActive, 1);
+        assert.equal(
+          h.view.session.evidence.decisions[0].stage,
+          op === 'action' ? 'stepping' : 'rendering',
+        );
         h.stop();
         assert.match(h.view.status, /Stopping after current decision/);
         assert.equal(h.view.session.phase, 'busy');
@@ -432,6 +452,7 @@ describe('continuous', () => {
         assert.equal(h.creations, 1);
         assert.equal(h.worker.terminate.mock.calls.length, 0);
         const entry = h.view.session.evidence.decisions[0];
+        assert.equal(entry.stage, 'completed');
         assert.equal(entry.execution.complete, true);
         assert.equal(entry.result.tic, 7);
         assert.equal(entry.result.nativeSha256, entry.result.canvasSha256);
@@ -482,7 +503,7 @@ describe('continuous', () => {
       h.clock();
       const work = h.start();
       await checkpoint(
-        () => h.view.session.evidence.decisions[0]?.status === 'Complete',
+        () => h.view.session.evidence.decisions[0]?.stage === 'completed',
       );
       assert.equal(h.view.session.phase, 'ready');
       assert.equal(

@@ -162,6 +162,7 @@ describe('terminal', () => {
   it('recovers manual readiness from an invalid model choice without dispatch', async () => {
     await withSession({ choice: { answers: [] } }, async (h) => {
       assert.equal(await h.next(), 'api-failure');
+      assert.equal(h.view.session.evidence.decisions[0].stage, 'ended');
       assert.equal(h.gameCalls, 0);
       assert.equal(h.view.session.controls.ready, true);
       assert.equal(h.creations, 1);
@@ -184,6 +185,7 @@ describe('terminal', () => {
           assert.equal(await h.next(), 'terminal');
           const session = h.view.session;
           const entry = session.evidence.decisions[0];
+          assert.equal(entry.stage, 'ended');
           assert.equal(session.phase, 'terminal');
           assert.equal(session.controls.ready, false);
           assert.equal(h.worker.terminate.mock.calls.length, 1);
@@ -228,6 +230,7 @@ describe('terminal', () => {
       const render = h.hold('render');
       const finishing = h.next();
       await render.waiting;
+      assert.equal(h.view.session.evidence.decisions[0].stage, 'rendering');
       assert.equal(h.worker.terminate.mock.calls.length, 0);
       assert.equal(h.view.session.phase, 'busy');
       assert.equal(h.view.session.controls.ready, false);
@@ -247,6 +250,7 @@ describe('terminal', () => {
       assert.equal(h.gameCalls, 2);
       render.release();
       assert.equal(await finishing, 'terminal');
+      assert.equal(h.view.session.evidence.decisions[0].stage, 'ended');
       assert.equal(h.view.session.phase, 'terminal');
     });
   });
@@ -260,6 +264,7 @@ describe('terminal', () => {
       await withSession(options, async (h) => {
         assert.equal(await h.next(), 'retired');
         const session = h.view.session;
+        assert.equal(session.evidence.decisions[0].stage, 'ended');
         assert.equal(session.controls.ready, false);
         assert.equal(session.phase, 'error');
         assert.equal(
@@ -298,6 +303,9 @@ describe('terminal', () => {
             () => {},
           );
         h.controller.close();
+        h.controller.restore(true);
+        assert.equal(h.view.session.evidence.decisions[0].stage, 'ended');
+        assert.equal(h.view.session.waitingForSdk, true);
         assert.equal(signal.aborted, abortEffective);
         h.releaseBody();
         assert.equal(await pending, 'retired');
