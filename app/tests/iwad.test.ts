@@ -28,13 +28,22 @@ function section(source, start, end) {
   assert.ok(first >= 0 && last > first, `Source markers: ${start}`);
   return source.slice(first, last);
 }
+// Evaluate the production checks in this VM's Error realm; keep helpers private.
+const observationChecksSource = stripTypeScriptTypes(
+  readFileSync(
+    new URL('../src/native-observation-checks.ts', import.meta.url),
+    'utf8',
+  ),
+).replace(/^export /gm, '');
 const controllerSource = stripTypeScriptTypes(
   [
     'let current; const pageExited = false;',
-    section(main, 'function check(', 'const passive = ['),
-    section(main, 'const work = [', 'type EngineMetadata ='),
+    section(main, 'function check(', 'type EngineMetadata ='),
+    `const { passiveCheck, healthy, checkPrepared } = (() => {
+      ${observationChecksSource}
+      return { passiveCheck, healthy, checkPrepared };
+    })();`,
     section(main, 'function retire(', 'function terminalStatus('),
-    section(main, 'function healthy(', 'async function request<'),
     section(main, 'async function prepare()', "$('#iwad').addEventListener"),
     '({ prepare, get run() { return current; } })',
   ]

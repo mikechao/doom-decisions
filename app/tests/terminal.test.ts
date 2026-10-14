@@ -183,13 +183,23 @@ const executorSource = readFileSync(
 )
   .replace(/^import .*;\n/gm, '')
   .replace(/^export /gm, '');
+// Evaluate the production checks in this VM's Error realm; keep helpers private.
+const observationChecksSource = stripTypeScriptTypes(
+  readFileSync(
+    new URL('../src/native-observation-checks.ts', import.meta.url),
+    'utf8',
+  ),
+).replace(/^export /gm, '');
 const controllerSource = stripTypeScriptTypes(
   [
     'let current = initialRun; let pageExited = false;',
-    section('function check(', 'const passive = ['),
-    section('const passive = [', 'const work = ['),
+    section('function check(', 'type EngineMetadata ='),
+    `const { passiveCheck, healthy, checkPrepared } = (() => {
+      ${observationChecksSource}
+      return { passiveCheck, healthy, checkPrepared };
+    })();`,
     section('function assertCurrent(', 'const displayHistory ='),
-    section('function display(run:', 'function checkPrepared('),
+    section('function display(run:', 'async function request<'),
     executorSource,
     section('async function request<', 'function fence('),
     section('function fence(', "$('#start').addEventListener"),
