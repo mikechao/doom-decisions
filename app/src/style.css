@@ -35,7 +35,8 @@ body {
   min-height: 100vh;
 }
 main {
-  max-width: 1360px;
+  width: 100%;
+  max-width: none;
   margin: 0 auto 2rem;
   padding: 0 1.5rem;
 }
@@ -729,8 +730,15 @@ a {
   background: var(--focus);
 }
 @media (min-width: 1280px) {
+  main {
+    padding-inline: 16px;
+  }
   .console {
-    grid-template-columns: 17rem minmax(0, 1fr) 20rem;
+    /* Both outer rails gain the same width while the game lane stays 720px. */
+    grid-template-columns:
+      minmax(17rem, calc(50vw - 400px))
+      minmax(0, 1fr)
+      minmax(20rem, calc(50vw - 352px));
     grid-template-rows: auto minmax(0, 1fr);
   }
   .session-rail {
