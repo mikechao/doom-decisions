@@ -47,8 +47,28 @@ class Element extends EventTarget {
   setAttribute(name, value) {
     this.attributes.set(name, value);
   }
+  focus() {
+    document.activeElement = this;
+  }
   contains(node) {
     return node === this || this.children.includes(node);
+  }
+}
+
+// Only native dialog state/focus and dismissal are simulated here.
+class Dialog extends Element {
+  open = false;
+  showModal = vi.fn(() => {
+    this.open = true;
+    element('#close-prompt').focus();
+  });
+  close() {
+    this.open = false;
+    emit(this, 'close');
+  }
+  escape() {
+    const cancel = new Event('cancel', { cancelable: true });
+    if (this.dispatchEvent(cancel)) this.close();
   }
 }
 
@@ -106,11 +126,11 @@ beforeEach(async () => {
   const tics = document.querySelector('#tics');
   tics.value = '6';
   tics.valueAsNumber = 6;
-  document.querySelector('#prompt-panel').hidden = true;
+  elements.set('#prompt-dialog', new Dialog());
   const promptButton = document.querySelector('#view-prompt');
   promptButton.textContent = 'View Prompt';
-  promptButton.setAttribute('aria-expanded', 'false');
-  promptButton.setAttribute('aria-controls', 'prompt-panel');
+  promptButton.setAttribute('aria-haspopup', 'dialog');
+  promptButton.setAttribute('aria-controls', 'prompt-dialog');
   vi.stubGlobal('document', document);
   vi.stubGlobal('window', new EventTarget());
   await import('../src/main.ts');
@@ -118,32 +138,46 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Read-only decision prompt preview', () => {
-  it('places the button and hidden panel after limits guidance with a horizontal rule', () => {
+  it('keeps the trigger after limits guidance and labels the native read-only dialog', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-    assert.match(html, /<p id="stop-note"[^>]*>[^<]*<\/p>\s*<\/details>\s*<div class="prompt-group">\s*<hr>\s*<button id="view-prompt" type="button" aria-expanded="false" aria-controls="prompt-panel">View Prompt<\/button>\s*<div id="prompt-panel" hidden>/);
+    assert.match(html, /<p id="stop-note"[^>]*>[^<]*<\/p>\s*<\/details>\s*<div class="prompt-group">\s*<hr>\s*<button id="view-prompt" type="button" aria-haspopup="dialog" aria-controls="prompt-dialog">View Prompt<\/button>/);
+    assert.match(html, /<dialog id="prompt-dialog" class="decision-prompt" aria-labelledby="prompt-title" aria-describedby="prompt-description">/);
+    assert.match(html, /<h2 id="prompt-title">Decision Prompt<\/h2>/);
+    assert.match(html, /<button id="close-prompt" type="button" autofocus>Close<\/button>/);
+    assert.match(html, /<p id="prompt-description" class="help">/);
+    assert.match(html, /<p id="prompt-text"><\/p>/);
+    assert.doesNotMatch(html, /prompt-panel|contenteditable/);
     assert.match(html, /Preview of the default next_action instructions using the current tic selection\./);
     assert.match(html, /In-flight decisions retain their captured duration\./);
   });
 
-  it('toggles before setup with accurate labels and ARIA without calling the controller', () => {
+  it('opens before setup and closes by button, Escape or native close without controller actions', () => {
     const button = element('#view-prompt');
-    const panel = element('#prompt-panel');
+    const dialog = element('#prompt-dialog');
     const calls = Object.values(session.controller).map((method) => method.mock.calls.length);
     document.activeElement = button;
     assert.equal(button.disabled, false);
-    assert.equal(panel.hidden, true);
+    assert.equal(dialog.open, false);
     assert.equal(button.textContent, 'View Prompt');
-    assert.equal(button.attributes.get('aria-expanded'), 'false');
-    assert.equal(button.attributes.get('aria-controls'), 'prompt-panel');
-    assert.equal(element('#prompt-text').textContent, formatDefaultDecisionInstructions(6));
-    for (const hidden of [false, true, false]) {
+    assert.equal(button.attributes.get('aria-haspopup'), 'dialog');
+    assert.equal(button.attributes.get('aria-controls'), 'prompt-dialog');
+    for (const dismiss of [
+      () => emit(element('#close-prompt'), 'click'),
+      () => dialog.escape(),
+      () => dialog.close(),
+    ]) {
       emit(button, 'click');
       emit(document, 'click');
-      assert.equal(panel.hidden, hidden);
-      assert.equal(button.textContent, hidden ? 'View Prompt' : 'Hide Prompt');
-      assert.equal(button.attributes.get('aria-expanded'), String(!hidden));
+      assert.equal(dialog.open, true);
+      assert.equal(button.textContent, 'View Prompt');
+      assert.equal(document.activeElement, element('#close-prompt'));
+      assert.equal(element('#prompt-text').textContent, formatDefaultDecisionInstructions(6));
+      dismiss();
+      assert.equal(dialog.open, false);
+      assert.equal(button.textContent, 'View Prompt');
       assert.equal(document.activeElement, button);
     }
+    assert.equal(dialog.showModal.mock.calls.length, 3);
     assert.deepEqual(Object.values(session.controller).map((method) => method.mock.calls.length), calls);
   });
 
@@ -161,15 +195,18 @@ describe('Read-only decision prompt preview', () => {
       assert.equal(element('#prompt-text').textContent, formatDefaultDecisionInstructions(n));
       assert.equal(session.ports.readTics(), n, 'Preview leaves the selected duration intact');
     }
-    emit(button, 'click');
+    emit(element('#close-prompt'), 'click');
     tics.value = '21';
     tics.valueAsNumber = 21;
+    emit(tics, 'input');
+    assert.equal(element('#prompt-text').textContent, formatDefaultDecisionInstructions(35));
     emit(button, 'click');
     assert.equal(element('#prompt-text').textContent, formatDefaultDecisionInstructions(21));
     assert.deepEqual(Object.values(session.controller).map((method) => method.mock.calls.length), calls);
   });
 
   it('replaces stale instructions for empty or invalid tics and recovers on valid input', () => {
+    const calls = Object.values(session.controller).map((method) => method.mock.calls.length);
     emit(element('#view-prompt'), 'click');
     const tics = element('#tics');
     for (const n of [NaN, 0, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
@@ -182,6 +219,12 @@ describe('Read-only decision prompt preview', () => {
     tics.valueAsNumber = 35;
     emit(tics, 'change');
     assert.equal(element('#prompt-text').textContent, formatDefaultDecisionInstructions(35));
+    emit(element('#close-prompt'), 'click');
+    tics.value = '';
+    tics.valueAsNumber = NaN;
+    emit(element('#view-prompt'), 'click');
+    assert.equal(element('#prompt-text').textContent, 'Enter a positive JavaScript safe integer for tics to preview instructions.');
+    assert.deepEqual(Object.values(session.controller).map((method) => method.mock.calls.length), calls);
   });
 });
 

@@ -30,6 +30,9 @@
 * {
   box-sizing: border-box;
 }
+html:has(dialog:modal) {
+  overflow: hidden;
+}
 body {
   margin: 0;
   min-height: 100vh;
@@ -270,7 +273,8 @@ summary:hover {
   border-color: var(--light-action);
 }
 #stop,
-#view-prompt {
+#view-prompt,
+#close-prompt {
   color: var(--ivory);
   background: transparent;
   border-color: var(--boundary);
@@ -284,7 +288,8 @@ summary:hover {
   border-color: var(--ivory);
 }
 #stop:hover:enabled,
-#view-prompt:hover:enabled {
+#view-prompt:hover:enabled,
+#close-prompt:hover:enabled {
   background: #30352a;
 }
 #next:active:enabled {
@@ -294,7 +299,8 @@ summary:hover {
   background: #c4b594;
 }
 #stop:active:enabled,
-#view-prompt:active:enabled {
+#view-prompt:active:enabled,
+#close-prompt:active:enabled {
   background: #20251b;
 }
 #next:disabled,
@@ -353,8 +359,40 @@ summary:hover {
   padding: 0.625rem 0.5rem;
   cursor: pointer;
 }
-:where(#prompt-panel) > p {
-  margin-top: 0.75rem;
+.decision-prompt {
+  width: min(44rem, calc(100% - 2rem));
+  max-height: calc(100dvh - 2rem);
+  margin: auto;
+  padding: clamp(1rem, 4vw, 2rem);
+  overflow-y: auto;
+  color: var(--ivory);
+  background: var(--surface);
+  border: 1px solid var(--boundary);
+  border-radius: 2px;
+}
+.decision-prompt::backdrop {
+  background: rgb(0 0 0 / 60%);
+}
+.decision-prompt-content {
+  display: grid;
+  gap: 1rem;
+}
+.decision-prompt-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.decision-prompt-heading > h2 {
+  font-size: 1.5rem;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+}
+#close-prompt {
+  padding: 0.5rem 1rem;
+  cursor: pointer;
 }
 #prompt-text {
   overflow-wrap: anywhere;

@@ -22,7 +22,8 @@ type Elements = {
   '#stop': HTMLButtonElement;
   '#budget': HTMLInputElement;
   '#view-prompt': HTMLButtonElement;
-  '#prompt-panel': HTMLDivElement;
+  '#prompt-dialog': HTMLDialogElement;
+  '#close-prompt': HTMLButtonElement;
   '#prompt-text': HTMLParagraphElement;
   '#continuous-state': HTMLParagraphElement;
   '#history': HTMLOListElement;
@@ -236,15 +237,18 @@ function displayDecisionPrompt() {
       : 'Enter a positive JavaScript safe integer for tics to preview instructions.';
 }
 $('#view-prompt').addEventListener('click', () => {
-  const panel = $('#prompt-panel');
-  panel.hidden = !panel.hidden;
-  $('#view-prompt').setAttribute('aria-expanded', String(!panel.hidden));
-  $('#view-prompt').textContent = panel.hidden ? 'View Prompt' : 'Hide Prompt';
-  if (!panel.hidden) displayDecisionPrompt();
+  displayDecisionPrompt();
+  $('#prompt-dialog').showModal();
 });
-$('#tics').addEventListener('input', displayDecisionPrompt);
-$('#tics').addEventListener('change', displayDecisionPrompt);
-displayDecisionPrompt();
+$('#close-prompt').addEventListener('click', () => $('#prompt-dialog').close());
+$('#prompt-dialog').addEventListener('close', () => {
+  if (!$('#prompt-dialog').open) $('#view-prompt').focus();
+});
+const refreshOpenDecisionPrompt = () => {
+  if ($('#prompt-dialog').open) displayDecisionPrompt();
+};
+$('#tics').addEventListener('input', refreshOpenDecisionPrompt);
+$('#tics').addEventListener('change', refreshOpenDecisionPrompt);
 $('#iwad').addEventListener(
   'change',
   () => void controller.prepare($('#iwad').files?.[0]),

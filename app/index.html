@@ -71,11 +71,7 @@
           </details>
           <div class="prompt-group">
             <hr>
-            <button id="view-prompt" type="button" aria-expanded="false" aria-controls="prompt-panel">View Prompt</button>
-            <div id="prompt-panel" hidden>
-              <p class="help">Preview of the default next_action instructions using the current tic selection. In-flight decisions retain their captured duration.</p>
-              <p id="prompt-text"></p>
-            </div>
+            <button id="view-prompt" type="button" aria-haspopup="dialog" aria-controls="prompt-dialog">View Prompt</button>
           </div>
         </section>
       </div>
@@ -115,6 +111,16 @@
         </p>
       </section>
     </div>
+    <dialog id="prompt-dialog" class="decision-prompt" aria-labelledby="prompt-title" aria-describedby="prompt-description">
+      <div class="decision-prompt-content">
+        <div class="decision-prompt-heading">
+          <h2 id="prompt-title">Decision Prompt</h2>
+          <button id="close-prompt" type="button" autofocus>Close</button>
+        </div>
+        <p id="prompt-description" class="help">Preview of the default next_action instructions using the current tic selection. In-flight decisions retain their captured duration.</p>
+        <p id="prompt-text"></p>
+      </div>
+    </dialog>
     <details class="advanced">
       <summary>Advanced evidence: preparation, decisions and frame hashes</summary>
       <p id="sdk" role="status">Checking bundled OpenAI SDK…</p>
