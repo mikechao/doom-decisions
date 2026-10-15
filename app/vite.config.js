@@ -46,7 +46,11 @@ function transformCsp(html) {
       fail();
     // Live may rewrite content and retain the original in this extra attribute.
     // Always emit our bounded policy, never inherit Live's added permissions.
-    if (value(original[0] ?? content[0]) !== strictCsp) fail();
+    const originalPolicy =
+      original.length === 1
+        ? Buffer.from(value(original[0]), 'base64').toString('utf8')
+        : value(content[0]);
+    if (originalPolicy !== strictCsp) fail();
     return [{ meta, content: content[0] }];
   });
   if (candidates.length !== 1) fail();
