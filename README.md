@@ -47,4 +47,18 @@ These instructions target macOS arm64 and require Node 22.20.0 and npm; see the 
    npm --prefix app run dev
    ```
    To run the development Vite server
-   
+
+## Tech Stack
+
+- TypeScript - App logic, decision controls, and communication with the game.
+- HTML and CSS - The page layout, controls, and styling.
+- Canvas 2D - Displays the game frames and captures screenshots.
+- Web Workers - Run the game engine off the main browser thread.
+- C and WebAssembly (doom.wasm) - The modified Doom engine running in the browser.
+- OpenAI Decisions API and official SDK - Send screenshots and action choices to OpenAI and receive the next command.
+- Vite - The local development server and frontend bundling.
+- Node.js and npm - Run build and verification scripts and manage app dependencies.
+- Bash and Make - Coordinate and compile the engine build.
+- WASI SDK and Binaryen - Compile the C engine to WebAssembly and process the WASM modules.
+- Vitest - Offline app regression tests.
+- Biome - TypeScript and JavaScript linting and formatting.
