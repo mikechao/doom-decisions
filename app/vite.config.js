@@ -66,6 +66,10 @@ function transformCsp(html) {
 export default defineConfig(({ command, mode }) => ({
   base: './',
   worker: { format: 'es' },
+  build: {
+    minify: false,
+    sourcemap: true,
+  },
   plugins:
     command === 'serve' && mode === 'impeccable'
       ? [{ name: 'impeccable-dev-csp', transformIndexHtml: transformCsp }]
