@@ -6,43 +6,45 @@ The basic flow is the following.
 
 1. Take a screenshot of the current game.
 2. Send the screenshot and a list of game commands to the Decisions API
-3. Use the game command with the highest confidence and advance the game based on the number of tics entered (default 6)
+3. Use the game command chosen by the API and advance the game based on the number of tics entered (default 6)
 
 There are 2 modes
 1. "Next Decision" - Where the flow above is execute once per button click.
-2. "Continuous Mode" - Where the flow above is executed a preconfigured number of times.
+2. "Continuous Mode" - Where the flow above repeats up to a preconfigured maximum number of API attempts.
 
 ## Start a "game"
 
-Get a Doom IWAD file. Download the [Freedoom Phase 1+2](https://freedoom.github.io/download.html)
+Get a Doom IWAD file. Download and extract [Freedoom Phase 1+2](https://freedoom.github.io/download.html), then select `freedoom1.wad` in the browser app.
 
-Get an OpenAI API key and enter it.
+Enter your own OpenAI API key. Requests go directly from the browser to OpenAI; the client and key stay in memory until refresh. This prototype requires trusting the page and its scripts. See [key handling](app/README.md#temporary-browser-direct-credentials).
 
 Click "Next Decision"
 or
-Set an API budget and Click "Continuous Mode"
+Set "Max API attempts" and Click "Start Continuous Mode"
 
 ## Run locally
+
+These instructions target macOS arm64 and require Node 22.20.0 and npm; see the [full prerequisites](app/README.md#prerequisites-and-clean-checkout).
 
 1. Clone this repo
 2. Run
    ```bash
-   ./script/setup_toolchain.sh install
+   ./scripts/setup_toolchain.sh install
     ```
    To install wasi-sdk-24.0-arm64-macos and binaryen-version_119-arm64-macos to build Doom in WASM.
 3. Run
    ```bash
+   npm --prefix app ci
+   ```
+   To install the dependencies for the web app
+4. Run
+   ```bash
    ./build.sh
    ```
    To build the Doom Engine and the web page.
-4. Run
-   ```bash
-   npm --prefix app install
-   ```
-   To install the dependencies for the web app
 5. Run
    ```bash
-   npm --prefix run dev
+   npm --prefix app run dev
    ```
    To run the development Vite server
    
