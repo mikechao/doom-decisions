@@ -76,6 +76,32 @@ Rust, example, hook and cleanup rules. Missing inputs fail.
 Legacy `all`, `doom`, example, dev-init, clean and hook targets retain their
 side effects and require separate authorization; use `./build.sh` for the app.
 
+## Explicit toolchain setup
+
+On macOS arm64 with system Bash 3.2, run `bash scripts/setup_toolchain.sh install`
+to download only missing SDK/Binaryen installations, or
+`bash scripts/setup_toolchain.sh verify` for an offline, read-only readiness check.
+Both use the default ignored `tools/wasi-sdk-24.0/` and `tools/binaryen-119/`
+locations; build overrides do not redirect setup. Other hosts are rejected.
+Verification checks executable versions and selected nonempty SDK/library files;
+it is not full artifact attestation. `scripts/build_engine.mjs` remains the build
+admission authority. Neither build mode invokes setup or downloads tools.
+
+The script pins exact archive sizes and SHA-256 values checked on 2026-10-15.
+The [WASI SDK 24.0 arm64 archive](https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-24/wasi-sdk-24.0-arm64-macos.tar.gz)
+digest was independently computed from the official HTTPS release asset, not
+publisher-authenticated. The [Binaryen 119 arm64 archive](https://github.com/WebAssembly/binaryen/releases/download/version_119/binaryen-version_119-arm64-macos.tar.gz)
+digest matches its [published checksum](https://github.com/WebAssembly/binaryen/releases/download/version_119/binaryen-version_119-arm64-macos.tar.gz.sha256).
+No publisher signature was established for either. Size/hash checks precede
+extraction; private staging under `tools/` precedes a same-filesystem rename.
+Keep concurrent setup/build processes stopped during installation.
+
+Existing destinations are never overwritten, repaired or removed. On failure,
+inspect and manually move/remove only an invalid destination before retrying.
+Handled exits clean owned staging; an unhandled interruption can leave ignored
+`tools/.setup-toolchain.*` directories, which may be removed manually once no setup
+process is running. Preserve valid tools and unrelated files under `tools/`.
+
 ## Limits and interruption
 
 The supported build fixes Make to `-rR -j2`, `A1_FIXTURES=1` and explicit SDK/

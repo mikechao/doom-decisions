@@ -90,6 +90,22 @@ Its tested host is macOS; the Bash entrypoint does not establish support for
 other hosts whose Make/tool versions differ. Paths passed to the engine wrapper
 must satisfy its restrictions (including no whitespace or symlink ancestry).
 
+For **macOS arm64**, explicitly install missing pinned WASI SDK/Binaryen tools,
+or check existing tools offline (both commands use macOS Bash 3.2):
+
+```sh
+bash scripts/setup_toolchain.sh install
+bash scripts/setup_toolchain.sh verify
+```
+
+These commands use only `tools/wasi-sdk-24.0/` and `tools/binaryen-119/`, under
+ignored `tools/`; they do not provision Node/npm or other prerequisites. Valid
+existing installations are left unchanged without downloading. Invalid or symlink
+destinations fail without repair: inspect and manually move/remove only the affected
+destination before retrying. Normal `./build.sh` and `--frontend-only` never invoke
+setup or fetch tools. See [setup integrity and recovery](../docs/doom-build.md#explicit-toolchain-setup)
+for checksum provenance and limits.
+
 From a checkout containing the app-local lockfile, install frontend dependencies:
 
 ```sh
