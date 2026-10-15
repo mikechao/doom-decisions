@@ -269,7 +269,8 @@ summary:hover {
   background: var(--light-action);
   border-color: var(--light-action);
 }
-#stop {
+#stop,
+#view-prompt {
   color: var(--ivory);
   background: transparent;
   border-color: var(--boundary);
@@ -282,7 +283,8 @@ summary:hover {
   background: var(--ivory);
   border-color: var(--ivory);
 }
-#stop:hover:enabled {
+#stop:hover:enabled,
+#view-prompt:hover:enabled {
   background: #30352a;
 }
 #next:active:enabled {
@@ -291,7 +293,8 @@ summary:hover {
 #start:active:enabled {
   background: #c4b594;
 }
-#stop:active:enabled {
+#stop:active:enabled,
+#view-prompt:active:enabled {
   background: #20251b;
 }
 #next:disabled,
@@ -335,6 +338,28 @@ summary:hover {
 }
 .control-guidance-text {
   margin-top: 0.5rem;
+}
+.prompt-group {
+  min-width: 0;
+  margin-top: 1rem;
+}
+.prompt-group > hr {
+  margin: 0 0 0.875rem;
+  border: 0;
+  border-top: 1px solid var(--rule);
+}
+#view-prompt {
+  width: 100%;
+  padding: 0.625rem 0.5rem;
+  cursor: pointer;
+}
+:where(#prompt-panel) > p {
+  margin-top: 0.75rem;
+}
+#prompt-text {
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
+  line-height: 1.6;
 }
 .game {
   width: 100%;
@@ -778,12 +803,14 @@ a {
     gap: 1rem 1.5rem;
   }
   .control-bar > h2,
-  .control-guidance {
+  .control-guidance,
+  .prompt-group {
     grid-column: 1 / -1;
   }
   .manual-controls,
   .continuous-group,
-  .control-guidance {
+  .control-guidance,
+  .prompt-group {
     margin-top: 0;
   }
   .continuous-group {

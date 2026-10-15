@@ -1,5 +1,6 @@
 import { createDecisionHistory } from './decision-history';
 import { deriveDecisionControls } from './decision-controls';
+import { formatDefaultDecisionInstructions } from './decision-request';
 import { projectLatestOutcome } from './latest-outcome';
 import {
   createSessionController,
@@ -20,6 +21,9 @@ type Elements = {
   '#start': HTMLButtonElement;
   '#stop': HTMLButtonElement;
   '#budget': HTMLInputElement;
+  '#view-prompt': HTMLButtonElement;
+  '#prompt-panel': HTMLDivElement;
+  '#prompt-text': HTMLParagraphElement;
   '#continuous-state': HTMLParagraphElement;
   '#history': HTMLOListElement;
   '#history-empty': HTMLParagraphElement;
@@ -224,6 +228,23 @@ $('#start').addEventListener('click', () =>
   controller.startContinuous($('#budget').valueAsNumber),
 );
 $('#stop').addEventListener('click', () => controller.stop());
+function displayDecisionPrompt() {
+  const tics = $('#tics').valueAsNumber;
+  $('#prompt-text').textContent =
+    Number.isSafeInteger(tics) && tics >= 1
+      ? formatDefaultDecisionInstructions(tics)
+      : 'Enter a positive JavaScript safe integer for tics to preview instructions.';
+}
+$('#view-prompt').addEventListener('click', () => {
+  const panel = $('#prompt-panel');
+  panel.hidden = !panel.hidden;
+  $('#view-prompt').setAttribute('aria-expanded', String(!panel.hidden));
+  $('#view-prompt').textContent = panel.hidden ? 'View Prompt' : 'Hide Prompt';
+  if (!panel.hidden) displayDecisionPrompt();
+});
+$('#tics').addEventListener('input', displayDecisionPrompt);
+$('#tics').addEventListener('change', displayDecisionPrompt);
+displayDecisionPrompt();
 $('#iwad').addEventListener(
   'change',
   () => void controller.prepare($('#iwad').files?.[0]),

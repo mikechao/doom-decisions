@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, it, vi } from 'vitest';
+import { formatDefaultDecisionInstructions } from '../src/decision-request.ts';
 
 const session = vi.hoisted(() => ({
   ports: undefined,
@@ -102,11 +103,87 @@ beforeEach(async () => {
     document.querySelector('#iwad'),
     new Element(), // Nested credential-handling summary.
   ];
+  const tics = document.querySelector('#tics');
+  tics.value = '6';
+  tics.valueAsNumber = 6;
+  document.querySelector('#prompt-panel').hidden = true;
+  const promptButton = document.querySelector('#view-prompt');
+  promptButton.textContent = 'View Prompt';
+  promptButton.setAttribute('aria-expanded', 'false');
+  promptButton.setAttribute('aria-controls', 'prompt-panel');
   vi.stubGlobal('document', document);
   vi.stubGlobal('window', new EventTarget());
   await import('../src/main.ts');
 });
 afterEach(() => vi.unstubAllGlobals());
+
+describe('Read-only decision prompt preview', () => {
+  it('places the button and hidden panel after limits guidance with a horizontal rule', () => {
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    assert.match(html, /<p id="stop-note"[^>]*>[^<]*<\/p>\s*<\/details>\s*<div class="prompt-group">\s*<hr>\s*<button id="view-prompt" type="button" aria-expanded="false" aria-controls="prompt-panel">View Prompt<\/button>\s*<div id="prompt-panel" hidden>/);
+    assert.match(html, /Preview of the default next_action instructions using the current tic selection\./);
+    assert.match(html, /In-flight decisions retain their captured duration\./);
+  });
+
+  it('toggles before setup with accurate labels and ARIA without calling the controller', () => {
+    const button = element('#view-prompt');
+    const panel = element('#prompt-panel');
+    const calls = Object.values(session.controller).map((method) => method.mock.calls.length);
+    document.activeElement = button;
+    assert.equal(button.disabled, false);
+    assert.equal(panel.hidden, true);
+    assert.equal(button.textContent, 'View Prompt');
+    assert.equal(button.attributes.get('aria-expanded'), 'false');
+    assert.equal(button.attributes.get('aria-controls'), 'prompt-panel');
+    assert.equal(element('#prompt-text').textContent, formatDefaultDecisionInstructions(6));
+    for (const hidden of [false, true, false]) {
+      emit(button, 'click');
+      emit(document, 'click');
+      assert.equal(panel.hidden, hidden);
+      assert.equal(button.textContent, hidden ? 'View Prompt' : 'Hide Prompt');
+      assert.equal(button.attributes.get('aria-expanded'), String(!hidden));
+      assert.equal(document.activeElement, button);
+    }
+    assert.deepEqual(Object.values(session.controller).map((method) => method.mock.calls.length), calls);
+  });
+
+  it('previews the current selection during play and refreshes when reopened', () => {
+    show({ phase: 'busy', continuous: { active: true }, controls: { ready: false, stop: true, tics: true, iwad: false } });
+    const button = element('#view-prompt');
+    const tics = element('#tics');
+    const calls = Object.values(session.controller).map((method) => method.mock.calls.length);
+    assert.equal(button.disabled, false);
+    emit(button, 'click');
+    for (const [n, event] of [[1, 'input'], [6, 'change'], [35, 'input']]) {
+      tics.value = String(n);
+      tics.valueAsNumber = n;
+      emit(tics, event);
+      assert.equal(element('#prompt-text').textContent, formatDefaultDecisionInstructions(n));
+      assert.equal(session.ports.readTics(), n, 'Preview leaves the selected duration intact');
+    }
+    emit(button, 'click');
+    tics.value = '21';
+    tics.valueAsNumber = 21;
+    emit(button, 'click');
+    assert.equal(element('#prompt-text').textContent, formatDefaultDecisionInstructions(21));
+    assert.deepEqual(Object.values(session.controller).map((method) => method.mock.calls.length), calls);
+  });
+
+  it('replaces stale instructions for empty or invalid tics and recovers on valid input', () => {
+    emit(element('#view-prompt'), 'click');
+    const tics = element('#tics');
+    for (const n of [NaN, 0, -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      tics.value = Number.isNaN(n) ? '' : String(n);
+      tics.valueAsNumber = n;
+      emit(tics, 'input');
+      assert.equal(element('#prompt-text').textContent, 'Enter a positive JavaScript safe integer for tics to preview instructions.');
+    }
+    tics.value = '35';
+    tics.valueAsNumber = 35;
+    emit(tics, 'change');
+    assert.equal(element('#prompt-text').textContent, formatDefaultDecisionInstructions(35));
+  });
+});
 
 describe('Setup & Key disclosure', () => {
   it('starts with a native open disclosure, nested key guidance and controls immediately after it', () => {

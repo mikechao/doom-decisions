@@ -69,6 +69,14 @@
             <p id="continuous-note" class="help control-guidance-text">Budget includes failed and canceled API attempts.</p>
             <p id="stop-note" class="control-guidance-text">Stop closes admission and waits for API cleanup or current-action and resulting-frame verification. It does not cancel an in-flight operation instantly.</p>
           </details>
+          <div class="prompt-group">
+            <hr>
+            <button id="view-prompt" type="button" aria-expanded="false" aria-controls="prompt-panel">View Prompt</button>
+            <div id="prompt-panel" hidden>
+              <p class="help">Preview of the default next_action instructions using the current tic selection. In-flight decisions retain their captured duration.</p>
+              <p id="prompt-text"></p>
+            </div>
+          </div>
         </section>
       </div>
       <section class="game" aria-labelledby="game-title">

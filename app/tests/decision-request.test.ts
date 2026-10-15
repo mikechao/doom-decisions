@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
+import {
+  buildDefaultDecisionRequest,
+  formatDefaultDecisionInstructions,
+} from '../src/decision-request.ts';
 
 describe('buildDefaultDecisionRequest', () => {
   it.each([
     { tic: 1, n: 6, png: 'data:image/png;base64,first' },
     { tic: 73, n: 2, png: 'data:image/png;base64,second' },
+    { tic: 1, n: 1, png: 'data:image/png;base64,one' },
+    { tic: 73, n: 35, png: 'data:image/png;base64,thirty-five' },
     { tic: 999, n: Number.MAX_SAFE_INTEGER, png: 'data:image/png;base64,third' },
   ])(
     'preserves the whole request and isolates mutable trees (tic $tic, N $n)',
@@ -44,6 +49,9 @@ describe('buildDefaultDecisionRequest', () => {
       const first = buildDefaultDecisionRequest(tic, n, png);
       const second = buildDefaultDecisionRequest(tic, n, png);
       expect(first).toStrictEqual(expected);
+      expect(formatDefaultDecisionInstructions(n)).toBe(
+        expected.questions[0].instructions,
+      );
       expect(second).toStrictEqual(first);
 
       // Whole-body equality above establishes this shape within the SDK unions.
