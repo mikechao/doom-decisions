@@ -1,59 +1,48 @@
 # Doom Decisions
 
-Watch Doom in the browser while OpenAI's Decisions API chooses the next action.
-The owner-accepted **v0.2.0 Continuous Mode MVP** uses vanilla TypeScript, Vite,
-CSS and a modified Doom WASM engine running in an app-owned module Worker.
+When OpenAI announced their [Decisions API](https://developers.openai.com/api/docs/guides/decisions) the lane choosing example looked like a game to me. So I thought since this model is multimodal can it "play" Doom. That is what this small project is. It's just a small wrapper around [doom.wasm](https://github.com/jacobenget/doom.wasm) with the Decisions API hooked up.
 
-Select your local **Doom IWAD** to attempt E1M1 preparation automatically,
-including one mandatory neutral tic without an API request. Each **Next Decision**
-click requests one of seven actions: neutral, forward, turn right, backward,
-turn left, fire or use. You choose any **positive JavaScript safe integer** of tics,
-initially **6**, captured separately for each admitted decision.
-**Start Continuous Mode** admits sequential decisions
-with a frozen per-run API-attempt budget: any positive JavaScript safe integer,
-default **2**, including failed or canceled calls. N changes affect later decisions.
-**Stop** closes admission and finishes cleanup or current-action verification.
-API waits and idle advance no gameplay; there are no automatic retries or restarts.
-Refresh starts a new session. See [Continuous Mode](app/README.md#continuous-mode).
+The basic flow is the following.
 
-The IWAD stays local and is not bundled or redistributed. Selection is best-effort:
-the controlled engine expects compatible Doom E1M1 data and may reject other files.
-Freedoom 0.13.0 Phase 1 and the owner's local Doom shareware `DOOM1.WAD` have worked
-in owner-run trials. See [local IWAD support and limitations](app/README.md#local-iwad-support).
-Supply your own OpenAI API key in the browser: calls go directly to OpenAI,
-and credentials remain in memory for the session. This temporary BYOK prototype
-requires trust in the served page and its scripts; it is not a production
-credential-security design. See the [credential limitations](app/README.md#temporary-browser-direct-credentials).
+1. Take a screenshot of the current game.
+2. Send the screenshot and a list of game commands to the Decisions API
+3. Use the game command with the highest confidence and advance the game based on the number of tics entered (default 6)
+
+There are 2 modes
+1. "Next Decision" - Where the flow above is execute once per button click.
+2. "Continuous Mode" - Where the flow above is executed a preconfigured number of times.
+
+## Start a "game"
+
+Get a Doom IWAD file. Download the [Freedoom Phase 1+2](https://freedoom.github.io/download.html)
+
+Get an OpenAI API key and enter it.
+
+Click "Next Decision"
+or
+Set an API budget and Click "Continuous Mode"
 
 ## Run locally
 
-First provision the tools in the [setup guide](app/README.md#prerequisites-and-clean-checkout).
-From the repository root:
-
-```sh
-npm --prefix app ci --no-audit --no-fund
-./build.sh
-(cd app && ./node_modules/.bin/vite preview --host 127.0.0.1 --port 8000 --strictPort)
-```
-
-Open `http://127.0.0.1:8000/`, select the IWAD, enter a key and click
-**Next Decision**, or set **Max API attempts** and choose **Start Continuous Mode**;
-use **Stop** to end the run. The build generates and verifies the bundled engine
-without embedding a WAD. Later frontend-only builds can use `./build.sh --frontend-only`
-when the existing native artifact and evidence still verify. In agent sessions,
-follow [AGENTS.md](AGENTS.md) for execution approval requirements.
-The supported fresh build and local preview require no Python; upstream utilities
-still use it. The owner reports successful full/frontend-only builds and Ctrl+C
-stopping compilation in a macOS terminal; there is no global build timeout.
-
-## Source and evidence
-
-- [App guide](app/README.md): setup, checks, browser procedure and credentials.
-- [Engine build guide](docs/doom-build.md): toolchain, staging and fixture boundaries.
-- [Vendor provenance](docs/doom-vendor-provenance.md): pinned source, licenses and unresolved example-asset rights.
-- [Prototype evidence](app/README.md#prototype-acceptance-and-evidence): owner-reported gameplay and remaining proof gaps.
-
-Automated checks and builds do not establish browser/API runtime success.
-Retired experiments, historical reports and superseded plans are recoverable
-from Git history; ignored raw evidence is not. Review redistribution rights and corresponding-source
-obligations before public distribution.
+1. Clone this repo
+2. Run
+   ```bash
+   ./script/setup_toolchain.sh install
+    ```
+   To install wasi-sdk-24.0-arm64-macos and binaryen-version_119-arm64-macos to build Doom in WASM.
+3. Run
+   ```bash
+   ./build.sh
+   ```
+   To build the Doom Engine and the web page.
+4. Run
+   ```bash
+   npm --prefix app install
+   ```
+   To install the dependencies for the web app
+5. Run
+   ```bash
+   npm --prefix run dev
+   ```
+   To run the development Vite server
+   
