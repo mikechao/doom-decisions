@@ -2,20 +2,24 @@ import { defineConfig } from 'vite';
 
 const strictCsp =
   "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'self' https://api.openai.com; base-uri 'none'; form-action 'none'";
+// Vite serves imported CSS through inline style elements during development.
+const devCsp = strictCsp.replace(
+  "style-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+);
 // Installed Impeccable setup: HTTP scripts/SSE and inline styles; Vite: HMR.
 // Reconfirm the helper's actual origin before starting a Live trial.
-const impeccableCsp = strictCsp
+const impeccableCsp = devCsp
   .replace("script-src 'self'", "script-src 'self' http://localhost:8400")
-  .replace("style-src 'self'", "style-src 'self' 'unsafe-inline'")
   .replace(
     "connect-src 'self'",
     "connect-src 'self' http://localhost:8400 ws://127.0.0.1:5173",
   );
 
-function transformCsp(html) {
+function transformCsp(html, csp) {
   const fail = () => {
     throw new Error(
-      'Impeccable dev CSP: expected exactly one unambiguous strict CSP meta element',
+      'Dev CSP: expected exactly one unambiguous strict CSP meta element',
     );
   };
   // Quoted values may contain >; attributes may be reordered or added by Live.
@@ -58,7 +62,7 @@ function transformCsp(html) {
   const offset = meta.index + content.index;
   return (
     html.slice(0, offset) +
-    ` content="${impeccableCsp}"` +
+    ` content="${csp}"` +
     html.slice(offset + content[0].length)
   );
 }
@@ -71,7 +75,16 @@ export default defineConfig(({ command, mode }) => ({
     sourcemap: true,
   },
   plugins:
-    command === 'serve' && mode === 'impeccable'
-      ? [{ name: 'impeccable-dev-csp', transformIndexHtml: transformCsp }]
+    command === 'serve'
+      ? [
+          {
+            name: 'dev-csp',
+            transformIndexHtml: (html) =>
+              transformCsp(
+                html,
+                mode === 'impeccable' ? impeccableCsp : devCsp,
+              ),
+          },
+        ]
       : [],
 }));
