@@ -79,6 +79,14 @@ export function observation(n: number): Observation {
       skill: 2,
       playerstate: 0,
       health: 100,
+      armorpoints: 0,
+      readyWeapon: { id: 1, name: 'pistol', ammoType: 'bullets' },
+      ammo: {
+        bullets: { current: 50, max: 200 },
+        shells: { current: 0, max: 50 },
+        cells: { current: 0, max: 300 },
+        rockets: { current: 0, max: 50 },
+      },
       virtualMs: Math.floor((n * 1000) / 35),
       buildTick: n - 1,
       turnheld: 0,
@@ -136,6 +144,12 @@ export function preparationResult(
     netIntercept: 0,
     titleReady: op === 'init' ? 1 : 0,
   });
+  if (op === 'init') {
+    result.native.loadComplete = 0;
+    result.native.armorpoints = null;
+    result.native.readyWeapon = null;
+    result.native.ammo = null;
+  }
   return op === 'prepare'
     ? ({ ...result, status: 0, outcome: 'APPLIED' } satisfies Results['prepare'])
     : ({ ...result, status: 0 } satisfies Results['init']);

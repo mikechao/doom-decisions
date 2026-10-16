@@ -101,7 +101,31 @@ export type NativeObservation = Record<
   | 'reactiontime'
   | 'flags',
   number
-> & { built: Command; entered: Command };
+> & {
+  built: Command;
+  entered: Command;
+  // Null until loadComplete; remains available at a terminal boundary.
+  armorpoints: number | null;
+  readyWeapon: {
+    id: number;
+    name:
+      | 'fist'
+      | 'pistol'
+      | 'shotgun'
+      | 'chaingun'
+      | 'rocket_launcher'
+      | 'plasma_rifle'
+      | 'bfg9000'
+      | 'chainsaw'
+      | 'super_shotgun'
+      | 'unknown';
+    ammoType: 'bullets' | 'shells' | 'cells' | 'rockets' | 'none' | 'unknown';
+  } | null;
+  ammo: Record<
+    'bullets' | 'shells' | 'cells' | 'rockets',
+    { current: number; max: number }
+  > | null;
+};
 
 export interface Observation {
   counters: Counters;

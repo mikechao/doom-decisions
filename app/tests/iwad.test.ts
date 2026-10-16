@@ -75,7 +75,7 @@ async function withWorker(options, test) {
           memory: { buffer: new ArrayBuffer(65536) },
           a1WasiInitCount: () => 0,
           a1ReadCounter: () => 0,
-          a21ReadObservation: () => 0,
+          a21ReadObservation: options.readObservation ?? (() => 0),
           initControlled: () => -2,
         },
       }),
@@ -277,6 +277,95 @@ describe('iwad', () => {
     }
   });
 
+  it('decodes appended player fields and every weapon/ammo identity through the Worker entry', async () => {
+    // Native getter results are faked; this proves decoding, not compiled C/WASM.
+    const weapons = [
+      [0, 'fist', 5, 'none'],
+      [1, 'pistol', 0, 'bullets'],
+      [2, 'shotgun', 1, 'shells'],
+      [3, 'chaingun', 0, 'bullets'],
+      [4, 'rocket_launcher', 3, 'rockets'],
+      [5, 'plasma_rifle', 2, 'cells'],
+      [6, 'bfg9000', 2, 'cells'],
+      [7, 'chainsaw', 5, 'none'],
+      [8, 'super_shotgun', 1, 'shells'],
+      [9, 'unknown', -1, 'unknown'], // NUMWEAPONS
+      [10, 'unknown', -1, 'unknown'], // wp_nochange
+      [-1, 'unknown', -1, 'unknown'],
+      [99, 'unknown', -1, 'unknown'],
+      [1, 'pistol', 4, 'unknown'], // NUMAMMO must not mean an inventory slot.
+      [1, 'pistol', 99, 'unknown'],
+    ];
+    for (const [id, name, ammoId, ammoType] of weapons) {
+      const reads = [];
+      const fields = {
+        10: 1, // Whole native load completed.
+        20: 87, // Existing health index remains unchanged.
+        76: 35,
+        77: id,
+        78: ammoId,
+        79: 11,
+        80: 22,
+        81: 33,
+        82: 44,
+        83: 111,
+        84: 222,
+        85: 333,
+        86: 444,
+      };
+      await withWorker(
+        {
+          readObservation(index) {
+            reads.push(index);
+            return fields[index] ?? 0;
+          },
+        },
+        async (h) => {
+          assert.equal((await h.load(smallWad)).ok, true);
+          reads.length = 0;
+          await h.scope.onmessage({ data: { op: 'snapshot' } });
+          const reply = h.replies.at(-1);
+          assert.equal(reply.ok, true);
+          assert.equal(reply.result.native.health, 87);
+          assert.equal(reply.result.native.armorpoints, 35);
+          assert.deepEqual(reply.result.native.readyWeapon, { id, name, ammoType });
+          assert.deepEqual(reply.result.native.ammo, {
+            bullets: { current: 11, max: 111 },
+            shells: { current: 22, max: 222 },
+            cells: { current: 33, max: 333 },
+            rockets: { current: 44, max: 444 },
+          });
+          assert.deepEqual(
+            reads.filter((index) => index >= 76).sort((a, b) => a - b),
+            [76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86],
+          );
+          assert.equal(h.closed, false);
+        },
+      );
+    }
+  });
+
+  it('keeps new telemetry unavailable before native preparation', async () => {
+    await withWorker(
+      {
+        readObservation(index) {
+          assert.ok(index < 76, 'Unprepared observation must not read inventory');
+          return 0;
+        },
+      },
+      async (h) => {
+        assert.equal((await h.load(smallWad)).ok, true);
+        await h.scope.onmessage({ data: { op: 'snapshot' } });
+        const reply = h.replies.at(-1);
+        assert.equal(reply.ok, true);
+        assert.equal(reply.result.native.loadComplete, 0);
+        assert.equal(reply.result.native.armorpoints, null);
+        assert.equal(reply.result.native.readyWeapon, null);
+        assert.equal(reply.result.native.ammo, null);
+      },
+    );
+  });
+
   it('retires on integrity mismatch or mocked compilation failure', async () => {
     await withWorker({}, async (h) => {
       assert.equal((await h.load(smallWad, '0'.repeat(64))).ok, false);
@@ -321,6 +410,56 @@ describe('iwad', () => {
           assert.equal(h.sdkCalls, 0);
         },
       );
+  });
+
+  it('includes every new telemetry value in passive snapshot and render checks', async () => {
+    const mutations = [
+      (native) => {
+        native.armorpoints++;
+      },
+      (native) => {
+        native.readyWeapon.id = 7;
+      },
+      (native) => {
+        native.readyWeapon.name = 'chainsaw';
+      },
+      (native) => {
+        native.readyWeapon.ammoType = 'none';
+      },
+      ...['bullets', 'shells', 'cells', 'rockets'].flatMap((ammo) => [
+        (native) => {
+          native.ammo[ammo].current++;
+        },
+        (native) => {
+          native.ammo[ammo].max++;
+        },
+      ]),
+    ];
+    for (const operation of ['snapshot', 'render']) {
+      for (const mutate of mutations) {
+        let snapshots = 0;
+        await selection(
+          {
+            mutateResult(data, result) {
+              if (data.op === 'snapshot') ++snapshots;
+              if (
+                data.op === operation &&
+                (operation === 'render' || snapshots === 2)
+              )
+                mutate(result.native);
+            },
+          },
+          async (h) => {
+            await h.select();
+            assert.equal(h.view.session.phase, 'error');
+            assert.match(h.view.session.evidence.error, /Passive operation changed/);
+            assert.equal(h.worker.terminate.mock.calls.length, 1);
+            assert.equal(h.native.calls, 1, 'No extra tic after telemetry mismatch');
+            assert.equal(h.sdkCalls, 0);
+          },
+        );
+      }
+    }
   });
 
   it('retires on passive snapshot frame hash Canvas or idle mismatch', async () => {

@@ -2,6 +2,7 @@
 // transport only. No browser entry, source extraction, VM, WASM or game assets.
 import assert from 'node:assert/strict';
 import { afterEach, it } from 'vitest';
+import { verifyAction } from '../src/decision.ts';
 import { cleanup, fixture } from './fixtures/session.ts';
 import { pixels, sha } from './fixtures/synthetic-doom.ts';
 
@@ -72,6 +73,76 @@ it('initializes, prepares, and completes one verified decision through ordinary 
     assert.equal(h.view.session.evidence.decisions[0].stage, 'completed');
   } finally {
     controller.close();
+  }
+});
+
+it('presents player telemetry from preparation snapshots through action and render evidence', async () => {
+  const telemetry = {
+    health: 87,
+    armorpoints: 35,
+    readyWeapon: { id: 4, name: 'rocket_launcher', ammoType: 'rockets' },
+    ammo: {
+      bullets: { current: 11, max: 111 },
+      shells: { current: 22, max: 222 },
+      cells: { current: 33, max: 333 },
+      rockets: { current: 44, max: 444 },
+    },
+  };
+  const h = fixture({ at: 1, signals: telemetry });
+  try {
+    h.browserInputs.tics = 1;
+    const prepared = await h.prepare();
+    const initial = prepared.evidence.operations.find(({ op }) => op === 'init');
+    assert.equal(initial.result.native.armorpoints, null);
+    assert.equal(initial.result.native.readyWeapon, null);
+    assert.equal(initial.result.native.ammo, null);
+    const before = h.native.observe();
+    for (const { op, result } of prepared.evidence.operations) {
+      if (op === 'snapshot' || op === 'render' || op === 'prepare') {
+        assert.equal(result.native.health, 100);
+        assert.equal(result.native.armorpoints, 0);
+        assert.deepEqual(result.native.readyWeapon, {
+          id: 1,
+          name: 'pistol',
+          ammoType: 'bullets',
+        });
+        assert.deepEqual(result.native.ammo, before.native.ammo);
+      }
+    }
+    assert.equal(await h.next(), 'completed');
+    const presented = h.view.session;
+    const action = presented.evidence.operations.findLast(
+      ({ op }) => op === 'action',
+    ).result;
+    const rendered = presented.evidence.operations.at(-1);
+    assert.equal(rendered.op, 'render');
+    assert.equal(rendered.result.counters.gametic, 2);
+    for (const native of [
+      action.native,
+      action.steps[0].native,
+      rendered.result.native,
+    ]) {
+      for (const [field, expected] of Object.entries(telemetry))
+        assert.deepEqual(native[field], expected);
+    }
+    assert.equal(presented.evidence.decisions[0].waitUnchanged, true);
+    assert.equal(presented.frame.nativeSha256, presented.frame.canvasSha256);
+    assert.equal(
+      before.native.ammo.rockets.current,
+      0,
+      'Prior evidence stays detached',
+    );
+
+    // The final receipt must agree with its verified step, including inventory.
+    const mismatched = structuredClone(action);
+    mismatched.native = structuredClone(mismatched.native);
+    mismatched.native.ammo.rockets.current--;
+    const verified = verifyAction(before, 0, 1, mismatched);
+    assert.equal(verified.independentlyVerifiedTics, 1);
+    assert.equal(verified.complete, false);
+    assert.equal(verified.completionUncertain, true);
+  } finally {
+    await h.dispose();
   }
 });
 
