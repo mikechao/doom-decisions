@@ -12,11 +12,11 @@ export type DecisionControlsPresentation = Readonly<{
 
 const selectIwad = 'Select a local Doom IWAD to prepare the game.';
 const preparing = 'Preparing Doom from the selected local IWAD…';
-const enterKey = 'Enter a temporary OpenAI API key to request decisions.';
 
 export function deriveDecisionControls(
   session: DecisionReadiness | undefined,
   keyPresent: boolean,
+  providerName = 'OpenAI',
 ): DecisionControlsPresentation {
   if (!session) {
     return { bannerText: selectIwad, buttonsEnabled: false };
@@ -50,7 +50,9 @@ export function deriveDecisionControls(
 
   const credentialAvailable = session.hasClient || keyPresent;
   return {
-    bannerText: credentialAvailable ? null : enterKey,
+    bannerText: credentialAvailable
+      ? null
+      : `Enter a temporary ${providerName} API key to request decisions.`,
     buttonsEnabled: session.controls.ready && credentialAvailable,
   };
 }

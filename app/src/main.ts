@@ -1,6 +1,7 @@
 import { createDecisionHistory } from './decision-history';
 import { deriveDecisionControls } from './decision-controls';
 import { formatDefaultDecisionInstructions } from './decision-request';
+import { jevDecisionProviderFactory } from './jev-decision-provider';
 import { projectLatestOutcome } from './latest-outcome';
 import { openAiDecisionProviderFactory } from './openai-decision-provider';
 import {
@@ -9,10 +10,15 @@ import {
 } from './session-controller';
 import './style.css';
 
+// Explicit opt-in: Vite serve --mode jev. Production always selects OpenAI.
+const jevMode = import.meta.env.DEV && import.meta.env.MODE === 'jev';
+
 type Elements = {
   '#screen': HTMLCanvasElement;
   '#iwad': HTMLInputElement;
   '#key': HTMLInputElement;
+  '#key-label': HTMLLabelElement;
+  '#key-note': HTMLParagraphElement;
   '#key-state': HTMLParagraphElement;
   '#setup': HTMLDetailsElement;
   '#setup-asset': HTMLSpanElement;
@@ -52,6 +58,11 @@ function canvasContext(screen: HTMLCanvasElement) {
 }
 function check(ok: unknown, message: string): asserts ok {
   if (!ok) throw Error(message);
+}
+if (jevMode) {
+  $('#key-label').textContent = 'Temporary TypeSafe / Jev API key (experimental)';
+  $('#key-note').textContent =
+    'Sent directly to TypeSafe with the current screenshot. Images are experimental. Trust this page and its scripts. The field clears on capture; the credential stays in memory. A blank field keeps it. Enter a replacement before a later click to correct it. Refresh clears in-memory credentials.';
 }
 function localFetch(name: string, json: true): Promise<unknown>;
 function localFetch(name: string, json?: false): Promise<ArrayBuffer>;
@@ -97,6 +108,7 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
   const readiness = deriveDecisionControls(
     run,
     $('#key').value.trim().length > 0,
+    jevMode ? 'TypeSafe / Jev' : 'OpenAI',
   );
   const prerequisite = $('#control-prerequisite');
   prerequisite.textContent = readiness.bannerText ?? '';
@@ -181,7 +193,7 @@ const controller = createSessionController(
     clearCanvas: () => context.clearRect(0, 0, 640, 400),
     present: display,
   },
-  openAiDecisionProviderFactory,
+  jevMode ? jevDecisionProviderFactory : openAiDecisionProviderFactory,
 );
 const syncCredentialReadiness = () => {
   updateControlAvailability(latestSession);

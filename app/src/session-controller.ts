@@ -473,7 +473,7 @@ export function createSessionController(
     if (!run.client) {
       display(
         run,
-        'Enter a temporary OpenAI API key before requesting decisions.',
+        'Enter a temporary API key before requesting decisions.',
       );
       return 'not-admitted';
     }

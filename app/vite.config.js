@@ -7,6 +7,11 @@ const devCsp = strictCsp.replace(
   "style-src 'self'",
   "style-src 'self' 'unsafe-inline'",
 );
+// Experimental provider, only when explicitly serving in Jev development mode.
+const jevCsp = devCsp.replace(
+  "connect-src 'self' https://api.openai.com",
+  "connect-src 'self' https://api.typesafe.ai",
+);
 // Installed Impeccable setup: HTTP scripts/SSE and inline styles; Vite: HMR.
 // Reconfirm the helper's actual origin before starting a Live trial.
 const impeccableCsp = devCsp
@@ -82,7 +87,11 @@ export default defineConfig(({ command, mode }) => ({
             transformIndexHtml: (html) =>
               transformCsp(
                 html,
-                mode === 'impeccable' ? impeccableCsp : devCsp,
+                mode === 'impeccable'
+                  ? impeccableCsp
+                  : mode === 'jev'
+                    ? jevCsp
+                    : devCsp,
               ),
           },
         ]
