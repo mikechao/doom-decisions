@@ -69,7 +69,7 @@
 
 #include "g_game.h"
 #ifdef DOOM_CONTROLLED_TITLE
-#include "d_items.h"
+#include "g_player_observation.h"
 #include "r_state.h"
 #include "net_client.h"
 #endif
@@ -2399,32 +2399,19 @@ int G_A21Observe(int index) {
     return A21InputAvailable() ? gamekeydown[key_fire] : 0;
   case 75:
     return A21InputAvailable() ? gamekeydown[key_use] : 0;
-  /* Read-only inventory; fixed ammo enums never index via am_noammo. */
+  /* Read-only inventory. */
   case 76:
-    return players[0].armorpoints;
   case 77:
-    return players[0].readyweapon;
   case 78:
-    if (players[0].readyweapon < wp_fist ||
-        players[0].readyweapon >= NUMWEAPONS)
-      return -1;
-    return weaponinfo[players[0].readyweapon].ammo;
   case 79:
-    return players[0].ammo[am_clip];
   case 80:
-    return players[0].ammo[am_shell];
   case 81:
-    return players[0].ammo[am_cell];
   case 82:
-    return players[0].ammo[am_misl];
   case 83:
-    return players[0].maxammo[am_clip];
   case 84:
-    return players[0].maxammo[am_shell];
   case 85:
-    return players[0].maxammo[am_cell];
   case 86:
-    return players[0].maxammo[am_misl];
+    return A21ObservePlayerInventory(&players[0], index);
 
   default:
     return -1;
