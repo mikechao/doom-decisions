@@ -1,17 +1,27 @@
 import { createDecisionHistory } from './decision-history';
 import { deriveDecisionControls } from './decision-controls';
 import { formatDefaultDecisionInstructions } from './decision-request';
+import { jevDecisionProviderFactory } from './jev-decision-provider';
 import { projectLatestOutcome } from './latest-outcome';
+import { openAiDecisionProviderFactory } from './openai-decision-provider';
 import {
   createSessionController,
   type SessionPresentation,
 } from './session-controller';
 import './style.css';
 
+// Explicit opt-in: Vite serve --mode jev. Production always selects OpenAI.
+const jevMode = import.meta.env.DEV && import.meta.env.MODE === 'jev';
+const jevPlaceholder = 'jev-vite-proxy-not-a-credential';
+const jevKeyStatus =
+  'TypeSafe key held by the local Vite server. Authentication unverified.';
+
 type Elements = {
   '#screen': HTMLCanvasElement;
   '#iwad': HTMLInputElement;
   '#key': HTMLInputElement;
+  '#key-label': HTMLLabelElement;
+  '#key-note': HTMLParagraphElement;
   '#key-state': HTMLParagraphElement;
   '#setup': HTMLDetailsElement;
   '#setup-asset': HTMLSpanElement;
@@ -52,6 +62,15 @@ function canvasContext(screen: HTMLCanvasElement) {
 function check(ok: unknown, message: string): asserts ok {
   if (!ok) throw Error(message);
 }
+if (jevMode) {
+  $('#key').value = '';
+  $('#key').hidden = true;
+  $('#key').disabled = true;
+  $('#key-label').hidden = true;
+  $('#key-state').textContent = jevKeyStatus;
+  $('#key-note').textContent =
+    'Experimental Jev mode sends the current screenshot through the local Vite server to TypeSafe. Images are experimental. Configure TYPESAFE_API_KEY only in the Vite server process and restart that server to change it. Do not enter a TypeSafe key in this page.';
+}
 function localFetch(name: string, json: true): Promise<unknown>;
 function localFetch(name: string, json?: false): Promise<ArrayBuffer>;
 async function localFetch(name: string, json = false): Promise<unknown> {
@@ -86,7 +105,11 @@ function collapseCompletedSetup(
     setupPointerActive ||
     $('#setup').contains(focusTarget) ||
     !latestSession?.prepared ||
-    !(latestSession.hasClient || (keyCommitted && $('#key').value.trim()))
+    !(
+      jevMode ||
+      latestSession.hasClient ||
+      (keyCommitted && $('#key').value.trim())
+    )
   )
     return;
   setupAutoCollapseDone = true;
@@ -95,7 +118,8 @@ function collapseCompletedSetup(
 function updateControlAvailability(run: SessionRunPresentation | undefined) {
   const readiness = deriveDecisionControls(
     run,
-    $('#key').value.trim().length > 0,
+    jevMode || $('#key').value.trim().length > 0,
+    jevMode ? 'TypeSafe / Jev' : 'OpenAI',
   );
   const prerequisite = $('#control-prerequisite');
   prerequisite.textContent = readiness.bannerText ?? '';
@@ -105,7 +129,7 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
   if (!run) return;
   const sessionReady = run.controls.ready;
   $('#budget').disabled = !sessionReady;
-  $('#key').disabled = !sessionReady;
+  $('#key').disabled = jevMode || !sessionReady;
   $('#stop').disabled = !run.controls.stop;
   $('#tics').disabled = !run.controls.tics;
   $('#iwad').disabled = !run.controls.iwad;
@@ -117,7 +141,13 @@ function display(view: SessionPresentation) {
     $('#frame').textContent = view.frameStatus;
   if (view.iwadEnabled !== undefined) $('#iwad').disabled = !view.iwadEnabled;
   const status = view.status;
-  if (status) $('#status').textContent = status;
+  if (status)
+    $('#status').textContent = jevMode
+      ? status.replace(
+          'Correct the key if needed, then click Next Decision to retry.',
+          'Check TYPESAFE_API_KEY on the local Vite server before another manual attempt.',
+        )
+      : status;
   const run = view.session;
   if (run) latestSession = run;
   updateControlAvailability(latestSession);
@@ -137,9 +167,11 @@ function display(view: SessionPresentation) {
       : 'Continuous mode stopped';
   $('#continuous-state').textContent =
     `${continuousStatus}${continuous ? ` · API attempts ${continuous.used} / ${continuous.limit}` : ''} · verified tic ${run.verifiedTics}${run.waitingForSdk ? ' · waiting for API response cleanup' : ''}`;
-  $('#key-state').textContent = run.hasClient
-    ? 'Client in memory; blank keeps it. Authentication unverified.'
-    : 'Client in memory • Refresh clears it';
+  $('#key-state').textContent = jevMode
+    ? jevKeyStatus
+    : run.hasClient
+      ? 'Client in memory; blank keeps it. Authentication unverified.'
+      : 'Client in memory • Refresh clears it';
   displayHistory(run.evidence.decisions);
   const outcome = projectLatestOutcome(
     run.evidence.decisions.at(-1),
@@ -152,33 +184,40 @@ function display(view: SessionPresentation) {
   $('#outcome-evidence').hidden = !outcome.evidence;
   displaySetupStatus(run);
 }
-const controller = createSessionController({
-  localFetch,
-  createWorker: () =>
-    new Worker(new URL('./worker.ts', import.meta.url), {
-      type: 'module',
+const controller = createSessionController(
+  {
+    localFetch,
+    createWorker: () =>
+      new Worker(new URL('./worker.ts', import.meta.url), {
+        type: 'module',
+      }),
+    readTics: () => $('#tics').valueAsNumber,
+    takeKey: () => {
+      if (jevMode) {
+        $('#key').value = '';
+        return jevPlaceholder;
+      }
+      const key = $('#key').value.trim();
+      if (key) $('#key').value = '';
+      return key;
+    },
+    clearKey: () => {
+      $('#key').value = '';
+    },
+    focusBudget: () => $('#budget').focus(),
+    capture: () => ({
+      png: canvas.toDataURL('image/png'),
+      rgba: context.getImageData(0, 0, 640, 400).data,
     }),
-  readTics: () => $('#tics').valueAsNumber,
-  takeKey: () => {
-    const key = $('#key').value.trim();
-    if (key) $('#key').value = '';
-    return key;
+    paintAndReadback: (rgba) => {
+      context.putImageData(new ImageData(rgba, 640, 400), 0, 0);
+      return context.getImageData(0, 0, 640, 400).data;
+    },
+    clearCanvas: () => context.clearRect(0, 0, 640, 400),
+    present: display,
   },
-  clearKey: () => {
-    $('#key').value = '';
-  },
-  focusBudget: () => $('#budget').focus(),
-  capture: () => ({
-    png: canvas.toDataURL('image/png'),
-    rgba: context.getImageData(0, 0, 640, 400).data,
-  }),
-  paintAndReadback: (rgba) => {
-    context.putImageData(new ImageData(rgba, 640, 400), 0, 0);
-    return context.getImageData(0, 0, 640, 400).data;
-  },
-  clearCanvas: () => context.clearRect(0, 0, 640, 400),
-  present: display,
-});
+  jevMode ? jevDecisionProviderFactory : openAiDecisionProviderFactory,
+);
 const syncCredentialReadiness = () => {
   updateControlAvailability(latestSession);
 };

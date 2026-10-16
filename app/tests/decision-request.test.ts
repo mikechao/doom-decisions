@@ -1,8 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildDefaultDecisionRequest,
   formatDefaultDecisionInstructions,
 } from '../src/decision-request.ts';
+import { validateChoice } from '../src/decision.ts';
+import {
+  decodeOpenAIDecision,
+  encodeOpenAIDecisionRequest,
+  openAiDecisionProviderFactory,
+} from '../src/openai-decision-provider.ts';
 
 describe('buildDefaultDecisionRequest', () => {
   it.each([
@@ -46,8 +52,12 @@ describe('buildDefaultDecisionRequest', () => {
           },
         ],
       };
-      const first = buildDefaultDecisionRequest(tic, n, png);
-      const second = buildDefaultDecisionRequest(tic, n, png);
+      const first = encodeOpenAIDecisionRequest(
+        buildDefaultDecisionRequest(tic, n, png),
+      );
+      const second = encodeOpenAIDecisionRequest(
+        buildDefaultDecisionRequest(tic, n, png),
+      );
       expect(first).toStrictEqual(expected);
       expect(formatDefaultDecisionInstructions(n)).toBe(
         expected.questions[0].instructions,
@@ -76,7 +86,86 @@ describe('buildDefaultDecisionRequest', () => {
       mutable.input[0].content[0].text = 'mutated';
       mutable.questions[0].choices[0].value = 'mutated';
       expect(second).toStrictEqual(expected);
-      expect(buildDefaultDecisionRequest(tic, n, png)).toStrictEqual(expected);
+      expect(
+        encodeOpenAIDecisionRequest(buildDefaultDecisionRequest(tic, n, png)),
+      ).toStrictEqual(expected);
     },
   );
+});
+
+it('builds only immutable domain evidence without telemetry or wire fields', () => {
+  const input = buildDefaultDecisionRequest(73, 35, 'data:image/png;base64,local');
+  expect(Object.keys(input).sort()).toEqual([
+    'context', 'instructions', 'permittedActions', 'png',
+  ]);
+  expect(input.permittedActions).toEqual([
+    'neutral', 'forward', 'turn_right', 'backward', 'turn_left', 'fire', 'use',
+  ]);
+  expect(Object.isFrozen(input)).toBe(true);
+  expect(Object.isFrozen(input.permittedActions)).toBe(true);
+  expect(input.permittedActions).not.toBe(
+    buildDefaultDecisionRequest(73, 35, input.png).permittedActions,
+  );
+});
+
+it('decodes OpenAI envelopes and retains refusal and malformed-answer handling', () => {
+  const answer = (choice) => ({
+    answers: [{ type: 'choice', name: 'next_action', choice }],
+  });
+  for (const action of ['neutral', 'forward', 'turn_right', 'backward', 'turn_left', 'fire', 'use'])
+    expect(validateChoice(decodeOpenAIDecision(answer(action))).action).toBe(action);
+  expect(
+    decodeOpenAIDecision({ answers: [{ type: 'refusal', name: 'next_action' }] }),
+  ).toEqual({ kind: 'refusal' });
+  for (const data of [
+    answer(true),
+    answer('1'),
+    answer('forward+fire'),
+    answer('__proto__'),
+    { answers: [] },
+    { answers: [{ type: 'choice', name: 'other', choice: 'neutral' }] },
+    { answers: [answer('neutral').answers[0], answer('fire').answers[0]] },
+  ])
+    expect(() => validateChoice(decodeOpenAIDecision(data))).toThrow();
+  const wire = answer('fire');
+  Object.assign(wire.answers[0], {
+    confidence: 0.7, probabilities: 'untrusted-metric',
+  });
+  expect(decodeOpenAIDecision(wire)).toEqual({
+    kind: 'choice', action: 'fire', confidence: 0.7, probabilities: 'untrusted-metric',
+  });
+});
+
+it('includes synchronous OpenAI wire encoding in the original deadline without charging expired requests', async () => {
+  vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] });
+  const fetch = vi.fn(async () => { throw Error('Unexpected offline transport'); });
+  vi.stubGlobal('fetch', fetch);
+  try {
+    const provider = openAiDecisionProviderFactory.create('offline-not-a-credential');
+    const input = buildDefaultDecisionRequest(1, 6, 'data:image/png;base64,local');
+    const lifecycle = {};
+    const diagnostics = { requestId: null, http: null, latencyMs: null };
+    const beforeCreate = vi.fn();
+    const startedAt = performance.now();
+    await expect(provider.request(
+      {
+        ...input,
+        get context() {
+          vi.advanceTimersByTime(10000); // Synchronous wire construction work.
+          return input.context;
+        },
+      },
+      lifecycle,
+      diagnostics,
+      { assertFresh() {}, beforeCreate, onReadStateChange() {} },
+      startedAt,
+    )).rejects.toThrow('API deadline exceeded (10 seconds)');
+    expect(beforeCreate).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(diagnostics.latencyMs).toBe(10000);
+    expect(lifecycle).toEqual({ apiController: undefined });
+  } finally {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  }
 });

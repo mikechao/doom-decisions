@@ -2,11 +2,222 @@
 // transport only. No browser entry, source extraction, VM, WASM or game assets.
 import assert from 'node:assert/strict';
 import { afterEach, it } from 'vitest';
-import { verifyAction } from '../src/decision.ts';
-import { cleanup, fixture } from './fixtures/session.ts';
+import { DecisionFailure, verifyAction } from '../src/decision.ts';
+import type {
+  DecisionProvider,
+  DecisionProviderFactory,
+  DecisionRequest,
+  DecisionResult,
+} from '../src/decision-provider.ts';
+import { checkpoint, cleanup, deferred, fixture } from './fixtures/session.ts';
 import { pixels, sha } from './fixtures/synthetic-doom.ts';
 
 afterEach(cleanup);
+
+function fakeProviderFactory(
+  request: DecisionProvider['request'],
+): DecisionProviderFactory {
+  return {
+    probe: () => ({
+      status: 'Offline fake available',
+      evidence: { provider: 'offline-fake' },
+    }),
+    create: () => ({ request }),
+  };
+}
+
+it('injects domain-only decisions while the controller freezes N and verifies manual and continuous frames', async () => {
+  const inputs: DecisionRequest[] = [];
+  const providerFactory = fakeProviderFactory((input, _lifecycle, diagnostics, hooks) => {
+    hooks.assertFresh();
+    hooks.beforeCreate();
+    inputs.push(input);
+    assert.deepEqual(Object.keys(input).sort(), [
+      'context', 'instructions', 'permittedActions', 'png',
+    ]);
+    assert.deepEqual(input.permittedActions, [
+      'neutral', 'forward', 'turn_right', 'backward', 'turn_left', 'fire', 'use',
+    ]);
+    assert.equal(input.png, 'data:image/png;base64,synthetic');
+    assert.equal(Object.isFrozen(input), true);
+    assert.equal(Object.isFrozen(input.permittedActions), true);
+    h.browserInputs.tics = 35; // Later admissions only; provider cannot choose duration.
+    diagnostics.requestId = 'req_fake';
+    diagnostics.latencyMs = 0;
+    return Promise.resolve({ kind: 'choice', action: 'neutral', confidence: 0.7 });
+  });
+  const h = fixture({ providerFactory });
+  try {
+    await h.prepare();
+    assert.equal(h.view.sdkStatus, 'Offline fake available');
+    assert.deepEqual(h.view.session.evidence.sdk, { provider: 'offline-fake' });
+    h.browserInputs.tics = 2;
+    const manual = h.next();
+    assert.equal(await h.next(), 'not-admitted');
+    assert.equal(await manual, 'completed');
+    await h.controller.startContinuous(1);
+    const [first, second] = h.view.session.evidence.decisions;
+    assert.match(inputs[0].instructions, /exactly 2 gameplay tics/);
+    assert.match(inputs[1].instructions, /exactly 35 gameplay tics/);
+    assert.match(inputs[0].context, /verified tic 1\./);
+    assert.match(inputs[1].context, /verified tic 3\./);
+    assert.deepEqual(h.actions, [
+      { mask: 0, tics: 1 },
+      { mask: 0, tics: 2 },
+      { mask: 0, tics: 35 },
+    ]);
+    assert.equal(first.selectedTics, 2);
+    assert.equal(second.selectedTics, 35);
+    assert.deepEqual(second.observation, first.result);
+    for (const entry of [first, second]) {
+      assert.equal(entry.execution.complete, true);
+      assert.equal(entry.execution.independentlyVerifiedTics, entry.selectedTics);
+      assert.equal(entry.result.nativeSha256, entry.result.canvasSha256);
+      assert.equal(entry.waitUnchanged, true);
+      assert.deepEqual(entry.choice, {
+        action: 'neutral',
+        confidence: 0.7,
+        probabilities: null,
+      });
+      assert.equal(entry.requestId, 'req_fake');
+    }
+    assert.equal(h.view.session.verifiedTics, 38);
+    assert.equal(h.view.session.continuous.used, 1);
+    assert.equal(h.view.session.continuous.limit, 1);
+    assert.equal(h.view.session.controls.ready, true);
+    h.browserInputs.tics = 0;
+    assert.equal(await h.next(), 'not-admitted');
+    assert.equal(inputs.length, 2);
+    assert.equal(h.sdkCalls, 0);
+    assert.equal(h.transportCalls, 0);
+    assert.equal(h.creations, 1);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it('rejects invalid fake actions, refusals and failures without dispatch, retry or raw-error disclosure', async () => {
+  const outcomes: (DecisionResult | Error)[] = [
+    { kind: 'choice', action: 'forward+fire' },
+    { kind: 'refusal' },
+    new DecisionFailure('API connection failure (network/CORS/access)'),
+    new Error('private provider response'),
+  ];
+  for (const outcome of outcomes) {
+    let calls = 0;
+    const providerFactory = fakeProviderFactory((_input, _lifecycle, _diagnostics, hooks) => {
+      hooks.assertFresh();
+      hooks.beforeCreate();
+      ++calls;
+      return outcome instanceof Error
+        ? Promise.reject(outcome)
+        : Promise.resolve(outcome);
+    });
+    const h = fixture({ providerFactory });
+    try {
+      await h.prepare();
+      await h.start();
+      assert.equal(calls, 1);
+      assert.equal(h.view.session.continuous.used, 1);
+      assert.equal(h.view.session.continuous.active, false);
+      assert.equal(h.gameCalls, 0);
+      assert.equal(h.gameOps.includes('action'), false);
+      assert.equal(h.sdkCalls, 0);
+      assert.equal(h.transportCalls, 0);
+      const recoverable =
+        !(outcome instanceof Error) || outcome instanceof DecisionFailure;
+      assert.equal(h.view.session.phase, recoverable ? 'ready' : 'error');
+      assert.equal(h.view.session.controls.ready, recoverable);
+      assert.doesNotMatch(
+        JSON.stringify(h.view), /private provider response|forward\+fire/,
+      );
+      if (recoverable)
+        assert.equal(h.view.session.evidence.decisions[0].waitUnchanged, true);
+    } finally {
+      await h.dispose();
+    }
+  }
+});
+
+it('fences late fake results after Stop or close and retains independent cleanup ownership', async () => {
+  for (const command of ['stop', 'close']) {
+    const result = deferred(),
+      reader = deferred(),
+      invoked = deferred();
+    let signal: AbortSignal | undefined;
+    const providerFactory = fakeProviderFactory((_input, lifecycle, _diagnostics, hooks) => {
+      const controller = new AbortController();
+      signal = controller.signal;
+      lifecycle.apiController = controller;
+      hooks.assertFresh();
+      hooks.beforeCreate();
+      const cleanup = reader.promise.then(
+        () => {},
+        () => {},
+      ).then(() => {
+        if (lifecycle.sdkRead === cleanup) lifecycle.sdkRead = undefined;
+        hooks.onReadStateChange();
+      });
+      lifecycle.sdkRead = cleanup;
+      hooks.onReadStateChange();
+      invoked.resolve();
+      // Intentionally ignore Abort: the controller must fence a valid late result.
+      return (result.promise as Promise<DecisionResult>).finally(() => {
+        if (lifecycle.apiController === controller)
+          lifecycle.apiController = undefined;
+      });
+    });
+    const h = fixture({ providerFactory });
+    let work;
+    try {
+      await h.prepare();
+      work = h.start();
+      await invoked.promise;
+      h.controller[command]();
+      assert.ok(signal);
+      assert.equal(signal.aborted, true);
+      assert.equal(h.view.session.waitingForSdk, true);
+      assert.equal(h.view.session.controls.ready, false);
+      result.resolve({ kind: 'choice', action: 'forward' });
+      if (command === 'stop') {
+        await checkpoint(
+          () => h.view.session.evidence.decisions[0].stage === 'cleanup',
+        );
+        assert.equal(h.view.session.continuous.active, true);
+        assert.equal(await h.next(), 'not-admitted');
+        await h.start();
+        assert.equal(h.view.session.continuous.used, 1);
+        const proof = h.hold('snapshot');
+        reader.reject(Error('private late reader error'));
+        await proof.waiting;
+        assert.equal(h.view.session.waitingForSdk, false);
+        assert.equal(h.view.session.controls.ready, false);
+        proof.release();
+      } else {
+        await work;
+        assert.equal(h.view.session.waitingForSdk, true);
+        reader.resolve();
+      }
+      await work;
+      await checkpoint(() => !h.view.session.waitingForSdk);
+      assert.equal(h.gameCalls, 0);
+      assert.equal(h.gameOps.includes('action'), false);
+      assert.equal(h.view.session.controls.ready, command === 'stop');
+      assert.equal(
+        h.worker.terminate.mock.calls.length, command === 'close' ? 1 : 0,
+      );
+      assert.equal(h.sdkCalls, 0);
+      assert.equal(h.transportCalls, 0);
+      assert.doesNotMatch(JSON.stringify(h.view), /private late reader error/);
+    } finally {
+      result.resolve({ kind: 'choice', action: 'neutral' });
+      reader.resolve();
+      h.controller.close();
+      await work;
+      await h.dispose();
+    }
+  }
+});
 
 it('initializes, prepares, and completes one verified decision through ordinary imports', async () => {
   const h = fixture();
