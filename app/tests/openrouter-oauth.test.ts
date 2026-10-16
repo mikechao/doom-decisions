@@ -138,6 +138,37 @@ it('does not replay if the page reloads after claim but before exchange', async 
   assert.equal(h.fetch.mock.calls.length, 0);
 });
 
+it('round-trips an HTTPS static subpath and requires exact trailing-slash identity', async () => {
+  for (const path of ['/doom/', '/games/doom/index.html']) {
+    const target = 'https://doom.example.test' + path;
+    const h = fakeBrowser(target + '?view=wide#prompt');
+    const outgoing = createOpenRouterOAuth(h.context);
+    await outgoing.begin();
+    const authorize = new URL(h.location.assign.mock.calls[0][0]);
+    assert.equal(authorize.searchParams.get('callback_url'), target);
+    const flow = JSON.parse(h.values.get(pendingKey)!);
+    outgoing.close();
+    h.location.href = target + `?code=offline-code&state=${flow.state}`;
+    const returned = createOpenRouterOAuth(h.context);
+    assert.equal(h.location.href, target + '?view=wide#prompt');
+    await returned.exchange();
+    assert.equal(h.fetch.mock.calls.length, 1);
+    assert.equal(h.values.size, 0);
+    assert.equal(returned.takeKey(), minted);
+  }
+  for (const [expected, actual] of [['/doom/', '/doom'], ['/doom', '/doom/']]) {
+    const h = fakeBrowser('https://doom.example.test' + actual + successQuery);
+    pending(h, { callback: 'https://doom.example.test' + expected });
+    const returned = createOpenRouterOAuth(h.context);
+    await returned.exchange();
+    assert.equal(h.fetch.mock.calls.length, 0);
+    assert.equal(h.history.replaceState.mock.calls.length, 0);
+    assert.equal(h.values.size, 0);
+    assert.equal(returned.hasKey, false);
+    assert.match(returned.message, /Cannot verify/);
+  }
+});
+
 it('ignores unsolicited params and rejects uncorrelated, duplicate or malformed callbacks', async () => {
   for (const query of [
     '?code=unrelated', successQuery, '?code=offline-code',

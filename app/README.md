@@ -2,8 +2,9 @@
 
 The owner-accepted **v0.2.0 Continuous Mode MVP** uses vanilla DOM APIs with
 TypeScript **7.0.2**, Vite **8.3.4**, plain CSS, and official
-**openai 7.32.0**. The HTML entry loads `src/main.ts`; TypeScript checks types
-without emitting JavaScript, and Vite owns bundling.
+**@openrouter/sdk 1.4.25** by default, with **openai 7.32.0** for the explicit
+experimental direct OpenAI alternative. The HTML entry loads `src/main.ts`;
+TypeScript checks types without emitting JavaScript, and Vite owns bundling.
 The app automatically prepares real E1M1 on local IWAD selection and verifies exactly
 one mandatory neutral first tic. Each **Next Decision** click then makes at most
 one official SDK Decisions request using the current rendered image, executes
@@ -177,13 +178,19 @@ cleanup when only the wrapper receives a signal. A hung tool may require manual 
 
 ## Temporary browser-direct credentials
 
-Enter a temporary OpenAI API key in the password field before Next Decision or Start.
-The app sends it directly to `https://api.openai.com/v1/decisions` using the pinned
-SDK, `gpt-6-luna`, browser opt-in, zero retries, and a 10-second deadline including
-response-body reading. Availability, account access and browser CORS must be
-confirmed in the owner trial; installed SDK types and a successful build do not
-establish authenticated access. See the
-[official Decisions guide](https://developers.openai.com/api/docs/guides/decisions).
+OpenRouter is the default in development and production. Sign in before selecting
+a WAD, or reveal the manual OpenRouter password field and enter a temporary key
+after preparation. The browser sends prompts/screenshots through OpenRouter,
+which may route model input to its downstream provider. Decisions can incur
+charges. Authorization creates a remote OpenRouter API key; refreshing this page
+clears local access without revoking that key. See the sign-in flow below.
+
+The operator-only direct OpenAI alternative sends requests to
+`https://api.openai.com/v1/decisions` using the pinned SDK and `gpt-6-luna`, browser
+opt-in, zero retries, and a 10-second deadline including response-body reading.
+Earlier direct OpenAI trials encountered CORS restrictions; deployed browser
+access remains unverified. SDK availability and builds do not establish access.
+No provider error selects OpenAI or automatically retries a request.
 
 The field clears when captured; the SDK client remains only in memory for later
 clicks. An empty field can therefore mean a client is already available. During a
@@ -208,15 +215,65 @@ picker is locked; changing the selected file never restarts a prepared game.
 There are no Prepare, Reset or New Game buttons. Refresh starts a new game
 and clears the in-memory credential; it does not resume prior state.
 
-## Experimental OpenRouter development mode
+## Provider selection and static hosting
+
+Provider selection is fixed at dev startup or production build time. It is a
+nonsecret operator setting, with no in-app provider menu:
+
+| Configuration | Provider |
+| --- | --- |
+| Missing/empty `VITE_DECISION_PROVIDER`, or `openrouter` | OpenRouter in DEV and PROD |
+| `VITE_DECISION_PROVIDER=openai` | Experimental direct OpenAI; manual key only, no OpenRouter OAuth/storage access |
+| Development `--mode jev`, missing/empty setting or `openrouter` | Retained direct Jev experiment via local Vite proxy |
+| Development `--mode jev` with `openai` | Startup error: conflicting configuration |
+| Any other nonempty setting | Startup error; no provider selected |
+
+`--mode impeccable` retains its dev helper allowances and uses the same provider
+setting. `--mode openrouter` remains compatible but is no longer necessary.
+Production never selects direct Jev or enables its proxy, even with `--mode jev`.
+This does not add model selection; OpenRouter uses only
+`openai/gpt-6-luna-decisions`.
+
+For an explicitly experimental OpenAI session/build, with separate execution approval:
+
+```sh
+VITE_DECISION_PROVIDER=openai npm --prefix app run dev
+VITE_DECISION_PROVIDER=openai npm --prefix app run build
+```
+
+The production setting is compiled into the assets; changing a hosting environment
+variable after building does not switch providers. Never put an API key in a
+`VITE_` variable: these values are public client configuration.
+
+Static hosting must use HTTPS for Web Crypto (loopback HTTP is suitable locally).
+Serve the entry page at the exact callback **origin + pathname**, including its
+query parameters, without changing hostname or path on return. Prefer a canonical
+directory URL ending in `/`, such as `https://example.test/doom/`, or explicit
+`/doom/index.html`. The relative Vite asset base supports subpaths; an extensionless
+`/doom` rewrite without a trailing slash can resolve assets against the wrong
+directory. Canonicalize before sign-in. `/doom` and `/doom/` are distinct callbacks.
+The same tab/origin must retain its pending `sessionStorage` record through return.
+The host must serve the app at `?code=...&state=...`; no backend exchange is added.
+
+The strict source/production CSP permits only same-origin connections and
+`https://openrouter.ai` / `https://api.openai.com`. Both exact API origins are
+permitted regardless of selected provider; this avoids separate CSP builds and
+does not enable automatic fallback. Host response CSP must also permit the
+selected endpoint. Production has no inline-style, localhost-helper or proxy
+allowances. Keep host logs and analytics from recording callback query secrets;
+client-side URL scrubbing cannot erase prior host logs. Do not log/export keys,
+codes, verifiers, screenshots or response bodies. Deployed callback serving,
+exchange CORS and model access remain unverified for this change.
+
+## OpenRouter sign-in and Decisions
 
 With dependencies and verified staged engine assets already available, launch:
 
 ```sh
-npm --prefix app run dev -- --mode openrouter --host 127.0.0.1 --port 5173 --strictPort
+npm --prefix app run dev
 ```
 
-This explicit development mode uses official `@openrouter/sdk` **1.4.25**,
+The default provider in development and production uses official `@openrouter/sdk` **1.4.25**,
 `alpha.decisions.create`, and the pinned `openai/gpt-6-luna-decisions` model.
 **Sign in with OpenRouter** is the primary connection option, available only
 before selecting a WAD. Authorizing creates an OpenRouter API key for this page;
@@ -232,7 +289,8 @@ One namespaced `sessionStorage` record temporarily holds those values, the exact
 callback target and non-auth query/hash restoration details. Blocked storage
 prevents redirect. The same-tab callback is **current origin + pathname**, with
 no query/hash: `127.0.0.1` and `localhost`, ports and paths are distinct. Keep the
-same OpenRouter-mode Vite instance running through authorization and return.
+same development server or static deployment available through authorization
+and return.
 
 Only a pending flow at its expected callback with one nonempty code and exactly
 matching state can exchange. Pending metadata is consumed once, and owned
@@ -282,18 +340,22 @@ unset: this provider rejects SDK debug logging. SDK success exposes a sanitized
 body ID when available; HTTP status may remain null without response metadata.
 Choice keys are emitted in the existing order; downstream ordering is not promised.
 
-Only this development mode permits the OpenRouter origin in CSP. Default OpenAI,
-Jev development mode, and the strict production policy remain unchanged.
+Ordinary development and strict production CSP permit the OpenRouter origin;
+only the direct Jev development experiment removes external API connections.
 The owner previously reported successful browser-direct Decisions HTTP 200 and
-four verified/rendered `forward` decisions at N=6, cumulative tic 25. That is
-Decisions-provider evidence, **not OAuth exchange/CORS evidence**. OAuth code and
-offline tests have not yet been run or live-verified as part of this patch.
+four verified/rendered `forward` decisions at N=6, cumulative tic 25, then successful
+localhost browser sign-in followed by Next Decision at the OAuth milestone.
+The owner also reports tests, build and independent P0–P2 review passed for that
+milestone. These are prior owner-reported results, not verification of this
+default-provider patch or of a deployed static host. No tests/builds or live trials
+have been run for this change yet.
 The generated auth endpoint reference marks bearer authorization as required,
 contradicting the OAuth guide/reference helper; this implementation follows the
 guide without adding a credential, proxy or workaround.
 
-**Separately authorized live acceptance:** launch the command above with approved
-dependencies/staged assets, click Sign in before WAD selection, and obtain owner
+**Separately authorized deployed acceptance:** after offline checks, build and
+independent review, serve the built assets at the intended HTTPS static URL
+(including its real subpath). Click Sign in before WAD selection, and obtain owner
 approval to authorize/mint a key. Verify exact hostname/path return, auth endpoint
 preflight/CORS and one readable exchange response, URL cleanup and no Decisions
 or Worker preparation during auth. Do not export HARs, bodies, headers or codes.
@@ -301,8 +363,9 @@ Then select the approved local WAD and verify fresh neutral 1/1/1 preparation.
 After separate approval for one potentially billable Next Decision, use N=6:
 expect one legal choice, unchanged native state while waiting, healthy 6/6/6 tics,
 cumulative tic 7 and matching resulting native/Canvas hashes (or existing verified
-terminal-prefix handling). Do not start continuous mode. Auth CORS, unauthenticated
-exchange, exact localhost/127.0.0.1 acceptance and denial behavior remain live gates.
+terminal-prefix handling). Do not start continuous mode. Deployed auth CORS,
+unauthenticated exchange, exact callback path serving and denial behavior remain
+live gates. Successful localhost OAuth does not prove static-host acceptance.
 
 ## Prototype acceptance and evidence
 
@@ -343,13 +406,13 @@ From the repository root:
 ```
 
 Open `http://127.0.0.1:8000/` in Chrome. Use loopback or HTTPS for Web Crypto.
-Relative Vite URLs also support hosting beneath a path prefix. The app uses local
+Relative Vite URLs support canonical subpaths as described above. The app uses local
 static assets and one Vite-packaged ES module Worker. CSP permits same-origin
-Workers and OpenAI API connections. Inspect any Worker response CSP headers as
-well as the page policy. The noncredential SDK probe
-uses rejecting fetch and never invokes `decisions.create`.
+Workers and both precise API origins. Inspect any Worker response CSP headers as
+well as the page policy. The noncredential SDK probes never invoke Decisions.
 
-1. Confirm SDK **7.32.0** and `decisions.create` available. Inspect Console/Network;
+1. Confirm default OpenRouter SDK **1.4.25** and sign-in UI (or explicitly selected
+   experimental OpenAI SDK **7.32.0**). Inspect Console/Network;
    record Chrome version, errors and local resource URLs. Select known-good local
    **Freedoom 0.13.0 Phase 1** `freedoom1.wad` (28,795,076 bytes; SHA-256
    `7323bcc168c5a45ff10749b339960e98314740a734c30d4b9f3337001f9e703d`).
@@ -365,7 +428,8 @@ uses rejecting fetch and never invokes `decisions.create`.
    Wait for the five-second startup idle check to complete. Expand evidence:
    repeated snapshots preserve every counter and native field; the passive render
    changes only render/frame/intercept bookkeeping. No keyboard input drives Doom.
-3. Enter a temporary key; set **N1=2**; click **Next Decision** once. Expect exactly
+3. Choose **Use an API key instead** and enter a temporary OpenRouter key (or the
+   OpenAI key field for explicit OpenAI builds); set **N1=2**; click **Next Decision** once. Expect exactly
    one Decisions POST (OPTIONS preflight is separate), action **2 / 2 / 2**,
    cumulative **tic 3**, a verified resulting frame, and the same Worker/game.
 4. Wait without clicking. Expect no new API request or native tic. Set **N2=5**;

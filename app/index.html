@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'self' https://api.openai.com; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'self' https://openrouter.ai https://api.openai.com; base-uri 'none'; form-action 'none'">
   <title>Doom Decisions</title>
   <script type="module" src="./src/main.ts"></script>
   <script type="module" src="./src/history-scroll.ts"></script>
@@ -25,7 +25,7 @@
             <div id="openrouter-connect" hidden>
               <div id="openrouter-signin">
                 <button id="openrouter-signin-button" type="button" aria-describedby="openrouter-auth-note openrouter-auth-status" disabled>Sign in with OpenRouter</button>
-                <p id="openrouter-auth-note" class="help">Authorize OpenRouter to create an API key for Doom Decisions. This page keeps the key in memory; refreshing clears it. Sign in before selecting a WAD; returning starts fresh setup.</p>
+                <p id="openrouter-auth-note" class="help">Authorize OpenRouter to create an API key for Doom Decisions. Decisions send prompts and screenshots through OpenRouter and may incur charges. This page keeps the key in memory; refreshing clears it without revoking the remote key. Sign in before selecting a WAD; returning starts fresh setup.</p>
               </div>
               <button id="openrouter-manual" type="button" aria-controls="manual-key" aria-expanded="false">Use an API key instead</button>
               <p id="openrouter-auth-status" class="help" role="status" aria-live="polite" aria-atomic="true"></p>
@@ -38,14 +38,14 @@
               <p id="asset-note" class="help">Local Only • Refresh to change</p>
             </div>
             <div id="manual-key">
-              <label id="key-label" for="key">Temporary OpenAI API key</label>
+              <label id="key-label" for="key">Temporary OpenRouter API key</label>
               <input id="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="key-state key-note" disabled>
               <p id="key-state" class="help">Client in memory • Refresh clears it</p>
               <button id="openrouter-back" type="button" aria-controls="manual-key openrouter-signin" hidden>Use sign-in instead</button>
             </div>
             <details class="setup-details">
               <summary>Temporary key: handling &amp; trust</summary>
-              <p id="key-note" class="help">Sent directly to OpenAI. Trust this page and its scripts. The field clears on capture; the client stays in memory. A blank field keeps it. Enter a replacement before a later click to correct it. Refresh clears in-memory credentials.</p>
+              <p id="key-note" class="help">Sent directly to OpenRouter, which may route model input to its downstream provider. Decisions can incur charges. Trust this page and its scripts. Credentials stay in memory; refresh clears local access without revoking the remote key.</p>
             </details>
           </div>
         </details>
@@ -133,7 +133,7 @@
     </dialog>
     <details class="advanced">
       <summary>Advanced evidence: preparation, decisions and frame hashes</summary>
-      <p id="sdk" role="status">Checking bundled OpenAI SDK…</p>
+      <p id="sdk" role="status">Checking bundled Decisions SDK…</p>
       <p id="frame">No frame rendered.</p>
       <pre id="evidence">Not prepared.</pre>
     </details>

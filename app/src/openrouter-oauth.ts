@@ -1,4 +1,4 @@
-// Inert until constructed by the explicit OpenRouter development entry.
+// Inert until constructed by the OpenRouter app entry in development or production.
 const pendingKey = 'doom-decisions.openrouter-oauth.pending.v1';
 const initialMessage = 'Sign in or use an API key instead.';
 const invalidReturn =

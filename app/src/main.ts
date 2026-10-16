@@ -12,12 +12,23 @@ import {
 } from './session-controller';
 import './style.css';
 
-// Explicit development opt-ins. Production always selects OpenAI.
+// Provider choice is fixed at startup/build time; Vite modes retain dev tooling.
 const jevMode = import.meta.env.DEV && import.meta.env.MODE === 'jev';
-const openRouterMode =
-  import.meta.env.DEV && import.meta.env.MODE === 'openrouter';
+const providerSetting = import.meta.env.VITE_DECISION_PROVIDER || 'openrouter';
+const providerError =
+  providerSetting !== 'openrouter' && providerSetting !== 'openai'
+    ? 'VITE_DECISION_PROVIDER must be openrouter or openai.'
+    : jevMode && providerSetting === 'openai'
+      ? 'Jev development mode conflicts with VITE_DECISION_PROVIDER=openai.'
+      : undefined;
+if (providerError) {
+  const status = document.querySelector('#status');
+  if (status) status.textContent = `Startup failed: ${providerError}`;
+  throw Error(providerError);
+}
+const openRouterMode = !jevMode && providerSetting === 'openrouter';
 // Claim and scrub an owned callback before Canvas/DOM startup can fail.
-// Other modes never construct the helper or access OAuth storage/callbacks.
+// Other providers never construct the helper or access OAuth storage/callbacks.
 const oauth = openRouterMode ? createOpenRouterOAuth(window) : undefined;
 if (oauth) window.addEventListener('pagehide', () => oauth.close());
 const jevPlaceholder = 'jev-vite-proxy-not-a-credential';
@@ -93,7 +104,11 @@ if (openRouterMode) {
   $('#key').hidden = true;
   $('#key-label').textContent = 'Temporary OpenRouter API key';
   $('#key-note').textContent =
-    'Your key, screenshot, context, instructions and choices go directly to OpenRouter, which may send model input to its downstream provider. Trust this page and its scripts. The field clears on capture; the client stays in memory. A blank field keeps it. Entering a manual key replaces an unused sign-in key when you click Next Decision or Start, even if the key is invalid. Refresh clears local credentials; it does not revoke keys at OpenRouter.';
+    'Your key, screenshot, context, instructions and choices go directly to OpenRouter, which may send model input to its downstream provider. Decisions can incur charges. Trust this page and its scripts. The field clears on capture; the client stays in memory. A blank field keeps it. Entering a manual key replaces an unused sign-in key when you click Next Decision or Start, even if the key is invalid. Refresh clears local credentials; it does not revoke keys at OpenRouter.';
+} else if (!jevMode) {
+  $('#key-label').textContent = 'Temporary OpenAI API key (experimental)';
+  $('#key-note').textContent =
+    'Direct OpenAI was explicitly selected by the operator. Browser access may fail due to CORS; deployed access is unverified. Your key and model input go directly to OpenAI; Decisions can incur charges. Trust this page and its scripts. The field clears on capture; the client stays in memory. A blank field keeps it. Enter a replacement before a later click to correct it. Refresh clears local credentials. No automatic provider fallback.';
 }
 function localFetch(name: string, json: true): Promise<unknown>;
 function localFetch(name: string, json?: false): Promise<ArrayBuffer>;

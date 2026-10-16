@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
 const strictCsp =
-  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'self' https://api.openai.com; base-uri 'none'; form-action 'none'";
+  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'self' https://openrouter.ai https://api.openai.com; base-uri 'none'; form-action 'none'";
 // Vite serves imported CSS through inline style elements during development.
 const devCsp = strictCsp.replace(
   "style-src 'self'",
@@ -9,12 +9,8 @@ const devCsp = strictCsp.replace(
 );
 // Experimental provider, only when explicitly serving in Jev development mode.
 const jevCsp = devCsp.replace(
-  "connect-src 'self' https://api.openai.com",
+  "connect-src 'self' https://openrouter.ai https://api.openai.com",
   "connect-src 'self'",
-);
-const openRouterCsp = devCsp.replace(
-  "connect-src 'self' https://api.openai.com",
-  "connect-src 'self' https://openrouter.ai",
 );
 // Installed Impeccable setup: HTTP scripts/SSE and inline styles; Vite: HMR.
 // Reconfirm the helper's actual origin before starting a Live trial.
@@ -148,9 +144,7 @@ export default defineConfig(({ command, mode, isPreview }) => ({
                   ? impeccableCsp
                   : mode === 'jev'
                     ? jevCsp
-                    : mode === 'openrouter'
-                      ? openRouterCsp
-                      : devCsp,
+                    : devCsp,
               ),
           },
         ]

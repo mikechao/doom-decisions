@@ -108,6 +108,9 @@ function toggleSetup() {
 async function mount(mode = 'test', dev = true) {
   vi.stubEnv('MODE', mode);
   vi.stubEnv('DEV', dev);
+  // Keep generic manual-key/disclosure cases on the explicit OpenAI path.
+  // Default OpenRouter and its browser ports are covered in openrouter-mode.
+  vi.stubEnv('VITE_DECISION_PROVIDER', dev && mode === 'jev' ? undefined : 'openai');
   vi.resetModules();
   vi.resetAllMocks();
   elements = new Map();
@@ -167,7 +170,7 @@ it('Jev uses a placeholder, hides and clears browser key input, and explains ser
   assert.equal(element('#prompt-dialog').open, true);
 });
 
-it('production with Jev mode retains the OpenAI key flow', async () => {
+it('production with Jev mode honors the explicit OpenAI key opt-in', async () => {
   await mount('jev', false);
   assert.equal(element('#key').hidden, false);
   show();

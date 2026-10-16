@@ -6,6 +6,7 @@ import { afterEach, beforeEach, it, vi } from 'vitest';
 import { DecisionFailure, validateChoice } from '../src/decision.ts';
 import type { DecisionDiagnostics, DecisionLifecycle } from '../src/decision-provider.ts';
 import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
+import { openAiDecisionProviderFactory } from '../src/openai-decision-provider.ts';
 import { openRouterDecisionProviderFactory } from '../src/openrouter-decision-provider.ts';
 import { checkpoint, cleanup, deferred, fixture } from './fixtures/session.ts';
 
@@ -30,8 +31,8 @@ const response = (body: unknown = answer(), status = 200) => new Response(JSON.s
 });
 
 beforeEach(() => {
-  vi.stubEnv('DEV', true);
-  vi.stubEnv('MODE', 'openrouter');
+  vi.stubEnv('DEV', false);
+  vi.stubEnv('MODE', 'production');
   vi.stubEnv('OPENROUTER_DEBUG', undefined);
   vi.stubEnv('OPENROUTER_HTTP_REFERER', undefined);
   vi.stubEnv('OPENROUTER_APP_TITLE', undefined);
@@ -50,27 +51,50 @@ function start(request = input(), startedAt = performance.now()) {
   return { pending, lifecycle, diagnostics, hooks };
 }
 
-it('probes inertly and fails closed outside explicit development or with SDK debug logging', async () => {
+it('probes inertly in DEV/PROD and rejects bad keys or SDK debug logging', async () => {
   const transport = vi.mocked(fetch);
   assert.match(openRouterDecisionProviderFactory.probe().status, /1\.4\.25.*openai\/gpt-6-luna-decisions/);
   assert.throws(() => openRouterDecisionProviderFactory.create(''));
   assert.throws(() => openRouterDecisionProviderFactory.create('bad key'));
   const provider = openRouterDecisionProviderFactory.create(key);
-  for (const [dev, mode] of [[false, 'openrouter'], [true, 'development'], [true, 'jev']] as const) {
+  for (const [dev, mode] of [[false, 'production'], [false, 'openrouter'], [true, 'development'], [true, 'impeccable']] as const) {
     vi.stubEnv('DEV', dev); vi.stubEnv('MODE', mode);
-    assert.throws(() => openRouterDecisionProviderFactory.probe(), DecisionFailure);
-    assert.throws(() => openRouterDecisionProviderFactory.create(key), DecisionFailure);
-    await assert.rejects(provider.request(input(), {}, { requestId: null, http: null, latencyMs: null },
-      { assertFresh() {}, beforeCreate() { assert.fail('No charge'); }, onReadStateChange() {} }, performance.now()), DecisionFailure);
+    assert.match(openRouterDecisionProviderFactory.probe().status, /OpenRouter SDK 1\.4\.25/);
+    assert.equal(typeof openRouterDecisionProviderFactory.create(key).request, 'function');
   }
-  vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'openrouter');
+  vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'production');
   for (const flag of ['true', 'false']) {
     // SDK 1.4.25 coerces any nonempty environment string, even "false", to true.
     vi.stubEnv('OPENROUTER_DEBUG', flag); resetEnv();
     assert.throws(() => openRouterDecisionProviderFactory.create(key), /Disable OpenRouter SDK debug logging/);
     assert.throws(() => openRouterDecisionProviderFactory.probe(), /Disable OpenRouter SDK debug logging/);
+    await assert.rejects(provider.request(input(), {}, { requestId: null, http: null, latencyMs: null },
+      { assertFresh() {}, beforeCreate() { assert.fail('No charge'); }, onReadStateChange() {} }, performance.now()), /Disable OpenRouter SDK debug logging/);
   }
   assert.equal(transport.mock.calls.length, 0);
+});
+
+it('never constructs OpenAI or retries after an OpenRouter request failure', async () => {
+  for (const outcome of [
+    () => response({ error: { message: 'offline failure', code: 503 } }, 503),
+    () => { throw new TypeError('offline CORS failure'); },
+    () => new Response('{broken', { headers: { 'content-type': 'application/json' } }),
+  ]) {
+    const openAi = vi.spyOn(openAiDecisionProviderFactory, 'create').mockImplementation(() => {
+      assert.fail('OpenAI must be explicitly selected');
+    });
+    const h = fixture({ providerFactory: openRouterDecisionProviderFactory });
+    try {
+      await h.prepare();
+      const capture = h.ports.capture;
+      h.ports.capture = () => ({ ...capture(), png });
+      const transport = vi.fn(async () => outcome()); vi.stubGlobal('fetch', transport);
+      assert.equal(await h.next(), 'api-failure');
+      assert.equal(transport.mock.calls.length, 1);
+      assert.equal(h.gameCalls, 0);
+      assert.equal(openAi.mock.calls.length, 0);
+    } finally { await h.dispose(); }
+  }
 });
 
 it('uses exactly one charged SDK wrapper and wire request with original PNG, strings and ordered keys', async () => {

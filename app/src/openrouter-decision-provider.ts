@@ -20,9 +20,7 @@ const model = 'openai/gpt-6-luna-decisions';
 const deadlineMs = 10000;
 const pngPrefix = 'data:image/png;base64,';
 
-function assertOpenRouterDevelopment() {
-  if (!import.meta.env.DEV || import.meta.env.MODE !== 'openrouter')
-    throw new DecisionFailure('OpenRouter requires explicit development mode.');
+function assertOpenRouterConfiguration() {
   // 1.4.25 falls back to console logging when OPENROUTER_DEBUG is truthy.
   // Reject it rather than enabling a no-op logger (which still clones/reads bodies).
   let debug: boolean | undefined;
@@ -113,16 +111,16 @@ export function decodeOpenRouterDecision(
 
 export const openRouterDecisionProviderFactory: DecisionProviderFactory = {
   probe() {
-    assertOpenRouterDevelopment();
+    assertOpenRouterConfiguration();
     if (SDK_METADATA.sdkVersion !== '1.4.25')
       throw new DecisionFailure('Require OpenRouter SDK 1.4.25.');
     return {
-      status: `Experimental OpenRouter SDK 1.4.25 · ${model} · browser POST/access unverified`,
+      status: `OpenRouter SDK 1.4.25 · ${model} · model access unverified`,
       evidence: { provider: 'OpenRouter', version: '1.4.25', model },
     };
   },
   create(apiKey) {
-    assertOpenRouterDevelopment();
+    assertOpenRouterConfiguration();
     if (!apiKey || !/^[\x21-\x7e]+$/.test(apiKey))
       throw new DecisionFailure('A usable temporary API key is required.');
     const client = new OpenRouter({
@@ -132,7 +130,7 @@ export const openRouterDecisionProviderFactory: DecisionProviderFactory = {
     });
     return {
       async request(input, lifecycle, diagnostics, hooks, startedAt) {
-        assertOpenRouterDevelopment();
+        assertOpenRouterConfiguration();
         const controller = new AbortController();
         lifecycle.apiController = controller;
         let timedOut = false;
