@@ -1,0 +1,378 @@
+// Real pinned SDK with fake fetch/Response and synthetic controller ports only.
+import assert from 'node:assert/strict';
+import { resetEnv } from '@openrouter/sdk/lib/env.js';
+import { Decisions } from '@openrouter/sdk/sdk/decisions.js';
+import { afterEach, beforeEach, it, vi } from 'vitest';
+import { DecisionFailure, validateChoice } from '../src/decision.ts';
+import type { DecisionDiagnostics, DecisionLifecycle } from '../src/decision-provider.ts';
+import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
+import { openRouterDecisionProviderFactory } from '../src/openrouter-decision-provider.ts';
+import { checkpoint, cleanup, deferred, fixture } from './fixtures/session.ts';
+
+const actions = ['neutral', 'forward', 'turn_right', 'backward', 'turn_left', 'fire', 'use'] as const;
+const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=';
+const png = `data:image/png;base64,${base64}`;
+const key = 'offline-openrouter-dummy-only';
+const input = () => buildDefaultDecisionRequest(73, 2, png);
+const answer = (action: unknown = 'forward') => ({
+  model: 'openai/gpt-6-luna-decisions',
+  answers: {
+    next_action: {
+      type: 'choice', choice: action, confidence: 0.8,
+      probabilities: Object.fromEntries(actions.map(value => [value, value === action ? 1 : 0])),
+    },
+  },
+  usage: { input_tokens: 123, output_tokens: 0 },
+  id: 'gen-dec-offline-1',
+});
+const response = (body: unknown = answer(), status = 200) => new Response(JSON.stringify(body), {
+  status, headers: { 'content-type': 'application/json' },
+});
+
+beforeEach(() => {
+  vi.stubEnv('DEV', true);
+  vi.stubEnv('MODE', 'openrouter');
+  vi.stubEnv('OPENROUTER_DEBUG', undefined);
+  vi.stubEnv('OPENROUTER_HTTP_REFERER', undefined);
+  vi.stubEnv('OPENROUTER_APP_TITLE', undefined);
+  vi.stubEnv('OPENROUTER_APP_CATEGORIES', undefined);
+  resetEnv();
+  vi.stubGlobal('fetch', vi.fn(async () => { throw Error('Unexpected offline transport'); }));
+});
+afterEach(() => { cleanup(); vi.unstubAllEnvs(); resetEnv(); });
+
+function start(request = input(), startedAt = performance.now()) {
+  const lifecycle: DecisionLifecycle = {};
+  const diagnostics: DecisionDiagnostics = { requestId: null, http: null, latencyMs: null };
+  const hooks = { assertFresh: vi.fn(), beforeCreate: vi.fn(), onReadStateChange: vi.fn() };
+  const provider = openRouterDecisionProviderFactory.create(key);
+  const pending = provider.request(request, lifecycle, diagnostics, hooks, startedAt);
+  return { pending, lifecycle, diagnostics, hooks };
+}
+
+it('probes inertly and fails closed outside explicit development or with SDK debug logging', async () => {
+  const transport = vi.mocked(fetch);
+  assert.match(openRouterDecisionProviderFactory.probe().status, /1\.4\.25.*openai\/gpt-6-luna-decisions/);
+  assert.throws(() => openRouterDecisionProviderFactory.create(''));
+  assert.throws(() => openRouterDecisionProviderFactory.create('bad key'));
+  const provider = openRouterDecisionProviderFactory.create(key);
+  for (const [dev, mode] of [[false, 'openrouter'], [true, 'development'], [true, 'jev']] as const) {
+    vi.stubEnv('DEV', dev); vi.stubEnv('MODE', mode);
+    assert.throws(() => openRouterDecisionProviderFactory.probe(), DecisionFailure);
+    assert.throws(() => openRouterDecisionProviderFactory.create(key), DecisionFailure);
+    await assert.rejects(provider.request(input(), {}, { requestId: null, http: null, latencyMs: null },
+      { assertFresh() {}, beforeCreate() { assert.fail('No charge'); }, onReadStateChange() {} }, performance.now()), DecisionFailure);
+  }
+  vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'openrouter');
+  for (const flag of ['true', 'false']) {
+    // SDK 1.4.25 coerces any nonempty environment string, even "false", to true.
+    vi.stubEnv('OPENROUTER_DEBUG', flag); resetEnv();
+    assert.throws(() => openRouterDecisionProviderFactory.create(key), /Disable OpenRouter SDK debug logging/);
+    assert.throws(() => openRouterDecisionProviderFactory.probe(), /Disable OpenRouter SDK debug logging/);
+  }
+  assert.equal(transport.mock.calls.length, 0);
+});
+
+it('uses exactly one charged SDK wrapper and wire request with original PNG, strings and ordered keys', async () => {
+  const create = vi.spyOn(Decisions.prototype, 'create');
+  const transport = vi.fn(async (request: Request) => {
+    assert.equal(h.hooks.beforeCreate.mock.calls.length, 1);
+    assert.equal(request.url, 'https://openrouter.ai/api/alpha/decisions');
+    assert.equal(request.method, 'POST');
+    assert.equal(request.headers.get('authorization'), `Bearer ${key}`);
+    assert.equal(request.headers.get('content-type'), 'application/json');
+    assert.equal(request.headers.get('accept'), 'application/json');
+    assert.equal(request.headers.has('http-referer'), false);
+    assert.equal(request.headers.has('x-openrouter-title'), false);
+    assert.equal(request.headers.has('x-openrouter-categories'), false);
+    assert.equal(request.mode, 'cors');
+    assert.equal(request.credentials, 'omit');
+    assert.equal(request.cache, 'no-store');
+    assert.equal(request.redirect, 'error');
+    assert.equal(request.referrerPolicy, 'no-referrer');
+    assert.equal(request.signal.aborted, false);
+    const wire = await request.json();
+    assert.deepEqual(wire, {
+      model: 'openai/gpt-6-luna-decisions', provider: { allow_fallbacks: false },
+      state: [input().context, { type: 'image_url', image_url: { url: png } }],
+      questions: { next_action: { type: 'choice', instructions: input().instructions,
+        criteria: { neutral: null, forward: null, turn_right: null, backward: null, turn_left: null, fire: null, use: null } } },
+    });
+    assert.deepEqual(Object.keys(wire.questions.next_action.criteria), actions);
+    assert.deepEqual(Buffer.from(wire.state[1].image_url.url.slice('data:image/png;base64,'.length), 'base64'), Buffer.from(base64, 'base64'));
+    return response();
+  });
+  vi.stubGlobal('fetch', transport);
+  const h = start();
+  const selected = validateChoice(await h.pending);
+  await h.lifecycle.sdkRead;
+  assert.equal(create.mock.calls.length, 1);
+  const [wrapper, options] = create.mock.calls[0];
+  assert.deepEqual(Object.keys(wrapper), ['decisionsRequest']);
+  assert.equal(wrapper.decisionsRequest.provider.allowFallbacks, false);
+  assert.deepEqual(options.retries, { strategy: 'none' });
+  assert.ok(options.signal instanceof AbortSignal);
+  assert.equal(transport.mock.calls.length, 1);
+  assert.equal(selected.action, 'forward');
+  assert.equal(selected.confidence, 0.8);
+  assert.deepEqual(selected.probabilities?.map(p => p.value), actions);
+  assert.equal(h.diagnostics.requestId, 'gen-dec-offline-1');
+  assert.equal(h.diagnostics.http, null, 'Success client returns no raw HTTP metadata');
+  assert.equal(h.lifecycle.sdkRead, undefined);
+  assert.equal(h.lifecycle.apiController, undefined);
+});
+
+it('normalizes all legal labels and rejects malformed, missing and unsupported SDK responses', async () => {
+  for (const action of actions) {
+    vi.stubGlobal('fetch', vi.fn(async () => response(answer(action))));
+    const h = start();
+    assert.equal(validateChoice(await h.pending).action, action);
+    await h.lifecycle.sdkRead;
+  }
+  for (const data of [null, {}, { ...answer(), answers: {} },
+    { ...answer(), answers: { wrong: answer().answers.next_action } },
+    { ...answer(), answers: { ...answer().answers, extra: answer().answers.next_action } },
+    answer(1), { ...answer(), answers: { next_action: { type: 'refusal' } } },
+    { ...answer(), answers: { next_action: { type: 'noul', noul: 0.8 } } },
+  ]) {
+    const transport = vi.fn(async () => response(data)); vi.stubGlobal('fetch', transport);
+    const h = start();
+    await assert.rejects(h.pending, DecisionFailure);
+    await h.lifecycle.sdkRead;
+    assert.equal(transport.mock.calls.length, 1);
+  }
+  for (const action of ['FORWARD', 'forward+fire', '__proto__', '1']) {
+    vi.stubGlobal('fetch', vi.fn(async () => response(answer(action))));
+    const h = start();
+    const result = await h.pending;
+    assert.throws(() => validateChoice(result), /Invalid next_action choice/);
+    await h.lifecycle.sdkRead;
+  }
+});
+
+it('does not charge local validation, stale state or expired construction; SDK validation is charged', async () => {
+  vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] });
+  const originalCreate = Decisions.prototype.create;
+  const create = vi.spyOn(Decisions.prototype, 'create');
+  for (const request of [
+    { ...input(), png: 'data:image/jpeg;base64,AAAA' },
+    { ...input(), png: 'data:image/png;base64,%%%' },
+    { ...input(), png: 'data:image/png;base64,AAAA' },
+    { ...input(), get context() { vi.advanceTimersByTime(10000); return 'late'; } },
+  ]) {
+    const h = start(request);
+    await assert.rejects(h.pending, DecisionFailure);
+    assert.equal(h.hooks.beforeCreate.mock.calls.length, 0);
+    assert.equal(h.lifecycle.sdkRead, undefined);
+  }
+  const expired = start(input(), performance.now() - 10000);
+  await assert.rejects(expired.pending, /deadline exceeded/);
+  assert.equal(expired.hooks.beforeCreate.mock.calls.length, 0);
+  const hooks = { assertFresh() { throw new DecisionFailure('Stale attempt'); }, beforeCreate: vi.fn(), onReadStateChange() {} };
+  await assert.rejects(openRouterDecisionProviderFactory.create(key).request(input(), {},
+    { requestId: null, http: null, latencyMs: null }, hooks, performance.now()), /Stale attempt/);
+  assert.equal(hooks.beforeCreate.mock.calls.length, 0);
+  assert.equal(create.mock.calls.length, 0);
+  // Inject a runtime type violation at the SDK boundary, then let its actual
+  // generated validator reject it. This is charged despite sending no HTTP.
+  create.mockImplementationOnce(function (request, options) {
+    return originalCreate.call(this, { ...request,
+      decisionsRequest: { ...request.decisionsRequest, model: undefined as never },
+    }, options);
+  });
+  const internal = start();
+  await assert.rejects(internal.pending, DecisionFailure);
+  await internal.lifecycle.sdkRead;
+  assert.equal(internal.hooks.beforeCreate.mock.calls.length, 1);
+  assert.equal(create.mock.calls.length, 1);
+  assert.equal(vi.mocked(fetch).mock.calls.length, 0);
+  assert.equal(vi.getTimerCount(), 0);
+});
+
+it('drops ambiguous optional metrics and unsafe request IDs', async () => {
+  for (const probabilities of [undefined, {}, { forward: 1 },
+    { ...answer().answers.next_action.probabilities, extra: 0 },
+    { ...answer().answers.next_action.probabilities, fire: -1 },
+  ]) {
+    const data = answer();
+    Object.assign(data.answers.next_action, { confidence: 2, probabilities });
+    data.id = `gen-dec-${key}`;
+    vi.stubGlobal('fetch', async () => response(data));
+    const h = start();
+    const result = validateChoice(await h.pending);
+    await h.lifecycle.sdkRead;
+    assert.equal(result.confidence, null);
+    assert.equal(result.probabilities, null);
+    assert.equal(h.diagnostics.requestId, null);
+  }
+});
+
+it('records SDK-added Node headers without optional attribution or cookies', async () => {
+  let headers: Headers;
+  const transport = vi.fn(async (request: Request) => {
+    headers = request.headers;
+    return response();
+  });
+  vi.stubGlobal('fetch', transport);
+  const h = start(); await h.pending; await h.lifecycle.sdkRead;
+  assert.equal(headers.has('http-referer'), false);
+  assert.equal(headers.has('x-openrouter-title'), false);
+  assert.equal(headers.has('x-openrouter-categories'), false);
+  assert.deepEqual([...headers.keys()], ['accept', 'authorization', 'content-type', 'cookie', 'user-agent']);
+  assert.match(headers.get('user-agent'), /@openrouter\/sdk/);
+  // SDK sets an empty Cookie header and adds User-Agent only outside browsers.
+  // Actual browser filtering/preflight remains owner-run evidence, not Node proof.
+  assert.equal(headers.get('cookie'), '');
+  assert.equal(transport.mock.calls.length, 1);
+});
+
+it('sanitizes HTTP, JSON, network and synthetic SDK errors without retries or logging', async () => {
+  const logs = ['log', 'warn', 'error', 'group', 'groupEnd'].map(method => vi.spyOn(console, method as 'log').mockImplementation(() => {}));
+  for (const status of [401, 402, 403, 429, 500, 503]) {
+    const transport = vi.fn(async () => response({ error: { code: status, message: `Authorization Bearer ${key} ${png}` } }, status));
+    vi.stubGlobal('fetch', transport);
+    const h = start();
+    await assert.rejects(h.pending, (error: Error) => {
+      assert.equal(error.message, `API HTTP failure (${status})`); return true;
+    });
+    await h.lifecycle.sdkRead;
+    assert.equal(h.diagnostics.http, status);
+    assert.equal(h.hooks.beforeCreate.mock.calls.length, 1);
+    assert.equal(transport.mock.calls.length, 1);
+    assert.doesNotMatch(JSON.stringify(h.diagnostics), /offline-openrouter|Authorization|data:image/);
+  }
+  for (const outcome of [() => { throw new TypeError(`Failed to fetch ${key} ${png}`); },
+    () => new Response('{broken', { headers: { 'content-type': 'application/json' } }),
+  ]) {
+    const transport = vi.fn(async () => outcome()); vi.stubGlobal('fetch', transport);
+    const h = start();
+    await assert.rejects(h.pending, (error: Error) => {
+      assert.ok(error instanceof DecisionFailure);
+      assert.doesNotMatch(error.message, /offline-openrouter|Authorization|data:image/); return true;
+    });
+    await h.lifecycle.sdkRead;
+    assert.equal(transport.mock.calls.length, 1);
+  }
+  vi.spyOn(Decisions.prototype, 'create').mockRejectedValueOnce(Error(`Authorization: Bearer ${key} ${png}`));
+  const h = start();
+  await assert.rejects(h.pending, { message: 'SDK or response-body failure' });
+  await h.lifecycle.sdkRead;
+  assert.ok(logs.every(log => log.mock.calls.length === 0));
+});
+
+it('retains entire SDK fetch/body ownership through abort and the original deadline with late settlement', async () => {
+  for (const boundary of ['fetch', 'text']) for (const cancel of ['abort', 'deadline']) for (const rejects of [false, true]) {
+    vi.useFakeTimers({ toFake: ['performance', 'setTimeout', 'clearTimeout'] });
+    const gate = deferred(), reading = deferred();
+    let signal: AbortSignal;
+    const transport = vi.fn(async (request: Request) => {
+      signal = request.signal;
+      if (boundary === 'fetch') {
+        reading.resolve(); await gate.promise;
+        if (rejects) throw Error(`private late ${key}`);
+      }
+      const res = response();
+      if (boundary === 'text') {
+        const text = res.text.bind(res);
+        res.text = async () => {
+          reading.resolve(); await gate.promise;
+          if (rejects) throw Error(`private late ${key}`);
+          return text();
+        };
+      }
+      return res;
+    });
+    vi.stubGlobal('fetch', transport);
+    // Four seconds of prior domain construction leaves only six seconds.
+    const h = start(input(), performance.now() - 4000);
+    const rejected = assert.rejects(h.pending, cancel === 'abort' ? /API request aborted/ : /deadline exceeded/);
+    try {
+      await reading.promise;
+      const ownership = h.lifecycle.sdkRead;
+      assert.ok(ownership);
+      if (cancel === 'abort') h.lifecycle.apiController.abort();
+      else { await vi.advanceTimersByTimeAsync(5999); assert.equal(signal.aborted, false); await vi.advanceTimersByTimeAsync(1); }
+      await rejected;
+      assert.equal(signal.aborted, true);
+      for (let n = 0; n < 20; ++n) await Promise.resolve();
+      assert.equal(h.lifecycle.sdkRead, ownership);
+      gate.resolve(); await ownership;
+      assert.equal(h.lifecycle.sdkRead, undefined);
+      assert.equal(h.hooks.beforeCreate.mock.calls.length, 1);
+      assert.equal(transport.mock.calls.length, 1);
+      assert.equal(vi.getTimerCount(), 0);
+    } finally { gate.resolve(); await h.lifecycle.sdkRead; vi.useRealTimers(); }
+  }
+});
+
+it('clears only lifecycle references it still owns', async () => {
+  const gate = deferred(), reading = deferred();
+  vi.stubGlobal('fetch', async () => {
+    const res = response(); const text = res.text.bind(res);
+    res.text = async () => { reading.resolve(); await gate.promise; return text(); };
+    return res;
+  });
+  const h = start(); await reading.promise;
+  const ownership = h.lifecycle.sdkRead;
+  const controller = new AbortController(); const replacement = Promise.resolve();
+  h.lifecycle.apiController = controller; h.lifecycle.sdkRead = replacement;
+  gate.resolve(); await h.pending; await ownership;
+  assert.equal(h.lifecycle.apiController, controller);
+  assert.equal(h.lifecycle.sdkRead, replacement);
+});
+
+it('verifies one synthetic manual action and recovers invalid SDK answers without native dispatch', async () => {
+  for (const data of [answer('neutral'), answer('forward+fire'), { ...answer(), answers: {} },
+    { ...answer(), answers: { next_action: { type: 'refusal' } } },
+  ]) {
+    const h = fixture({ providerFactory: openRouterDecisionProviderFactory });
+    try {
+      await h.prepare();
+      const capture = h.ports.capture;
+      h.ports.capture = () => ({ ...capture(), png });
+      const transport = vi.fn(async () => response(data)); vi.stubGlobal('fetch', transport);
+      h.browserInputs.tics = 2;
+      const outcome = await h.next();
+      const valid = data.answers.next_action?.choice === 'neutral';
+      assert.equal(outcome, valid ? 'completed' : 'api-failure');
+      assert.equal(transport.mock.calls.length, 1);
+      assert.equal(h.gameCalls, valid ? 2 : 0);
+      const entry = h.view.session.evidence.decisions[0];
+      assert.equal(entry.waitUnchanged, true);
+      if (valid) {
+        assert.equal(entry.execution.requestedTics, 2);
+        assert.equal(entry.execution.reportedCompletedTics, 2);
+        assert.equal(entry.execution.independentlyVerifiedTics, 2);
+        assert.equal(entry.result.tic, 3);
+        assert.equal(entry.result.nativeSha256, entry.result.canvasSha256);
+      } else assert.equal(h.gameOps.includes('action'), false);
+    } finally { await h.dispose(); }
+  }
+});
+
+it('fences Stop and close while late SDK body work retains controller admission', async () => {
+  for (const command of ['stop', 'close']) {
+    const h = fixture({ providerFactory: openRouterDecisionProviderFactory });
+    const reading = deferred(), gate = deferred(); let pending;
+    try {
+      await h.prepare();
+      const capture = h.ports.capture; h.ports.capture = () => ({ ...capture(), png });
+      vi.stubGlobal('fetch', async () => {
+        const res = response(answer('neutral')); const text = res.text.bind(res);
+        res.text = async () => { reading.resolve(); await gate.promise; return text(); };
+        return res;
+      });
+      h.browserInputs.budget = 1; pending = h.start(); await reading.promise;
+      h.controller[command]();
+      await checkpoint(() => h.view.session.waitingForSdk);
+      assert.equal(h.view.session.controls.ready, false);
+      assert.equal(await h.next(), 'not-admitted');
+      assert.equal(h.view.session.continuous.used, 1);
+      if (command === 'stop') await checkpoint(() => h.view.session.evidence.decisions[0].stage === 'cleanup');
+      gate.resolve(); await pending;
+      await checkpoint(() => !h.view.session.waitingForSdk);
+      assert.equal(h.gameCalls, 0);
+      assert.equal(h.view.session.controls.ready, command === 'stop');
+    } finally { gate.resolve(); await pending; await h.dispose(); }
+  }
+});

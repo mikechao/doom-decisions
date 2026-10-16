@@ -12,6 +12,10 @@ const jevCsp = devCsp.replace(
   "connect-src 'self' https://api.openai.com",
   "connect-src 'self'",
 );
+const openRouterCsp = devCsp.replace(
+  "connect-src 'self' https://api.openai.com",
+  "connect-src 'self' https://openrouter.ai",
+);
 // Installed Impeccable setup: HTTP scripts/SSE and inline styles; Vite: HMR.
 // Reconfirm the helper's actual origin before starting a Live trial.
 const impeccableCsp = devCsp
@@ -144,7 +148,9 @@ export default defineConfig(({ command, mode, isPreview }) => ({
                   ? impeccableCsp
                   : mode === 'jev'
                     ? jevCsp
-                    : devCsp,
+                    : mode === 'openrouter'
+                      ? openRouterCsp
+                      : devCsp,
               ),
           },
         ]

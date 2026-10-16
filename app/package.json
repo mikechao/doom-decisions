@@ -17,6 +17,7 @@
     "check": "npm run typecheck && node ../scripts/check_worker.mjs && npm test && biome check ."
   },
   "dependencies": {
+    "@openrouter/sdk": "1.4.25",
     "@typesafe-ai/sdk": "0.7.0",
     "openai": "7.32.0"
   },

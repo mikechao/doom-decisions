@@ -4,14 +4,17 @@ import { formatDefaultDecisionInstructions } from './decision-request';
 import { jevDecisionProviderFactory } from './jev-decision-provider';
 import { projectLatestOutcome } from './latest-outcome';
 import { openAiDecisionProviderFactory } from './openai-decision-provider';
+import { openRouterDecisionProviderFactory } from './openrouter-decision-provider';
 import {
   createSessionController,
   type SessionPresentation,
 } from './session-controller';
 import './style.css';
 
-// Explicit opt-in: Vite serve --mode jev. Production always selects OpenAI.
+// Explicit development opt-ins. Production always selects OpenAI.
 const jevMode = import.meta.env.DEV && import.meta.env.MODE === 'jev';
+const openRouterMode =
+  import.meta.env.DEV && import.meta.env.MODE === 'openrouter';
 const jevPlaceholder = 'jev-vite-proxy-not-a-credential';
 const jevKeyStatus =
   'TypeSafe key held by the local Vite server. Authentication unverified.';
@@ -71,6 +74,11 @@ if (jevMode) {
   $('#key-note').textContent =
     'Experimental Jev mode sends the current screenshot through the local Vite server to TypeSafe. Images are experimental. Configure TYPESAFE_API_KEY only in the Vite server process and restart that server to change it. Do not enter a TypeSafe key in this page.';
 }
+if (openRouterMode) {
+  $('#key-label').textContent = 'Temporary OpenRouter API key';
+  $('#key-note').textContent =
+    'Your key, screenshot, context, instructions and choices go directly to OpenRouter, which may send model input to its downstream provider. Trust this page and its scripts. The field clears on capture; the client stays in memory. A blank field keeps it. Enter a replacement before a later click to correct it. Refresh clears in-memory credentials. Browser POST and account access are unverified.';
+}
 function localFetch(name: string, json: true): Promise<unknown>;
 function localFetch(name: string, json?: false): Promise<ArrayBuffer>;
 async function localFetch(name: string, json = false): Promise<unknown> {
@@ -119,7 +127,7 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
   const readiness = deriveDecisionControls(
     run,
     jevMode || $('#key').value.trim().length > 0,
-    jevMode ? 'TypeSafe / Jev' : 'OpenAI',
+    jevMode ? 'TypeSafe / Jev' : openRouterMode ? 'OpenRouter' : 'OpenAI',
   );
   const prerequisite = $('#control-prerequisite');
   prerequisite.textContent = readiness.bannerText ?? '';
@@ -216,7 +224,11 @@ const controller = createSessionController(
     clearCanvas: () => context.clearRect(0, 0, 640, 400),
     present: display,
   },
-  jevMode ? jevDecisionProviderFactory : openAiDecisionProviderFactory,
+  jevMode
+    ? jevDecisionProviderFactory
+    : openRouterMode
+      ? openRouterDecisionProviderFactory
+      : openAiDecisionProviderFactory,
 );
 const syncCredentialReadiness = () => {
   updateControlAvailability(latestSession);

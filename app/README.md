@@ -208,6 +208,40 @@ picker is locked; changing the selected file never restarts a prepared game.
 There are no Prepare, Reset or New Game buttons. Refresh starts a new game
 and clears the in-memory credential; it does not resume prior state.
 
+## Experimental OpenRouter development mode
+
+With dependencies and verified staged engine assets already available, launch:
+
+```sh
+npm --prefix app run dev -- --mode openrouter --host 127.0.0.1 --port 5173 --strictPort
+```
+
+This explicit development mode uses official `@openrouter/sdk` **1.4.25**,
+`alpha.decisions.create`, and the pinned `openai/gpt-6-luna-decisions` model.
+Enter an **OpenRouter API key** in the existing password field. The key, original
+Canvas PNG, context, unchanged instructions and seven choices go directly to
+`https://openrouter.ai/api/alpha/decisions`; OpenRouter may forward model input
+to its downstream provider. The field clears on capture; the client stays in
+memory, blank keeps it, replacement input replaces it, and refresh clears it.
+There is no application proxy or credential persistence.
+
+SDK retries and provider fallbacks are disabled. One charged SDK invocation is
+not proof of one remote computation or billing outcome. The existing 10-second
+budget includes request construction and body reading; canceled work retains
+admission until the underlying SDK operation settles. Keep `OPENROUTER_DEBUG`
+unset: this provider rejects SDK debug logging. SDK success exposes a sanitized
+body ID when available; HTTP status may remain null without response metadata.
+Choice keys are emitted in the existing order; downstream ordering is not promised.
+
+Only this development mode permits the OpenRouter origin in CSP. Default OpenAI,
+Jev development mode, and the strict production policy remain unchanged.
+Authenticated browser POST/CORS, account/model access and actual screenshot
+processing/gameplay are **not yet established**. The separately authorized owner
+trial is one manual **Next Decision** with N=2 after automatic preparation:
+expect one POST, one legal choice, unchanged native state during waiting,
+2/2/2 requested/reported/verified tics, cumulative tic 3 and matching resulting
+native/Canvas hashes. Do not start continuous mode for that trial.
+
 ## Prototype acceptance and evidence
 
 The owner accepted v0.2.0 with known evidence gaps. Prior observations are
