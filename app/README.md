@@ -218,12 +218,61 @@ npm --prefix app run dev -- --mode openrouter --host 127.0.0.1 --port 5173 --str
 
 This explicit development mode uses official `@openrouter/sdk` **1.4.25**,
 `alpha.decisions.create`, and the pinned `openai/gpt-6-luna-decisions` model.
-Enter an **OpenRouter API key** in the existing password field. The key, original
-Canvas PNG, context, unchanged instructions and seven choices go directly to
+**Sign in with OpenRouter** is the primary connection option, available only
+before selecting a WAD. Authorizing creates an OpenRouter API key for this page;
+it does not establish an application account or a persistent login session.
+**Use an API key instead** reveals the existing password field, editable after
+successful preparation. **Use sign-in instead** hides it and discards any
+unsubmitted manual edit. After WAD selection, sign-in stays unavailable; refresh
+for a fresh sign-in, or use a manual replacement during a healthy idle game.
+
+The browser-only [PKCE S256 flow](https://openrouter.ai/docs/guides/overview/auth/oauth)
+uses Web Crypto for a 32-byte random verifier and an independent random state.
+One namespaced `sessionStorage` record temporarily holds those values, the exact
+callback target and non-auth query/hash restoration details. Blocked storage
+prevents redirect. The same-tab callback is **current origin + pathname**, with
+no query/hash: `127.0.0.1` and `localhost`, ports and paths are distinct. Keep the
+same OpenRouter-mode Vite instance running through authorization and return.
+
+Only a pending flow at its expected callback with one nonempty code and exactly
+matching state can exchange. Pending metadata is consumed once, and owned
+callback parameters are removed with `history.replaceState` before networking,
+preserving history state, saved non-auth query/hash and additional unrelated
+return parameters. Unsolicited or uncorrelated `code` parameters are left alone
+and never exchanged; a deliberate new sign-in excludes reserved auth parameters
+from its restoration metadata. Returns without a code clear pending metadata
+and show a non-success message, including denial without echoed state. The
+exact denial return shape remains unverified. Stale/malformed attempts require
+an explicit fresh sign-in; there is no exchange replay on reload.
+
+The verified code is exchanged once with plain browser fetch to
+`POST https://openrouter.ai/api/v1/auth/keys`, with JSON `code`, `code_verifier`
+and `code_challenge_method: S256`, no bearer key/cookies, no retries and a separate
+10-second timeout covering fetch and JSON reading. Errors are fixed local
+messages; response bodies, credentials and account identity are not displayed.
+Page exit aborts and fences late results. The temporary verifier survives the
+outgoing redirect, then is consumed on return; tab storage can survive browser
+restoration, so tab close is not a secure-erasure guarantee. Remote authorization
+codes expire ten minutes after issuance according to the guide.
+
+The minted API key is **memory only**, never placed in either storage area or the
+password input. The next explicit Next/Start consumes it through the existing
+key port; the provider then retains its client. A nonempty manual key wins and
+discards an unused sign-in key, even if that manual candidate is invalid. Blank
+input keeps the current client. Refresh, page exit or fatal retirement clears
+local access, without revoking the remote key or logging out of OpenRouter.
+Timeout, cancellation or a lost response does not prove no key was created.
+Repeated sign-in can create additional keys; manage/delete them in
+[OpenRouter key settings](https://openrouter.ai/settings/keys). Trust in the page,
+scripts and browser remains necessary; JavaScript cannot securely erase heap copies.
+
+Authorization navigation ends the current page; no WAD, Worker or Doom state is
+restored. On return, select the local WAD for a **fresh** verified preparation,
+then explicitly choose Next Decision or Start. Authentication never prepares the
+game or issues Decisions. The key, original Canvas PNG, context, unchanged
+instructions and seven choices go directly to
 `https://openrouter.ai/api/alpha/decisions`; OpenRouter may forward model input
-to its downstream provider. The field clears on capture; the client stays in
-memory, blank keeps it, replacement input replaces it, and refresh clears it.
-There is no application proxy or credential persistence.
+to its downstream provider. There is no application proxy or persistent API key.
 
 SDK retries and provider fallbacks are disabled. One charged SDK invocation is
 not proof of one remote computation or billing outcome. The existing 10-second
@@ -235,12 +284,25 @@ Choice keys are emitted in the existing order; downstream ordering is not promis
 
 Only this development mode permits the OpenRouter origin in CSP. Default OpenAI,
 Jev development mode, and the strict production policy remain unchanged.
-Authenticated browser POST/CORS, account/model access and actual screenshot
-processing/gameplay are **not yet established**. The separately authorized owner
-trial is one manual **Next Decision** with N=2 after automatic preparation:
-expect one POST, one legal choice, unchanged native state during waiting,
-2/2/2 requested/reported/verified tics, cumulative tic 3 and matching resulting
-native/Canvas hashes. Do not start continuous mode for that trial.
+The owner previously reported successful browser-direct Decisions HTTP 200 and
+four verified/rendered `forward` decisions at N=6, cumulative tic 25. That is
+Decisions-provider evidence, **not OAuth exchange/CORS evidence**. OAuth code and
+offline tests have not yet been run or live-verified as part of this patch.
+The generated auth endpoint reference marks bearer authorization as required,
+contradicting the OAuth guide/reference helper; this implementation follows the
+guide without adding a credential, proxy or workaround.
+
+**Separately authorized live acceptance:** launch the command above with approved
+dependencies/staged assets, click Sign in before WAD selection, and obtain owner
+approval to authorize/mint a key. Verify exact hostname/path return, auth endpoint
+preflight/CORS and one readable exchange response, URL cleanup and no Decisions
+or Worker preparation during auth. Do not export HARs, bodies, headers or codes.
+Then select the approved local WAD and verify fresh neutral 1/1/1 preparation.
+After separate approval for one potentially billable Next Decision, use N=6:
+expect one legal choice, unchanged native state while waiting, healthy 6/6/6 tics,
+cumulative tic 7 and matching resulting native/Canvas hashes (or existing verified
+terminal-prefix handling). Do not start continuous mode. Auth CORS, unauthenticated
+exchange, exact localhost/127.0.0.1 acceptance and denial behavior remain live gates.
 
 ## Prototype acceptance and evidence
 

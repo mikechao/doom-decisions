@@ -22,16 +22,26 @@
         <details id="setup" class="setup" open aria-labelledby="setup-title">
           <summary><h2 id="setup-title">Setup &amp; Key</h2></summary>
           <div class="setup-content">
+            <div id="openrouter-connect" hidden>
+              <div id="openrouter-signin">
+                <button id="openrouter-signin-button" type="button" aria-describedby="openrouter-auth-note openrouter-auth-status" disabled>Sign in with OpenRouter</button>
+                <p id="openrouter-auth-note" class="help">Authorize OpenRouter to create an API key for Doom Decisions. This page keeps the key in memory; refreshing clears it. Sign in before selecting a WAD; returning starts fresh setup.</p>
+              </div>
+              <button id="openrouter-manual" type="button" aria-controls="manual-key" aria-expanded="false">Use an API key instead</button>
+              <p id="openrouter-auth-status" class="help" role="status" aria-live="polite" aria-atomic="true"></p>
+              <p class="help">Refresh and tab close clear local access, without revoking the key. Manage or delete keys in <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings</a>.</p>
+            </div>
             <div>
               <label for="iwad">Local Doom IWAD</label>
               <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
               <span id="setup-asset"></span>
               <p id="asset-note" class="help">Local Only • Refresh to change</p>
             </div>
-            <div>
+            <div id="manual-key">
               <label id="key-label" for="key">Temporary OpenAI API key</label>
               <input id="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="key-state key-note" disabled>
               <p id="key-state" class="help">Client in memory • Refresh clears it</p>
+              <button id="openrouter-back" type="button" aria-controls="manual-key openrouter-signin" hidden>Use sign-in instead</button>
             </div>
             <details class="setup-details">
               <summary>Temporary key: handling &amp; trust</summary>

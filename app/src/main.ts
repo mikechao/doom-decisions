@@ -5,6 +5,7 @@ import { jevDecisionProviderFactory } from './jev-decision-provider';
 import { projectLatestOutcome } from './latest-outcome';
 import { openAiDecisionProviderFactory } from './openai-decision-provider';
 import { openRouterDecisionProviderFactory } from './openrouter-decision-provider';
+import { createOpenRouterOAuth } from './openrouter-oauth';
 import {
   createSessionController,
   type SessionPresentation,
@@ -15,6 +16,10 @@ import './style.css';
 const jevMode = import.meta.env.DEV && import.meta.env.MODE === 'jev';
 const openRouterMode =
   import.meta.env.DEV && import.meta.env.MODE === 'openrouter';
+// Claim and scrub an owned callback before Canvas/DOM startup can fail.
+// Other modes never construct the helper or access OAuth storage/callbacks.
+const oauth = openRouterMode ? createOpenRouterOAuth(window) : undefined;
+if (oauth) window.addEventListener('pagehide', () => oauth.close());
 const jevPlaceholder = 'jev-vite-proxy-not-a-credential';
 const jevKeyStatus =
   'TypeSafe key held by the local Vite server. Authentication unverified.';
@@ -26,6 +31,13 @@ type Elements = {
   '#key-label': HTMLLabelElement;
   '#key-note': HTMLParagraphElement;
   '#key-state': HTMLParagraphElement;
+  '#manual-key': HTMLDivElement;
+  '#openrouter-connect': HTMLDivElement;
+  '#openrouter-signin': HTMLDivElement;
+  '#openrouter-signin-button': HTMLButtonElement;
+  '#openrouter-manual': HTMLButtonElement;
+  '#openrouter-back': HTMLButtonElement;
+  '#openrouter-auth-status': HTMLParagraphElement;
   '#setup': HTMLDetailsElement;
   '#setup-asset': HTMLSpanElement;
   '#control-prerequisite': HTMLParagraphElement;
@@ -75,9 +87,13 @@ if (jevMode) {
     'Experimental Jev mode sends the current screenshot through the local Vite server to TypeSafe. Images are experimental. Configure TYPESAFE_API_KEY only in the Vite server process and restart that server to change it. Do not enter a TypeSafe key in this page.';
 }
 if (openRouterMode) {
+  $('#openrouter-connect').hidden = false;
+  $('#openrouter-back').hidden = false;
+  $('#manual-key').hidden = true;
+  $('#key').hidden = true;
   $('#key-label').textContent = 'Temporary OpenRouter API key';
   $('#key-note').textContent =
-    'Your key, screenshot, context, instructions and choices go directly to OpenRouter, which may send model input to its downstream provider. Trust this page and its scripts. The field clears on capture; the client stays in memory. A blank field keeps it. Enter a replacement before a later click to correct it. Refresh clears in-memory credentials. Browser POST and account access are unverified.';
+    'Your key, screenshot, context, instructions and choices go directly to OpenRouter, which may send model input to its downstream provider. Trust this page and its scripts. The field clears on capture; the client stays in memory. A blank field keeps it. Entering a manual key replaces an unused sign-in key when you click Next Decision or Start, even if the key is invalid. Refresh clears local credentials; it does not revoke keys at OpenRouter.';
 }
 function localFetch(name: string, json: true): Promise<unknown>;
 function localFetch(name: string, json?: false): Promise<ArrayBuffer>;
@@ -105,6 +121,35 @@ let latestSession: SessionRunPresentation | undefined;
 let setupAutoCollapseDone = false;
 let keyCommitted = false;
 let setupPointerActive = false;
+let startupReady = false;
+let wadSelected = false;
+let manualKeyVisible = false;
+function displayOAuth() {
+  if (!oauth) return;
+  const preWad = !wadSelected && !latestSession;
+  $('#openrouter-signin-button').disabled =
+    !startupReady ||
+    !preWad ||
+    oauth.busy ||
+    oauth.closed ||
+    oauth.hasKey ||
+    $('#key').value.trim().length > 0;
+  $('#openrouter-signin-button').setAttribute('aria-busy', String(oauth.busy));
+  $('#openrouter-signin-button').textContent = oauth.busy
+    ? 'Connecting…'
+    : 'Sign in with OpenRouter';
+  $('#openrouter-manual').disabled = oauth.busy || oauth.closed;
+  $('#openrouter-back').disabled = oauth.busy || oauth.closed;
+  $('#openrouter-auth-status').textContent = latestSession?.hasClient
+    ? 'OpenRouter client in memory; blank keeps it. Refresh clears this page.'
+    : oauth.message;
+  if (oauth.busy || oauth.closed) {
+    $('#iwad').disabled = true;
+    $('#key').disabled = true;
+  } else if (!latestSession) {
+    $('#iwad').disabled = !startupReady;
+  }
+}
 function collapseCompletedSetup(
   focusTarget: Node | null = document.activeElement,
 ) {
@@ -115,6 +160,7 @@ function collapseCompletedSetup(
     !latestSession?.prepared ||
     !(
       jevMode ||
+      oauth?.hasKey ||
       latestSession.hasClient ||
       (keyCommitted && $('#key').value.trim())
     )
@@ -126,7 +172,7 @@ function collapseCompletedSetup(
 function updateControlAvailability(run: SessionRunPresentation | undefined) {
   const readiness = deriveDecisionControls(
     run,
-    jevMode || $('#key').value.trim().length > 0,
+    jevMode || !!oauth?.hasKey || $('#key').value.trim().length > 0,
     jevMode ? 'TypeSafe / Jev' : openRouterMode ? 'OpenRouter' : 'OpenAI',
   );
   const prerequisite = $('#control-prerequisite');
@@ -148,6 +194,7 @@ function display(view: SessionPresentation) {
   if (view.frameStatus !== undefined)
     $('#frame').textContent = view.frameStatus;
   if (view.iwadEnabled !== undefined) $('#iwad').disabled = !view.iwadEnabled;
+  if (view.iwadEnabled !== undefined) startupReady = view.iwadEnabled;
   const status = view.status;
   if (status)
     $('#status').textContent = jevMode
@@ -159,6 +206,7 @@ function display(view: SessionPresentation) {
   const run = view.session;
   if (run) latestSession = run;
   updateControlAvailability(latestSession);
+  displayOAuth();
   collapseCompletedSetup();
   if (!run) return;
   $('#status').dataset.phase = run.phase;
@@ -207,10 +255,12 @@ const controller = createSessionController(
       }
       const key = $('#key').value.trim();
       if (key) $('#key').value = '';
-      return key;
+      return oauth ? oauth.takeKey(key) : key;
     },
     clearKey: () => {
       $('#key').value = '';
+      oauth?.clear();
+      displayOAuth();
     },
     focusBudget: () => $('#budget').focus(),
     capture: () => ({
@@ -232,7 +282,55 @@ const controller = createSessionController(
 );
 const syncCredentialReadiness = () => {
   updateControlAvailability(latestSession);
+  displayOAuth();
 };
+if (oauth) {
+  $('#openrouter-manual').addEventListener('click', () => {
+    if (oauth.busy || oauth.closed) return;
+    manualKeyVisible = true;
+    $('#manual-key').hidden = false;
+    $('#key').hidden = false;
+    $('#openrouter-signin').hidden = true;
+    $('#openrouter-manual').hidden = true;
+    $('#openrouter-manual').setAttribute('aria-expanded', 'true');
+    // The existing key field becomes editable after successful preparation.
+    ($('#key').disabled ? $('#openrouter-back') : $('#key')).focus();
+  });
+  $('#openrouter-back').addEventListener('click', () => {
+    if (oauth.busy || oauth.closed) return;
+    manualKeyVisible = false;
+    $('#key').value = ''; // Discard an unsubmitted edit rather than hide it.
+    $('#manual-key').hidden = true;
+    $('#key').hidden = true;
+    $('#openrouter-signin').hidden = false;
+    $('#openrouter-manual').hidden = false;
+    $('#openrouter-manual').setAttribute('aria-expanded', 'false');
+    syncCredentialReadiness();
+    ($('#openrouter-signin-button').disabled
+      ? $('#openrouter-manual')
+      : $('#openrouter-signin-button')
+    ).focus();
+  });
+  $('#openrouter-signin-button').addEventListener('click', async () => {
+    // Enforce setup ownership independently of disabled-button presentation.
+    if (
+      !startupReady ||
+      wadSelected ||
+      latestSession ||
+      manualKeyVisible ||
+      oauth.busy ||
+      oauth.closed ||
+      oauth.hasKey ||
+      $('#key').value.trim()
+    )
+      return;
+    const connecting = oauth.begin();
+    displayOAuth();
+    await connecting;
+    displayOAuth();
+  });
+  displayOAuth();
+}
 $('#key').addEventListener('input', () => {
   keyCommitted = false;
   syncCredentialReadiness();
@@ -300,12 +398,38 @@ const refreshOpenDecisionPrompt = () => {
 };
 $('#tics').addEventListener('input', refreshOpenDecisionPrompt);
 $('#tics').addEventListener('change', refreshOpenDecisionPrompt);
-$('#iwad').addEventListener(
-  'change',
-  () => void controller.prepare($('#iwad').files?.[0]),
-);
+$('#iwad').addEventListener('change', () => {
+  if (oauth && (oauth.busy || oauth.closed || !startupReady)) return;
+  const file = $('#iwad').files?.[0];
+  if (file) wadSelected = true;
+  displayOAuth();
+  void controller.prepare(file);
+});
 window.addEventListener('pagehide', () => controller.close());
 window.addEventListener('pageshow', (event) =>
   controller.restore(event.persisted),
 );
-void controller.initialize();
+if (oauth) {
+  // Exchange errors are fixed helper messages, never controller exception text.
+  // No WAD, Worker, provider client or Decisions request is started by auth.
+  void (async () => {
+    try {
+      const exchanging = oauth.exchange();
+      displayOAuth();
+      await exchanging;
+      if (oauth.closed) return;
+      displayOAuth();
+      await controller.initialize();
+    } catch {
+      // Unexpected bootstrap failures never expose auth exception details.
+      startupReady = false;
+      oauth.clear();
+      $('#status').textContent = 'Startup failed. Reload to retry.';
+    } finally {
+      if (!startupReady && oauth.hasKey) oauth.clear();
+      displayOAuth();
+    }
+  })();
+} else {
+  void controller.initialize();
+}
