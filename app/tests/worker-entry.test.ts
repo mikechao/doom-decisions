@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { describe, expect, it, vi } from 'vitest';
 
 describe('Worker entry', () => {
-  it('keeps shared imports passive and retires unknown operations without starting gameplay', async () => {
+  it('keeps helper imports passive and retires unknown operations without starting gameplay', async () => {
     const replies = [];
     let closed = false;
     const previous = Object.getOwnPropertyDescriptor(globalThis, 'self');
@@ -17,6 +17,7 @@ describe('Worker entry', () => {
       // Re-execute module startup so the test cannot pass against cached imports.
       vi.resetModules();
       await import('../src/worker-shared.ts');
+      await import('../src/player-state.ts');
       await import('../src/decision.ts');
       expect(self.onmessage).toBeUndefined();
       await import('../src/worker.ts');

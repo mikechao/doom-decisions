@@ -1,3 +1,4 @@
+import { readPlayerTelemetry, readReadyWeapon } from './player-state.ts';
 import type {
   Counters,
   Dimensions,
@@ -250,22 +251,7 @@ function a21Observation(): NativeObservation {
   ] as const;
   const base = readFields(names, read);
   const loaded = base.loadComplete === 1;
-  // doomdef.h weapontype_t order; NUMWEAPONS/wp_nochange are not weapons.
-  const weaponNames = [
-    'fist',
-    'pistol',
-    'shotgun',
-    'chaingun',
-    'rocket_launcher',
-    'plasma_rifle',
-    'bfg9000',
-    'chainsaw',
-    'super_shotgun',
-  ] as const;
-  // doomdef.h ammotype_t: 0..3 inventory types, 4 NUMAMMO, 5 am_noammo.
-  const ammoNames = ['bullets', 'shells', 'cells', 'rockets'] as const;
-  const weaponId = loaded ? read(77) : -1;
-  const ammoId = loaded ? read(78) : -1;
+  const readyWeapon = loaded ? readReadyWeapon(read) : null;
   return {
     ...base,
     ...readFields(extra, (i) =>
@@ -273,22 +259,9 @@ function a21Observation(): NativeObservation {
     ),
     built: readFields(fields, (i) => read(32 + i)),
     entered: readFields(fields, (i) => read(42 + i)),
-    armorpoints: loaded ? read(76) : null,
-    readyWeapon: loaded
-      ? {
-          id: weaponId,
-          name: weaponNames[weaponId] ?? 'unknown',
-          ammoType: ammoId === 5 ? 'none' : (ammoNames[ammoId] ?? 'unknown'),
-        }
-      : null,
-    ammo: loaded
-      ? {
-          bullets: { current: read(79), max: read(83) },
-          shells: { current: read(80), max: read(84) },
-          cells: { current: read(81), max: read(85) },
-          rockets: { current: read(82), max: read(86) },
-        }
-      : null,
+    ...(readyWeapon
+      ? readPlayerTelemetry(read, readyWeapon)
+      : { armorpoints: null, readyWeapon: null, ammo: null }),
   };
 }
 function observations(): Observation {

@@ -295,6 +295,7 @@ describe('iwad', () => {
       [99, 'unknown', -1, 'unknown'],
       [1, 'pistol', 4, 'unknown'], // NUMAMMO must not mean an inventory slot.
       [1, 'pistol', 99, 'unknown'],
+      [1, 'pistol', 3, 'rockets'], // Decode the sampled ammo ID independently.
     ];
     for (const [id, name, ammoId, ammoType] of weapons) {
       const reads = [];
@@ -336,9 +337,46 @@ describe('iwad', () => {
             rockets: { current: 44, max: 444 },
           });
           assert.deepEqual(
-            reads.filter((index) => index >= 76).sort((a, b) => a - b),
-            [76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86],
+            reads,
+            [
+              ...Array.from({ length: 32 }, (_, index) => index),
+              77,
+              78,
+              ...Array.from({ length: 24 }, (_, index) => 52 + index),
+              ...Array.from({ length: 20 }, (_, index) => 32 + index),
+              76,
+              79,
+              83,
+              80,
+              84,
+              81,
+              85,
+              82,
+              86,
+            ],
           );
+          const native = reply.result.native;
+          assert.equal(Object.keys(native)[20], 'health');
+          assert.deepEqual(Object.keys(native).slice(-5), [
+            'built',
+            'entered',
+            'armorpoints',
+            'readyWeapon',
+            'ammo',
+          ]);
+          assert.deepEqual(Object.keys(native.readyWeapon), [
+            'id',
+            'name',
+            'ammoType',
+          ]);
+          assert.deepEqual(Object.keys(native.ammo), [
+            'bullets',
+            'shells',
+            'cells',
+            'rockets',
+          ]);
+          for (const amount of Object.values(native.ammo))
+            assert.deepEqual(Object.keys(amount), ['current', 'max']);
           assert.equal(h.closed, false);
         },
       );
@@ -362,6 +400,11 @@ describe('iwad', () => {
         assert.equal(reply.result.native.armorpoints, null);
         assert.equal(reply.result.native.readyWeapon, null);
         assert.equal(reply.result.native.ammo, null);
+        assert.deepEqual(Object.keys(reply.result.native).slice(-3), [
+          'armorpoints',
+          'readyWeapon',
+          'ammo',
+        ]);
       },
     );
   });

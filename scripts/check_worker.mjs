@@ -36,7 +36,8 @@ for (const file of fs.readdirSync(new URL('src/', root)).filter(file => file.end
   });
   assert.ok(imports.every(name => !/(?:^|\/)worker(?:\.ts)?(?:\?|$)/.test(name)),
     'Worker entry must only be loaded by its constructor');
-  if (file === 'worker.ts') assert.deepEqual(imports, ['./worker-shared.ts']);
+  if (file === 'worker.ts') assert.deepEqual(imports, ['./player-state.ts', './worker-shared.ts']);
+  if (file === 'player-state.ts') assert.deepEqual(imports, []);
   if (file === 'worker-shared.ts') assert.deepEqual(imports, []);
 }
 console.log('Worker packaging static check PASS: module constructor, ES output, CSP and shared import boundary.');
