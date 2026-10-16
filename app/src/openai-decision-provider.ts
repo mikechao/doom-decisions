@@ -61,7 +61,8 @@ export function decodeOpenAIDecision(data: unknown): DecisionResult {
 
 export const openAiDecisionProviderFactory: DecisionProviderFactory = {
   probe() {
-    if (VERSION !== '7.32.0') throw Error('Require official OpenAI SDK 7.32.0.');
+    if (VERSION !== '7.32.0')
+      throw Error('Require official OpenAI SDK 7.32.0.');
     const client = new OpenAI({
       apiKey: 'sdk-probe-not-a-credential',
       dangerouslyAllowBrowser: true,

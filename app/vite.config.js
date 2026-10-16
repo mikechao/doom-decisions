@@ -10,7 +10,7 @@ const devCsp = strictCsp.replace(
 // Experimental provider, only when explicitly serving in Jev development mode.
 const jevCsp = devCsp.replace(
   "connect-src 'self' https://api.openai.com",
-  "connect-src 'self' https://api.typesafe.ai",
+  "connect-src 'self'",
 );
 // Installed Impeccable setup: HTTP scripts/SSE and inline styles; Vite: HMR.
 // Reconfirm the helper's actual origin before starting a Live trial.
@@ -72,15 +72,68 @@ function transformCsp(html, csp) {
   );
 }
 
-export default defineConfig(({ command, mode }) => ({
+// The key stays in this closure, never in serializable proxy/config properties.
+function jevProxy() {
+  const key = process.env.TYPESAFE_API_KEY;
+  if (!key || !/^[\x21-\x7e]+$/.test(key))
+    throw new Error(
+      'Jev development requires a header-safe TYPESAFE_API_KEY on the Vite server.',
+    );
+  return {
+    // Claim the namespace so unsupported paths fail instead of reaching upstream.
+    '/__jev': {
+      target: 'https://api.typesafe.ai',
+      changeOrigin: true,
+      secure: true,
+      followRedirects: false,
+      bypass(req) {
+        const host = req.headers.host;
+        if (
+          req.url !== '/__jev/v1/systemone' ||
+          req.method !== 'POST' ||
+          !/^(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(host ?? '') ||
+          req.headers.origin !== `http://${host}` ||
+          req.headers.expect !== undefined ||
+          !/^multipart\/form-data;\s*boundary=/.test(
+            req.headers['content-type'] ?? '',
+          )
+        )
+          return false;
+      },
+      rewrite: () => '/v1/systemone',
+      configure(proxy) {
+        proxy.on('proxyReq', (outgoing) => {
+          outgoing.setHeader('authorization', `Bearer ${key}`);
+          for (const name of [
+            'cookie',
+            'proxy-authorization',
+            'origin',
+            'referer',
+          ])
+            outgoing.removeHeader(name);
+        });
+        proxy.on('proxyRes', (response) => {
+          delete response.headers['set-cookie'];
+        });
+      },
+    },
+  };
+}
+
+export default defineConfig(({ command, mode, isPreview }) => ({
   base: './',
   worker: { format: 'es' },
   build: {
     minify: false,
     sourcemap: true,
   },
+  ...(command === 'serve' && mode === 'jev' && !isPreview
+    ? { server: { host: '127.0.0.1', cors: false, proxy: jevProxy() } }
+    : {}),
+  // Vite preview otherwise inherits server.proxy. This is never a preview API.
+  preview: { proxy: {} },
   plugins:
-    command === 'serve'
+    command === 'serve' && !isPreview
       ? [
           {
             name: 'dev-csp',

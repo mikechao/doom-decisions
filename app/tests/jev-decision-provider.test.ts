@@ -2,7 +2,7 @@
 // ports only. These tests never start a browser, native Doom, or a real request.
 import assert from 'node:assert/strict';
 import { TypeSafeClient } from '@typesafe-ai/sdk';
-import { afterEach, it, vi } from 'vitest';
+import { afterEach, beforeEach, it, vi } from 'vitest';
 import { DecisionFailure, validateChoice } from '../src/decision.ts';
 import type { DecisionDiagnostics, DecisionLifecycle } from '../src/decision-provider.ts';
 import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
@@ -12,7 +12,11 @@ import {
 } from '../src/jev-decision-provider.ts';
 import { checkpoint, cleanup, deferred, fixture } from './fixtures/session.ts';
 
-afterEach(cleanup);
+beforeEach(() => {
+  vi.stubEnv('DEV', true);
+  vi.stubEnv('MODE', 'jev');
+});
+afterEach(() => { cleanup(); vi.unstubAllEnvs(); });
 
 const actions = ['neutral', 'forward', 'turn_right', 'backward', 'turn_left', 'fire', 'use'] as const;
 // A valid tiny PNG: only fake fetch sees it. Real Doom still captures 640×400.
@@ -53,6 +57,22 @@ it('probes without transport or credential discovery and requires an explicit ke
   assert.equal(fetch.mock.calls.length, 0);
 });
 
+it('fails closed outside Jev development, even for a previously created provider', async () => {
+  const provider = jevDecisionProviderFactory.create('offline-not-a-credential');
+  const fetch = vi.fn();
+  vi.stubGlobal('fetch', fetch);
+  for (const [dev, mode] of [[false, 'jev'], [true, 'development'], [false, 'production']] as const) {
+    vi.stubEnv('DEV', dev);
+    vi.stubEnv('MODE', mode);
+    assert.throws(() => jevDecisionProviderFactory.probe(), /local Vite development proxy/);
+    assert.throws(() => jevDecisionProviderFactory.create('offline'), /local Vite development proxy/);
+    const hooks = { assertFresh: vi.fn(), beforeCreate: vi.fn(), onReadStateChange: vi.fn() };
+    await assert.rejects(provider.request(input(), {}, { requestId: null, http: null, latencyMs: null }, hooks, performance.now()), /local Vite development proxy/);
+    assert.equal(hooks.beforeCreate.mock.calls.length, 0);
+  }
+  assert.equal(fetch.mock.calls.length, 0);
+});
+
 it('uses one charged SDK invocation with unchanged PNG, prompt, context and seven ordered choices', async () => {
   let calls = 0;
   let charges = 0;
@@ -66,12 +86,12 @@ it('uses one charged SDK invocation with unchanged PNG, prompt, context and seve
     assert.equal(this.compression, false);
     assert.equal(this.logLevel, 'off');
     assert.equal(this.timeout, 10000);
-    assert.equal(this.baseURL, 'https://api.typesafe.ai');
+    assert.equal(this.baseURL, '/__jev');
     assert.equal(options?.signal?.aborted, false);
     return original.call(this, request, options);
   };
   const fetch = vi.fn(async (url, init) => {
-    assert.equal(url, 'https://api.typesafe.ai/v1/systemone');
+    assert.equal(url, '/__jev/v1/systemone');
     const headers = new Headers(init.headers);
     assert.equal(headers.get('authorization'), 'Bearer offline-not-a-credential');
     assert.equal(headers.get('TypeSafe-Danger-Zone-Images'), 'true');

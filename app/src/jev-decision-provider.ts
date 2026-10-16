@@ -18,8 +18,15 @@ import type {
 const deadlineMs = 10000;
 const model = 'jev-1.14.0';
 const pngPrefix = 'data:image/png;base64,';
+function assertJevDevelopment() {
+  if (!import.meta.env.DEV || import.meta.env.MODE !== 'jev')
+    throw new DecisionFailure('Jev requires the local Vite development proxy.');
+}
 const probability = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+  typeof value === 'number' &&
+  Number.isFinite(value) &&
+  value >= 0 &&
+  value <= 1;
 const record = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -45,7 +52,9 @@ export function encodeJevDecisionRequest(input: DecisionRequest) {
     questions: {
       next_action: choice(
         input.instructions,
-        Object.fromEntries(input.permittedActions.map((action) => [action, null])),
+        Object.fromEntries(
+          input.permittedActions.map((action) => [action, null]),
+        ),
       ),
     },
   };
@@ -56,7 +65,10 @@ export function decodeJevDecision(
   permittedActions: DecisionRequest['permittedActions'],
 ): DecisionResult {
   const answers = record(record(data).answers);
-  if (Object.keys(answers).length !== 1 || !Object.hasOwn(answers, 'next_action'))
+  if (
+    Object.keys(answers).length !== 1 ||
+    !Object.hasOwn(answers, 'next_action')
+  )
     throw new DecisionFailure('Invalid answer count');
   const answer = record(answers.next_action);
   // SDK 0.7.0 defines no refusal response. Unknown answer types are invalid.
@@ -143,13 +155,14 @@ function observeResponseWork() {
 
 export const jevDecisionProviderFactory: DecisionProviderFactory = {
   probe() {
+    assertJevDevelopment();
     if (
       VERSION !== '0.7.0' ||
       typeof TypeSafeClient.prototype.systemOne !== 'function'
     )
       throw Error('Require official TypeSafe SDK 0.7.0 with systemOne.');
     return {
-      status: `Experimental TypeSafe SDK ${VERSION} · ${model} · images enabled · browser access unverified`,
+      status: `Experimental TypeSafe SDK ${VERSION} · ${model} · images enabled · local Vite proxy · live access unverified`,
       evidence: {
         provider: 'TypeSafe / Jev',
         version: VERSION,
@@ -159,17 +172,21 @@ export const jevDecisionProviderFactory: DecisionProviderFactory = {
     };
   },
   create(apiKey) {
+    assertJevDevelopment();
     if (!apiKey || !/^[\x21-\x7e]+$/.test(apiKey))
       throw Error('A usable temporary API key is required.');
     return {
       async request(input, lifecycle, diagnostics, hooks, startedAt) {
+        assertJevDevelopment();
         const controller = new AbortController();
         lifecycle.apiController = controller;
         const work = observeResponseWork();
         let timedOut = false;
         const abortError = () =>
           new DecisionFailure(
-            timedOut ? 'API deadline exceeded (10 seconds)' : 'API request aborted',
+            timedOut
+              ? 'API deadline exceeded (10 seconds)'
+              : 'API request aborted',
           );
         let onAbort = () => {};
         const cancelled = new Promise<never>((_resolve, reject) => {
@@ -197,7 +214,7 @@ export const jevDecisionProviderFactory: DecisionProviderFactory = {
           const prepared = encodeJevDecisionRequest(input);
           const client = new TypeSafeClient({
             apiKey,
-            baseURL: 'https://api.typesafe.ai',
+            baseURL: '/__jev',
             defaultModel: model,
             dangerouslyAllowBrowser: true,
             logLevel: 'off',
@@ -248,7 +265,10 @@ export const jevDecisionProviderFactory: DecisionProviderFactory = {
           return await Promise.race([result, cancelled]);
         } catch (error) {
           if (controller.signal.aborted) throw abortError();
-          if (error instanceof DecisionFailure || error instanceof DecisionStopped)
+          if (
+            error instanceof DecisionFailure ||
+            error instanceof DecisionStopped
+          )
             throw error;
           if (error instanceof APIError) {
             const status = error.status;
@@ -272,7 +292,9 @@ export const jevDecisionProviderFactory: DecisionProviderFactory = {
           if (error instanceof APIUserAbortError)
             throw new DecisionFailure('API request aborted');
           if (error instanceof APIConnectionError)
-            throw new DecisionFailure('API connection failure (network/CORS/access)');
+            throw new DecisionFailure(
+              'API connection failure (network/CORS/access)',
+            );
           throw new DecisionFailure('SDK or response-body failure');
         } finally {
           clearTimeout(deadline);

@@ -105,7 +105,9 @@ function toggleSetup() {
   element('#setup').open = !element('#setup').open;
 }
 
-beforeEach(async () => {
+async function mount(mode = 'test', dev = true) {
+  vi.stubEnv('MODE', mode);
+  vi.stubEnv('DEV', dev);
   vi.resetModules();
   vi.resetAllMocks();
   elements = new Map();
@@ -134,8 +136,46 @@ beforeEach(async () => {
   vi.stubGlobal('document', document);
   vi.stubGlobal('window', new EventTarget());
   await import('../src/main.ts');
+}
+beforeEach(() => mount());
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+it('Jev uses a placeholder, hides and clears browser key input, and explains server configuration', async () => {
+  await mount('jev');
+  assert.equal(element('#key').hidden, true);
+  assert.equal(element('#key').disabled, true);
+  assert.equal(element('#key').value, '');
+  assert.equal(element('#key-label').hidden, true);
+  assert.match(element('#key-note').textContent, /TYPESAFE_API_KEY only in the Vite server process/);
+  assert.match(element('#key-state').textContent, /local Vite server/);
+  show({ phase: 'preparing', prepared: false });
+  assert.equal(element('#next').disabled, true);
+  show();
+  assert.equal(element('#next').disabled, false);
+  assert.equal(element('#start').disabled, false);
+  assert.equal(element('#key').disabled, true);
+  assert.equal(element('#setup').open, false);
+  element('#key').value = 'ignored-synthetic-browser-input';
+  assert.equal(session.ports.takeKey(), 'jev-vite-proxy-not-a-credential');
+  assert.equal(element('#key').value, '');
+  session.ports.present({ status: 'HTTP failure (502); no native action dispatched. Correct the key if needed, then click Next Decision to retry.' });
+  assert.match(element('#status').textContent, /Check TYPESAFE_API_KEY on the local Vite server/);
+  assert.doesNotMatch(element('#status').textContent, /Correct the key/);
+  show({ hasClient: true });
+  assert.match(element('#key-state').textContent, /Authentication unverified/);
+  emit(element('#view-prompt'), 'click');
+  assert.equal(element('#prompt-dialog').open, true);
 });
-afterEach(() => vi.unstubAllGlobals());
+
+it('production with Jev mode retains the OpenAI key flow', async () => {
+  await mount('jev', false);
+  assert.equal(element('#key').hidden, false);
+  show();
+  assert.equal(element('#next').disabled, true);
+  editKey('synthetic-openai-key');
+  assert.equal(session.ports.takeKey(), 'synthetic-openai-key');
+  assert.equal(element('#key').value, '');
+});
 
 describe('Read-only decision prompt preview', () => {
   it('keeps the trigger after limits guidance and labels the native read-only dialog', () => {

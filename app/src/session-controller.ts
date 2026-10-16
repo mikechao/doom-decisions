@@ -471,10 +471,7 @@ export function createSessionController(
       }
     }
     if (!run.client) {
-      display(
-        run,
-        'Enter a temporary API key before requesting decisions.',
-      );
+      display(run, 'Enter a temporary API key before requesting decisions.');
       return 'not-admitted';
     }
     // Freeze duration and attempt identity before the first await. The handler
