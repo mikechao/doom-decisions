@@ -11,6 +11,9 @@ export const masks = Object.freeze({
   use: 32,
 });
 export type ActionName = keyof typeof masks;
+// Recoverable request failures carry only fixed, locally chosen categories.
+export class DecisionFailure extends Error {}
+export class DecisionStopped extends Error {}
 export type Phase =
   | 'unprepared'
   | 'preparing'
@@ -64,28 +67,28 @@ const probability = (value: unknown): value is number =>
   Number.isFinite(value) &&
   value >= 0 &&
   value <= 1;
-export function validateChoice(data: unknown) {
-  const answers = record(data).answers;
-  if (!Array.isArray(answers) || answers.length !== 1)
-    throw Error('Invalid answer count');
-  const answer = record(answers[0]);
-  if (answer.type === 'refusal') throw Error('API refusal');
+export function validateChoice(
+  data: unknown,
+  permittedActions: readonly ActionName[] = Object.keys(masks) as ActionName[],
+) {
+  const answer = record(data);
+  if (answer.kind === 'refusal') throw Error('API refusal');
   if (
-    answer.type !== 'choice' ||
-    answer.name !== 'next_action' ||
-    typeof answer.choice !== 'string' ||
-    !Object.hasOwn(masks, answer.choice)
+    answer.kind !== 'choice' ||
+    typeof answer.action !== 'string' ||
+    !Object.hasOwn(masks, answer.action) ||
+    !permittedActions.includes(answer.action as ActionName)
   )
     throw Error('Invalid next_action choice');
   // Optional metrics never authorize an action. Keep only validated projections.
   const probabilities = answer.probabilities;
   return {
-    action: answer.choice as ActionName,
+    action: answer.action as ActionName,
     confidence: probability(answer.confidence) ? answer.confidence : null,
     probabilities:
       Array.isArray(probabilities) &&
-      probabilities.length === 7 &&
-      Object.keys(masks).every(
+      probabilities.length === permittedActions.length &&
+      permittedActions.every(
         (value) =>
           probabilities.filter(
             (p) =>

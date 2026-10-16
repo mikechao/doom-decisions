@@ -6,6 +6,7 @@ import { setImmediate } from 'node:timers/promises';
 import { OpenAI } from 'openai/client';
 import { Decisions } from 'openai/resources/decisions';
 import { vi } from 'vitest';
+import { openAiDecisionProviderFactory } from '../../src/openai-decision-provider.ts';
 import {
   createSessionController,
   type SessionBrowserPorts,
@@ -95,7 +96,7 @@ export function fixture(configuration = {}) {
   // before requestDecision installs its reader observer. Use a plain call-through
   // wrapper, retaining the real SDK object/classes and lazy APIPromise semantics.
   const sdkCreate = { mock: { calls: [] } };
-  Decisions.prototype.create = function (input, options) {
+  const observeCreate = function (input, options) {
     sdkCreate.mock.calls.push([input, options]);
     assert.equal(options.maxRetries, 0);
     assert.equal(options.signal.aborted, false);
@@ -145,9 +146,12 @@ export function fixture(configuration = {}) {
     };
     return pending; // Actual SDK parser, identities, reader and Abort/deadline races.
   };
-  restorers.push(() => {
-    Decisions.prototype.create = create;
-  });
+  if (!settings.providerFactory) {
+    Decisions.prototype.create = observeCreate;
+    restorers.push(() => {
+      Decisions.prototype.create = create;
+    });
+  }
   const browserInputs = { tics: 6, budget: 2 };
   const wasm = new Uint8Array([1, 2, 3]).buffer;
   const wad = settings.wad ?? new ArrayBuffer(12);
@@ -337,14 +341,18 @@ export function fixture(configuration = {}) {
     },
   };
   let preparationSnapshots = 0;
-  const controller = createSessionController(ports);
+  const controller = createSessionController(
+    ports,
+    settings.providerFactory ?? openAiDecisionProviderFactory,
+  );
   async function prepare() {
     assert.deepEqual(ops, []);
     assert.equal(creations, 0);
     assert.deepEqual(view, {}, 'Construction is inert');
     await controller.initialize();
     assert.equal(view.iwadEnabled, true);
-    assert.match(view.sdkStatus, /7.32.0.*decisions.create available/);
+    if (!settings.providerFactory)
+      assert.match(view.sdkStatus, /7.32.0.*decisions.create available/);
     assert.equal(creations, 0);
     const preparing = controller.prepare({
       size: wad.byteLength,

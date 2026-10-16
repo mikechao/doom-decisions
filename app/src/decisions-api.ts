@@ -3,10 +3,16 @@ import type {
   Decision,
   DecisionCreateParams,
 } from 'openai/resources/decisions';
+import { DecisionFailure, DecisionStopped } from './decision.ts';
+import type {
+  DecisionDiagnostics,
+  DecisionHooks,
+  DecisionLifecycle,
+} from './decision-provider.ts';
+
+export { DecisionFailure, DecisionStopped } from './decision.ts';
 
 const deadlineMs = 10000;
-export class DecisionFailure extends Error {}
-export class DecisionStopped extends Error {}
 const safeRequestId = (value: unknown) =>
   typeof value === 'string' && /^req_[A-Za-z0-9_-]{1,200}$/.test(value)
     ? value
@@ -30,22 +36,6 @@ export function createClient(apiKey: string): OpenAI {
     },
   });
 }
-// These are structural views of the controller's existing mutable objects.
-export type DecisionLifecycle = {
-  apiController?: AbortController;
-  sdkRead?: Promise<void>;
-};
-export type DecisionDiagnostics = {
-  requestId: string | null;
-  http: number | null;
-  latencyMs: number | null;
-};
-export type DecisionHooks = {
-  assertFresh(): void;
-  beforeCreate(): void;
-  onReadStateChange(): void;
-};
-
 export async function requestDecision(
   client: OpenAI,
   preparedRequest: DecisionCreateParams,

@@ -2,6 +2,7 @@ import { createDecisionHistory } from './decision-history';
 import { deriveDecisionControls } from './decision-controls';
 import { formatDefaultDecisionInstructions } from './decision-request';
 import { projectLatestOutcome } from './latest-outcome';
+import { openAiDecisionProviderFactory } from './openai-decision-provider';
 import {
   createSessionController,
   type SessionPresentation,
@@ -152,33 +153,36 @@ function display(view: SessionPresentation) {
   $('#outcome-evidence').hidden = !outcome.evidence;
   displaySetupStatus(run);
 }
-const controller = createSessionController({
-  localFetch,
-  createWorker: () =>
-    new Worker(new URL('./worker.ts', import.meta.url), {
-      type: 'module',
+const controller = createSessionController(
+  {
+    localFetch,
+    createWorker: () =>
+      new Worker(new URL('./worker.ts', import.meta.url), {
+        type: 'module',
+      }),
+    readTics: () => $('#tics').valueAsNumber,
+    takeKey: () => {
+      const key = $('#key').value.trim();
+      if (key) $('#key').value = '';
+      return key;
+    },
+    clearKey: () => {
+      $('#key').value = '';
+    },
+    focusBudget: () => $('#budget').focus(),
+    capture: () => ({
+      png: canvas.toDataURL('image/png'),
+      rgba: context.getImageData(0, 0, 640, 400).data,
     }),
-  readTics: () => $('#tics').valueAsNumber,
-  takeKey: () => {
-    const key = $('#key').value.trim();
-    if (key) $('#key').value = '';
-    return key;
+    paintAndReadback: (rgba) => {
+      context.putImageData(new ImageData(rgba, 640, 400), 0, 0);
+      return context.getImageData(0, 0, 640, 400).data;
+    },
+    clearCanvas: () => context.clearRect(0, 0, 640, 400),
+    present: display,
   },
-  clearKey: () => {
-    $('#key').value = '';
-  },
-  focusBudget: () => $('#budget').focus(),
-  capture: () => ({
-    png: canvas.toDataURL('image/png'),
-    rgba: context.getImageData(0, 0, 640, 400).data,
-  }),
-  paintAndReadback: (rgba) => {
-    context.putImageData(new ImageData(rgba, 640, 400), 0, 0);
-    return context.getImageData(0, 0, 640, 400).data;
-  },
-  clearCanvas: () => context.clearRect(0, 0, 640, 400),
-  present: display,
-});
+  openAiDecisionProviderFactory,
+);
 const syncCredentialReadiness = () => {
   updateControlAvailability(latestSession);
 };

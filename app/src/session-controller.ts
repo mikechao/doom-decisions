@@ -1,20 +1,18 @@
-import { OpenAI } from 'openai/client';
-import { VERSION } from 'openai/version';
 import type { ActionName, Attempt, Execution, Phase } from './decision';
 import {
   admitDecision,
   assertDecision,
+  DecisionFailure,
+  DecisionStopped,
   masks,
   validateChoice,
   verifyAction,
 } from './decision';
 import { buildDefaultDecisionRequest } from './decision-request.ts';
-import {
-  createClient,
-  DecisionFailure,
-  DecisionStopped,
-  requestDecision,
-} from './decisions-api.ts';
+import type {
+  DecisionProvider,
+  DecisionProviderFactory,
+} from './decision-provider.ts';
 import { checkPrepared, passiveCheck } from './native-observation-checks.ts';
 import type {
   Counters,
@@ -49,11 +47,7 @@ type EngineMetadata = {
   bytes: number;
   sha256: string;
 };
-type SdkProbe = {
-  version: string;
-  decisionsCreateAvailable: true;
-  requestsEnabled: true;
-};
+type SdkProbe = ReturnType<DecisionProviderFactory['probe']>['evidence'];
 type Frame = { tic: number; nativeSha256: string; canvasSha256: string };
 // Presentation progress only; never proof of execution, cleanup or readiness.
 export type DecisionStage =
@@ -113,7 +107,7 @@ type Run = {
   verifiedTics: number;
   frame?: Frame;
   attempt?: Attempt;
-  client?: OpenAI;
+  client?: DecisionProvider;
   apiController?: AbortController;
   sdkRead?: Promise<void>;
   continuous?: ContinuousRun;
@@ -179,7 +173,10 @@ export interface SessionBrowserPorts {
 }
 
 // Import and construction are inert. Only explicit commands start work.
-export function createSessionController(ports: SessionBrowserPorts) {
+export function createSessionController(
+  ports: SessionBrowserPorts,
+  providerFactory: DecisionProviderFactory,
+) {
   let engine: EngineMetadata | undefined,
     sdk: SdkProbe | undefined,
     current: Run | undefined;
@@ -383,6 +380,7 @@ export function createSessionController(ports: SessionBrowserPorts) {
     attempt: Attempt,
     entry: DecisionEntry,
     png: string,
+    permittedActions: readonly ActionName[],
     continuous?: ContinuousRun,
   ) {
     fence(run, attempt);
@@ -396,9 +394,9 @@ export function createSessionController(ports: SessionBrowserPorts) {
       entry.observation.tic,
       attempt.tics,
       png,
+      permittedActions,
     );
-    return requestDecision(
-      run.client,
+    return run.client.request(
       preparedRequest,
       run,
       entry,
@@ -461,7 +459,7 @@ export function createSessionController(ports: SessionBrowserPorts) {
         return 'not-admitted';
       }
       try {
-        run.client = createClient(key); // Replacement drops the prior client; same Doom run.
+        run.client = providerFactory.create(key); // Same Doom run; drop the prior client.
       } catch {
         display(
           run,
@@ -483,6 +481,7 @@ export function createSessionController(ports: SessionBrowserPorts) {
     // guard, rather than disabled styling alone, prevents overlapping admission.
     const attempt = admitDecision(run, tics);
     if (!attempt) return 'not-admitted';
+    const permittedActions = Object.freeze(Object.keys(masks) as ActionName[]);
     if (continuous) continuous.dispatched = false;
     const dispatchFence = () => {
       fence(run, attempt);
@@ -540,10 +539,17 @@ export function createSessionController(ports: SessionBrowserPorts) {
         `Decision ${entry.number}: requesting action for ${attempt.tics} tics…`,
       );
       canRecover = true;
-      const data = await decide(run, attempt, entry, png, continuous);
+      const data = await decide(
+        run,
+        attempt,
+        entry,
+        png,
+        permittedActions,
+        continuous,
+      );
       dispatchFence();
       try {
-        entry.choice = validateChoice(data);
+        entry.choice = validateChoice(data, permittedActions);
       } catch (error) {
         // validateChoice emits only fixed local categories, never response values.
         throw new DecisionFailure(
@@ -880,28 +886,9 @@ export function createSessionController(ports: SessionBrowserPorts) {
   }
   async function initialize() {
     try {
-      check(VERSION === '7.32.0', 'Require official OpenAI SDK 7.32.0.');
-      const client = new OpenAI({
-        apiKey: 'sdk-probe-not-a-credential',
-        dangerouslyAllowBrowser: true,
-        maxRetries: 0,
-        logLevel: 'off',
-        fetch: async () => {
-          throw Error('SDK availability probe cannot send requests.');
-        },
-      });
-      check(
-        typeof client.decisions?.create === 'function',
-        'Bundled SDK lacks decisions.create.',
-      );
-      sdk = {
-        version: VERSION,
-        decisionsCreateAvailable: true,
-        requestsEnabled: true,
-      };
-      ports.present({
-        sdkStatus: `OpenAI SDK ${VERSION} loaded · decisions.create available · manual steps or explicitly started continuous mode`,
-      });
+      const probe = providerFactory.probe();
+      sdk = probe.evidence;
+      ports.present({ sdkStatus: probe.status });
       const metadata = await ports.localFetch('doom-build.json', true);
       check(
         metadata !== null &&

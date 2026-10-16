@@ -11,7 +11,8 @@ import {
 
 const session = () => ({ valid: true, phase: 'ready', worker: {} });
 const answer = (choice) => ({
-  answers: [{ type: 'choice', name: 'next_action', choice }],
+  kind: 'choice',
+  action: choice,
 });
 
 // Synthetic native command/counter chains exercise the preserved real verifier.
@@ -178,14 +179,36 @@ describe('decision', () => {
       answer('1'),
       answer('forward+fire'),
       answer('__proto__'),
-      { answers: [] },
-      { answers: [{ type: 'refusal', name: 'next_action' }] },
-      { answers: [{ type: 'choice', name: 'other', choice: 'neutral' }] },
-      { answers: [answer('neutral').answers[0], answer('fire').answers[0]] },
+      null,
+      { kind: 'refusal' },
+      { kind: 'other', action: 'neutral' },
+      { answers: [{ type: 'choice', name: 'next_action', choice: 'neutral' }] },
     ]) {
       assert.throws(() => validateChoice(data));
     }
     assert.equal(validateChoice(answer('neutral')).confidence, null);
+    assert.throws(() => validateChoice(answer('fire'), ['neutral']));
+    const probabilities = Object.keys(masks).map((value) => ({
+      value, probability: 0.1,
+    }));
+    assert.deepEqual(
+      validateChoice({ ...answer('fire'), confidence: 0.7, probabilities }),
+      { action: 'fire', confidence: 0.7, probabilities },
+    );
+    for (const confidence of [-1, 2, NaN, Infinity, 'private'])
+      assert.equal(
+        validateChoice({ ...answer('fire'), confidence }).confidence, null,
+      );
+    for (const invalid of [
+      [],
+      probabilities.slice(1),
+      [...probabilities.slice(1), probabilities[1]],
+      probabilities.map((p) => ({ ...p, probability: -1 })),
+    ])
+      assert.equal(
+        validateChoice({ ...answer('fire'), probabilities: invalid }).probabilities,
+        null,
+      );
   });
 
   it('verifies complete chains and large refused durations', async () => {
