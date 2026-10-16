@@ -21,6 +21,8 @@ Continuous Mode freezes a positive safe-integer **per-run SDK-attempt budget, de
 - `build.sh`: Node admission → foreground Make → Node closeout → verified staging → Vite build wrapper. `scripts/build_engine.mjs` owns supported-build admission/evidence and shared fingerprint/inspection helpers; `scripts/inspect_doom.mjs` checks the WASM interface; `scripts/stage_web.mjs` verifies/stages artifacts; `scripts/check_worker.mjs` protects Worker packaging.
 - `README.md` is the project entry point; `app/README.md` is the setup/run guide. `docs/` retains build/provenance references. Historical reports, retired experiments and superseded plans are recoverable from Git history. Do not silently move or delete ignored assets/artifacts, including any historical `references/doom.wasm/build/` outputs. New engine outputs belong under `engine/doom/build/`.
 
+Structured Doom observations flow through native extraction/dispatch, the indexed WASM getter, Worker sampling, and the TypeScript player-state adapter; see [Doom game-state pipeline](docs/doom-game-state-pipeline.md) before changing observation indices, schemas, or sampling boundaries.
+
 Older Stage A3/B/C/D full-contract plans and the M4-C investigation are superseded historical/deferred design scope in Git history, not automatic prerequisites for the accepted MVP or descriptions of current features.
 
 ## Build, Test, and Development Commands
