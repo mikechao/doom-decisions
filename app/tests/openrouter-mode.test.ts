@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { Decisions } from '@openrouter/sdk/sdk/decisions.js';
 import { afterEach, it, vi } from 'vitest';
 import config from '../vite.config.js';
 import { jevDecisionProviderFactory } from '../src/jev-decision-provider.ts';
@@ -81,7 +82,7 @@ it('rejects ambiguous or altered source CSP and bounds Live rewrites', () => {
 });
 
 class Element extends EventTarget {
-  value = ''; valueAsNumber = 2; disabled = true; hidden = false; open = true;
+  value = ''; valueAsNumber = 2; disabled = true; hidden = false; open = true; checked = false;
   textContent = ''; dataset = {}; files = [];
   getContext() { return {}; }
   querySelector() { return undefined; }
@@ -105,6 +106,9 @@ function browserFixture(query = '', hasPending = false) {
   element('#key-label').textContent = 'Temporary OpenRouter API key';
   element('#openrouter-connect').hidden = true;
   element('#openrouter-back').hidden = true;
+  element('#openrouter-model-gpt').value = 'openai/gpt-6-luna-decisions';
+  element('#openrouter-model-gpt').checked = true;
+  element('#openrouter-model-jev').value = 'typesafe/jev-1.14';
   const document = new EventTarget();
   Object.assign(document, { querySelector: element, activeElement: null });
   vi.stubGlobal('document', document);
@@ -131,6 +135,9 @@ function browserFixture(query = '', hasPending = false) {
     session.ports.present({ iwadEnabled: true });
     return Promise.resolve();
   });
+  // Real controller.close clears credentials through this port, which also
+  // refreshes OAuth/model availability after the early OAuth pagehide handler.
+  session.controller.close.mockImplementation(() => session.ports.clearKey());
   return { element, document, window, storage, values, location, history, transport, worker };
 }
 
@@ -138,6 +145,17 @@ async function settleStartup() {
   // Flush the caught auth/bootstrap promises, without timers or real transport.
   for (let i = 0; i < 8; i++) await Promise.resolve();
 }
+
+it('labels exactly two native model choices beneath sign-in in the shared OpenRouter container', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /<div id="openrouter-connect" hidden>\s*<div id="openrouter-signin">\s*<button id="openrouter-signin-button"[^>]*>Sign in with OpenRouter<\/button>\s*<\/div>\s*<fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>/);
+  const group = html.match(/<fieldset id="openrouter-model"[^>]*>([\s\S]*?)<\/fieldset>/)![1];
+  assert.match(group, /<legend>OpenRouter model<\/legend>/);
+  assert.equal((group.match(/type="radio"/g) ?? []).length, 2);
+  assert.match(group, /<label><input id="openrouter-model-gpt" type="radio" name="openrouter-model" value="openai\/gpt-6-luna-decisions" checked> GPT-6 Luna Decisions<\/label>/);
+  assert.match(group, /<label><input id="openrouter-model-jev" type="radio" name="openrouter-model" value="typesafe\/jev-1\.14"> Jev 1.14<\/label>/);
+  assert.ok(html.indexOf('</fieldset>') < html.indexOf('<button id="openrouter-manual"'));
+});
 
 function ready() {
   session.ports.present({ session: {
@@ -147,7 +165,7 @@ function ready() {
 }
 
 it('selects the provider at the app edge, labels BYOK truthfully and retains capture/replacement semantics', async () => {
-  // Do not reset imported provider modules: compare the actual injected factory.
+  // OpenRouter wraps a per-session model factory; direct factories stay unchanged.
   for (const [dev, mode, setting, expected, load] of [
     [true, 'openrouter', undefined, openRouterDecisionProviderFactory, () => import('../src/main.ts?openrouter-test')],
     [true, 'jev', undefined, jevDecisionProviderFactory, () => import('../src/main.ts?jev-test')],
@@ -170,14 +188,20 @@ it('selects the provider at the app edge, labels BYOK truthfully and retains cap
     // Literal query imports re-evaluate only the app entry per mode.
     await load();
     await settleStartup();
-    assert.equal(session.factory, expected);
+    if (expected === openRouterDecisionProviderFactory) {
+      assert.deepEqual(session.factory.probe().evidence, { provider: 'OpenRouter', version: '1.4.25' });
+    } else assert.equal(session.factory, expected);
     if (expected === openRouterDecisionProviderFactory) {
       assert.equal(element('#key-label').textContent, 'Temporary OpenRouter API key');
       assert.match(element('#key-note').textContent, /key, screenshot, context, instructions and choices.*OpenRouter.*downstream provider/);
       assert.equal(element('#openrouter-connect').hidden, false);
+      assert.equal(element('#openrouter-model').disabled, true);
+      assert.equal(element('#openrouter-model-gpt').checked, true);
+      assert.match(element('#openrouter-model-help').textContent, /Selected: GPT-6 Luna Decisions/);
       assert.equal(element('#manual-key').hidden, true);
       assert.equal(element('#key').hidden, true);
       element('#openrouter-manual').dispatchEvent(new Event('click'));
+      assert.equal(element('#openrouter-model').disabled, false);
       assert.equal(element('#manual-key').hidden, false);
       assert.equal(element('#openrouter-signin').hidden, true);
       assert.equal(element('#openrouter-manual').attributes.get('aria-expanded'), 'true');
@@ -251,15 +275,23 @@ it('rejects invalid settings and Jev/OpenAI conflicts before OAuth or controller
 it('returns an OAuth key through the existing port only on an explicit decision, never through DOM/storage', async () => {
   vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'production'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
   const h = browserFixture(`?code=offline-code&state=${nonce}`, true);
-  const create = vi.spyOn(openRouterDecisionProviderFactory, 'create');
   await import('../src/main.ts?oauth-handoff-test');
   await settleStartup();
+  const create = vi.spyOn(session.factory, 'create');
   assert.equal(h.history.replaceState.mock.calls.length, 1);
   assert.equal(h.transport.mock.calls.length, 1);
   assert.equal(h.location.href, callback + '?view=wide#prompt');
   assert.equal(h.values.size, 0);
   assert.equal(h.element('#key').value, '');
   assert.match(h.element('#openrouter-auth-status').textContent, /key received/);
+  assert.equal(h.element('#openrouter-model').disabled, false);
+  h.element('#openrouter-model-jev').checked = true;
+  h.element('#openrouter-model-jev').dispatchEvent(new Event('change'));
+  assert.equal(h.element('#openrouter-model-gpt').checked, false);
+  assert.match(h.element('#openrouter-model-help').textContent, /Selected: Jev 1.14/);
+  assert.match(h.element('#sdk').textContent, /configured model: typesafe\/jev-1\.14.*access unverified/);
+  assert.doesNotMatch(h.element('#sdk').textContent, /gpt-6/);
+  assert.equal(h.storage.setItem.mock.calls.length, 0);
   assert.equal(create.mock.calls.length, 0);
   assert.equal(session.controller.prepare.mock.calls.length, 0);
   assert.equal(session.controller.next.mock.calls.length, 0);
@@ -269,10 +301,11 @@ it('returns an OAuth key through the existing port only on an explicit decision,
   assert.equal(h.element('#next').disabled, false, 'Pending memory key enables explicit admission');
   assert.equal(h.element('#openrouter-signin-button').disabled, true);
   // The unchanged controller does this on admission; mock only its native work.
-  create.mockImplementation(() => ({ request: vi.fn() }));
   session.controller.next.mockImplementation(() => session.factory.create(session.ports.takeKey()));
   h.element('#next').dispatchEvent(new Event('click'));
   assert.deepEqual(create.mock.calls, [[minted]]);
+  assert.equal(h.element('#openrouter-model').disabled, true);
+  assert.match(h.element('#openrouter-model-help').textContent, /Session model \(locked\): Jev 1.14/);
   assert.equal(session.ports.takeKey(), '', 'One-time handoff; retained-client logic remains in controller');
   assert.equal(h.element('#key').value, '');
 });
@@ -292,14 +325,111 @@ it('explicit production OpenAI leaves even an owned OAuth callback and pending s
   assert.equal(h.location.href, callback + `?code=offline-code&state=${nonce}`);
 });
 
+it('allows manual model selection until successful construction, then retains the frozen model through errors and continuous/Stop states', async () => {
+  vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'production'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture();
+  await import('../src/main.ts?model-manual-freeze-test');
+  await settleStartup();
+  session.factory.probe();
+  const choose = (id) => {
+    h.element(id).checked = true;
+    h.element(id).dispatchEvent(new Event('change'));
+  };
+  choose('#openrouter-model-jev');
+  assert.equal(h.element('#openrouter-model-gpt').checked, true, 'Unavailable before connection');
+  h.element('#openrouter-manual').dispatchEvent(new Event('click'));
+  choose('#openrouter-model-jev');
+  assert.equal(h.element('#openrouter-model').disabled, false);
+  assert.equal(h.element('#openrouter-signin').hidden, true);
+  assert.equal(h.element('#openrouter-connect').hidden, false);
+  assert.match(h.element('#sdk').textContent, /configured model: typesafe\/jev-1\.14/);
+  h.element('#openrouter-back').dispatchEvent(new Event('click'));
+  assert.equal(h.element('#openrouter-model-gpt').checked, true, 'Sign-in starts fresh setup');
+  assert.equal(h.element('#openrouter-model').disabled, true);
+  h.element('#openrouter-manual').dispatchEvent(new Event('click'));
+  choose('#openrouter-model-jev');
+  assert.throws(() => session.factory.create('bad key'));
+  assert.equal(h.element('#openrouter-model').disabled, false, 'Failed construction does not lock');
+  choose('#openrouter-model-gpt');
+  assert.match(h.element('#sdk').textContent, /configured model: openai\/gpt-6-luna-decisions/);
+  choose('#openrouter-model-jev');
+  ready();
+  for (const state of [{ phase: 'busy' }, { phase: 'ready', continuous: { active: true } }]) {
+    session.ports.present({ session: {
+      hasClient: false, prepared: true, verifiedTics: 1, evidence: { decisions: [] },
+      controls: { ready: false, stop: false, tics: false, iwad: false }, ...state,
+    } });
+    choose('#openrouter-model-gpt');
+    assert.equal(h.element('#openrouter-model').disabled, true);
+    assert.equal(h.element('#openrouter-model-jev').checked, true);
+  }
+  ready();
+  const evidence = JSON.parse(h.element('#evidence').textContent);
+  assert.equal(evidence.sdk.configuredModel, 'typesafe/jev-1.14');
+  assert.equal(evidence.sdk.modelAccess, 'unverified by SDK probe');
+  assert.equal(session.controller.prepare.mock.calls.length, 0);
+  assert.equal(session.controller.next.mock.calls.length, 0);
+  assert.equal(session.controller.startContinuous.mock.calls.length, 0);
+  assert.equal(h.worker.mock.calls.length, 0);
+  assert.equal(h.transport.mock.calls.length, 0);
+  assert.equal(h.storage.setItem.mock.calls.length, 0);
+
+  const sdk = vi.spyOn(Decisions.prototype, 'create').mockResolvedValue({
+    answers: { next_action: { type: 'choice', choice: 'neutral' } },
+  } as never);
+  const retained = session.factory.create('offline-manual-dummy');
+  assert.equal(sdk.mock.calls.length, 0, 'Construction is inert');
+  assert.equal(h.element('#openrouter-model').disabled, true);
+  assert.match(h.element('#openrouter-model-help').textContent, /Session model \(locked\): Jev 1.14/);
+  for (const state of [
+    { phase: 'busy' },
+    { phase: 'ready', continuous: { active: true } },
+    { phase: 'ready', continuous: { active: true, stopRequested: true }, waitingForSdk: true },
+    { phase: 'ready', continuous: { active: false } },
+    { phase: 'error', hasClient: false },
+  ]) {
+    session.ports.present({ session: {
+      phase: 'ready', hasClient: true, prepared: true, verifiedTics: 1,
+      evidence: { sdk: { provider: 'OpenRouter', version: '1.4.25' }, decisions: [] },
+      controls: { ready: true, stop: false, tics: true, iwad: false }, ...state,
+    } });
+    choose('#openrouter-model-gpt');
+    assert.equal(h.element('#openrouter-model').disabled, true);
+    assert.equal(h.element('#openrouter-model-jev').checked, true);
+    assert.doesNotMatch(h.element('#sdk').textContent, /gpt-6/);
+  }
+  const request = {
+    context: 'offline context', instructions: 'offline instructions',
+    png: 'data:image/png;base64,iVBORw0KGgo=', permittedActions: ['neutral'] as const,
+  };
+  const hooks = { assertFresh() {}, beforeCreate() {}, onReadStateChange() {} };
+  // Retained and replacement clients both close over the locked selection.
+  for (const provider of [retained, session.factory.create('offline-replacement-dummy')]) {
+    const lifecycle = {};
+    await provider.request(request, lifecycle, { requestId: null, http: null, latencyMs: null }, hooks, performance.now());
+    await lifecycle.sdkRead;
+  }
+  assert.deepEqual(sdk.mock.calls.map(([request]) => request.decisionsRequest.model), ['typesafe/jev-1.14', 'typesafe/jev-1.14']);
+  h.window.dispatchEvent(new Event('pagehide'));
+  choose('#openrouter-model-gpt');
+  assert.equal(h.element('#openrouter-model-jev').checked, true);
+  assert.equal(h.element('#openrouter-model').disabled, true);
+  assert.equal(h.transport.mock.calls.length, 0);
+});
+
 it('production page exit clears a received OAuth key without admitting Decisions', async () => {
   vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'production'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
   const h = browserFixture(`?code=offline-code&state=${nonce}`, true);
-  const create = vi.spyOn(openRouterDecisionProviderFactory, 'create');
+  const create = vi.spyOn(Decisions.prototype, 'create');
   await import('../src/main.ts?oauth-exit-after-exchange-test');
   await settleStartup();
   assert.match(h.element('#openrouter-auth-status').textContent, /key received/);
+  assert.equal(h.element('#openrouter-model').disabled, false);
   h.window.dispatchEvent(new Event('pagehide'));
+  assert.equal(h.element('#openrouter-model').disabled, true);
+  h.element('#openrouter-model-jev').checked = true;
+  h.element('#openrouter-model-jev').dispatchEvent(new Event('change'));
+  assert.equal(h.element('#openrouter-model-gpt').checked, true);
   assert.equal(session.ports.takeKey(), '');
   assert.equal(h.values.size, 0);
   assert.equal(session.controller.close.mock.calls.length, 1);
@@ -338,6 +468,10 @@ it('blocks duplicate sign-in and WAD preparation while connecting and after WAD 
   assert.equal(h.element('#openrouter-signin-button').disabled, false);
   h.element('#openrouter-signin-button').dispatchEvent(new Event('click'));
   h.element('#openrouter-signin-button').dispatchEvent(new Event('click'));
+  h.element('#openrouter-model-jev').checked = true;
+  h.element('#openrouter-model-jev').dispatchEvent(new Event('change'));
+  assert.equal(h.element('#openrouter-model').disabled, true);
+  assert.equal(h.element('#openrouter-model-gpt').checked, true);
   assert.equal(h.element('#iwad').disabled, true);
   h.element('#iwad').files = [{}];
   h.element('#iwad').dispatchEvent(new Event('change'));
@@ -346,6 +480,10 @@ it('blocks duplicate sign-in and WAD preparation while connecting and after WAD 
   assert.equal(h.worker.mock.calls.length, 0);
   assert.equal(h.transport.mock.calls.length, 0);
   h.window.dispatchEvent(new Event('pagehide'));
+  h.element('#openrouter-model-jev').checked = true;
+  h.element('#openrouter-model-jev').dispatchEvent(new Event('change'));
+  assert.equal(h.element('#openrouter-model').disabled, true);
+  assert.equal(h.element('#openrouter-model-gpt').checked, true);
   assert.equal(h.values.has(pendingKey), true);
 
   const selected = browserFixture();
@@ -385,7 +523,7 @@ it('shows fixed failure/cancellation status and preserves manual fallback with n
   assert.equal(session.controller.next.mock.calls.length, 0);
   assert.equal(failed.worker.mock.calls.length, 0);
   assert.equal(session.controller.startContinuous.mock.calls.length, 0);
-  assert.equal(session.factory, openRouterDecisionProviderFactory);
+  assert.deepEqual(session.factory.probe().evidence, { provider: 'OpenRouter', version: '1.4.25' });
   assert.equal(openAi.mock.calls.length, 0);
 });
 

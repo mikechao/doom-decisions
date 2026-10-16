@@ -25,8 +25,14 @@
             <div id="openrouter-connect" hidden>
               <div id="openrouter-signin">
                 <button id="openrouter-signin-button" type="button" aria-describedby="openrouter-auth-note openrouter-auth-status" disabled>Sign in with OpenRouter</button>
-                <p id="openrouter-auth-note" class="help">Authorize OpenRouter to create an API key for Doom Decisions. Decisions send prompts and screenshots through OpenRouter and may incur charges. This page keeps the key in memory; refreshing clears it without revoking the remote key. Sign in before selecting a WAD; returning starts fresh setup.</p>
               </div>
+              <fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>
+                <legend>OpenRouter model</legend>
+                <label><input id="openrouter-model-gpt" type="radio" name="openrouter-model" value="openai/gpt-6-luna-decisions" checked> GPT-6 Luna Decisions</label>
+                <label><input id="openrouter-model-jev" type="radio" name="openrouter-model" value="typesafe/jev-1.14"> Jev 1.14</label>
+              </fieldset>
+              <p id="openrouter-model-help" class="help" role="status">Selected: GPT-6 Luna Decisions. Choose after connecting, before your first decision. Model access unverified.</p>
+              <p id="openrouter-auth-note" class="help">Authorize OpenRouter to create an API key for Doom Decisions. Decisions send prompts and screenshots through OpenRouter and may incur charges. This page keeps the key in memory; refreshing clears it without revoking the remote key. Sign in before selecting a WAD; returning starts fresh setup.</p>
               <button id="openrouter-manual" type="button" aria-controls="manual-key" aria-expanded="false">Use an API key instead</button>
               <p id="openrouter-auth-status" class="help" role="status" aria-live="polite" aria-atomic="true"></p>
               <p class="help">Refresh and tab close clear local access, without revoking the key. Manage or delete keys in <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings</a>.</p>

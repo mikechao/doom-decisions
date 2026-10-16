@@ -7,7 +7,7 @@ import { DecisionFailure, validateChoice } from '../src/decision.ts';
 import type { DecisionDiagnostics, DecisionLifecycle } from '../src/decision-provider.ts';
 import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
 import { openAiDecisionProviderFactory } from '../src/openai-decision-provider.ts';
-import { openRouterDecisionProviderFactory } from '../src/openrouter-decision-provider.ts';
+import { createOpenRouterDecisionProviderFactory, openRouterDecisionProviderFactory, openRouterModels } from '../src/openrouter-decision-provider.ts';
 import { checkpoint, cleanup, deferred, fixture } from './fixtures/session.ts';
 
 const actions = ['neutral', 'forward', 'turn_right', 'backward', 'turn_left', 'fire', 'use'] as const;
@@ -42,17 +42,29 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllEnvs(); resetEnv(); });
 
-function start(request = input(), startedAt = performance.now()) {
+function start(request = input(), startedAt = performance.now(), factory = openRouterDecisionProviderFactory) {
   const lifecycle: DecisionLifecycle = {};
   const diagnostics: DecisionDiagnostics = { requestId: null, http: null, latencyMs: null };
   const hooks = { assertFresh: vi.fn(), beforeCreate: vi.fn(), onReadStateChange: vi.fn() };
-  const provider = openRouterDecisionProviderFactory.create(key);
+  const provider = factory.create(key);
   const pending = provider.request(request, lifecycle, diagnostics, hooks, startedAt);
   return { pending, lifecycle, diagnostics, hooks };
 }
 
 it('probes inertly in DEV/PROD and rejects bad keys or SDK debug logging', async () => {
   const transport = vi.mocked(fetch);
+  assert.deepEqual(openRouterModels, {
+    'openai/gpt-6-luna-decisions': 'GPT-6 Luna Decisions',
+    'typesafe/jev-1.14': 'Jev 1.14',
+  });
+  for (const model of Object.keys(openRouterModels) as (keyof typeof openRouterModels)[]) {
+    const probe = createOpenRouterDecisionProviderFactory(model).probe();
+    assert.ok(probe.status.includes(`configured model: ${model}`));
+    assert.match(probe.status, /model access unverified/);
+    assert.equal(probe.evidence.configuredModel, model);
+    assert.equal(probe.evidence.modelAccess, 'unverified by SDK probe');
+  }
+  assert.throws(() => createOpenRouterDecisionProviderFactory('unsupported' as never), /Unsupported OpenRouter model/);
   assert.match(openRouterDecisionProviderFactory.probe().status, /1\.4\.25.*openai\/gpt-6-luna-decisions/);
   assert.throws(() => openRouterDecisionProviderFactory.create(''));
   assert.throws(() => openRouterDecisionProviderFactory.create('bad key'));
@@ -74,77 +86,79 @@ it('probes inertly in DEV/PROD and rejects bad keys or SDK debug logging', async
   assert.equal(transport.mock.calls.length, 0);
 });
 
-it('never constructs OpenAI or retries after an OpenRouter request failure', async () => {
-  for (const outcome of [
-    () => response({ error: { message: 'offline failure', code: 503 } }, 503),
-    () => { throw new TypeError('offline CORS failure'); },
-    () => new Response('{broken', { headers: { 'content-type': 'application/json' } }),
-  ]) {
-    const openAi = vi.spyOn(openAiDecisionProviderFactory, 'create').mockImplementation(() => {
-      assert.fail('OpenAI must be explicitly selected');
-    });
-    const h = fixture({ providerFactory: openRouterDecisionProviderFactory });
-    try {
-      await h.prepare();
-      const capture = h.ports.capture;
-      h.ports.capture = () => ({ ...capture(), png });
-      const transport = vi.fn(async () => outcome()); vi.stubGlobal('fetch', transport);
-      assert.equal(await h.next(), 'api-failure');
-      assert.equal(transport.mock.calls.length, 1);
-      assert.equal(h.gameCalls, 0);
-      assert.equal(openAi.mock.calls.length, 0);
-    } finally { await h.dispose(); }
-  }
-});
-
-it('uses exactly one charged SDK wrapper and wire request with original PNG, strings and ordered keys', async () => {
-  const create = vi.spyOn(Decisions.prototype, 'create');
-  const transport = vi.fn(async (request: Request) => {
-    assert.equal(h.hooks.beforeCreate.mock.calls.length, 1);
-    assert.equal(request.url, 'https://openrouter.ai/api/alpha/decisions');
-    assert.equal(request.method, 'POST');
-    assert.equal(request.headers.get('authorization'), `Bearer ${key}`);
-    assert.equal(request.headers.get('content-type'), 'application/json');
-    assert.equal(request.headers.get('accept'), 'application/json');
-    assert.equal(request.headers.has('http-referer'), false);
-    assert.equal(request.headers.has('x-openrouter-title'), false);
-    assert.equal(request.headers.has('x-openrouter-categories'), false);
-    assert.equal(request.mode, 'cors');
-    assert.equal(request.credentials, 'omit');
-    assert.equal(request.cache, 'no-store');
-    assert.equal(request.redirect, 'error');
-    assert.equal(request.referrerPolicy, 'no-referrer');
-    assert.equal(request.signal.aborted, false);
-    const wire = await request.json();
-    assert.deepEqual(wire, {
-      model: 'openai/gpt-6-luna-decisions', provider: { allow_fallbacks: false },
-      state: [input().context, { type: 'image_url', image_url: { url: png } }],
-      questions: { next_action: { type: 'choice', instructions: input().instructions,
-        criteria: { neutral: null, forward: null, turn_right: null, backward: null, turn_left: null, fire: null, use: null } } },
-    });
-    assert.deepEqual(Object.keys(wire.questions.next_action.criteria), actions);
-    assert.deepEqual(Buffer.from(wire.state[1].image_url.url.slice('data:image/png;base64,'.length), 'base64'), Buffer.from(base64, 'base64'));
-    return response();
+for (const model of Object.keys(openRouterModels) as (keyof typeof openRouterModels)[]) {
+  it(`never constructs OpenAI or retries after a ${model} request failure`, async () => {
+    for (const outcome of [
+      () => response({ error: { message: 'offline failure', code: 503 } }, 503),
+      () => { throw new TypeError('offline CORS failure'); },
+      () => new Response('{broken', { headers: { 'content-type': 'application/json' } }),
+    ]) {
+      const openAi = vi.spyOn(openAiDecisionProviderFactory, 'create').mockImplementation(() => {
+        assert.fail('OpenAI must be explicitly selected');
+      });
+      const h = fixture({ providerFactory: createOpenRouterDecisionProviderFactory(model) });
+      try {
+        await h.prepare();
+        const capture = h.ports.capture;
+        h.ports.capture = () => ({ ...capture(), png });
+        const transport = vi.fn(async () => outcome()); vi.stubGlobal('fetch', transport);
+        assert.equal(await h.next(), 'api-failure');
+        assert.equal(transport.mock.calls.length, 1);
+        assert.equal(h.gameCalls, 0);
+        assert.equal(openAi.mock.calls.length, 0);
+      } finally { await h.dispose(); }
+    }
   });
-  vi.stubGlobal('fetch', transport);
-  const h = start();
-  const selected = validateChoice(await h.pending);
-  await h.lifecycle.sdkRead;
-  assert.equal(create.mock.calls.length, 1);
-  const [wrapper, options] = create.mock.calls[0];
-  assert.deepEqual(Object.keys(wrapper), ['decisionsRequest']);
-  assert.equal(wrapper.decisionsRequest.provider.allowFallbacks, false);
-  assert.deepEqual(options.retries, { strategy: 'none' });
-  assert.ok(options.signal instanceof AbortSignal);
-  assert.equal(transport.mock.calls.length, 1);
-  assert.equal(selected.action, 'forward');
-  assert.equal(selected.confidence, 0.8);
-  assert.deepEqual(selected.probabilities?.map(p => p.value), actions);
-  assert.equal(h.diagnostics.requestId, 'gen-dec-offline-1');
-  assert.equal(h.diagnostics.http, null, 'Success client returns no raw HTTP metadata');
-  assert.equal(h.lifecycle.sdkRead, undefined);
-  assert.equal(h.lifecycle.apiController, undefined);
-});
+
+  it(`uses one charged ${model} SDK request with original PNG, strings and ordered keys`, async () => {
+    const create = vi.spyOn(Decisions.prototype, 'create');
+    const transport = vi.fn(async (request: Request) => {
+      assert.equal(h.hooks.beforeCreate.mock.calls.length, 1);
+      assert.equal(request.url, 'https://openrouter.ai/api/alpha/decisions');
+      assert.equal(request.method, 'POST');
+      assert.equal(request.headers.get('authorization'), `Bearer ${key}`);
+      assert.equal(request.headers.get('content-type'), 'application/json');
+      assert.equal(request.headers.get('accept'), 'application/json');
+      assert.equal(request.headers.has('http-referer'), false);
+      assert.equal(request.headers.has('x-openrouter-title'), false);
+      assert.equal(request.headers.has('x-openrouter-categories'), false);
+      assert.equal(request.mode, 'cors');
+      assert.equal(request.credentials, 'omit');
+      assert.equal(request.cache, 'no-store');
+      assert.equal(request.redirect, 'error');
+      assert.equal(request.referrerPolicy, 'no-referrer');
+      assert.equal(request.signal.aborted, false);
+      const wire = await request.json();
+      assert.deepEqual(wire, {
+        model, provider: { allow_fallbacks: false },
+        state: [input().context, { type: 'image_url', image_url: { url: png } }],
+        questions: { next_action: { type: 'choice', instructions: input().instructions,
+          criteria: { neutral: null, forward: null, turn_right: null, backward: null, turn_left: null, fire: null, use: null } } },
+      });
+      assert.deepEqual(Object.keys(wire.questions.next_action.criteria), actions);
+      assert.deepEqual(Buffer.from(wire.state[1].image_url.url.slice('data:image/png;base64,'.length), 'base64'), Buffer.from(base64, 'base64'));
+      return response({ ...answer(), model });
+    });
+    vi.stubGlobal('fetch', transport);
+    const h = start(input(), performance.now(), createOpenRouterDecisionProviderFactory(model));
+    const selected = validateChoice(await h.pending);
+    await h.lifecycle.sdkRead;
+    assert.equal(create.mock.calls.length, 1);
+    const [wrapper, options] = create.mock.calls[0];
+    assert.deepEqual(Object.keys(wrapper), ['decisionsRequest']);
+    assert.equal(wrapper.decisionsRequest.provider.allowFallbacks, false);
+    assert.deepEqual(options.retries, { strategy: 'none' });
+    assert.ok(options.signal instanceof AbortSignal);
+    assert.equal(transport.mock.calls.length, 1);
+    assert.equal(selected.action, 'forward');
+    assert.equal(selected.confidence, 0.8);
+    assert.deepEqual(selected.probabilities?.map(p => p.value), actions);
+    assert.equal(h.diagnostics.requestId, 'gen-dec-offline-1');
+    assert.equal(h.diagnostics.http, null, 'Success client returns no raw HTTP metadata');
+    assert.equal(h.lifecycle.sdkRead, undefined);
+    assert.equal(h.lifecycle.apiController, undefined);
+  });
+}
 
 it('normalizes all legal labels and rejects malformed, missing and unsupported SDK responses', async () => {
   for (const action of actions) {

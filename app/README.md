@@ -231,8 +231,8 @@ nonsecret operator setting, with no in-app provider menu:
 `--mode impeccable` retains its dev helper allowances and uses the same provider
 setting. `--mode openrouter` remains compatible but is no longer necessary.
 Production never selects direct Jev or enables its proxy, even with `--mode jev`.
-This does not add model selection; OpenRouter uses only
-`openai/gpt-6-luna-decisions`.
+OpenRouter offers the two session model choices described below. Direct OpenAI
+and the legacy direct Jev experiment have no model selector.
 
 For an explicitly experimental OpenAI session/build, with separate execution approval:
 
@@ -274,7 +274,21 @@ npm --prefix app run dev
 ```
 
 The default provider in development and production uses official `@openrouter/sdk` **1.4.25**,
-`alpha.decisions.create`, and the pinned `openai/gpt-6-luna-decisions` model.
+`alpha.decisions.create`, with two model choices using the same OpenRouter key:
+**GPT-6 Luna Decisions** (`openai/gpt-6-luna-decisions`, default) or
+**Jev 1.14** (`typesafe/jev-1.14`). The radio group below sign-in becomes editable
+after OAuth returns a key or you choose manual-key entry. Choose before your
+first decision. Returning from manual entry to sign-in without an OAuth key
+restores the default; choose again after connecting. Selection is held only in
+memory and never added to OAuth storage. Refresh restores the default.
+
+The first successfully constructed provider client freezes the model for the
+game session, including after API errors, Stop, continuous play and replacement
+keys. SDK status/evidence describe the configured model; the inert SDK probe
+does not prove remote model access. Selection and OAuth completion never admit
+a Decisions request or prepare a Worker. Only Next Decision or Start admits a
+billable request, with no automatic provider or model fallback.
+
 **Sign in with OpenRouter** is the primary connection option, available only
 before selecting a WAD. Authorizing creates an OpenRouter API key for this page;
 it does not establish an application account or a persistent login session.

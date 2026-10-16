@@ -1,10 +1,17 @@
 import { createDecisionHistory } from './decision-history';
 import { deriveDecisionControls } from './decision-controls';
 import { formatDefaultDecisionInstructions } from './decision-request';
+import type { DecisionProviderFactory } from './decision-provider';
 import { jevDecisionProviderFactory } from './jev-decision-provider';
 import { projectLatestOutcome } from './latest-outcome';
 import { openAiDecisionProviderFactory } from './openai-decision-provider';
-import { openRouterDecisionProviderFactory } from './openrouter-decision-provider';
+import {
+  createOpenRouterDecisionProviderFactory,
+  defaultOpenRouterModel,
+  isOpenRouterModel,
+  openRouterModels,
+  type OpenRouterModel,
+} from './openrouter-decision-provider';
 import { createOpenRouterOAuth } from './openrouter-oauth';
 import {
   createSessionController,
@@ -49,6 +56,10 @@ type Elements = {
   '#openrouter-manual': HTMLButtonElement;
   '#openrouter-back': HTMLButtonElement;
   '#openrouter-auth-status': HTMLParagraphElement;
+  '#openrouter-model': HTMLFieldSetElement;
+  '#openrouter-model-gpt': HTMLInputElement;
+  '#openrouter-model-jev': HTMLInputElement;
+  '#openrouter-model-help': HTMLParagraphElement;
   '#setup': HTMLDetailsElement;
   '#setup-asset': HTMLSpanElement;
   '#control-prerequisite': HTMLParagraphElement;
@@ -139,6 +150,43 @@ let setupPointerActive = false;
 let startupReady = false;
 let wadSelected = false;
 let manualKeyVisible = false;
+let selectedModel: OpenRouterModel = defaultOpenRouterModel;
+let modelLocked = false;
+let modelFactory = createOpenRouterDecisionProviderFactory(selectedModel);
+let modelProbe: ReturnType<DecisionProviderFactory['probe']> | undefined;
+function modelSelectionDisabled() {
+  return (
+    !oauth ||
+    !startupReady ||
+    oauth.busy ||
+    oauth.closed ||
+    modelLocked ||
+    (!oauth.hasKey && !manualKeyVisible) ||
+    latestSession?.phase === 'busy' ||
+    latestSession?.phase === 'error' ||
+    latestSession?.phase === 'terminal' ||
+    !!latestSession?.waitingForSdk ||
+    !!latestSession?.continuous?.active
+  );
+}
+function displayModel() {
+  if (!openRouterMode) return;
+  $('#openrouter-model').disabled = modelSelectionDisabled();
+  $('#openrouter-model-gpt').checked = selectedModel === defaultOpenRouterModel;
+  $('#openrouter-model-jev').checked = selectedModel === 'typesafe/jev-1.14';
+  $('#openrouter-model-help').textContent =
+    `${modelLocked ? 'Session model (locked)' : 'Selected'}: ${openRouterModels[selectedModel]}. ${modelLocked ? 'Refresh to choose again.' : 'Choose after connecting, before your first decision.'} Model access is not verified by the SDK probe.`;
+  if (modelProbe) $('#sdk').textContent = modelProbe.status;
+  if (latestSession && modelProbe)
+    $('#evidence').textContent = JSON.stringify(
+      {
+        ...latestSession.evidence,
+        sdk: { ...latestSession.evidence.sdk, ...modelProbe.evidence },
+      },
+      null,
+      2,
+    );
+}
 function displayOAuth() {
   if (!oauth) return;
   const preWad = !wadSelected && !latestSession;
@@ -164,6 +212,7 @@ function displayOAuth() {
   } else if (!latestSession) {
     $('#iwad').disabled = !startupReady;
   }
+  displayModel();
 }
 function collapseCompletedSetup(
   focusTarget: Node | null = document.activeElement,
@@ -225,7 +274,8 @@ function display(view: SessionPresentation) {
   collapseCompletedSetup();
   if (!run) return;
   $('#status').dataset.phase = run.phase;
-  $('#evidence').textContent = JSON.stringify(run.evidence, null, 2);
+  if (!openRouterMode)
+    $('#evidence').textContent = JSON.stringify(run.evidence, null, 2);
   const continuous = run.continuous;
   const continuousStatus = continuous?.active
     ? continuous.stopRequested
@@ -255,6 +305,24 @@ function display(view: SessionPresentation) {
   $('#outcome-evidence').hidden = !outcome.evidence;
   displaySetupStatus(run);
 }
+// The controller's startup probe precedes the user's choice. Keep its cached
+// provenance model-neutral; presentation adds the current configured model.
+// Each real client closes over its model, even when a later key replaces it.
+const sessionOpenRouterFactory: DecisionProviderFactory = {
+  probe() {
+    modelProbe = modelFactory.probe();
+    return {
+      status: modelProbe.status,
+      evidence: { provider: 'OpenRouter', version: '1.4.25' },
+    };
+  },
+  create(key) {
+    const client = modelFactory.create(key);
+    modelLocked = true; // Only successful construction freezes the session.
+    displayModel();
+    return client;
+  },
+};
 const controller = createSessionController(
   {
     localFetch,
@@ -292,7 +360,7 @@ const controller = createSessionController(
   jevMode
     ? jevDecisionProviderFactory
     : openRouterMode
-      ? openRouterDecisionProviderFactory
+      ? sessionOpenRouterFactory
       : openAiDecisionProviderFactory,
 );
 const syncCredentialReadiness = () => {
@@ -300,6 +368,26 @@ const syncCredentialReadiness = () => {
   displayOAuth();
 };
 if (oauth) {
+  for (const selector of [
+    '#openrouter-model-gpt',
+    '#openrouter-model-jev',
+  ] as const) {
+    $(selector).addEventListener('change', () => {
+      const value = $(selector).value;
+      if (
+        !modelSelectionDisabled() &&
+        $(selector).checked &&
+        isOpenRouterModel(value)
+      ) {
+        const factory = createOpenRouterDecisionProviderFactory(value);
+        const probe = factory.probe();
+        selectedModel = value;
+        modelFactory = factory;
+        modelProbe = probe;
+      }
+      displayModel();
+    });
+  }
   $('#openrouter-manual').addEventListener('click', () => {
     if (oauth.busy || oauth.closed) return;
     manualKeyVisible = true;
@@ -308,12 +396,19 @@ if (oauth) {
     $('#openrouter-signin').hidden = true;
     $('#openrouter-manual').hidden = true;
     $('#openrouter-manual').setAttribute('aria-expanded', 'true');
+    displayModel();
     // The existing key field becomes editable after successful preparation.
     ($('#key').disabled ? $('#openrouter-back') : $('#key')).focus();
   });
   $('#openrouter-back').addEventListener('click', () => {
     if (oauth.busy || oauth.closed) return;
     manualKeyVisible = false;
+    if (!oauth.hasKey && !modelLocked) {
+      // Sign-in starts a fresh page; the unavailable pre-auth choice is default.
+      selectedModel = defaultOpenRouterModel;
+      modelFactory = createOpenRouterDecisionProviderFactory(selectedModel);
+      modelProbe = modelFactory.probe();
+    }
     $('#key').value = ''; // Discard an unsubmitted edit rather than hide it.
     $('#manual-key').hidden = true;
     $('#key').hidden = true;

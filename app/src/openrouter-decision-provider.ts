@@ -16,7 +16,22 @@ import type {
   DecisionResult,
 } from './decision-provider.ts';
 
-const model = 'openai/gpt-6-luna-decisions';
+export const openRouterModels = {
+  'openai/gpt-6-luna-decisions': 'GPT-6 Luna Decisions',
+  'typesafe/jev-1.14': 'Jev 1.14',
+} as const;
+export type OpenRouterModel = keyof typeof openRouterModels;
+export const defaultOpenRouterModel: OpenRouterModel =
+  'openai/gpt-6-luna-decisions';
+
+export function isOpenRouterModel(value: string): value is OpenRouterModel {
+  return Object.hasOwn(openRouterModels, value);
+}
+
+function assertModel(model: string): asserts model is OpenRouterModel {
+  if (!isOpenRouterModel(model))
+    throw new DecisionFailure('Unsupported OpenRouter model.');
+}
 const deadlineMs = 10000;
 const pngPrefix = 'data:image/png;base64,';
 
@@ -34,7 +49,9 @@ function assertOpenRouterConfiguration() {
 
 export function encodeOpenRouterDecisionRequest(
   input: DecisionRequest,
+  model: OpenRouterModel = defaultOpenRouterModel,
 ): CreateApiAlphaDecisionsRequest {
+  assertModel(model);
   if (
     typeof input.context !== 'string' ||
     typeof input.instructions !== 'string' ||
@@ -109,136 +126,150 @@ export function decodeOpenRouterDecision(
   };
 }
 
-export const openRouterDecisionProviderFactory: DecisionProviderFactory = {
-  probe() {
-    assertOpenRouterConfiguration();
-    if (SDK_METADATA.sdkVersion !== '1.4.25')
-      throw new DecisionFailure('Require OpenRouter SDK 1.4.25.');
-    return {
-      status: `OpenRouter SDK 1.4.25 · ${model} · model access unverified`,
-      evidence: { provider: 'OpenRouter', version: '1.4.25', model },
-    };
-  },
-  create(apiKey) {
-    assertOpenRouterConfiguration();
-    if (!apiKey || !/^[\x21-\x7e]+$/.test(apiKey))
-      throw new DecisionFailure('A usable temporary API key is required.');
-    const client = new OpenRouter({
-      apiKey,
-      serverURL: 'https://openrouter.ai',
-      retryConfig: { strategy: 'none' },
-    });
-    return {
-      async request(input, lifecycle, diagnostics, hooks, startedAt) {
-        assertOpenRouterConfiguration();
-        const controller = new AbortController();
-        lifecycle.apiController = controller;
-        let timedOut = false;
-        const abortError = () =>
-          new DecisionFailure(
-            timedOut
-              ? 'API deadline exceeded (10 seconds)'
-              : 'API request aborted',
-          );
-        const onAbort = () => rejectAbort(abortError());
-        let rejectAbort: (error: Error) => void = () => {};
-        const cancelled = new Promise<never>((_resolve, reject) => {
-          rejectAbort = reject;
-        });
-        void cancelled.catch(() => {});
-        controller.signal.addEventListener('abort', onAbort, { once: true });
-        const deadline = setTimeout(
-          () => {
-            timedOut = true;
-            controller.abort();
-          },
-          Math.max(0, deadlineMs - (performance.now() - startedAt)),
-        );
-        const checkDeadline = () => {
-          if (performance.now() - startedAt >= deadlineMs) {
-            timedOut = true;
-            controller.abort();
-          }
-          if (controller.signal.aborted) throw abortError();
-          hooks.assertFresh();
-        };
-        try {
-          checkDeadline();
-          const prepared = encodeOpenRouterDecisionRequest(input);
-          checkDeadline();
-          hooks.beforeCreate();
-          const pending = client.alpha.decisions.create(prepared, {
-            serverURL: 'https://openrouter.ai',
-            retries: { strategy: 'none' },
-            // A supplied signal takes precedence over SDK timeoutMs in 1.4.25.
-            // The adapter timer owns the remaining construction + read budget.
-            signal: controller.signal,
-            mode: 'cors',
-            credentials: 'omit',
-            cache: 'no-store',
-            redirect: 'error',
-            referrerPolicy: 'no-referrer',
-          });
-          // SDK 1.4.25 awaits HTTPClient.request and matchers' response.text(),
-          // JSON parsing and schema validation, without racing the reader on Abort.
-          // Track that entire operation independently of outward cancellation.
-          const cleanup = pending
-            .then(
-              () => {},
-              () => {},
-            )
-            .then(() => {
-              if (lifecycle.sdkRead === cleanup) lifecycle.sdkRead = undefined;
-              hooks.onReadStateChange();
-            });
-          lifecycle.sdkRead = cleanup;
-          hooks.onReadStateChange();
-          const result = pending.then((data) => {
-            checkDeadline();
-            diagnostics.requestId =
-              data.id &&
-              /^gen-dec-[A-Za-z0-9_-]{1,200}$/.test(data.id) &&
-              !data.id.includes(apiKey)
-                ? data.id
-                : null;
-            return decodeOpenRouterDecision(data, input.permittedActions);
-          });
-          return await Promise.race([result, cancelled]);
-        } catch (error) {
-          if (controller.signal.aborted) throw abortError();
-          if (
-            error instanceof DecisionFailure ||
-            error instanceof DecisionStopped
-          )
-            throw error;
-          if (error instanceof OpenRouterError) {
-            const status = error.statusCode;
-            if (Number.isInteger(status) && status >= 100 && status <= 599) {
-              diagnostics.http = status;
-              throw new DecisionFailure(
-                status >= 400
-                  ? `API HTTP failure (${status})`
-                  : 'Invalid API response',
-              );
-            }
-          }
-          if (error instanceof RequestTimeoutError)
-            throw new DecisionFailure('SDK timeout');
-          if (error instanceof RequestAbortedError)
-            throw new DecisionFailure('API request aborted');
-          if (error instanceof ConnectionError)
-            throw new DecisionFailure(
-              'API connection failure (network/CORS/access)',
+export function createOpenRouterDecisionProviderFactory(
+  model: OpenRouterModel = defaultOpenRouterModel,
+): DecisionProviderFactory {
+  assertModel(model);
+  return {
+    probe() {
+      assertOpenRouterConfiguration();
+      if (SDK_METADATA.sdkVersion !== '1.4.25')
+        throw new DecisionFailure('Require OpenRouter SDK 1.4.25.');
+      return {
+        status: `OpenRouter SDK 1.4.25 · configured model: ${model} · model access unverified`,
+        evidence: {
+          provider: 'OpenRouter',
+          version: '1.4.25',
+          configuredModel: model,
+          modelAccess: 'unverified by SDK probe',
+        },
+      };
+    },
+    create(apiKey) {
+      assertOpenRouterConfiguration();
+      if (!apiKey || !/^[\x21-\x7e]+$/.test(apiKey))
+        throw new DecisionFailure('A usable temporary API key is required.');
+      const client = new OpenRouter({
+        apiKey,
+        serverURL: 'https://openrouter.ai',
+        retryConfig: { strategy: 'none' },
+      });
+      return {
+        async request(input, lifecycle, diagnostics, hooks, startedAt) {
+          assertOpenRouterConfiguration();
+          const controller = new AbortController();
+          lifecycle.apiController = controller;
+          let timedOut = false;
+          const abortError = () =>
+            new DecisionFailure(
+              timedOut
+                ? 'API deadline exceeded (10 seconds)'
+                : 'API request aborted',
             );
-          throw new DecisionFailure('SDK or response-body failure');
-        } finally {
-          clearTimeout(deadline);
-          controller.signal.removeEventListener('abort', onAbort);
-          if (lifecycle.apiController === controller)
-            lifecycle.apiController = undefined;
-          diagnostics.latencyMs = Math.round(performance.now() - startedAt);
-        }
-      },
-    };
-  },
-};
+          const onAbort = () => rejectAbort(abortError());
+          let rejectAbort: (error: Error) => void = () => {};
+          const cancelled = new Promise<never>((_resolve, reject) => {
+            rejectAbort = reject;
+          });
+          void cancelled.catch(() => {});
+          controller.signal.addEventListener('abort', onAbort, { once: true });
+          const deadline = setTimeout(
+            () => {
+              timedOut = true;
+              controller.abort();
+            },
+            Math.max(0, deadlineMs - (performance.now() - startedAt)),
+          );
+          const checkDeadline = () => {
+            if (performance.now() - startedAt >= deadlineMs) {
+              timedOut = true;
+              controller.abort();
+            }
+            if (controller.signal.aborted) throw abortError();
+            hooks.assertFresh();
+          };
+          try {
+            checkDeadline();
+            const prepared = encodeOpenRouterDecisionRequest(input, model);
+            checkDeadline();
+            hooks.beforeCreate();
+            const pending = client.alpha.decisions.create(prepared, {
+              serverURL: 'https://openrouter.ai',
+              retries: { strategy: 'none' },
+              // A supplied signal takes precedence over SDK timeoutMs in 1.4.25.
+              // The adapter timer owns the remaining construction + read budget.
+              signal: controller.signal,
+              mode: 'cors',
+              credentials: 'omit',
+              cache: 'no-store',
+              redirect: 'error',
+              referrerPolicy: 'no-referrer',
+            });
+            // SDK 1.4.25 awaits HTTPClient.request and matchers' response.text(),
+            // JSON parsing and schema validation, without racing the reader on Abort.
+            // Track that entire operation independently of outward cancellation.
+            const cleanup = pending
+              .then(
+                () => {},
+                () => {},
+              )
+              .then(() => {
+                if (lifecycle.sdkRead === cleanup)
+                  lifecycle.sdkRead = undefined;
+                hooks.onReadStateChange();
+              });
+            lifecycle.sdkRead = cleanup;
+            hooks.onReadStateChange();
+            const result = pending.then((data) => {
+              checkDeadline();
+              diagnostics.requestId =
+                data.id &&
+                /^gen-dec-[A-Za-z0-9_-]{1,200}$/.test(data.id) &&
+                !data.id.includes(apiKey)
+                  ? data.id
+                  : null;
+              return decodeOpenRouterDecision(data, input.permittedActions);
+            });
+            return await Promise.race([result, cancelled]);
+          } catch (error) {
+            if (controller.signal.aborted) throw abortError();
+            if (
+              error instanceof DecisionFailure ||
+              error instanceof DecisionStopped
+            )
+              throw error;
+            if (error instanceof OpenRouterError) {
+              const status = error.statusCode;
+              if (Number.isInteger(status) && status >= 100 && status <= 599) {
+                diagnostics.http = status;
+                throw new DecisionFailure(
+                  status >= 400
+                    ? `API HTTP failure (${status})`
+                    : 'Invalid API response',
+                );
+              }
+            }
+            if (error instanceof RequestTimeoutError)
+              throw new DecisionFailure('SDK timeout');
+            if (error instanceof RequestAbortedError)
+              throw new DecisionFailure('API request aborted');
+            if (error instanceof ConnectionError)
+              throw new DecisionFailure(
+                'API connection failure (network/CORS/access)',
+              );
+            throw new DecisionFailure('SDK or response-body failure');
+          } finally {
+            clearTimeout(deadline);
+            controller.signal.removeEventListener('abort', onAbort);
+            if (lifecycle.apiController === controller)
+              lifecycle.apiController = undefined;
+            diagnostics.latencyMs = Math.round(performance.now() - startedAt);
+          }
+        },
+      };
+    },
+  };
+}
+
+export const openRouterDecisionProviderFactory =
+  createOpenRouterDecisionProviderFactory();
