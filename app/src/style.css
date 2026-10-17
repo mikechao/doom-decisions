@@ -110,6 +110,7 @@ header {
   display: block;
   margin-top: 0.375rem;
   overflow-wrap: anywhere;
+  color: var(--muted);
   font-size: 0.8125rem;
   line-height: 1.4;
 }
@@ -314,15 +315,6 @@ summary:hover {
 .setup-file > button {
   width: 100%;
 }
-.setup-file > label[for="iwad"] {
-  grid-column: 1;
-  margin-top: 0;
-  line-height: 1.35;
-}
-.setup-file > input[type="file"] {
-  grid-column: 2;
-  margin-top: 0;
-}
 .setup-file > #setup-asset {
   margin-top: 0;
 }
@@ -331,29 +323,98 @@ summary:hover {
   margin-top: 0;
   line-height: 1.4;
 }
-.setup-file > #asset-note.compact-note-list,
-#openrouter-auth-note.compact-note-list {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  row-gap: 0.15rem;
+.setup-file > #asset-note.asset-note {
   width: 100%;
   max-width: none;
   margin-top: 0;
+  color: var(--muted);
   font-size: 0.75rem;
   font-weight: 500;
   line-height: 1.25;
+  text-align: center;
 }
-.compact-note-list > [role="listitem"] {
-  display: list-item;
-  margin-left: 0.9rem;
-  list-style-type: disc;
+#openrouter-auth-note.auth-charge-note {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.25;
 }
-.compact-note-list > [role="listitem"]::marker {
+.iwad-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--boundary);
+  border-radius: 2px;
+  color: var(--light-action);
+  background: var(--surface);
+  font:
+    500 0.875rem / 1.25 system-ui,
+    sans-serif;
+  cursor: pointer;
+}
+.setup-file > .iwad-picker {
+  grid-column: 1 / -1;
+}
+.iwad-picker:focus-within {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+.iwad-picker:hover:not(:has(input:disabled)) {
+  border-color: #b2b4aa;
+}
+.iwad-picker:has(input:disabled) {
+  border-color: var(--rule);
+  color: var(--muted);
+  background: #242923;
+  cursor: default;
+}
+.iwad-picker > input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 1px;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.iwad-picker--quiet {
+  padding-inline: 0.25rem;
+  border-color: transparent;
+  border-bottom-color: var(--rule);
+  border-radius: 0;
+  color: var(--muted);
+  background: transparent;
+}
+.iwad-picker--quiet:hover:not(:has(input:disabled)) {
+  border-bottom-color: var(--boundary);
+  color: var(--ivory);
+}
+.iwad-picker--folder {
+  gap: 0.75rem;
+  padding-inline: 0.75rem;
+  color: var(--ivory);
+  background: #1d211b;
+}
+.iwad-picker--folder .iwad-folder-icon {
+  width: 1.25rem;
+  height: 1.125rem;
+  flex: 0 0 auto;
   color: var(--amber);
 }
-#openrouter-auth-note.compact-note-list > .charge-emphasis {
-  color: var(--ivory);
-  font-weight: 600;
+.iwad-folder-icon path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .setup-details > summary {
   padding-block: 0.5rem;

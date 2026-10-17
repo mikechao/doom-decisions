@@ -277,9 +277,9 @@ describe('Setup disclosure', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     assert.match(html, /<details id="setup"[^>]* open[^>]*>/);
     assert.match(html, /<summary><h2 id="setup-title">Setup<\/h2><\/summary>/);
-    assert.match(html, /<label for="iwad">Choose local IWAD<\/label>/);
+    assert.match(html, /<label class="iwad-picker[^\"]*" for="iwad">[\s\S]*?<svg class="iwad-folder-icon"[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/svg>\s*<span>Choose local IWAD<\/span>[\s\S]*?<input id="iwad" type="file" accept="\.wad" aria-describedby="asset-note" disabled>\s*<\/label>/);
     assert.match(html, /<button id="included-freedoom"[^>]* disabled>Use included Freedoom<\/button>/);
-    assert.match(html, /<p id="asset-note" class="help compact-note-list" role="list"><span role="listitem">Freedoom downloads about 9\.83 MiB\.<\/span><span role="listitem">Local IWADs stay in your browser\.<\/span><span role="listitem">Sign in first, or use an API key after preparation\.<\/span><span role="listitem">Refresh to change the WAD\.<\/span><\/p>/);
+    assert.match(html, /<p id="asset-note" class="help asset-note">Freedoom download: ~9\.83 MiB\. Local files stay in your browser\. Refresh to change the game file\.<\/p>/);
     assert.match(html, /<details class="setup-details">\s*<summary>Privacy &amp; API key details<\/summary>/);
     const details = html.match(/<details class="setup-details">([\s\S]*?)<\/details>/)![1];
     assert.match(details, /<p id="openrouter-key-settings" class="help" hidden>Manage or revoke keys in <a href="https:\/\/openrouter.ai\/settings\/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings<\/a>\.<\/p>/);

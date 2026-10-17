@@ -152,7 +152,7 @@ async function settleStartup() {
 
 it('labels exactly two native model choices beneath sign-in in the shared OpenRouter container', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  assert.match(html, /<div id="openrouter-connect" hidden>\s*<div id="openrouter-signin">\s*<button id="openrouter-signin-button"[^>]*>Sign in with OpenRouter<\/button>\s*<\/div>\s*<p id="openrouter-auth-note" class="help compact-note-list" role="list"><span role="listitem">Connect with OpenRouter to let AI control Doom\.<\/span><span class="charge-emphasis" role="listitem">API usage will incur charges\.<\/span><\/p>\s*<fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>/);
+  assert.match(html, /<div id="openrouter-connect" hidden>\s*<div id="openrouter-signin">\s*<button id="openrouter-signin-button"[^>]*>Sign in with OpenRouter<\/button>\s*<\/div>\s*<p id="openrouter-auth-note" class="help auth-charge-note">API usage will incur charges\.<\/p>\s*<fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>/);
   const group = html.match(/<fieldset id="openrouter-model"[^>]*>([\s\S]*?)<\/fieldset>/)![1];
   assert.match(group, /<legend>AI model<\/legend>/);
   assert.equal((group.match(/type="radio"/g) ?? []).length, 2);

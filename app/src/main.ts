@@ -539,6 +539,7 @@ $('#included-freedoom').addEventListener('click', () => {
 });
 $('#iwad').addEventListener('change', () => {
   const file = $('#iwad').files?.[0];
+  if (file) $('#setup-asset').textContent = file.name;
   selectIwad(file, file?.name);
 });
 window.addEventListener('pagehide', () => controller.close());

@@ -25,7 +25,7 @@
               <div id="openrouter-signin">
                 <button id="openrouter-signin-button" type="button" aria-describedby="openrouter-auth-note openrouter-auth-status" disabled>Sign in with OpenRouter</button>
               </div>
-              <p id="openrouter-auth-note" class="help compact-note-list" role="list"><span role="listitem">Connect with OpenRouter to let AI control Doom.</span><span class="charge-emphasis" role="listitem">API usage will incur charges.</span></p>
+              <p id="openrouter-auth-note" class="help auth-charge-note">API usage will incur charges.</p>
               <fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>
                 <legend>AI model</legend>
                 <label><input id="openrouter-model-gpt" type="radio" name="openrouter-model" value="openai/gpt-6-luna-decisions" checked> GPT-6 Luna Decisions</label>
@@ -37,10 +37,15 @@
             </div>
             <div class="setup-file">
               <button id="included-freedoom" type="button" aria-describedby="asset-note" disabled>Use included Freedoom</button>
-              <label for="iwad">Choose local IWAD</label>
-              <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
-              <span id="setup-asset"></span>
-              <p id="asset-note" class="help compact-note-list" role="list"><span role="listitem">Freedoom downloads about 9.83 MiB.</span><span role="listitem">Local IWADs stay in your browser.</span><span role="listitem">Sign in first, or use an API key after preparation.</span><span role="listitem">Refresh to change the WAD.</span></p>
+              <label class="iwad-picker iwad-picker--quiet iwad-picker--folder" for="iwad">
+                <svg class="iwad-folder-icon" viewBox="0 0 24 18" aria-hidden="true" focusable="false">
+                  <path d="M2.25 6V3.75c0-.55.45-1 1-1h4.6l2.05 2h10.85c.55 0 1 .45 1 1V6M2.25 6h19.5l-2.1 8.25H4.45L2.25 6Z" />
+                </svg>
+                <span>Choose local IWAD</span>
+                <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
+              </label>
+              <span id="setup-asset" aria-live="polite" aria-atomic="true"></span>
+              <p id="asset-note" class="help asset-note">Freedoom download: ~9.83 MiB. Local files stay in your browser. Refresh to change the game file.</p>
             </div>
             <div id="manual-key">
               <label id="key-label" for="key">Temporary OpenRouter API key</label>
