@@ -314,6 +314,19 @@ summary:hover {
 }
 .setup-file > button {
   width: 100%;
+  text-align: center;
+}
+:where(.setup-file) > .iwad-picker {
+  justify-content: center;
+}
+:where(.setup-file) > .iwad-picker > .iwad-folder-icon {
+  position: absolute;
+  top: 50%;
+  left: 0.75rem;
+  transform: translateY(-50%);
+}
+:where(.setup-file) > .iwad-picker > span {
+  text-align: center;
 }
 .setup-file > #setup-asset {
   margin-top: 0;
