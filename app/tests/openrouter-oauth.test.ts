@@ -64,9 +64,11 @@ it('generates independent random values, encodes the exact callback and prevents
     getRandomValues, subtle: { digest: () => digest.promise },
   } as unknown as Crypto;
   const oauth = createOpenRouterOAuth(h.context);
+  assert.equal(oauth.message, '');
   const first = oauth.begin();
   await oauth.begin();
   assert.equal(oauth.busy, true);
+  assert.equal(oauth.message, 'Connecting…');
   assert.equal(getRandomValues.mock.calls.length, 2);
   assert.equal(h.location.assign.mock.calls.length, 0);
   digest.resolve(new Uint8Array(32).fill(3).buffer);

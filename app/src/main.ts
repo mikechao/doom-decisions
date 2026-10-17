@@ -9,7 +9,6 @@ import {
   createOpenRouterDecisionProviderFactory,
   defaultOpenRouterModel,
   isOpenRouterModel,
-  openRouterModels,
   type OpenRouterModel,
 } from './openrouter-decision-provider';
 import { createOpenRouterOAuth } from './openrouter-oauth';
@@ -56,6 +55,7 @@ type Elements = {
   '#openrouter-manual': HTMLButtonElement;
   '#openrouter-back': HTMLButtonElement;
   '#openrouter-auth-status': HTMLParagraphElement;
+  '#openrouter-key-settings': HTMLParagraphElement;
   '#openrouter-model': HTMLFieldSetElement;
   '#openrouter-model-gpt': HTMLInputElement;
   '#openrouter-model-jev': HTMLInputElement;
@@ -114,8 +114,9 @@ if (openRouterMode) {
   $('#manual-key').hidden = true;
   $('#key').hidden = true;
   $('#key-label').textContent = 'Temporary OpenRouter API key';
+  $('#openrouter-key-settings').hidden = false;
   $('#key-note').textContent =
-    'Your key, screenshot, context, instructions and choices go directly to OpenRouter, which may send model input to its downstream provider. Decisions can incur charges. Trust this page and its scripts. The field clears on capture; the client stays in memory. A blank field keeps it. Entering a manual key replaces an unused sign-in key when you click Next Decision or Start, even if the key is invalid. Refresh clears local credentials; it does not revoke keys at OpenRouter.';
+    "Sign-in authorizes OpenRouter to issue an API key for Doom Decisions. The key stays in page memory, not localStorage. Refresh clears the app's local access but does not revoke the issued key. Screenshots, context, instructions and decisions go directly to OpenRouter and may be sent to its selected model provider. API usage may incur charges on your OpenRouter account. Trust this app and its served scripts with your key. The manual key field clears on capture; a blank field keeps the current client. A manual key replaces an unused sign-in key on Next Decision or Start, even if invalid.";
 } else if (!jevMode) {
   $('#key-label').textContent = 'Temporary OpenAI API key (experimental)';
   $('#key-note').textContent =
@@ -174,8 +175,9 @@ function displayModel() {
   $('#openrouter-model').disabled = modelSelectionDisabled();
   $('#openrouter-model-gpt').checked = selectedModel === defaultOpenRouterModel;
   $('#openrouter-model-jev').checked = selectedModel === 'typesafe/jev-1.14';
-  $('#openrouter-model-help').textContent =
-    `${modelLocked ? 'Session model (locked)' : 'Selected'}: ${openRouterModels[selectedModel]}. ${modelLocked ? 'Refresh to choose again.' : 'Choose after connecting, before your first decision.'} Model access is not verified by the SDK probe.`;
+  $('#openrouter-model-help').textContent = modelLocked
+    ? 'Model locked for this session. Refresh to choose again.'
+    : '';
   if (modelProbe) $('#sdk').textContent = modelProbe.status;
   if (latestSession && modelProbe)
     $('#evidence').textContent = JSON.stringify(
@@ -204,7 +206,7 @@ function displayOAuth() {
   $('#openrouter-manual').disabled = oauth.busy || oauth.closed;
   $('#openrouter-back').disabled = oauth.busy || oauth.closed;
   $('#openrouter-auth-status').textContent = latestSession?.hasClient
-    ? 'OpenRouter client in memory; blank keeps it. Refresh clears this page.'
+    ? 'OpenRouter client in memory.'
     : oauth.message;
   if (oauth.busy || oauth.closed) {
     $('#iwad').disabled = true;

@@ -20,28 +20,27 @@
     <div class="console">
       <div class="session-rail">
         <details id="setup" class="setup" open aria-labelledby="setup-title">
-          <summary><h2 id="setup-title">Setup &amp; Key</h2></summary>
+          <summary><h2 id="setup-title">Setup</h2></summary>
           <div class="setup-content">
             <div id="openrouter-connect" hidden>
               <div id="openrouter-signin">
                 <button id="openrouter-signin-button" type="button" aria-describedby="openrouter-auth-note openrouter-auth-status" disabled>Sign in with OpenRouter</button>
               </div>
+              <p id="openrouter-auth-note" class="help">Connect with OpenRouter to let AI control Doom. API usage may incur charges.</p>
               <fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>
-                <legend>OpenRouter model</legend>
+                <legend>AI model</legend>
                 <label><input id="openrouter-model-gpt" type="radio" name="openrouter-model" value="openai/gpt-6-luna-decisions" checked> GPT-6 Luna Decisions</label>
                 <label><input id="openrouter-model-jev" type="radio" name="openrouter-model" value="typesafe/jev-1.14"> Jev 1.14</label>
               </fieldset>
-              <p id="openrouter-model-help" class="help" role="status">Selected: GPT-6 Luna Decisions. Choose after connecting, before your first decision. Model access unverified.</p>
-              <p id="openrouter-auth-note" class="help">Authorize OpenRouter to create an API key for Doom Decisions. Decisions send prompts and screenshots through OpenRouter and may incur charges. This page keeps the key in memory; refreshing clears it without revoking the remote key. Sign in before selecting a WAD; returning starts fresh setup.</p>
+              <p id="openrouter-model-help" class="help" role="status"></p>
               <button id="openrouter-manual" type="button" aria-controls="manual-key" aria-expanded="false">Use an API key instead</button>
               <p id="openrouter-auth-status" class="help" role="status" aria-live="polite" aria-atomic="true"></p>
-              <p class="help">Refresh and tab close clear local access, without revoking the key. Manage or delete keys in <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings</a>.</p>
             </div>
             <div>
-              <label for="iwad">Local Doom IWAD</label>
+              <label for="iwad">Doom game file</label>
               <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
               <span id="setup-asset"></span>
-              <p id="asset-note" class="help">Local Only • Refresh to change</p>
+              <p id="asset-note" class="help">Choose a local Doom or Freedoom .wad file. It stays in your browser. Refresh to change files.</p>
             </div>
             <div id="manual-key">
               <label id="key-label" for="key">Temporary OpenRouter API key</label>
@@ -50,8 +49,9 @@
               <button id="openrouter-back" type="button" aria-controls="manual-key openrouter-signin" hidden>Use sign-in instead</button>
             </div>
             <details class="setup-details">
-              <summary>Temporary key: handling &amp; trust</summary>
-              <p id="key-note" class="help">Sent directly to OpenRouter, which may route model input to its downstream provider. Decisions can incur charges. Trust this page and its scripts. Credentials stay in memory; refresh clears local access without revoking the remote key.</p>
+              <summary>Privacy &amp; API key details</summary>
+              <p id="key-note" class="help">Sign-in authorizes OpenRouter to issue an API key for Doom Decisions. The key stays in page memory, not localStorage. Refresh clears the app's local access but does not revoke the issued key. Screenshots, context, instructions and decisions go directly to OpenRouter and may be sent to its selected model provider. API usage may incur charges on your OpenRouter account. Trust this app and its served scripts with your key.</p>
+              <p id="openrouter-key-settings" class="help" hidden>Manage or revoke keys in <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings</a>.</p>
             </details>
           </div>
         </details>

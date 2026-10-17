@@ -106,6 +106,7 @@ function browserFixture(query = '', hasPending = false) {
   element('#key-label').textContent = 'Temporary OpenRouter API key';
   element('#openrouter-connect').hidden = true;
   element('#openrouter-back').hidden = true;
+  element('#openrouter-key-settings').hidden = true;
   element('#openrouter-model-gpt').value = 'openai/gpt-6-luna-decisions';
   element('#openrouter-model-gpt').checked = true;
   element('#openrouter-model-jev').value = 'typesafe/jev-1.14';
@@ -148,13 +149,15 @@ async function settleStartup() {
 
 it('labels exactly two native model choices beneath sign-in in the shared OpenRouter container', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  assert.match(html, /<div id="openrouter-connect" hidden>\s*<div id="openrouter-signin">\s*<button id="openrouter-signin-button"[^>]*>Sign in with OpenRouter<\/button>\s*<\/div>\s*<fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>/);
+  assert.match(html, /<div id="openrouter-connect" hidden>\s*<div id="openrouter-signin">\s*<button id="openrouter-signin-button"[^>]*>Sign in with OpenRouter<\/button>\s*<\/div>\s*<p id="openrouter-auth-note" class="help">Connect with OpenRouter to let AI control Doom\. API usage may incur charges\.<\/p>\s*<fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>/);
   const group = html.match(/<fieldset id="openrouter-model"[^>]*>([\s\S]*?)<\/fieldset>/)![1];
-  assert.match(group, /<legend>OpenRouter model<\/legend>/);
+  assert.match(group, /<legend>AI model<\/legend>/);
   assert.equal((group.match(/type="radio"/g) ?? []).length, 2);
   assert.match(group, /<label><input id="openrouter-model-gpt" type="radio" name="openrouter-model" value="openai\/gpt-6-luna-decisions" checked> GPT-6 Luna Decisions<\/label>/);
   assert.match(group, /<label><input id="openrouter-model-jev" type="radio" name="openrouter-model" value="typesafe\/jev-1\.14"> Jev 1.14<\/label>/);
   assert.ok(html.indexOf('</fieldset>') < html.indexOf('<button id="openrouter-manual"'));
+  assert.match(html, /<p id="openrouter-model-help" class="help" role="status"><\/p>/);
+  assert.match(html, /<p id="openrouter-auth-status" class="help" role="status" aria-live="polite" aria-atomic="true"><\/p>/);
 });
 
 function ready() {
@@ -193,11 +196,18 @@ it('selects the provider at the app edge, labels BYOK truthfully and retains cap
     } else assert.equal(session.factory, expected);
     if (expected === openRouterDecisionProviderFactory) {
       assert.equal(element('#key-label').textContent, 'Temporary OpenRouter API key');
-      assert.match(element('#key-note').textContent, /key, screenshot, context, instructions and choices.*OpenRouter.*downstream provider/);
+      assert.match(element('#key-note').textContent, /Sign-in authorizes OpenRouter to issue an API key for Doom Decisions/);
+      assert.match(element('#key-note').textContent, /page memory, not localStorage/);
+      assert.match(element('#key-note').textContent, /Refresh clears the app's local access but does not revoke the issued key/);
+      assert.match(element('#key-note').textContent, /Screenshots, context, instructions and decisions.*OpenRouter.*selected model provider/);
+      assert.match(element('#key-note').textContent, /charges on your OpenRouter account/);
+      assert.match(element('#key-note').textContent, /Trust this app and its served scripts with your key/);
+      assert.equal(element('#openrouter-key-settings').hidden, false);
       assert.equal(element('#openrouter-connect').hidden, false);
       assert.equal(element('#openrouter-model').disabled, true);
       assert.equal(element('#openrouter-model-gpt').checked, true);
-      assert.match(element('#openrouter-model-help').textContent, /Selected: GPT-6 Luna Decisions/);
+      assert.equal(element('#openrouter-model-help').textContent, '');
+      assert.equal(element('#openrouter-auth-status').textContent, '');
       assert.equal(element('#manual-key').hidden, true);
       assert.equal(element('#key').hidden, true);
       element('#openrouter-manual').dispatchEvent(new Event('click'));
@@ -239,6 +249,7 @@ it('selects the provider at the app edge, labels BYOK truthfully and retains cap
       assert.equal(h.storage.removeItem.mock.calls.length, 0);
       assert.equal(element('#openrouter-connect').hidden, true);
       assert.equal(element('#openrouter-back').hidden, true);
+      assert.equal(element('#openrouter-key-settings').hidden, true);
     }
     assert.equal(h.transport.mock.calls.length, 0);
     assert.equal(h.worker.mock.calls.length, 0);
@@ -288,7 +299,7 @@ it('returns an OAuth key through the existing port only on an explicit decision,
   h.element('#openrouter-model-jev').checked = true;
   h.element('#openrouter-model-jev').dispatchEvent(new Event('change'));
   assert.equal(h.element('#openrouter-model-gpt').checked, false);
-  assert.match(h.element('#openrouter-model-help').textContent, /Selected: Jev 1.14/);
+  assert.equal(h.element('#openrouter-model-help').textContent, '');
   assert.match(h.element('#sdk').textContent, /configured model: typesafe\/jev-1\.14.*access unverified/);
   assert.doesNotMatch(h.element('#sdk').textContent, /gpt-6/);
   assert.equal(h.storage.setItem.mock.calls.length, 0);
@@ -305,7 +316,7 @@ it('returns an OAuth key through the existing port only on an explicit decision,
   h.element('#next').dispatchEvent(new Event('click'));
   assert.deepEqual(create.mock.calls, [[minted]]);
   assert.equal(h.element('#openrouter-model').disabled, true);
-  assert.match(h.element('#openrouter-model-help').textContent, /Session model \(locked\): Jev 1.14/);
+  assert.equal(h.element('#openrouter-model-help').textContent, 'Model locked for this session. Refresh to choose again.');
   assert.equal(session.ports.takeKey(), '', 'One-time handoff; retained-client logic remains in controller');
   assert.equal(h.element('#key').value, '');
 });
@@ -380,7 +391,7 @@ it('allows manual model selection until successful construction, then retains th
   const retained = session.factory.create('offline-manual-dummy');
   assert.equal(sdk.mock.calls.length, 0, 'Construction is inert');
   assert.equal(h.element('#openrouter-model').disabled, true);
-  assert.match(h.element('#openrouter-model-help').textContent, /Session model \(locked\): Jev 1.14/);
+  assert.equal(h.element('#openrouter-model-help').textContent, 'Model locked for this session. Refresh to choose again.');
   for (const state of [
     { phase: 'busy' },
     { phase: 'ready', continuous: { active: true } },

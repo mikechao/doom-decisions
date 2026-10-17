@@ -271,12 +271,17 @@ describe('Read-only decision prompt preview', () => {
   });
 });
 
-describe('Setup & Key disclosure', () => {
+describe('Setup disclosure', () => {
   it('starts with a native open disclosure, nested key guidance and controls immediately after it', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     assert.match(html, /<details id="setup"[^>]* open[^>]*>/);
-    assert.match(html, /<summary><h2 id="setup-title">Setup &amp; Key<\/h2><\/summary>/);
-    assert.match(html, /<details class="setup-details">/);
+    assert.match(html, /<summary><h2 id="setup-title">Setup<\/h2><\/summary>/);
+    assert.match(html, /<label for="iwad">Doom game file<\/label>/);
+    assert.match(html, /<p id="asset-note" class="help">Choose a local Doom or Freedoom \.wad file\. It stays in your browser\. Refresh to change files\.<\/p>/);
+    assert.match(html, /<details class="setup-details">\s*<summary>Privacy &amp; API key details<\/summary>/);
+    const details = html.match(/<details class="setup-details">([\s\S]*?)<\/details>/)![1];
+    assert.match(details, /<p id="openrouter-key-settings" class="help" hidden>Manage or revoke keys in <a href="https:\/\/openrouter.ai\/settings\/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings<\/a>\.<\/p>/);
+    assert.equal((html.match(/https:\/\/openrouter.ai\/settings\/keys/g) ?? []).length, 1);
     assert.match(html, /<\/details>\s*<\/div>\s*<\/details>\s*<section class="control-bar /);
     assert.equal(element('#setup').open, true);
   });

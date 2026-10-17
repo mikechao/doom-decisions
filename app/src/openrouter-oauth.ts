@@ -1,6 +1,6 @@
 // Inert until constructed by the OpenRouter app entry in development or production.
 const pendingKey = 'doom-decisions.openrouter-oauth.pending.v1';
-const initialMessage = 'Sign in or use an API key instead.';
+const initialMessage = '';
 const invalidReturn =
   'Cannot verify sign-in return. Try again or use an API key.';
 const incomplete = 'Sign-in was not completed. Try again or use an API key.';
