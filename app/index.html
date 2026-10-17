@@ -25,7 +25,7 @@
               <div id="openrouter-signin">
                 <button id="openrouter-signin-button" type="button" aria-describedby="openrouter-auth-note openrouter-auth-status" disabled>Sign in with OpenRouter</button>
               </div>
-              <p id="openrouter-auth-note" class="help">Connect with OpenRouter to let AI control Doom. API usage may incur charges.</p>
+              <p id="openrouter-auth-note" class="help compact-note-list" role="list"><span role="listitem">Connect with OpenRouter to let AI control Doom.</span><span class="charge-emphasis" role="listitem">API usage will incur charges.</span></p>
               <fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>
                 <legend>AI model</legend>
                 <label><input id="openrouter-model-gpt" type="radio" name="openrouter-model" value="openai/gpt-6-luna-decisions" checked> GPT-6 Luna Decisions</label>
@@ -40,7 +40,7 @@
               <label for="iwad">Choose local IWAD</label>
               <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
               <span id="setup-asset"></span>
-              <p id="asset-note" class="help">Included Freedoom Phase 1 v0.13.0 downloads about 9.83 MiB when chosen. Or choose your own .wad; local files stay in your browser. Sign in before either choice, or use an API key after preparation. Refresh to change a prepared game.</p>
+              <p id="asset-note" class="help compact-note-list" role="list"><span role="listitem">Freedoom downloads about 9.83 MiB.</span><span role="listitem">Local IWADs stay in your browser.</span><span role="listitem">Sign in first, or use an API key after preparation.</span><span role="listitem">Refresh to change the WAD.</span></p>
             </div>
             <div id="manual-key">
               <label id="key-label" for="key">Temporary OpenRouter API key</label>

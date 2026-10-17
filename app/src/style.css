@@ -298,8 +298,62 @@ summary:hover {
   padding-block: 0.5rem;
 }
 .setup-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  column-gap: 0.75rem;
+  row-gap: 0.375rem;
+  align-items: center;
   padding-top: 0.75rem;
   border-top: 1px solid var(--rule);
+}
+.setup-file > button,
+.setup-file > #setup-asset,
+.setup-file > #asset-note {
+  grid-column: 1 / -1;
+}
+.setup-file > button {
+  width: 100%;
+}
+.setup-file > label[for="iwad"] {
+  grid-column: 1;
+  margin-top: 0;
+  line-height: 1.35;
+}
+.setup-file > input[type="file"] {
+  grid-column: 2;
+  margin-top: 0;
+}
+.setup-file > #setup-asset {
+  margin-top: 0;
+}
+.setup-file > #asset-note {
+  max-width: 40ch;
+  margin-top: 0;
+  line-height: 1.4;
+}
+.setup-file > #asset-note.compact-note-list,
+#openrouter-auth-note.compact-note-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 0.15rem;
+  width: 100%;
+  max-width: none;
+  margin-top: 0;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.25;
+}
+.compact-note-list > [role="listitem"] {
+  display: list-item;
+  margin-left: 0.9rem;
+  list-style-type: disc;
+}
+.compact-note-list > [role="listitem"]::marker {
+  color: var(--amber);
+}
+#openrouter-auth-note.compact-note-list > .charge-emphasis {
+  color: var(--ivory);
+  font-weight: 600;
 }
 .setup-details > summary {
   padding-block: 0.5rem;

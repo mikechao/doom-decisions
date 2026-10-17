@@ -279,7 +279,7 @@ describe('Setup disclosure', () => {
     assert.match(html, /<summary><h2 id="setup-title">Setup<\/h2><\/summary>/);
     assert.match(html, /<label for="iwad">Choose local IWAD<\/label>/);
     assert.match(html, /<button id="included-freedoom"[^>]* disabled>Use included Freedoom<\/button>/);
-    assert.match(html, /<p id="asset-note" class="help">Included Freedoom Phase 1 v0\.13\.0/);
+    assert.match(html, /<p id="asset-note" class="help compact-note-list" role="list"><span role="listitem">Freedoom downloads about 9\.83 MiB\.<\/span><span role="listitem">Local IWADs stay in your browser\.<\/span><span role="listitem">Sign in first, or use an API key after preparation\.<\/span><span role="listitem">Refresh to change the WAD\.<\/span><\/p>/);
     assert.match(html, /<details class="setup-details">\s*<summary>Privacy &amp; API key details<\/summary>/);
     const details = html.match(/<details class="setup-details">([\s\S]*?)<\/details>/)![1];
     assert.match(details, /<p id="openrouter-key-settings" class="help" hidden>Manage or revoke keys in <a href="https:\/\/openrouter.ai\/settings\/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings<\/a>\.<\/p>/);
