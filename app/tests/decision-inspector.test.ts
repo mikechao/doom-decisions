@@ -6,7 +6,6 @@ import { afterEach, beforeEach, it, vi } from 'vitest';
 import { masks } from '../src/decision.ts';
 import { defineDecisionHistory } from '../src/decision-history.ts';
 import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
-import { entries as sampleEntries, requests as sampleRequests } from '../src/sample-history.ts';
 
 let document, root, history, detail, list, nodes, frames, observers, registry;
 class Element extends EventTarget {
@@ -113,62 +112,85 @@ beforeEach(() => {
 });
 afterEach(() => { root.disconnectedCallback(); vi.unstubAllGlobals(); });
 
-it('browses all twelve synthetic decisions through one list/detail path with totals and receipts', () => {
-  nodes.get('history-preview-note').hidden = false;
-  nodes.get('inspector-preview-note').hidden = false;
-  root.display(sampleEntries, sampleRequests);
-  assert.deepEqual(history.children.map(node => node.id),
-    Array.from({ length: 12 }, (_, index) => `decision-${12 - index}`));
+it('browses a representative completed decision with probabilities, usage, request and evidence details', () => {
+  const completed = entry(1, {
+    stage: 'completed', status: 'Decision completed', action: 'neutral',
+    latencyMs: 42, http: 200, requestId: 'request-1', result: { tic: 3 },
+    execution: {
+      complete: true, requestedTics: 2, reportedCompletedTics: 2,
+      independentlyVerifiedTics: 2, completionUncertain: false,
+    },
+    cumulativeVerifiedTics: 3,
+    requestIdentity: { provider: 'OpenAI', requestedModel: 'test-model' },
+    responseMetadata: {
+      reportedModel: 'test-model-response',
+      usage: { input: 120, output: 8, total: 128 },
+    },
+    choice: { confidence: 0.4, probabilities: distribution() },
+  });
+  const newer = entry(2, {
+    stage: 'ended', status: 'Request canceled', sdkInvoked: false,
+    requestIdentity: undefined,
+  });
+  const decisions = [completed, newer];
+  const request = {
+    ...buildDefaultDecisionRequest(1, 2, 'data:image/png;base64,history-image'),
+    instructions: 'Choose one permitted action.',
+    context: 'Observed E1M1 state.',
+  };
+  const requests = Object.freeze({ 1: request });
+  root.display(decisions, requests);
+  assert.deepEqual(history.children.map(node => node.id), ['decision-2', 'decision-1']);
   assert.equal(nodes.get('history-empty').hidden, true);
   assert.equal(list.hidden, false); assert.equal(detail.hidden, true);
   assert.equal(root.querySelector('dialog'), null);
   const header = nodes.get('detail-header');
+  const title = nodes.get('inspector-title');
   assert.equal(header.parentElement, detail);
-  for (const id of ['back-to-history', 'inspector-title', 'inspector-preview-note'])
+  for (const id of ['back-to-history', 'inspector-title'])
     assert.equal(nodes.get(id).parentElement, header, `${id} stays outside the scrolling body`);
   assert.equal(nodes.get('detail-scroll').querySelector('#inspector-title'), null, 'No duplicate title in the body');
   assert.equal(nodes.get('detail-scroll').children[0], nodes.get('inspector-state'));
-  assert.equal(new Set(sampleEntries.map(entry => entry.action)).size, 7);
-  for (const entry of sampleEntries) {
-    const request = sampleRequests[entry.number], trigger = inspect(entry.number);
-    assert.equal(row(entry.number).querySelector('details'), null);
-    assert.match(trigger.textContent, /Sample completion · synthetic/);
-    assert.doesNotMatch(trigger.textContent, /verified and rendered/);
-    assert.ok(trigger.textContent.includes(`${entry.responseMetadata.usage.total.toLocaleString('en')} tokens`));
-    trigger.focus(); trigger.click();
-    assert.equal(list.hidden, true); assert.equal(detail.hidden, false);
-    assert.equal(nodes.get('inspector-preview-note').hidden, false);
-    assert.equal(document.activeElement, nodes.get('inspector-title'));
-    assert.equal(text('inspector-title'), `#${entry.number} · ${entry.action}`);
-    assert.equal(text('inspector-state'), 'Sample completion · synthetic');
-    assert.equal(nodes.get('inspector-execution').parentElement, nodes.get('inspector-technical'));
-    assert.equal(nodes.get('inspector-input-tokens').parentElement.parentElement, nodes.get('inspector-technical'));
-    assert.match(text('inspector-execution'), /Synthetic receipt/);
-    assert.match(text('inspector-result'), /no native or API proof/);
-    const probabilities = nodes.get('inspector-probabilities');
-    assert.equal(probabilities.hidden, false);
-    assert.equal(probabilities.children.length, 7);
-    const selected = probabilities.children.filter(node => node.dataset.selected === 'true');
-    assert.equal(selected.length, 1);
-    assert.match(selected[0].textContent, new RegExp(`${entry.action}Selected`));
-    assert.equal(nodes.get('inspector-request').open, false);
-    assert.equal(nodes.get('inspector-technical').open, false);
-    assert.equal(text('inspector-instructions'), request.instructions);
-    assert.equal(text('inspector-context'), request.context);
-    assert.equal(text('inspector-actions'), request.permittedActions.join('\n'));
-    assert.equal(text('inspector-image-status'), 'Screenshot: Unavailable');
-    assert.equal(nodes.get('inspector-image').attributes.has('src'), false);
-    assert.equal(text('inspector-model'), entry.requestIdentity.requestedModel);
-    assert.equal(text('inspector-reported-model'), entry.responseMetadata.reportedModel);
-    assert.equal(text('inspector-total-tokens'), entry.responseMetadata.usage.total.toLocaleString('en'));
-    assert.match(text('inspector-diagnostics'), /Sample: synthetic completion/);
-    root.display(sampleEntries, sampleRequests);
-    assert.equal(inspect(entry.number), trigger);
-    assert.equal(detail.hidden, false);
-    back();
-    assert.equal(list.hidden, false); assert.equal(detail.hidden, true);
-    assert.equal(document.activeElement, trigger);
-  }
+  const trigger = inspect(1);
+  assert.equal(row(1).querySelector('details'), null);
+  assert.match(trigger.textContent, /Completed · verified and rendered/);
+  assert.ok(trigger.textContent.includes('128 tokens'));
+  trigger.focus(); trigger.click();
+  assert.equal(list.hidden, true); assert.equal(detail.hidden, false);
+  assert.equal(document.activeElement, nodes.get('inspector-title'));
+  assert.equal(text('inspector-title'), '#1 · neutral');
+  assert.equal(text('inspector-state'), 'Completed · 2 tics independently verified');
+  assert.equal(nodes.get('inspector-execution').parentElement, nodes.get('inspector-technical'));
+  assert.equal(nodes.get('inspector-input-tokens').parentElement.parentElement, nodes.get('inspector-technical'));
+  assert.match(text('inspector-execution'), /Native requested: 2 · Worker-reported: 2 · Independently verified: 2/);
+  assert.match(text('inspector-result'), /Historical resulting frame verified and rendered/);
+  const probabilities = nodes.get('inspector-probabilities');
+  assert.equal(probabilities.hidden, false);
+  assert.equal(probabilities.children.length, 7);
+  assert.match(probabilities.children[0].textContent, /^fire/);
+  assert.equal(probabilities.children[0].children[1].textContent, '60%');
+  const selected = probabilities.children.filter(node => node.dataset.selected === 'true');
+  assert.equal(selected.length, 1);
+  assert.match(selected[0].textContent, /neutralSelected/);
+  assert.equal(nodes.get('inspector-request').open, false);
+  assert.equal(nodes.get('inspector-technical').open, false);
+  assert.equal(text('inspector-instructions'), request.instructions);
+  assert.equal(text('inspector-context'), request.context);
+  assert.equal(text('inspector-actions'), request.permittedActions.join('\n'));
+  assert.equal(text('inspector-image-status'), 'Historical request screenshot · 640 × 400');
+  assert.equal(nodes.get('inspector-image').attributes.get('src'), request.png);
+  assert.equal(text('inspector-model'), 'test-model');
+  assert.equal(text('inspector-reported-model'), 'test-model-response');
+  assert.equal(text('inspector-total-tokens'), '128');
+  assert.match(text('inspector-diagnostics'), /HTTP status: 200/);
+  assert.equal(title.parentElement, header);
+  root.display(decisions, requests);
+  assert.equal(inspect(1), trigger);
+  assert.equal(detail.hidden, false);
+  assert.equal(nodes.get('inspector-title').parentElement, header);
+  back();
+  assert.equal(list.hidden, false); assert.equal(detail.hidden, true);
+  assert.equal(document.activeElement, trigger);
   assert.equal(fetch.mock.calls.length, 0); assert.equal(Worker.mock.calls.length, 0);
 });
 

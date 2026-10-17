@@ -978,9 +978,6 @@ canvas {
   font-size: 0.8125rem;
   font-variant-numeric: tabular-nums;
 }
-#inspector-preview-note {
-  color: var(--ivory);
-}
 .decision-execution {
   margin-top: 0.375rem;
   color: var(--muted);

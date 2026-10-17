@@ -142,7 +142,7 @@ function createDecisionHistory(
 ) {
   // Keep focus-bearing nodes for the lifetime of each history entry.
   const historyRows = new Map<number, ReturnType<typeof createHistoryRow>>();
-  function displayHistory(entries: readonly HistoryEntry[], preview: boolean) {
+  function displayHistory(entries: readonly HistoryEntry[]) {
     empty.hidden = entries.length > 0;
     const numbers = new Set(entries.map((entry) => entry.number));
     for (const [number, row] of historyRows) {
@@ -161,15 +161,10 @@ function createDecisionHistory(
       const summary = projectDecisionHistorySummary(entry);
       view.action.textContent = summary.action;
       view.metrics.textContent = `${summary.latency} · ${summary.tokens}`;
-      view.status.textContent = preview ? previewStatus(entry) : summary.status;
+      view.status.textContent = summary.status;
     }
   }
   return { displayHistory, historyRows };
-}
-function previewStatus(entry: HistoryEntry) {
-  return entry.stage === 'completed'
-    ? 'Sample completion · synthetic'
-    : `Sample · ${decisionStatus(entry)}`;
 }
 function detailStatus(entry: HistoryEntry) {
   const execution = entry.execution;
@@ -264,16 +259,12 @@ export function defineDecisionHistory() {
       ) {
         this.entries = entries;
         this.requests = requests;
-        this.renderer?.displayHistory(entries, this.isPreview());
+        this.renderer?.displayHistory(entries);
         if (this.selected !== undefined) {
           if (entries.some((entry) => entry.number === this.selected))
             this.renderInspector();
           else this.showHistory();
         }
-      }
-
-      private isPreview() {
-        return !this.element('#history-preview-note').hidden;
       }
 
       private inspect(number: number) {
@@ -337,13 +328,9 @@ export function defineDecisionHistory() {
           // Keep text selection intact when presentation updates repeat a request.
           if (node.textContent !== text) node.textContent = text;
         };
-        const preview = this.isPreview();
         const summary = projectDecisionHistorySummary(entry);
         write('#inspector-title', `#${entry.number} · ${summary.action}`);
-        write(
-          '#inspector-state',
-          preview ? previewStatus(entry) : detailStatus(entry),
-        );
+        write('#inspector-state', detailStatus(entry));
         write(
           '#inspector-request-state',
           entry.sdkInvoked
@@ -382,26 +369,24 @@ export function defineDecisionHistory() {
         write(
           '#inspector-execution',
           execution
-            ? `${preview ? 'Synthetic receipt · ' : ''}Native requested: ${execution.requestedTics} · Worker-reported: ${execution.reportedCompletedTics ?? 'unknown'} · Independently verified: ${execution.independentlyVerifiedTics} tics${execution.completionUncertain ? ' (lower bound; completion uncertain)' : ''}.`
+            ? `Native requested: ${execution.requestedTics} · Worker-reported: ${execution.reportedCompletedTics ?? 'unknown'} · Independently verified: ${execution.independentlyVerifiedTics} tics${execution.completionUncertain ? ' (lower bound; completion uncertain)' : ''}.`
             : entry.stage === 'stepping'
               ? 'Awaiting native execution evidence.'
               : 'No native action dispatched.',
         );
         write(
           '#inspector-result',
-          preview
-            ? 'Illustrative execution and rendering only; no native or API proof.'
-            : entry.stage === 'stepping'
-              ? 'Native verification in progress; completion is not yet established.'
-              : execution?.completionUncertain
-                ? 'Native completion uncertain. Reload required; do not replay this action.'
-                : entry.result
-                  ? 'Historical resulting frame verified and rendered; it may no longer be the displayed frame.'
-                  : execution?.complete
-                    ? entry.stage === 'ended'
-                      ? 'Action verified; resulting frame unavailable. Reload required.'
-                      : 'Action verified; resulting frame not yet available.'
-                    : 'Verified resulting frame unavailable. A returned action alone does not prove execution.',
+          entry.stage === 'stepping'
+            ? 'Native verification in progress; completion is not yet established.'
+            : execution?.completionUncertain
+              ? 'Native completion uncertain. Reload required; do not replay this action.'
+              : entry.result
+                ? 'Historical resulting frame verified and rendered; it may no longer be the displayed frame.'
+                : execution?.complete
+                  ? entry.stage === 'ended'
+                    ? 'Action verified; resulting frame unavailable. Reload required.'
+                    : 'Action verified; resulting frame not yet available.'
+                  : 'Verified resulting frame unavailable. A returned action alone does not prove execution.',
         );
         const probabilities = this.element<HTMLUListElement>(
           '#inspector-probabilities',

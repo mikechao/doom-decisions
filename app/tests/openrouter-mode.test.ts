@@ -110,8 +110,6 @@ function browserFixture(query = '', hasPending = false) {
   element('#openrouter-connect').hidden = true;
   element('#openrouter-back').hidden = true;
   element('#openrouter-key-settings').hidden = true;
-  element('#history-preview-note').hidden = true;
-  element('#inspector-preview-note').hidden = true;
   element('#openrouter-model-gpt').value = 'openai/gpt-6-luna-decisions';
   element('#openrouter-model-gpt').checked = true;
   element('#openrouter-model-jev').value = 'typesafe/jev-1.14';
@@ -171,53 +169,6 @@ function ready() {
     evidence: { decisions: [] }, controls: { ready: true, stop: false, tics: true, iwad: false },
   } });
 }
-
-it('opts into sample history only for explicit Impeccable development and preserves real evidence', async () => {
-  const sample = await import('../src/sample-history.ts');
-  for (const [dev, mode, query, enabled, load] of [
-    [true, 'impeccable', '?sampleHistory=1', true, () => import('../src/main.ts?sample-on-test')],
-    [true, 'impeccable', '', false, () => import('../src/main.ts?sample-off-test')],
-    [true, 'impeccable', '?sampleHistory=0', false, () => import('../src/main.ts?sample-zero-test')],
-    [true, 'impeccable', '?sampleHistory=true', false, () => import('../src/main.ts?sample-text-test')],
-    [true, 'development', '?sampleHistory=1', false, () => import('../src/main.ts?sample-ordinary-test')],
-    [true, 'jev', '?sampleHistory=1', false, () => import('../src/main.ts?sample-jev-test')],
-    [false, 'production', '?sampleHistory=1', false, () => import('../src/main.ts?sample-production-test')],
-    [false, 'impeccable', '?sampleHistory=1', false, () => import('../src/main.ts?sample-impeccable-build-test')],
-  ] as const) {
-    vi.stubEnv('DEV', dev); vi.stubEnv('MODE', mode); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
-    const h = browserFixture(query);
-    await load();
-    const history = h.element('#decision-history');
-    if (enabled) await vi.waitFor(() => assert.equal(history.display.mock.calls.length, 1));
-    else assert.equal(history.display.mock.calls.length, 0);
-    assert.equal(h.element('#history-preview-note').hidden, !enabled);
-    assert.equal(h.element('#inspector-preview-note').hidden, !enabled);
-
-    const decisions = Object.freeze([]), inspectorRequests = Object.freeze({});
-    const evidence = Object.freeze({ decisions });
-    const run = {
-      phase: 'unprepared', prepared: false, hasClient: false, verifiedTics: 0,
-      evidence, inspectorRequests,
-      controls: { ready: false, stop: false, tics: false, iwad: true },
-    };
-    for (let i = 0; i < 2; i++) {
-      session.ports.present({ status: 'Waiting for game selection' });
-      session.ports.present({ session: run });
-      assert.deepEqual(history.display.mock.lastCall,
-        enabled ? [sample.entries, sample.requests] : [decisions, inspectorRequests]);
-      assert.equal(run.evidence, evidence);
-      assert.equal(run.evidence.decisions.length, 0);
-      assert.equal(run.inspectorRequests, inspectorRequests);
-      assert.equal(h.element('#outcome-action').textContent, 'No AI decisions yet.');
-    }
-    assert.equal(h.transport.mock.calls.length, 0);
-    assert.equal(h.worker.mock.calls.length, 0);
-    assert.equal(session.controller.prepare.mock.calls.length, 0);
-    assert.equal(session.controller.next.mock.calls.length, 0);
-    assert.equal(session.controller.startContinuous.mock.calls.length, 0);
-    assert.equal(h.storage.setItem.mock.calls.length, 0);
-  }
-});
 
 it('selects the provider at the app edge, labels BYOK truthfully and retains capture/replacement semantics', async () => {
   // OpenRouter wraps a per-session model factory; direct factories stay unchanged.
