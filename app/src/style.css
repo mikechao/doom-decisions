@@ -195,6 +195,10 @@ footer,
   margin-top: 0;
 }
 #openrouter-signin-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
   width: 100%;
   padding: 0.625rem 0.75rem;
   color: var(--ink);
@@ -213,6 +217,12 @@ footer,
 #openrouter-signin-button:enabled:active {
   background: var(--amber);
   border-color: var(--amber);
+}
+#openrouter-signin-logo {
+  display: block;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
 }
 #openrouter-manual,
 #openrouter-back {

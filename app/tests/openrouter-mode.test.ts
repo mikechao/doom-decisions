@@ -86,10 +86,15 @@ it('rejects ambiguous or altered source CSP and bounds Live rewrites', () => {
 class Element extends EventTarget {
   display = vi.fn();
   value = ''; valueAsNumber = 2; disabled = true; hidden = false; open = true; checked = false;
-  textContent = ''; dataset = {}; files = [];
+  private content = '';
+  children: Element[] = [];
+  dataset = {}; files = [];
+  get textContent() { return this.content + this.children.map(child => child.textContent).join(''); }
+  set textContent(value: string) { this.content = String(value); this.children = []; }
+  appendChild(child: Element) { this.children.push(child); return child; }
   getContext() { return {}; }
   querySelector() { return undefined; }
-  contains() { return false; }
+  contains(node: Element) { return this.children.includes(node); }
   attributes = new Map();
   setAttribute(name, value) { this.attributes.set(name, value); }
   focus() { document.activeElement = this; }
@@ -106,6 +111,8 @@ function browserFixture(query = '', hasPending = false) {
     if (!elements.has(id)) elements.set(id, new Element());
     return elements.get(id)!;
   };
+  element('#openrouter-signin-button').appendChild(element('#openrouter-signin-logo'));
+  element('#openrouter-signin-button').appendChild(element('#openrouter-signin-label'));
   element('#key-label').textContent = 'Temporary OpenRouter API key';
   element('#openrouter-connect').hidden = true;
   element('#openrouter-back').hidden = true;
@@ -152,7 +159,11 @@ async function settleStartup() {
 
 it('labels exactly two native model choices beneath sign-in in the shared OpenRouter container', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  assert.match(html, /<div id="openrouter-connect" hidden>\s*<div id="openrouter-signin">\s*<button id="openrouter-signin-button"[^>]*>Sign in with OpenRouter<\/button>\s*<\/div>\s*<p id="openrouter-auth-note" class="help auth-charge-note">API usage will incur charges\.<\/p>\s*<fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>/);
+  assert.match(html, /<div id="openrouter-connect" hidden>\s*<div id="openrouter-signin">\s*<button id="openrouter-signin-button"[^>]*>[\s\S]*?<\/button>\s*<\/div>\s*<p id="openrouter-auth-note" class="help auth-charge-note">API usage will incur charges\.<\/p>\s*<fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>/);
+  const buttonContents = html.match(/<button id="openrouter-signin-button"[^>]*>([\s\S]*?)<\/button>/)![1];
+  assert.match(buttonContents, /<svg id="openrouter-signin-logo" class="openrouter-signin-logo" viewBox="0 0 401\.4 293\.7" xmlns="http:\/\/www\.w3\.org\/2000\/svg" fill="currentColor" aria-hidden="true" focusable="false">\s*<path d="M303\.9475,/);
+  assert.match(buttonContents, /<span id="openrouter-signin-label">Sign in with OpenRouter<\/span>/);
+  assert.match(html, /OpenRouter logo: <a href="\.\/notices\/openrouter-sign-in\/LICENSE\.txt">MIT license<\/a>/);
   const group = html.match(/<fieldset id="openrouter-model"[^>]*>([\s\S]*?)<\/fieldset>/)![1];
   assert.match(group, /<legend>AI model<\/legend>/);
   assert.equal((group.match(/type="radio"/g) ?? []).length, 2);
@@ -297,6 +308,10 @@ it('returns an OAuth key through the existing port only on an explicit decision,
   assert.equal(h.location.href, callback + '?view=wide#prompt');
   assert.equal(h.values.size, 0);
   assert.equal(h.element('#key').value, '');
+  assert.equal(h.element('#openrouter-signin-label').textContent, 'OpenRouter sign-in complete');
+  assert.equal(h.element('#openrouter-signin-button').disabled, true);
+  assert.equal(h.element('#openrouter-signin-button').attributes.get('aria-busy'), 'false');
+  assert.equal(h.element('#openrouter-signin-button').contains(h.element('#openrouter-signin-logo')), true);
   assert.match(h.element('#openrouter-auth-status').textContent, /key received/);
   assert.equal(h.element('#openrouter-model').disabled, false);
   h.element('#openrouter-model-jev').checked = true;
@@ -479,9 +494,17 @@ it('blocks duplicate sign-in and WAD preparation while connecting and after WAD 
   const h = browserFixture();
   await import('../src/main.ts?oauth-setup-only-test');
   await settleStartup();
-  assert.equal(h.element('#openrouter-signin-button').disabled, false);
-  h.element('#openrouter-signin-button').dispatchEvent(new Event('click'));
-  h.element('#openrouter-signin-button').dispatchEvent(new Event('click'));
+  const signinButton = h.element('#openrouter-signin-button');
+  const signinLogo = h.element('#openrouter-signin-logo');
+  assert.equal(h.element('#openrouter-signin-label').textContent, 'Sign in with OpenRouter');
+  assert.equal(signinButton.disabled, false);
+  assert.equal(signinButton.attributes.get('aria-busy'), 'false');
+  signinButton.dispatchEvent(new Event('click'));
+  assert.equal(h.element('#openrouter-signin-label').textContent, 'Connecting…');
+  assert.equal(signinButton.disabled, true);
+  assert.equal(signinButton.attributes.get('aria-busy'), 'true');
+  assert.equal(signinButton.contains(signinLogo), true);
+  signinButton.dispatchEvent(new Event('click'));
   h.element('#openrouter-model-jev').checked = true;
   h.element('#openrouter-model-jev').dispatchEvent(new Event('change'));
   assert.equal(h.element('#openrouter-model').disabled, true);

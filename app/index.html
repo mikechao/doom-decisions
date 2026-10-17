@@ -23,7 +23,12 @@
           <div class="setup-content">
             <div id="openrouter-connect" hidden>
               <div id="openrouter-signin">
-                <button id="openrouter-signin-button" type="button" aria-describedby="openrouter-auth-note openrouter-auth-status" disabled>Sign in with OpenRouter</button>
+                <button id="openrouter-signin-button" type="button" aria-describedby="openrouter-auth-note openrouter-auth-status" disabled>
+                  <svg id="openrouter-signin-logo" class="openrouter-signin-logo" viewBox="0 0 401.4 293.7" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true" focusable="false">
+                    <path d="M303.9475,17.19926c42.79734,0,77.48933,34.69327,77.48933,77.48933s-34.69199,77.48933-77.48933,77.48933l76.86166,76.86244c9.76367,9.76313,2.84903,26.45667-10.95697,26.45667h-220.88335c-71.32686,0-129.14889-57.82202-129.14889-129.14889S77.64197,17.19926,148.96884,17.19926h154.97866ZM148.96884,68.85881c-42.79607,0-77.48933,34.69327-77.48933,77.48933s34.69327,77.48933,77.48933,77.48933,77.48933-34.69327,77.48933-77.48933-34.69327-77.48933-77.48933-77.48933Z" />
+                  </svg>
+                  <span id="openrouter-signin-label">Sign in with OpenRouter</span>
+                </button>
               </div>
               <p id="openrouter-auth-note" class="help auth-charge-note">API usage will incur charges.</p>
               <fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>
@@ -204,7 +209,7 @@
     </details>
     <footer>
       <p>Continuous mode starts only when you choose Start. Preparation uses one explicit neutral tic and no API request. Snapshots, rendering and idle time advance zero gameplay tics. Refresh to start a new game and clear in-memory credentials.</p>
-      <p>Engine: <a href="./notices/doom-LICENSE.txt">GPL license</a> · SDK: <a href="./notices/openai/LICENSE">Apache license</a> · Font: <a href="./font-notices/oswald/OFL.txt">Oswald · SIL OFL 1.1</a>.</p>
+      <p>Engine: <a href="./notices/doom-LICENSE.txt">GPL license</a> · SDK: <a href="./notices/openai/LICENSE">Apache license</a> · Font: <a href="./font-notices/oswald/OFL.txt">Oswald · SIL OFL 1.1</a> · OpenRouter logo: <a href="./notices/openrouter-sign-in/LICENSE.txt">MIT license</a>.</p>
       <p>Freedoom Phase 1 v0.13.0: <a href="./notices/freedoom/COPYING.txt">BSD 3-Clause license</a> · <a href="./notices/freedoom/CREDITS.txt">Credits</a> · <a href="./notices/freedoom/CREDITS-MUSIC.txt">Music credits</a>. No endorsement by Freedoom or its contributors is implied.</p>
     </footer>
   </main>

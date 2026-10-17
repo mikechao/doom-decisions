@@ -58,6 +58,7 @@ type Elements = {
   '#openrouter-connect': HTMLDivElement;
   '#openrouter-signin': HTMLDivElement;
   '#openrouter-signin-button': HTMLButtonElement;
+  '#openrouter-signin-label': HTMLSpanElement;
   '#openrouter-manual': HTMLButtonElement;
   '#openrouter-back': HTMLButtonElement;
   '#openrouter-auth-status': HTMLParagraphElement;
@@ -217,7 +218,7 @@ function displayOAuth() {
     oauth.hasKey ||
     $('#key').value.trim().length > 0;
   $('#openrouter-signin-button').setAttribute('aria-busy', String(oauth.busy));
-  $('#openrouter-signin-button').textContent = oauth.busy
+  $('#openrouter-signin-label').textContent = oauth.busy
     ? 'Connecting…'
     : oauth.hasKey
       ? 'OpenRouter sign-in complete'
