@@ -43,6 +43,18 @@ typography:
     fontFamily: "system-ui, sans-serif"
     fontSize: "16px"
     lineHeight: 1.5
+  history-number:
+    fontFamily: 'Oswald, "Arial Narrow", "Helvetica Neue", sans-serif'
+    fontSize: "2rem"
+    fontWeight: 600
+    lineHeight: 1.1
+    letterSpacing: "-0.025em"
+  history-action:
+    fontFamily: 'Oswald, "Arial Narrow", "Helvetica Neue", sans-serif'
+    fontSize: "1.25rem"
+    fontWeight: 500
+    lineHeight: 1.2
+    letterSpacing: "-0.015em"
   help:
     fontFamily: "system-ui, sans-serif"
     fontSize: "0.875rem"
@@ -80,6 +92,24 @@ components:
     textColor: "{colors.ivory}"
     rounded: "{rounded.control}"
     padding: "0.5rem 0.625rem"
+  button-signin:
+    backgroundColor: "{colors.amber}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.control}"
+    padding: "0.625rem 0.75rem"
+    width: "100%"
+  asset-picker:
+    backgroundColor: "#1d211b"
+    textColor: "{colors.ivory}"
+    rounded: "0px"
+    padding: "0.5rem 0.75rem"
+    width: "100%"
+  prompt-dialog:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ivory}"
+    rounded: "{rounded.control}"
+    padding: "clamp(1rem, 4vw, 2rem)"
+    width: "min(44rem, calc(100% - 2rem))"
 ---
 
 # Design System: Doom Decisions — AI Broadcast
@@ -101,18 +131,19 @@ The game image remains the visual center. Readable system text carries setup ins
 
 ### Documentation baseline and authority
 
-This is a normal documentation scan of the implemented interface, not a seed or
-redesign. On 2026-10-13 the repository root was
-`/Users/mike/projects/doom-decisions`, branch `main`, HEAD
-`9c1b61b1c946b5aa76045970985db743ee29dfc7`
-(`feat(ui): polish AI Broadcast controls and decision history`). The working
-tree was clean before generation; the Slice 4 interface was committed.
+This documentation scan was refreshed from the implemented interface on
+2026-10-17, preserving the established AI Broadcast language. The repository root
+was `/Users/mike/projects/doom-decisions-ui-tweaks`, HEAD
+`fe3355692abf2e36dacc4a8af1952845a4dfd664`
+(`style: finalize UI polish and remove preview data`). The working tree was
+clean before the documentation refresh.
 
 Visual authority is [app/index.html](app/index.html) and
 [app/src/style.css](app/src/style.css). Presentation behavior is read from
 [decision-history.ts](app/src/decision-history.ts),
 [latest-outcome.ts](app/src/latest-outcome.ts), and the display/render paths in
-[main.ts](app/src/main.ts), with optional metric validation in
+[main.ts](app/src/main.ts), with scroll-cue behavior in
+[history-scroll.ts](app/src/history-scroll.ts) and optional metric validation in
 [decision.ts](app/src/decision.ts). [PRODUCT.md](PRODUCT.md) and
 [AGENTS.md](AGENTS.md) supply durable product constraints.
 
@@ -120,7 +151,9 @@ The committed [ui-experiment.png](ui-experiment.png) was visually inspected for
 the original AI Broadcast intent. It is an illustrative concept, not a runtime
 capture. Its gameplay, sample completed decisions, “Loaded” indicator, oversized
 image, “E1M1” heading, and ornamental surface effects are not implementation
-evidence. Neither superseded design file was consulted from Git history.
+evidence. The current explanatory header, compact history rows, setup choices,
+and full-width layout take precedence over that concept. No current runtime
+screenshot or visual-regression golden was found in the inspected app sources.
 
 The palette, fonts, DOM structure, CSS rules, and presentation conditions below
 are directly observed in source. “Restrained”, “flat”, and the reusable spacing
@@ -137,6 +170,8 @@ CSS variables or a mandatory scale. The sidecar extends these tokens with
 component previews and metadata. Its synthesized color ramps are preview aids,
 not implemented colors or permission to expand the palette. Component previews
 are static style examples; fields, outcome, and history show initial states.
+The prompt preview shows only its surface and explanatory copy, without invented
+request instructions. Sign-in and asset-choice previews have no handlers.
 They contain no sample completed decisions and do not constitute gameplay or
 verification evidence.
 
@@ -147,8 +182,10 @@ one amber emphasis family.
 
 ### Primary
 
-- **Broadcast amber** (`amber`): Next Decision, the latest history number, and
-  the Latest Outcome number. A selected action is not automatically successful.
+- **Broadcast amber** (`amber`): OpenRouter sign-in, Next Decision, the Decision
+  controls heading and prerequisite icon, the local-file folder icon, the latest
+  history number, and the Latest Outcome number. A selected action is not
+  automatically successful.
 - **Pale action ivory** (`light-action`): the secondary filled Start Continuous
   Mode button, visually distinct from manual admission.
 
@@ -169,10 +206,12 @@ one amber emphasis family.
 
 **Ice-blue focus** (`focus`) is reserved for keyboard outlines, links, caret, and
 text selection. It is an interaction cue, not a second action hierarchy.
-Disabled fields and buttons use explicit muted charcoal treatments. Busy/error
-status text becomes ivory and heavier; neither gets an invented warning color.
+Disabled fields and buttons use explicit muted charcoal treatments; decision
+buttons in the current prerequisite treatment use the console surface, muted
+text, and boundary-colored borders. Busy/error status text becomes ivory and
+heavier; neither gets an invented warning color.
 
-**The Evidence Before Emphasis Rule.** Amber identifies the primary action and latest decision number; color alone never establishes completion, readiness, authentication, or game health.
+**The Evidence Before Emphasis Rule.** Amber identifies primary actions, setup guidance, and the latest decision number; color alone never establishes completion, readiness, authentication, or game health.
 
 ## Typography
 
@@ -186,16 +225,18 @@ is part of this system; retain the OFL notice and footer link.
 
 ### Hierarchy
 
-- **Identity:** the fluid display token belongs to Doom Decisions. AI Broadcast
-  is a smaller uppercase, widely tracked companion label.
+- **Identity:** the fluid display token belongs to Doom Decisions. Its companion
+  is a sentence-case system-font explanation, capped at 65ch. AI Broadcast is the
+  design's name, not the current visible header label.
 - **Game heading:** “Game view” uses the game-heading token and sentence case.
   It is intentionally more prominent than the small section labels.
 - **Section labels:** small Oswald labels use uppercase and generous tracking.
   Do not carry that treatment into explanatory paragraphs.
 - **Latest Outcome:** fluid display action text with a larger amber number
   (1.2em, weight 600). The empty state is smaller and muted.
-- **History:** large tabular decision numbers (3rem, weight 600) pair with action
-  names (1.875rem, weight 500); status and API latency stay in the body stack.
+- **History:** compact tabular decision numbers use the history-number token,
+  paired with the history-action token; status, API latency, and token totals
+  stay in the body stack.
   History preserves API action identifiers; Latest Outcome humanizes underscores.
 - **Reading:** the body token sets the root baseline. Help is generally smaller;
   rail guidance is denser (0.8125rem, line-height 1.45). Status remains readable
@@ -207,21 +248,27 @@ is part of this system; retain the OFL notice and footer link.
 
 ## Layout
 
-A centered page container (maximum 1360px, including padding) holds the identity
-header, console, advanced evidence disclosure, and footer. The console follows
+A full-width page container with no maximum width holds the identity header,
+console, advanced evidence disclosure, and footer. The console follows
 source order: persistent session/control rail, game view with Latest Outcome,
 then AI Decision History. Persistent means the controls remain present after
 preparation; there is no sticky/fixed positioning in the current CSS.
 
-At viewport widths of at least 1280px, the console has three columns: a 17rem
-rail, flexible game area, and 20rem history panel. Thin vertical rules separate
-them. These are current composition measurements, not minimum widths for every
-future surface. The flexible middle can show a smaller canvas even on desktop.
+At viewport widths of at least 1280px, outer gutters are 16px and the console has
+three columns. The left rail uses
+`minmax(calc(17rem + 10px), calc(50vw - 390px))`; the right history column uses
+`minmax(calc(20rem + 10px), calc(50vw - 342px))`; the game occupies the remaining
+`minmax(0, 1fr)` space. Thin vertical rules separate them. The outer columns absorb
+extra width while the game retains its display ceiling. The rail spans two grid
+rows; game and history occupy the first. These are current composition
+measurements, not minimum widths for every future surface.
 
 Below that breakpoint, the console stacks in source order. Between 760px and
 1279px, WAD/key setup and manual/continuous controls each use two columns within
-the rail. Below 760px those groups stack. At 639px and below, outer gutters and
-game padding tighten to 1rem and the AI Broadcast label loses its left divider.
+the rail. Below 760px those groups stack. Ordinary outer gutters are 1.5rem.
+At 639px and below, outer gutters tighten to 1rem, game padding becomes 1rem
+vertically and 0.5rem horizontally, and the explanatory header text loses its
+left divider.
 Do not infer mobile drawer or navigation behavior.
 
 The Game view heading, stage, and outcome align within a 640px maximum width.
@@ -236,9 +283,13 @@ of at least 34rem, outcome and operational status sit in 3:2 columns with a
 vertical divider; otherwise they stack with a horizontal divider. This is not a
 viewport breakpoint.
 
-History keeps all entries in a bounded scrolling region. Its panel is capped at
-`min(42rem, 75dvh)`, with that explicit height on wide layouts. The focusable list
-scrolls vertically, contains overscroll, and reserves a stable scrollbar gutter.
+History keeps all entries in a bounded scrolling region. On stacked layouts its
+panel is capped at `min(42rem, 75dvh)`. On wide layouts size containment lets the
+game determine the shared row height; history stretches within that row, with
+no independent maximum height and a 1.25rem bottom margin. The list and detail
+view each scroll vertically, contain overscroll, and reserve stable scrollbar
+gutters. A reserved footer shows “More decisions below” only when the list has
+content below its current scroll position; hiding it preserves its space.
 A viewport limit must not become an entry limit.
 
 Repeated small gaps, roughly one-rem content spacing, and slightly larger panel
@@ -248,10 +299,12 @@ readability instead of applying every recorded measurement to every component.
 ## Elevation & Depth
 
 Surfaces are flat: the stylesheet defines no box shadows, gradients, or animated
-transitions. Thin rules, a slightly different outcome surface, expanded-history
-tonal fill, and a stronger selected-probability fill provide depth. The stage's
-one-pixel outline bounds a black framebuffer. Color changes and disclosure
-chevron rotation reflect interaction immediately; do not infer animation tokens.
+transitions. Thin rules, a slightly different outcome surface, history-row tonal
+fill, and a stronger selected-probability fill provide depth. The stage's
+one-pixel outline bounds a black framebuffer. Color changes, native disclosure
+markers, and the history-row chevron indicate interaction without animation
+tokens. The native prompt dialog uses a translucent black backdrop
+(`rgb(0 0 0 / 60%)`) to separate the modal surface; it has no shadow.
 
 **The Rules Before Shadows Rule.** Separate resting surfaces with thin borders, spacing, and tonal changes. Preserve the implemented flat treatment.
 
@@ -261,23 +314,46 @@ Panels and the stage are rectangular. Controls have nearly square corners via
 the control radius token. Borders are generally one pixel; the keyboard outline
 is deliberately stronger. The tiny Selected tag and meter rounding are local
 details (3px), not a universal pill or card language. Native disclosure markers
-are retained for guidance and receipts; history summaries use a CSS chevron.
+are retained for guidance and receipts; history buttons use a right-facing CSS
+chevron. The local-file affordance uses a small stroked folder SVG; OpenRouter
+sign-in uses its inline monochrome logo.
 
 ## Components
 
 ### Session rail and inputs
 
-WAD selection and temporary API-key entry stay present alongside decision
-controls. Setup initially reads “Set up Doom”; verified preparation changes it
-to “Setup & key” and reports the selected filename as prepared. There is no
-invented “Loaded” light. WAD selection prepares automatically; refreshing is the
-way to change a prepared WAD.
+Setup is an initially open native disclosure titled “Setup”. It groups account
+connection, game-file choice, manual credentials, and privacy guidance. After
+preparation and credential readiness, it collapses once when focus and pointer
+activity have left setup. Users can reopen it. The selected asset is labeled
+selected or prepared; there is no invented “Loaded” light. Included Freedoom and
+local IWAD selection each prepare automatically after explicit choice;
+refreshing is the way to change a prepared game file.
 
-Use native labeled file, password, and number inputs with visible borders and
-dark fill. Inputs have at least 44px height. The file-selector button has its own
-compact treatment. Enabled hover brightens boundaries; disabled fields get a
-muted fill. Keep the password field's autocomplete, spellcheck, and capitalization
-settings, key-handling disclosure, and honest client-memory/authentication text.
+OpenRouter mode leads with a full-width amber sign-in button and inline logo
+(22px square), a compact charge note, and native radio choices for GPT-6 Luna
+Decisions and Jev 1.14. The model choices are not a provider menu. The model locks
+for the session when committed, with explicit refresh guidance. Underlined muted
+text buttons reveal manual API-key entry or return to sign-in. Busy sign-in says
+“Connecting…” and uses a wait cursor; completion is explicit text.
+
+The game-file group uses a full-width “Use included Freedoom” button and a
+full-width “Choose local IWAD” label with a left-aligned amber folder icon and
+centered text. The latter combines a quiet bottom-border treatment with a dark
+folder-button fill. Its native file input is visually clipped, remains labeled,
+and gives the enclosing label a visible focus-within outline. Compact guidance
+states the bundled download size and local-file behavior. Neither choice starts
+on page load.
+
+Use native labeled password and number inputs with visible borders and dark
+fill, plus the labeled native file input inside its custom affordance. Visible
+input controls and file affordances have at least 44px height. Enabled hover
+brightens boundaries; disabled fields get a muted fill. Keep the password field's
+autocomplete, spellcheck, and capitalization settings, privacy disclosure, and
+honest client-memory/authentication text.
+Manual entry is secondary in OpenRouter mode; experimental direct OpenAI has
+provider-specific copy. Preserve the distinction between clearing local access
+on refresh and remotely revoking a minted key.
 
 Tics per decision defaults to 6 and applies to both modes; it accepts positive
 JavaScript safe integers. Max API attempts defaults to 2, is a separate positive
@@ -326,48 +402,82 @@ Exit pending does not prove intermission or E1M2. Uncertain native completion
 retains a lower-bound verified count and requires reload; never replay it as if
 nothing ran.
 
-### Complete decision history
+### Complete decision history and detail view
 
-Every admitted decision retains a stable native disclosure row, newest first.
-Rows show number, action or pending/unavailable text, status, and real API latency
-or its pending/unavailable state. Only the newest number is amber. Existing
-disclosure and focus-bearing nodes survive presentation updates.
+Every admitted decision retains a stable button row, newest first. A compact
+three-column grid places the number on the left, action/status/metrics in the
+middle, and a small right-facing chevron at the edge. Rows show action or
+pending/unavailable text, status, real API latency, and provider-reported total
+tokens or explicit pending/unavailable text. Only the newest number is amber.
+Focus-bearing nodes survive presentation updates. Hover and selected rows use
+the same subtle olive fill.
 
-Expanded rows show action probabilities only when all seven action values have
-validated finite probabilities in range. Values sort descending, with native
-meters and explicit percentages; the selected action has a textual Selected tag,
-stronger fill, and ivory meter. Missing metrics say “Action probabilities
-unavailable.” API confidence appears only when validated and does not establish
-native success.
+Selecting a row replaces the list within the same panel with Decision detail.
+Its header contains “Back to history” and a sentence-case Oswald title; the body
+scrolls independently. Opening detail focuses the title. Returning restores the
+originating row's focus and visual offset, including after newer decisions arrive.
+This is an in-panel view, not an inline accordion or a modal.
 
-A nested Technical receipt preserves human-selected duration, requested/reported/
-independently verified counts, cumulative verified tic (or uncertain lower bound),
-observed/resulting tics, and sanitized request ID/latency. Complete history is
-neither a rolling subset nor a set of illustrative sample results.
+Detail shows returned action probabilities only when all seven action values
+have validated finite probabilities in range. Values sort descending, with
+native meters and explicit percentages; tiny positive values retain scientific
+notation rather than becoming zero. The selected action has a textual Selected
+tag, stronger fill, and ivory meter. Missing metrics say “Action probabilities
+unavailable.” API confidence appears separately and does not establish native
+success or explain the model's reasoning.
+
+Provider, requested model, differing reported model, API latency, and reported
+total tokens appear in a compact two-column definition list. The historical
+request screenshot is distinct from the currently displayed game frame; it
+shrinks proportionally, retains pixelated rendering, and has explicit
+pending/unavailable/error text. It is not a decorative placeholder image.
+
+Native Exact request and Technical receipt and diagnostics disclosures preserve
+captured instructions/context/actions, human-selected duration, requested/
+reported/independently verified counts, cumulative verified tic (or uncertain
+lower bound), observed/resulting tics, provider usage breakdown, and sanitized
+request metadata. Long identifiers and preformatted request text wrap. Complete
+history is neither a rolling subset nor a set of illustrative sample results.
+
+### Decision prompt dialog
+
+“View Prompt” is a full-width outlined body-font button below a thin rule in the
+control rail. It opens a native modal dialog containing a sentence-case Oswald
+heading, an autofocus Close button, concise explanatory text, and the default
+instructions for the current tic selection. Invalid duration produces guidance.
+This preview updates with duration edits and does not describe an already
+captured in-flight request; Exact request in history supplies that evidence.
+
+The dialog uses the prompt-dialog token, a one-pixel boundary, a viewport-limited
+height (`calc(100dvh - 2rem)`), and vertical overflow. The page locks scrolling
+while a modal dialog is open. Closing returns focus to View Prompt. Preserve the
+native modal behavior and explicit close control.
 
 ### Disclosures, evidence, and focus
 
-Key handling, limits/stopping, history rows, technical receipts, and advanced
-evidence use native `details`/`summary`. Guidance summaries have a minimum 44px
-height and a subtle hover surface. Advanced evidence remains below the console,
+Privacy/key handling, limits/stopping, exact requests, technical receipts, and
+advanced evidence use native `details`/`summary`. Guidance summaries have a
+minimum 44px height and a subtle hover surface. Advanced evidence remains below the console,
 with SDK status, frame identity/hash, and wrapped evidence text. Keep all evidence
 accessible even when collapsed.
 
-Visible focus uses an ice-blue 3px outline with 3px offset on focusable elements,
-including the scrollable history list. Links use the focus color with underline
-offset. Preserve field labels, described-by guidance, the canvas's accessible
-name, and polite live regions for game and continuous status. These are observed
-source affordances, not an accessibility certification.
+Visible focus uses an ice-blue 3px outline with 3px offset on focusable elements.
+History rows, history/detail scrollers, and Back to history use an inward offset
+(-3px) to keep the outline within their clipped regions. Links use the focus color
+with underline offset. Preserve field labels, described-by guidance, the canvas's
+accessible name, and polite live regions for game and continuous status. These
+are observed source affordances, not an accessibility certification.
 
 ## Do's and Don'ts
 
 ### Do:
 
 - Do retain “Game view” and the complete 640×400 framebuffer, full HUD, 8:5 proportions, 640×400 CSS display ceiling, and pixelated rendering.
-- Do keep WAD/key inputs, human duration, manual admission, continuous Start/Stop, and the independent attempt budget available in the session rail.
+- Do keep account connection, explicit included/local game-file choices, manual credentials, human duration, manual admission, continuous Start/Stop, and the independent attempt budget available in the session rail.
 - Do preserve every decision entry, newest first, with truthful status, optional validated metrics, technical receipts, and advanced evidence.
 - Do distinguish requested, reported, and independently verified tics, verified prefixes, resulting frames, and the currently displayed frame.
 - Do retain native disclosures, visible keyboard focus, meaningful labels, and readable body text when extending the interface.
+- Do preserve history list/detail navigation, focus and scroll restoration, and the distinction between prompt previews, captured requests, historical screenshots, and the current game frame.
 
 ### Don't:
 
