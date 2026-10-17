@@ -134,6 +134,29 @@ Snapshots share frozen references across presentation updates. Long sessions can
 therefore consume substantial memory; real-game PNG sizes have not been measured
 for this change. The CSP permits `data:` images only, with other directives unchanged.
 
+### Synthetic history for Impeccable Live
+
+With frontend dependencies already installed, run from the repository root:
+
+```sh
+npm --prefix app run dev:impeccable
+```
+
+Open `http://127.0.0.1:5173/?sampleHistory=1` to display twelve fully populated,
+deterministic synthetic completions through the existing history and inspector,
+with varied actions, probabilities, model labels, token counts and request text.
+Both surfaces show **SAMPLE DATA · UI PREVIEW**. Screenshots are unavailable;
+request details, usage, probabilities and receipts are illustrative. No WAD
+selection, Doom execution, sign-in or API call is needed. Controller presentation
+updates retain the sample
+history, without changing real session evidence, controls or behavior.
+
+Remove the query parameter and reload to restore real history (empty before any
+AI decision). The flag works only in Vite development with mode `impeccable`;
+ordinary development, preview and production builds ignore it. To use Impeccable
+Live, keep this Vite instance running, send `$impeccable live`, and manually open
+the sample URL in Chrome as usual. Stop Vite with **Ctrl+C** when finished.
+
 ## Prerequisites and clean checkout
 
 Provision tools yourself; the build never installs them. The supported engine

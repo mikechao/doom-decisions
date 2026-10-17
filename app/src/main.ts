@@ -80,6 +80,8 @@ type Elements = {
   '#prompt-text': HTMLParagraphElement;
   '#continuous-state': HTMLParagraphElement;
   '#decision-history': DecisionHistoryElement;
+  '#history-preview-note': HTMLParagraphElement;
+  '#inspector-preview-note': HTMLParagraphElement;
   '#outcome-number': HTMLSpanElement;
   '#outcome-action': HTMLSpanElement;
   '#outcome-evidence': HTMLParagraphElement;
@@ -145,6 +147,19 @@ function displaySetupStatus(run: NonNullable<SessionPresentation['session']>) {
 }
 defineDecisionHistory();
 const history = $('#decision-history');
+let sampleHistory: typeof import('./sample-history') | undefined;
+if (
+  import.meta.env.DEV &&
+  import.meta.env.MODE === 'impeccable' &&
+  new URL(window.location.href).searchParams.get('sampleHistory') === '1'
+) {
+  void import('./sample-history').then((sample) => {
+    sampleHistory = sample;
+    $('#history-preview-note').hidden = false;
+    $('#inspector-preview-note').hidden = false;
+    history.display(sample.entries, sample.requests);
+  });
+}
 type SessionRunPresentation = NonNullable<SessionPresentation['session']>;
 let latestSession: SessionRunPresentation | undefined;
 let setupAutoCollapseDone = false;
@@ -309,7 +324,10 @@ function display(view: SessionPresentation) {
     : run.hasClient
       ? 'Client in memory; blank keeps it. Authentication unverified.'
       : 'Client in memory • Refresh clears it';
-  history.display(run.evidence.decisions, run.inspectorRequests);
+  history.display(
+    sampleHistory?.entries ?? run.evidence.decisions,
+    sampleHistory?.requests ?? run.inspectorRequests,
+  );
   const outcome = projectLatestOutcome(
     run.evidence.decisions.at(-1),
     run.frame,

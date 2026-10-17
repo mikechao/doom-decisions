@@ -3,8 +3,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, it, vi } from 'vitest';
+import { masks } from '../src/decision.ts';
 import { defineDecisionHistory } from '../src/decision-history.ts';
 import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
+import { entries as sampleEntries, requests as sampleRequests } from '../src/sample-history.ts';
 
 let document, root, history, dialog, nodes, frames, observers, registry;
 class Element extends EventTarget {
@@ -106,6 +108,94 @@ beforeEach(() => {
   root.connectedCallback(); flush();
 });
 afterEach(() => { root.disconnectedCallback(); vi.unstubAllGlobals(); });
+
+it('renders all twelve synthetic completions with coherent receipts and populated inspectors', () => {
+  root.display(sampleEntries, sampleRequests);
+  assert.deepEqual(history.children.map(node => node.id),
+    Array.from({ length: 12 }, (_, index) => `decision-${12 - index}`));
+  assert.equal(nodes.get('history-empty').hidden, true);
+  assert.equal(new Set(sampleEntries.map(entry => entry.action).filter(Boolean)).size, 7);
+  let previousTic = 1;
+  for (const entry of sampleEntries) {
+    const request = sampleRequests[entry.number];
+    assert.equal(entry.stage, 'completed');
+    assert.match(entry.status, /sample/i);
+    assert.ok(Object.hasOwn(masks, entry.action));
+    assert.ok(Number.isSafeInteger(entry.selectedTics) && entry.selectedTics > 0);
+    assert.equal(entry.observation.tic, previousTic);
+    assert.equal(entry.result.tic, previousTic + entry.selectedTics);
+    assert.equal(entry.cumulativeVerifiedTics, entry.result.tic);
+    previousTic = entry.result.tic;
+    assert.deepEqual(entry.execution, {
+      complete: true, requestedTics: entry.selectedTics,
+      reportedCompletedTics: entry.selectedTics,
+      independentlyVerifiedTics: entry.selectedTics, completionUncertain: false,
+    });
+    assert.ok(entry.latencyMs > 0);
+    assert.equal(entry.requestId, `sample-ui-preview-${entry.number}`);
+    assert.equal(entry.http, 200); assert.equal(entry.sdkInvoked, true);
+    assert.equal(entry.requestIdentity.provider, 'OpenRouter');
+    assert.match(entry.requestIdentity.requestedModel, /^sample\//);
+    assert.match(entry.responseMetadata.reportedModel, /^sample\//);
+    const usage = entry.responseMetadata.usage;
+    for (const count of Object.values(usage)) assert.ok(Number.isSafeInteger(count) && count > 0);
+    assert.equal(usage.total, usage.input + usage.output);
+    assert.deepEqual(request.permittedActions, Object.keys(masks));
+    assert.equal(request.png, '');
+    const probabilities = entry.choice.probabilities;
+    assert.deepEqual(probabilities.map(item => item.value), request.permittedActions);
+    assert.ok(probabilities.every(item => Number.isFinite(item.probability) && item.probability >= 0 && item.probability <= 1));
+    assert.ok(Math.abs(probabilities.reduce((sum, item) => sum + item.probability, 0) - 1) < 1e-12);
+    const selected = probabilities.find(item => item.value === entry.action);
+    assert.equal(selected.probability, Math.max(...probabilities.map(item => item.probability)));
+    assert.equal(entry.choice.confidence, selected.probability);
+
+    const details = row(entry.number).querySelector('details');
+    assert.match(details.querySelector('summary').textContent, /Completed · verified and rendered/);
+    details.querySelector('summary').click();
+    const probabilityList = row(entry.number).querySelector('ul');
+    assert.equal(probabilityList.hidden, false);
+    assert.equal(probabilityList.children.length, 7);
+    assert.equal(probabilityList.children.filter(node => node.dataset.selected === 'true').length, 1);
+    assert.match(probabilityList.children.find(node => node.dataset.selected === 'true').textContent, new RegExp(`${entry.action}Selected`));
+    assert.equal(probabilityList.parentElement.children.find(node => node.textContent === 'Action probabilities unavailable.').hidden, true);
+    const receipt = row(entry.number).querySelector('pre').textContent;
+    assert.match(receipt, /Sample: synthetic completion/);
+    assert.match(receipt, new RegExp(`Native requested / reported / independently verified: ${entry.selectedTics} / ${entry.selectedTics} / ${entry.selectedTics}`));
+
+    const trigger = inspect(entry.number);
+    trigger.focus(); trigger.click();
+    assert.equal(text('inspector-title'), `Decision #${entry.number}`);
+    assert.match(text('inspector-state'), /stage: completed/);
+    assert.equal(text('inspector-request-state'), 'SDK invocation attempted.');
+    assert.match(text('inspector-instructions'), /SAMPLE DATA · UI PREVIEW/);
+    assert.equal(text('inspector-instructions'), request.instructions);
+    assert.equal(text('inspector-context'), request.context);
+    assert.equal(text('inspector-actions'), request.permittedActions.join('\n'));
+    assert.equal(text('inspector-image-status'), 'Screenshot: Unavailable');
+    assert.equal(nodes.get('inspector-image').attributes.has('src'), false);
+    for (const field of ['inspector-diagnostics', 'inspector-usage', 'inspector-answer'])
+      assert.doesNotMatch(text(field), /Unavailable|Pending/);
+    assert.ok(text('inspector-diagnostics').includes(entry.requestIdentity.requestedModel));
+    assert.ok(text('inspector-diagnostics').includes(entry.responseMetadata.reportedModel));
+    assert.match(text('inspector-usage'), new RegExp(`Reported total tokens: ${usage.total}`));
+    assert.match(text('inspector-answer'), new RegExp(`Chosen action: ${entry.action}`));
+    assert.equal((text('inspector-answer').match(/ · Selected/g) ?? []).length, 1);
+    root.display(sampleEntries, sampleRequests);
+    assert.equal(row(entry.number).querySelector('details'), details);
+    assert.equal(details.open, true); assert.equal(dialog.open, true);
+    if (entry.number % 2) dialog.escape();
+    else nodes.get('close-inspector').click();
+    assert.equal(dialog.open, false); assert.equal(document.activeElement, trigger);
+  }
+  assert.equal(Object.keys(sampleRequests).length, 12);
+  assert.equal(new Set(sampleEntries.map(entry => entry.choice.confidence)).size, 3);
+  assert.equal(new Set(sampleEntries.map(entry => entry.requestIdentity.requestedModel)).size, 3);
+  assert.equal(new Set(sampleEntries.map(entry => entry.responseMetadata.usage.total)).size, 12);
+  assert.equal(new Set(Object.values(sampleRequests).map(request => request.instructions)).size, 12);
+  assert.ok(new Set(Object.values(sampleRequests).map(request => request.context.length)).size >= 3);
+  assert.equal(fetch.mock.calls.length, 0); assert.equal(Worker.mock.calls.length, 0);
+});
 
 it('keeps newest-first row nodes/disclosures/focus while inspecting the original historical request', () => {
   const first = entry();
