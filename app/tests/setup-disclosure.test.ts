@@ -277,8 +277,9 @@ describe('Setup disclosure', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     assert.match(html, /<details id="setup"[^>]* open[^>]*>/);
     assert.match(html, /<summary><h2 id="setup-title">Setup<\/h2><\/summary>/);
-    assert.match(html, /<label for="iwad">Doom game file<\/label>/);
-    assert.match(html, /<p id="asset-note" class="help">Choose a local Doom or Freedoom \.wad file\. It stays in your browser\. Refresh to change files\.<\/p>/);
+    assert.match(html, /<label for="iwad">Choose local IWAD<\/label>/);
+    assert.match(html, /<button id="included-freedoom"[^>]* disabled>Use included Freedoom<\/button>/);
+    assert.match(html, /<p id="asset-note" class="help">Included Freedoom Phase 1 v0\.13\.0/);
     assert.match(html, /<details class="setup-details">\s*<summary>Privacy &amp; API key details<\/summary>/);
     const details = html.match(/<details class="setup-details">([\s\S]*?)<\/details>/)![1];
     assert.match(details, /<p id="openrouter-key-settings" class="help" hidden>Manage or revoke keys in <a href="https:\/\/openrouter.ai\/settings\/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings<\/a>\.<\/p>/);
@@ -288,9 +289,11 @@ describe('Setup disclosure', () => {
   });
 
   it('waits for preparation and a committed trimmed key without interrupting entry', () => {
-    show({ phase: 'unprepared', prepared: false });
+    session.ports.present({ iwadEnabled: true });
+    show({ phase: 'unprepared', prepared: false, controls: { ready: false, stop: false, tics: false, iwad: true } });
     assert.equal(element('#next').disabled, true);
     element('#iwad').files = [{ name: 'synthetic.wad' }];
+    emit(element('#iwad'), 'change');
     show({ phase: 'preparing', prepared: false });
     assert.equal(element('#setup').open, true);
     assert.match(element('#setup-asset').textContent, /selected/);

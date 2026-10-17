@@ -43,7 +43,7 @@ it('permits both exact API origins by default and preserves bounded dev tooling'
   ]) {
     vi.stubEnv('TYPESAFE_API_KEY', 'offline-server-dummy-only');
     const raw = config(env);
-    const transformed = raw.plugins[0]?.transformIndexHtml(html) ?? html;
+    const transformed = raw.plugins.find(p => p.name === 'dev-csp')?.transformIndexHtml(html) ?? html;
     const devServe = env.command === 'serve' && !env.isPreview;
     const jev = devServe && env.mode === 'jev';
     const impeccable = devServe && env.mode === 'impeccable';
@@ -487,6 +487,8 @@ it('blocks duplicate sign-in and WAD preparation while connecting and after WAD 
   assert.equal(h.element('#openrouter-model').disabled, true);
   assert.equal(h.element('#openrouter-model-gpt').checked, true);
   assert.equal(h.element('#iwad').disabled, true);
+  assert.equal(h.element('#included-freedoom').disabled, true);
+  h.element('#included-freedoom').dispatchEvent(new Event('click'));
   h.element('#iwad').files = [{}];
   h.element('#iwad').dispatchEvent(new Event('change'));
   await vi.waitFor(() => assert.equal(h.location.assign.mock.calls.length, 1));
@@ -510,6 +512,48 @@ it('blocks duplicate sign-in and WAD preparation while connecting and after WAD 
   selected.element('#openrouter-signin-button').dispatchEvent(new Event('click'));
   await settleStartup();
   assert.equal(selected.location.assign.mock.calls.length, 0);
+});
+
+it('keeps both IWAD choices and sign-in available until preparation, then shares admission and retry locks', async () => {
+  vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'production'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture();
+  const fetch = vi.fn(() => assert.fail('No asset or provider fetch before the admitted file read'));
+  vi.stubGlobal('fetch', fetch);
+  await import('../src/main.ts?included-freedoom-controls-test');
+  await settleStartup();
+  assert.equal(h.element('#openrouter-signin-button').disabled, false);
+  for (const id of ['#iwad', '#included-freedoom']) assert.equal(h.element(id).disabled, false);
+  assert.equal(session.controller.prepare.mock.calls.length, 0);
+  const present = (phase, iwad) => session.ports.present({ session: {
+    phase, prepared: phase === 'ready', hasClient: false, verifiedTics: 0,
+    evidence: { decisions: [] }, controls: { ready: phase === 'ready', stop: false, tics: false, iwad },
+  } });
+  session.controller.prepare.mockImplementation(() => { present('preparing', false); return Promise.resolve(); });
+  h.element('#included-freedoom').dispatchEvent(new Event('click'));
+  assert.equal(session.controller.prepare.mock.calls.length, 1);
+  const [file] = session.controller.prepare.mock.calls[0];
+  assert.equal(file.size, 28795076);
+  assert.equal(typeof file.arrayBuffer, 'function');
+  assert.equal(h.element('#openrouter-signin-button').disabled, true);
+  assert.match(h.element('#setup-asset').textContent, /Included Freedoom Phase 1 v0.13.0/);
+  for (const phase of ['preparing', 'ready', 'busy', 'error', 'terminal']) {
+    present(phase, false);
+    for (const id of ['#iwad', '#included-freedoom']) assert.equal(h.element(id).disabled, true);
+    h.element('#included-freedoom').dispatchEvent(new Event('click'));
+    h.element('#iwad').files = [{ name: 'local.wad' }];
+    h.element('#iwad').dispatchEvent(new Event('change'));
+    assert.equal(session.controller.prepare.mock.calls.length, 1);
+  }
+  present('unprepared', true);
+  for (const id of ['#iwad', '#included-freedoom']) assert.equal(h.element(id).disabled, false);
+  assert.equal(h.element('#openrouter-signin-button').disabled, true, 'Existing post-admission auth semantics remain');
+  h.element('#iwad').dispatchEvent(new Event('change'));
+  assert.equal(session.controller.prepare.mock.calls.length, 2);
+  assert.match(h.element('#setup-asset').textContent, /local.wad/);
+  assert.equal(fetch.mock.calls.length, 0);
+  assert.equal(h.worker.mock.calls.length, 0);
+  assert.equal(session.controller.next.mock.calls.length, 0);
+  assert.equal(session.controller.startContinuous.mock.calls.length, 0);
 });
 
 it('shows fixed failure/cancellation status and preserves manual fallback with no native work', async () => {

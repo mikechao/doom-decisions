@@ -1,0 +1,3 @@
+# Preserve pinned distribution bytes, including BOM, CRLF and upstream whitespace.
+third_party/freedoom/0.13.0/*.txt -text -whitespace
+third_party/freedoom/0.13.0/freedoom1.wad.gz -text

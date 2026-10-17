@@ -1,4 +1,32 @@
 import { defineConfig } from 'vite';
+import freedoom from './src/freedoom-identity.json' with { type: 'json' };
+
+// Vite's static middleware labels *.gz as HTTP Content-Encoding:gzip. This
+// particular asset is a gzip FILE: leave its bytes for DecompressionStream.
+function freedoomFileHeaders() {
+  let assetPath;
+  const headers = (req, res, next) => {
+    if (req.url?.split('?')[0] === assetPath) {
+      res.setHeader('Content-Type', 'application/gzip');
+      res.setHeader('Content-Encoding', 'identity');
+    }
+    next();
+  };
+  return {
+    name: 'freedoom-gzip-file',
+    configResolved(config) {
+      const base =
+        config.base === './' || config.base === '' ? '/' : config.base;
+      assetPath = base + freedoom.gzip.path;
+    },
+    configureServer(server) {
+      server.middlewares.use(headers);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(headers);
+    },
+  };
+}
 
 const strictCsp =
   "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src data:; worker-src 'self'; connect-src 'self' https://openrouter.ai https://api.openai.com; base-uri 'none'; form-action 'none'";
@@ -132,8 +160,8 @@ export default defineConfig(({ command, mode, isPreview }) => ({
     : {}),
   // Vite preview otherwise inherits server.proxy. This is never a preview API.
   preview: { proxy: {} },
-  plugins:
-    command === 'serve' && !isPreview
+  plugins: [
+    ...(command === 'serve' && !isPreview
       ? [
           {
             name: 'dev-csp',
@@ -148,5 +176,7 @@ export default defineConfig(({ command, mode, isPreview }) => ({
               ),
           },
         ]
-      : [],
+      : []),
+    freedoomFileHeaders(),
+  ],
 }));

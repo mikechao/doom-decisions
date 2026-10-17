@@ -36,10 +36,11 @@
               <p id="openrouter-auth-status" class="help" role="status" aria-live="polite" aria-atomic="true"></p>
             </div>
             <div class="setup-file">
-              <label for="iwad">Doom game file</label>
+              <button id="included-freedoom" type="button" aria-describedby="asset-note" disabled>Use included Freedoom</button>
+              <label for="iwad">Choose local IWAD</label>
               <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
               <span id="setup-asset"></span>
-              <p id="asset-note" class="help">Choose a local Doom or Freedoom .wad file. It stays in your browser. Refresh to change files.</p>
+              <p id="asset-note" class="help">Included Freedoom Phase 1 v0.13.0 downloads about 9.83 MiB when chosen. Or choose your own .wad; local files stay in your browser. Sign in before either choice, or use an API key after preparation. Refresh to change a prepared game.</p>
             </div>
             <div id="manual-key">
               <label id="key-label" for="key">Temporary OpenRouter API key</label>
@@ -56,7 +57,7 @@
         </details>
         <section class="control-bar control-bar--amber-gate" aria-labelledby="controls-title">
           <h2 id="controls-title">Decision controls</h2>
-          <p id="control-prerequisite" class="control-prerequisite">Select a local Doom IWAD to prepare the game.</p>
+          <p id="control-prerequisite" class="control-prerequisite">Use included Freedoom or choose a local IWAD to prepare the game.</p>
           <div class="manual-controls">
             <div class="shared-duration">
               <div class="duration">
@@ -169,6 +170,7 @@
     <footer>
       <p>Continuous mode starts only when you choose Start. Preparation uses one explicit neutral tic and no API request. Snapshots, rendering and idle time advance zero gameplay tics. Refresh to start a new game and clear in-memory credentials.</p>
       <p>Engine: <a href="./notices/doom-LICENSE.txt">GPL license</a> · SDK: <a href="./notices/openai/LICENSE">Apache license</a> · Font: <a href="./font-notices/oswald/OFL.txt">Oswald · SIL OFL 1.1</a>.</p>
+      <p>Freedoom Phase 1 v0.13.0: <a href="./notices/freedoom/COPYING.txt">BSD 3-Clause license</a> · <a href="./notices/freedoom/CREDITS.txt">Credits</a> · <a href="./notices/freedoom/CREDITS-MUSIC.txt">Music credits</a>. No endorsement by Freedoom or its contributors is implied.</p>
     </footer>
   </main>
 </body>

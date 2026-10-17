@@ -112,7 +112,7 @@ it('has no proxy or secret requirement in default dev, Impeccable, build, produc
     assert.equal(raw.server?.proxy, undefined);
     assert.deepEqual(raw.preview.proxy, {});
     assert.deepEqual(raw.worker, { format: 'es' });
-    const plugin = raw.plugins[0];
+    const plugin = raw.plugins.find(p => p.name === 'dev-csp');
     const transformed = plugin ? plugin.transformIndexHtml(html) : html;
     assert.match(transformed, /connect-src 'self'[^;]* https:\/\/api.openai.com/);
     assert.equal(transformed.includes('https://api.typesafe.ai'), false);

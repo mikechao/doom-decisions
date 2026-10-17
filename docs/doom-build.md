@@ -20,12 +20,17 @@ Binaryen transformations; `scripts/inspect_doom.mjs` checks the final interface.
 fingerprint and exact WASM bytes/interface before staging `doom.wasm`, sanitized
 `doom-build.json` and license notices in ignored `app/public/`. Vite packages the
 app-owned `app/src/worker.ts` as an ES module Worker and copies static assets to
-`app/dist/`; emitted WASM identity and absence of `.wad` files are checked.
+`app/dist/`; emitted WASM identity, pinned Freedoom gzip/notices and absence of raw `.wad` or alternate `.wad.gz` files are checked.
 The candidate and staged `public` are verified before atomically publishing the
 current selection. Current means a verified native engine, not a successful
 frontend build; a subsequent Vite failure still makes `build.sh` exit nonzero.
-The browser reads the user's locally selected IWAD; none is shipped. Best-effort
-compatibility requires verified Doom E1M1 preparation; see the
+The static site includes only the pinned compressed Phase 1 asset from
+`third_party/freedoom/0.13.0/`, plus release license and credits. Staging verifies
+source/output compressed hashes, gzip integrity, original WAD length/hash and
+notice bytes. Builds never download or recompress it; the engine embeds no WAD.
+The browser fetches/decompresses it only on an explicit choice, or reads a local
+IWAD through the same preparation interface. Best-effort compatibility requires
+verified Doom E1M1 preparation; see the
 [local IWAD support boundary](../app/README.md#local-iwad-support).
 
 `./build.sh --frontend-only` reuses the artifact selected by
