@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
 const strictCsp =
-  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'self' https://openrouter.ai https://api.openai.com; base-uri 'none'; form-action 'none'";
+  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src data:; worker-src 'self'; connect-src 'self' https://openrouter.ai https://api.openai.com; base-uri 'none'; form-action 'none'";
 // Vite serves imported CSS through inline style elements during development.
 const devCsp = strictCsp.replace(
   "style-src 'self'",

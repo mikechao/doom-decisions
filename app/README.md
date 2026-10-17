@@ -80,6 +80,33 @@ detection, but independently instrumented browser/WASM terminal evidence remains
 uncollected, including exit-pending and early-prefix proof. Synthetic tests do not
 establish that runtime evidence; see [prototype evidence](#prototype-acceptance-and-evidence).
 
+## Decision history inspector
+
+Expand a history entry and choose **Inspect decision #N** to open its native
+dialog. The image, instructions, context and ordered permitted actions come
+from that decision's immutable request, not the current Canvas or tic setting.
+Request preparation and SDK invocation are shown separately. Pending, failed,
+canceled and terminal entries remain inspectable with unavailable fields labeled.
+The requested provider/model is recorded during encoding; a provider-reported
+model is shown separately. Only validated action probabilities/confidence and
+reported nonnegative safe-integer token counts are displayed. Missing counts
+are **Unavailable**, including total tokens for OpenRouter and direct Jev;
+the app does not calculate a total or estimate usage. A real reported zero stays zero.
+
+The light-DOM `<decision-history>` element owns the rows, dialog and scroll cue.
+Close or Escape returns focus to the originating button when it still exists.
+Inspection does not pause continuous play; close the dialog to access Stop.
+It never captures another frame, starts a request or advances Doom.
+
+Requests live only in the current Run's memory, outside Advanced evidence JSON.
+Refresh clears them. History is unbounded for this prototype: base64 adds roughly
+one third to compressed PNG size before JavaScript string overhead, and a decoded
+640×400 RGBA image needs about 0.98 MiB. Only the selected image is assigned to an
+`img`, its source is removed on close, and no historical RGBA arrays are retained.
+Snapshots share frozen references across presentation updates. Long sessions can
+therefore consume substantial memory; real-game PNG sizes have not been measured
+for this change. The CSP permits `data:` images only, with other directives unchanged.
+
 ## Prerequisites and clean checkout
 
 Provision tools yourself; the build never installs them. The supported engine

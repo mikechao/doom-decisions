@@ -26,6 +26,20 @@ export type DecisionDiagnostics = {
   requestId: string | null;
   http: number | null;
   latencyMs: number | null;
+  // Encoding identifies the prepared call; only beforeCreate marks invocation.
+  requestIdentity?: Readonly<{
+    provider: 'OpenRouter' | 'OpenAI' | 'TypeSafe / Jev';
+    requestedModel: string;
+  }>;
+  sdkInvoked?: boolean;
+  responseMetadata?: Readonly<{
+    reportedModel: string | null;
+    usage: Readonly<{
+      input: number | null;
+      output: number | null;
+      total: number | null;
+    }>;
+  }>;
 };
 export type DecisionHooks = {
   assertFresh(): void;

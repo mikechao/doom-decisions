@@ -4,10 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'self' https://openrouter.ai https://api.openai.com; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src data:; worker-src 'self'; connect-src 'self' https://openrouter.ai https://api.openai.com; base-uri 'none'; form-action 'none'">
   <title>Doom Decisions</title>
   <script type="module" src="./src/main.ts"></script>
-  <script type="module" src="./src/history-scroll.ts"></script>
 </head>
 <body>
   <main>
@@ -115,7 +114,7 @@
           </div>
         </section>
       </section>
-      <section class="history-panel" aria-labelledby="history-title">
+      <decision-history id="decision-history" class="history-panel" role="region" aria-labelledby="history-title">
         <h2 id="history-title">AI Decision History</h2>
         <p class="history-order help">Newest first</p>
         <p id="history-empty" class="help">No AI decisions yet. Preparation's neutral tic is not an AI decision.</p>
@@ -125,7 +124,31 @@
             <path d="M10 3v13m-5-5 5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </p>
-      </section>
+        <dialog id="decision-inspector" class="decision-prompt decision-inspector" aria-labelledby="inspector-title">
+          <div class="decision-prompt-content">
+            <div class="decision-prompt-heading">
+              <h2 id="inspector-title">Decision inspector</h2>
+              <button id="close-inspector" type="button" autofocus>Close</button>
+            </div>
+            <p id="inspector-state"></p>
+            <p id="inspector-request-state" class="help"></p>
+            <p id="inspector-image-status" class="help"></p>
+            <img id="inspector-image" width="640" height="400" alt="Doom screenshot captured for this decision's request" hidden>
+            <h3>Request diagnostics</h3>
+            <pre id="inspector-diagnostics"></pre>
+            <h3>Token usage</h3>
+            <pre id="inspector-usage"></pre>
+            <h3>Decision result</h3>
+            <pre id="inspector-answer"></pre>
+            <h3>Exact request instructions</h3>
+            <pre id="inspector-instructions"></pre>
+            <h3>Exact request context</h3>
+            <pre id="inspector-context"></pre>
+            <h3>Permitted actions (request order)</h3>
+            <pre id="inspector-actions"></pre>
+          </div>
+        </dialog>
+      </decision-history>
     </div>
     <dialog id="prompt-dialog" class="decision-prompt" aria-labelledby="prompt-title" aria-describedby="prompt-description">
       <div class="decision-prompt-content">

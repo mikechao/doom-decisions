@@ -2,6 +2,7 @@ import { OpenAI } from 'openai/client';
 import type { DecisionCreateParams } from 'openai/resources/decisions';
 import { VERSION } from 'openai/version';
 import { DecisionFailure } from './decision.ts';
+import { readDecisionMetadata } from './decision-metadata.ts';
 import type {
   DecisionProviderFactory,
   DecisionRequest,
@@ -90,6 +91,10 @@ export const openAiDecisionProviderFactory: DecisionProviderFactory = {
         // Keep encoding synchronous and outside the executor's error mapping,
         // as before: construction failures never charge an SDK invocation.
         const preparedRequest = encodeOpenAIDecisionRequest(input);
+        diagnostics.requestIdentity = {
+          provider: 'OpenAI',
+          requestedModel: preparedRequest.model,
+        };
         return requestDecision(
           client,
           preparedRequest,
@@ -97,7 +102,14 @@ export const openAiDecisionProviderFactory: DecisionProviderFactory = {
           diagnostics,
           hooks,
           startedAt,
-        ).then(decodeOpenAIDecision);
+        ).then((data) => {
+          diagnostics.responseMetadata = readDecisionMetadata(
+            data,
+            'OpenAI',
+            apiKey,
+          );
+          return decodeOpenAIDecision(data);
+        });
       },
     };
   },

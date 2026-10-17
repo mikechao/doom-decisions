@@ -433,6 +433,18 @@ summary:hover {
 .decision-prompt::backdrop {
   background: rgb(0 0 0 / 60%);
 }
+.decision-inspector h3 {
+  margin-top: 0.5rem;
+}
+#inspector-image {
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
+.inspect-decision,
+#close-inspector {
+  padding: 0.625rem 0.75rem;
+}
 .decision-prompt-content {
   display: grid;
   gap: 1rem;
@@ -818,6 +830,11 @@ pre {
   font:
     0.8125rem / 1.6 ui-monospace,
     monospace;
+}
+.decision-inspector pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
 }
 .advanced {
   margin-top: 1.5rem;

@@ -9,6 +9,7 @@ import {
   VERSION,
 } from '@typesafe-ai/sdk';
 import { DecisionFailure, DecisionStopped } from './decision.ts';
+import { readDecisionMetadata } from './decision-metadata.ts';
 import type {
   DecisionProviderFactory,
   DecisionRequest,
@@ -212,6 +213,10 @@ export const jevDecisionProviderFactory: DecisionProviderFactory = {
         try {
           checkDeadline();
           const prepared = encodeJevDecisionRequest(input);
+          diagnostics.requestIdentity = {
+            provider: 'TypeSafe / Jev',
+            requestedModel: prepared.model,
+          };
           const client = new TypeSafeClient({
             apiKey,
             baseURL: '/__jev',
@@ -260,6 +265,11 @@ export const jevDecisionProviderFactory: DecisionProviderFactory = {
           hooks.onReadStateChange();
           const result = body.then(({ data }) => {
             checkDeadline();
+            diagnostics.responseMetadata = readDecisionMetadata(
+              data,
+              'TypeSafe / Jev',
+              apiKey,
+            );
             return decodeJevDecision(data, input.permittedActions);
           });
           return await Promise.race([result, cancelled]);

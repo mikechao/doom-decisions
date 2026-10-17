@@ -23,10 +23,11 @@ vi.mock('../src/session-controller', () => ({
   },
 }));
 vi.mock('../src/decision-history', () => ({
-  createDecisionHistory: () => () => {},
+  defineDecisionHistory: () => {},
 }));
 
 class Element extends EventTarget {
+  display = vi.fn();
   value = '';
   valueAsNumber = 2;
   disabled = false;

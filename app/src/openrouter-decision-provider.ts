@@ -10,6 +10,7 @@ import {
 } from '@openrouter/sdk/models/errors';
 import type { CreateApiAlphaDecisionsRequest } from '@openrouter/sdk/models/operations/createapialphadecisions.js';
 import { DecisionFailure, DecisionStopped } from './decision.ts';
+import { readDecisionMetadata } from './decision-metadata.ts';
 import type {
   DecisionProviderFactory,
   DecisionRequest,
@@ -191,6 +192,10 @@ export function createOpenRouterDecisionProviderFactory(
           try {
             checkDeadline();
             const prepared = encodeOpenRouterDecisionRequest(input, model);
+            diagnostics.requestIdentity = {
+              provider: 'OpenRouter',
+              requestedModel: prepared.decisionsRequest.model,
+            };
             checkDeadline();
             hooks.beforeCreate();
             const pending = client.alpha.decisions.create(prepared, {
@@ -222,6 +227,11 @@ export function createOpenRouterDecisionProviderFactory(
             hooks.onReadStateChange();
             const result = pending.then((data) => {
               checkDeadline();
+              diagnostics.responseMetadata = readDecisionMetadata(
+                data,
+                'OpenRouter',
+                apiKey,
+              );
               diagnostics.requestId =
                 data.id &&
                 /^gen-dec-[A-Za-z0-9_-]{1,200}$/.test(data.id) &&

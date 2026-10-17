@@ -10,8 +10,10 @@ import {
 } from './decision';
 import { buildDefaultDecisionRequest } from './decision-request.ts';
 import type {
+  DecisionDiagnostics,
   DecisionProvider,
   DecisionProviderFactory,
+  DecisionRequest,
 } from './decision-provider.ts';
 import { checkPrepared, passiveCheck } from './native-observation-checks.ts';
 import type {
@@ -58,7 +60,7 @@ export type DecisionStage =
   | 'completed'
   | 'cleanup'
   | 'ended';
-type DecisionEntry = {
+type DecisionEntry = DecisionDiagnostics & {
   number: number;
   selectedTics: number;
   stage: DecisionStage;
@@ -68,9 +70,6 @@ type DecisionEntry = {
   result: Frame | null;
   execution: Execution | null;
   cumulativeVerifiedTics: number;
-  requestId: string | null;
-  latencyMs: number | null;
-  http: number | null;
   waitUnchanged: boolean | null;
   choice?: ReturnType<typeof validateChoice>;
 };
@@ -112,6 +111,9 @@ type Run = {
   sdkRead?: Promise<void>;
   continuous?: ContinuousRun;
   evidence: Evidence;
+  // Immutable request objects are shared with presentation, never cloned/serialized
+  // with evidence. No historical RGBA buffers or provider credentials live here.
+  inspectorRequests: Readonly<Record<number, DecisionRequest>>;
   worker?: Worker | null;
   cancel?: ((error: Error) => void) | null;
   last?: Observation;
@@ -149,6 +151,7 @@ export type SessionPresentation = Readonly<{
     verifiedTics: number;
     frame?: Frame;
     evidence: Evidence;
+    inspectorRequests: Readonly<Record<number, DecisionRequest>>;
     continuous?: ContinuousRun;
     waitingForSdk: boolean;
     hasClient: boolean;
@@ -205,6 +208,7 @@ export function createSessionController(
         frame: run.frame ? { ...run.frame } : undefined,
         // Presentation receives detached data, never the mutable lifecycle owner.
         evidence: structuredClone(run.evidence),
+        inspectorRequests: run.inspectorRequests,
         continuous: continuous ? { ...continuous } : undefined,
         waitingForSdk: !!run.sdkRead,
         hasClient: !!run.client,
@@ -396,6 +400,10 @@ export function createSessionController(
       png,
       permittedActions,
     );
+    run.inspectorRequests = Object.freeze({
+      ...run.inspectorRequests,
+      [entry.number]: preparedRequest,
+    });
     return run.client.request(
       preparedRequest,
       run,
@@ -411,6 +419,7 @@ export function createSessionController(
             );
             continuous.used++;
           }
+          entry.sdkInvoked = true;
         },
         onReadStateChange: () => display(run),
       },
@@ -498,6 +507,7 @@ export function createSessionController(
       latencyMs: null,
       http: null,
       waitUnchanged: null,
+      sdkInvoked: false,
     };
     run.evidence.decisions.push(entry);
     display(
@@ -765,6 +775,7 @@ export function createSessionController(
       phase: 'preparing',
       verifiedTics: 0,
       evidence: { sdk, engine, operations: [], frames: [], decisions: [] },
+      inspectorRequests: Object.freeze({}),
     };
     current = run;
     ports.clearCanvas();

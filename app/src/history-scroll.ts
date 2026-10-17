@@ -1,13 +1,17 @@
-// Presentation only: observe the history viewport without touching game state.
-for (const panel of document.querySelectorAll<HTMLElement>('.history-panel')) {
-  const history = panel.querySelector<HTMLOListElement>('#history');
-  if (!history || !panel.querySelector('.history-scroll-cue')) continue;
+// Presentation only. The history element owns observer/listener cleanup.
+export function observeHistoryScroll(
+  panel: HTMLElement,
+  history: HTMLOListElement,
+) {
   let scheduled = false;
+  let frame = 0;
+  let active = true;
   const update = () => {
     if (scheduled) return;
     scheduled = true;
-    requestAnimationFrame(() => {
+    frame = requestAnimationFrame(() => {
       scheduled = false;
+      if (!active) return;
       panel.dataset.historyMore = String(
         history.clientHeight > 0 &&
           history.scrollHeight - history.clientHeight - history.scrollTop > 1,
@@ -32,7 +36,8 @@ for (const panel of document.querySelectorAll<HTMLElement>('.history-panel')) {
     }
     update();
   };
-  new MutationObserver(observeRows).observe(history, {
+  const mutations = new MutationObserver(observeRows);
+  mutations.observe(history, {
     childList: true,
     subtree: true,
     attributes: true,
@@ -40,4 +45,11 @@ for (const panel of document.querySelectorAll<HTMLElement>('.history-panel')) {
   });
   history.addEventListener('scroll', update, { passive: true });
   observeRows();
+  return () => {
+    active = false;
+    cancelAnimationFrame(frame);
+    resize.disconnect();
+    mutations.disconnect();
+    history.removeEventListener('scroll', update);
+  };
 }

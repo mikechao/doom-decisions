@@ -19,7 +19,7 @@ vi.mock('../src/session-controller', () => ({
     session.ports = ports; session.factory = factory; return session.controller;
   },
 }));
-vi.mock('../src/decision-history', () => ({ createDecisionHistory: () => () => {} }));
+vi.mock('../src/decision-history', () => ({ defineDecisionHistory: () => {} }));
 afterEach(() => {
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetAllMocks(); vi.restoreAllMocks();
 });
@@ -27,7 +27,7 @@ afterEach(() => {
 it('permits both exact API origins by default and preserves bounded dev tooling', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const sourcePolicy = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
-  assert.equal(sourcePolicy, "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; worker-src 'self'; connect-src 'self' https://openrouter.ai https://api.openai.com; base-uri 'none'; form-action 'none'");
+  assert.equal(sourcePolicy, "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; font-src 'self'; img-src data:; worker-src 'self'; connect-src 'self' https://openrouter.ai https://api.openai.com; base-uri 'none'; form-action 'none'");
   for (const env of [
     { command: 'serve', mode: 'openrouter' },
     { command: 'serve', mode: 'development' },
@@ -54,6 +54,8 @@ it('permits both exact API origins by default and preserves bounded dev tooling'
       .replace("script-src 'self'", "script-src 'self' http://localhost:8400")
       .replace("connect-src 'self'", "connect-src 'self' http://localhost:8400 ws://127.0.0.1:5173");
     assert.equal(policy, expected);
+    assert.match(policy, /(?:^|; )img-src data:;/);
+    assert.doesNotMatch(policy, /img-src[^;]*(?:https?:|blob:|'self'|\*)/);
     assert.equal(policy.includes('https://openrouter.ai'), !jev);
     assert.equal(policy.includes('https://api.openai.com'), !jev);
     if (env.command === 'build' || env.isPreview) assert.equal(transformed, html);
@@ -82,6 +84,7 @@ it('rejects ambiguous or altered source CSP and bounds Live rewrites', () => {
 });
 
 class Element extends EventTarget {
+  display = vi.fn();
   value = ''; valueAsNumber = 2; disabled = true; hidden = false; open = true; checked = false;
   textContent = ''; dataset = {}; files = [];
   getContext() { return {}; }

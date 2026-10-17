@@ -1,4 +1,7 @@
-import { createDecisionHistory } from './decision-history';
+import {
+  defineDecisionHistory,
+  type DecisionHistoryElement,
+} from './decision-history';
 import { deriveDecisionControls } from './decision-controls';
 import { formatDefaultDecisionInstructions } from './decision-request';
 import type { DecisionProviderFactory } from './decision-provider';
@@ -73,8 +76,7 @@ type Elements = {
   '#close-prompt': HTMLButtonElement;
   '#prompt-text': HTMLParagraphElement;
   '#continuous-state': HTMLParagraphElement;
-  '#history': HTMLOListElement;
-  '#history-empty': HTMLParagraphElement;
+  '#decision-history': DecisionHistoryElement;
   '#outcome-number': HTMLSpanElement;
   '#outcome-action': HTMLSpanElement;
   '#outcome-evidence': HTMLParagraphElement;
@@ -139,10 +141,8 @@ function displaySetupStatus(run: NonNullable<SessionPresentation['session']>) {
     ? `${file.name} · ${prepared ? 'prepared' : 'selected'}`
     : '';
 }
-const displayHistory = createDecisionHistory(
-  $('#history'),
-  $('#history-empty'),
-);
+defineDecisionHistory();
+const history = $('#decision-history');
 type SessionRunPresentation = NonNullable<SessionPresentation['session']>;
 let latestSession: SessionRunPresentation | undefined;
 let setupAutoCollapseDone = false;
@@ -295,7 +295,7 @@ function display(view: SessionPresentation) {
     : run.hasClient
       ? 'Client in memory; blank keeps it. Authentication unverified.'
       : 'Client in memory • Refresh clears it';
-  displayHistory(run.evidence.decisions);
+  history.display(run.evidence.decisions, run.inspectorRequests);
   const outcome = projectLatestOutcome(
     run.evidence.decisions.at(-1),
     run.frame,
