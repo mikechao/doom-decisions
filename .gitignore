@@ -9,6 +9,7 @@
 /app/public/doom.wasm
 /app/public/doom-build.json
 /app/public/notices/
+/app/public/iwads/
 *.[wW][aA][dD]
 .env
 .env.*

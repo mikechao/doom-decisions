@@ -15,13 +15,13 @@ function session(overrides = {}) {
 describe('Decision Controls prerequisite presentation', () => {
   it('asks the user to select an IWAD before a session is prepared', () => {
     assert.deepEqual(deriveDecisionControls(undefined, false), {
-      bannerText: 'Select a local Doom IWAD to prepare the game.',
+      bannerText: 'Use included Freedoom or choose a local IWAD to prepare the game.',
       buttonsEnabled: false,
     });
     assert.deepEqual(
       deriveDecisionControls(session({ prepared: false, phase: 'unprepared' }), true),
       {
-        bannerText: 'Select a local Doom IWAD to prepare the game.',
+        bannerText: 'Use included Freedoom or choose a local IWAD to prepare the game.',
         buttonsEnabled: false,
       },
     );

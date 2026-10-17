@@ -10,8 +10,9 @@ export type DecisionControlsPresentation = Readonly<{
   buttonsEnabled: boolean;
 }>;
 
-const selectIwad = 'Select a local Doom IWAD to prepare the game.';
-const preparing = 'Preparing Doom from the selected local IWAD…';
+const selectIwad =
+  'Use included Freedoom or choose a local IWAD to prepare the game.';
+const preparing = 'Preparing Doom from the selected IWAD…';
 
 export function deriveDecisionControls(
   session: DecisionReadiness | undefined,

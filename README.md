@@ -14,9 +14,7 @@ There are 2 modes
 
 ## Start a "game"
 
-Get a Doom IWAD file, such as [Freedoom Phase 1](https://freedoom.github.io/download.html).
-
-Choose **Sign in with OpenRouter** before selecting the WAD. Authorization creates an OpenRouter API key held only in page memory. Then select your local `freedoom1.wad`. **Use an API key instead** provides a manual OpenRouter-key alternative. Prompts and screenshots go directly through OpenRouter and may reach its downstream model provider; Decisions can incur charges. Refresh clears local access without revoking the remote key. This prototype requires trusting the page and its scripts. See [key handling](app/README.md#temporary-browser-direct-credentials).
+Choose **Sign in with OpenRouter** before either game-file choice. Authorization creates an OpenRouter API key held only in page memory. Then choose **Use included Freedoom** (official Phase 1 v0.13.0, about 9.83 MiB downloaded only on click), or **Choose local IWAD** for your own Doom/Freedoom `.wad`. Preparation verifies one neutral tic and makes no Decisions request. **Use an API key instead** provides a manual OpenRouter-key alternative after preparation. Prompts and screenshots go directly through OpenRouter and may reach its downstream model provider; Decisions can incur charges. Refresh clears local access without revoking the remote key. This prototype requires trusting the page and its scripts. See [key handling](app/README.md#temporary-browser-direct-credentials) and [included Freedoom provenance/notices](third_party/freedoom/0.13.0/PROVENANCE.md).
 
 Click "Next Decision"
 or

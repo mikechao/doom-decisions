@@ -5,7 +5,7 @@ TypeScript **7.0.2**, Vite **8.3.4**, plain CSS, and official
 **@openrouter/sdk 1.4.25** by default, with **openai 7.32.0** for the explicit
 experimental direct OpenAI alternative. The HTML entry loads `src/main.ts`;
 TypeScript checks types without emitting JavaScript, and Vite owns bundling.
-The app automatically prepares real E1M1 on local IWAD selection and verifies exactly
+The app prepares real E1M1 on explicit included-Freedoom or local IWAD selection and verifies exactly
 one mandatory neutral first tic. Each **Next Decision** click then makes at most
 one official SDK Decisions request using the current rendered image, executes
 one allowlisted action on the same Worker, and returns to idle. **Start Continuous
@@ -33,8 +33,35 @@ controlled Doom E1M1 preparation must succeed, including the single neutral tic,
 frame/Canvas verification and passive/idle proofs. Freedoom **0.13.0 Phase 1** and
 the owner's local Doom shareware **DOOM1.WAD** have worked in owner-run trials.
 This does not promise support for Doom II, PWADs, mods or every IWAD variant.
-No WAD is bundled, staged, uploaded or redistributed. Initial size/read errors allow
-selection retry; failed WASM verification or Worker/native work requires reload.
+**Use included Freedoom** downloads the pinned official Phase 1 v0.13.0 gzip file
+only when clicked (10,304,935 bytes, about 9.83 MiB). The browser uses native
+`DecompressionStream('gzip')`, verifies compressed and original byte identities,
+and passes the original 28,795,076-byte WAD through the same preparation interface.
+No WAD download, Worker or game preparation starts on page load. Unsupported
+decompression, fetch, or asset identity failures allow another explicit included
+choice or local selection; failed WASM verification or Worker/native work requires
+reload. Existing retirement clears in-memory credentials even on retryable asset
+failure; sign-in after admission requires refresh, or use BYOK after preparation.
+Local files stay in the browser and are never staged or uploaded.
+
+The reviewed source is `third_party/freedoom/0.13.0/freedoom1.wad.gz`; the
+[provenance record](../third_party/freedoom/0.13.0/PROVENANCE.md) records the pinned
+archive, WAD, gzip, compression command and distribution notices. Only this gzip
+may ship, with complete BSD 3-Clause license, credits and music credits under
+`notices/freedoom/`. Raw WADs and alternate/duplicate compressed WADs are rejected.
+Normal builds never acquire or recompress game assets. The engine still embeds
+no IWAD; the existing local-file admission has no fixed identity allowlist.
+
+Serve `.wad.gz` as a gzip **file**, not by labeling those stored bytes with
+`Content-Encoding: gzip`. Fetch performs HTTP decoding before the adapter sees
+bytes; the adapter requires the pinned compressed bytes before decompressing
+once. Incorrect transparent decoding fails safely. Vite's dev/preview header hook
+serves only this asset as `application/gzip` with `Content-Encoding: identity`,
+overriding Vite's default `.gz` HTTP decoding behavior. It adds no production
+middleware or CSP allowances. Verify response headers and
+delivered bytes in local preview and the actual deployed host. The 10,304,935-byte
+asset is below the 25 MiB (26,214,400-byte) Cloudflare individual-file limit;
+compression/build checks do not prove browser or deployed configuration behavior.
 
 Native lump consumers still have unchecked malformed-input paths. Worker isolation,
 retirement and the existing two-second request watchdog provide best-effort failure
@@ -169,7 +196,9 @@ The handoff rechecks the successful manifest, controlled profile, enabled
 fixtures, absent embedded IWAD, bytes/hash, source-input fingerprint, and typed
 interface with `scripts/inspect_doom.mjs`. It stages `doom.wasm`, a sanitized
 `doom-build.json`, and licenses under ignored `app/public/`. Vite copies these
-to `app/dist/`; the handoff verifies the emitted bytes and refuses `.wad` files.
+to `app/dist/`; the handoff verifies emitted bytes and refuses raw `.wad` files.
+The same handoff copies/verifies the pinned Freedoom gzip and release notices,
+including gzip integrity and original WAD identity, in source, `public` and `dist`.
 Staging verifies the candidate and `public` before atomically selecting current.
 Current certifies the native engine; a later failed frontend build still exits
 nonzero and does not certify a fresh `dist`.
@@ -617,7 +646,9 @@ owner-run procedure above after separate browser/server and billed-call approval
 The generated output includes the engine GPL license and SDK license files,
 including bundled vendor notices. Existing source copyright/notices stay in
 `engine/doom/`; see [vendor provenance](../docs/doom-vendor-provenance.md).
-No IWAD is shipped. Inclusion of licenses alone does not establish redistribution
+Included Freedoom ships as the pinned gzip with its complete release BSD 3-Clause
+notice, contributor credits and music credits, linked in the page footer. It does
+not imply endorsement by Freedoom or its contributors. Inclusion of licenses alone does not establish redistribution
 compliance. Review GPL corresponding-source/build-provenance obligations,
 third-party notices, and unresolved vendored asset rights **before public
 deployment**. This guide does not establish publication or redistribution clearance.

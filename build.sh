@@ -36,4 +36,4 @@ else
   node scripts/stage_web.mjs stage "$OUT"
 fi
 npm --prefix app run build
-echo 'Static app ready: app/dist/ (no IWAD).'
+echo 'Static app ready: app/dist/ (pinned Freedoom gzip; no raw or engine-embedded IWAD).'

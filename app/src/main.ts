@@ -1,3 +1,4 @@
+import { createIncludedFreedoom } from './bundled-freedoom';
 import {
   defineDecisionHistory,
   type DecisionHistoryElement,
@@ -17,6 +18,7 @@ import {
 import { createOpenRouterOAuth } from './openrouter-oauth';
 import {
   createSessionController,
+  type LocalIwad,
   type SessionPresentation,
 } from './session-controller';
 import './style.css';
@@ -47,6 +49,7 @@ const jevKeyStatus =
 type Elements = {
   '#screen': HTMLCanvasElement;
   '#iwad': HTMLInputElement;
+  '#included-freedoom': HTMLButtonElement;
   '#key': HTMLInputElement;
   '#key-label': HTMLLabelElement;
   '#key-note': HTMLParagraphElement;
@@ -136,9 +139,8 @@ async function localFetch(name: string, json = false): Promise<unknown> {
 }
 function displaySetupStatus(run: NonNullable<SessionPresentation['session']>) {
   const prepared = run.prepared;
-  const file = $('#iwad').files?.[0];
-  $('#setup-asset').textContent = file
-    ? `${file.name} · ${prepared ? 'prepared' : 'selected'}`
+  $('#setup-asset').textContent = selectedAssetName
+    ? `${selectedAssetName} · ${prepared ? 'prepared' : 'selected'}`
     : '';
 }
 defineDecisionHistory();
@@ -150,6 +152,7 @@ let keyCommitted = false;
 let setupPointerActive = false;
 let startupReady = false;
 let wadSelected = false;
+let selectedAssetName = '';
 let manualKeyVisible = false;
 let selectedModel: OpenRouterModel = defaultOpenRouterModel;
 let modelLocked = false;
@@ -189,7 +192,21 @@ function displayModel() {
       2,
     );
 }
+function assetSelectionAllowed() {
+  return (
+    startupReady &&
+    !oauth?.busy &&
+    !oauth?.closed &&
+    (!latestSession || latestSession.controls.iwad)
+  );
+}
+function displayAssetControls() {
+  const disabled = !assetSelectionAllowed();
+  $('#iwad').disabled = disabled;
+  $('#included-freedoom').disabled = disabled;
+}
 function displayOAuth() {
+  displayAssetControls();
   if (!oauth) return;
   const preWad = !wadSelected && !latestSession;
   $('#openrouter-signin-button').disabled =
@@ -209,10 +226,7 @@ function displayOAuth() {
     ? 'OpenRouter client in memory.'
     : oauth.message;
   if (oauth.busy || oauth.closed) {
-    $('#iwad').disabled = true;
     $('#key').disabled = true;
-  } else if (!latestSession) {
-    $('#iwad').disabled = !startupReady;
   }
   displayModel();
 }
@@ -252,14 +266,12 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
   $('#key').disabled = jevMode || !sessionReady;
   $('#stop').disabled = !run.controls.stop;
   $('#tics').disabled = !run.controls.tics;
-  $('#iwad').disabled = !run.controls.iwad;
   $('#next').setAttribute('aria-busy', String(run.phase === 'busy'));
 }
 function display(view: SessionPresentation) {
   if (view.sdkStatus !== undefined) $('#sdk').textContent = view.sdkStatus;
   if (view.frameStatus !== undefined)
     $('#frame').textContent = view.frameStatus;
-  if (view.iwadEnabled !== undefined) $('#iwad').disabled = !view.iwadEnabled;
   if (view.iwadEnabled !== undefined) startupReady = view.iwadEnabled;
   const status = view.status;
   if (status)
@@ -510,12 +522,24 @@ const refreshOpenDecisionPrompt = () => {
 };
 $('#tics').addEventListener('input', refreshOpenDecisionPrompt);
 $('#tics').addEventListener('change', refreshOpenDecisionPrompt);
-$('#iwad').addEventListener('change', () => {
-  if (oauth && (oauth.busy || oauth.closed || !startupReady)) return;
-  const file = $('#iwad').files?.[0];
-  if (file) wadSelected = true;
+function selectIwad(file?: LocalIwad, name = '') {
+  if (!assetSelectionAllowed()) return;
+  if (file) {
+    wadSelected = true;
+    selectedAssetName = name;
+  }
   displayOAuth();
   void controller.prepare(file);
+}
+$('#included-freedoom').addEventListener('click', () => {
+  selectIwad(
+    createIncludedFreedoom(import.meta.env.BASE_URL),
+    'Included Freedoom Phase 1 v0.13.0',
+  );
+});
+$('#iwad').addEventListener('change', () => {
+  const file = $('#iwad').files?.[0];
+  selectIwad(file, file?.name);
 });
 window.addEventListener('pagehide', () => controller.close());
 window.addEventListener('pageshow', (event) =>

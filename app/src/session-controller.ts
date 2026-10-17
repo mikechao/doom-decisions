@@ -767,7 +767,9 @@ export function createSessionController(
     )
       return;
     if (!file) {
-      ports.present({ status: 'Select your local Doom IWAD first.' });
+      ports.present({
+        status: 'Use included Freedoom or choose a local IWAD first.',
+      });
       return;
     }
     const run: Run = {
@@ -888,7 +890,7 @@ export function createSessionController(
       if (assetValidation) run.phase = 'unprepared';
       display(
         run,
-        `Preparation failed: ${run.evidence.error} ${assetValidation ? 'Select a local IWAD to retry preparation.' : 'Reload to restart.'}`,
+        `Preparation failed: ${run.evidence.error} ${assetValidation ? 'Choose an IWAD again to retry preparation.' : 'Reload to restart.'}`,
       );
     }
   }
@@ -920,8 +922,7 @@ export function createSessionController(
       engine = metadata as EngineMetadata;
       if (pageExited) return;
       ports.present({
-        status:
-          'Select your local Doom IWAD to attempt Doom preparation automatically.',
+        status: 'Use included Freedoom or choose a local IWAD to prepare Doom.',
         iwadEnabled: true,
       });
     } catch (error) {
