@@ -473,7 +473,7 @@ summary:hover {
 }
 .game {
   width: 100%;
-  padding: 1.25rem;
+  padding: 1.25rem 0.625rem;
   border-top: 1px solid var(--rule);
 }
 .game > h2 {
@@ -870,11 +870,11 @@ a {
     padding-inline: 16px;
   }
   .console {
-    /* Both outer rails gain the same width while the game lane stays 720px. */
+    /* Split the recovered game padding equally between the outer rails. */
     grid-template-columns:
-      minmax(17rem, calc(50vw - 400px))
+      minmax(calc(17rem + 10px), calc(50vw - 390px))
       minmax(0, 1fr)
-      minmax(20rem, calc(50vw - 352px));
+      minmax(calc(20rem + 10px), calc(50vw - 342px));
     grid-template-rows: auto minmax(0, 1fr);
   }
   .session-rail {
@@ -945,6 +945,6 @@ a {
     border-left: 0;
   }
   .game {
-    padding: 1rem;
+    padding: 1rem 0.5rem;
   }
 }
