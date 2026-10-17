@@ -8,7 +8,9 @@
 /app/dist/
 /app/public/doom.wasm
 /app/public/doom-build.json
-/app/public/notices/
+/app/public/notices/*
+!/app/public/notices/openrouter-sign-in/
+!/app/public/notices/openrouter-sign-in/LICENSE.txt
 /app/public/iwads/
 *.[wW][aA][dD]
 .env
