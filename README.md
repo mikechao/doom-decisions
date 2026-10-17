@@ -55,6 +55,9 @@ Browser CORS has failed in earlier direct OpenAI trials; it is not a verified
 production fallback. There is no automatic provider switching. See
 [provider selection and static hosting](app/README.md#provider-selection-and-static-hosting).
 
+For linked worktrees, install the repository-local [automatic local-tool setup](docs/local-worktrees.md)
+once to copy the existing Doom toolchain and Impeccable inputs on `git worktree add`.
+
 ## Tech Stack
 
 - TypeScript - App logic, decision controls, and communication with the game.
