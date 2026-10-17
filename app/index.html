@@ -122,40 +122,70 @@
       </section>
       <decision-history id="decision-history" class="history-panel" role="region" aria-labelledby="history-title">
         <h2 id="history-title">AI Decision History</h2>
-        <p id="history-preview-note" class="history-order help" hidden>SAMPLE DATA · UI PREVIEW</p>
-        <p class="history-order help">Newest first</p>
-        <p id="history-empty" class="help">No AI decisions yet. Preparation's neutral tic is not an AI decision.</p>
-        <ol id="history" aria-label="AI Decision History" reversed tabindex="0"></ol>
-        <p class="history-scroll-cue">More decisions below
-          <svg viewBox="0 0 20 20" width="20" height="20" fill="none" aria-hidden="true">
-            <path d="M10 3v13m-5-5 5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </p>
-        <dialog id="decision-inspector" class="decision-prompt decision-inspector" aria-labelledby="inspector-title">
-          <div class="decision-prompt-content">
-            <div class="decision-prompt-heading">
-              <h2 id="inspector-title">Decision inspector</h2>
-              <button id="close-inspector" type="button" autofocus>Close</button>
-            </div>
-            <p id="inspector-preview-note" class="help" hidden>SAMPLE DATA · UI PREVIEW · Synthetic entries; no gameplay or API calls.</p>
+        <div id="history-list-view" class="history-view">
+          <p id="history-preview-note" class="history-order help" hidden>SAMPLE DATA · UI PREVIEW · No gameplay or API calls.</p>
+          <p class="history-order help">Newest first · Tokens reported by provider</p>
+          <p id="history-empty" class="help">No AI decisions yet. Preparation's neutral tic is not an AI decision.</p>
+          <ol id="history" aria-label="AI Decision History" reversed tabindex="0"></ol>
+          <p class="history-scroll-cue">More decisions below
+            <svg viewBox="0 0 20 20" width="20" height="20" fill="none" aria-hidden="true">
+              <path d="M10 3v13m-5-5 5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </p>
+        </div>
+        <div id="decision-detail" class="history-view" hidden>
+          <div id="detail-header">
+            <button id="back-to-history" type="button" aria-controls="history-list-view">Back to history</button>
+            <h3 id="inspector-title" tabindex="-1">Decision detail</h3>
+            <p id="inspector-preview-note" class="history-order help" hidden>SAMPLE DATA · UI PREVIEW · No gameplay/API calls.</p>
+          </div>
+          <div id="detail-scroll" tabindex="0" role="region" aria-labelledby="inspector-title">
             <p id="inspector-state"></p>
-            <p id="inspector-request-state" class="help"></p>
+            <section aria-labelledby="probability-title">
+              <h4 id="probability-title">Returned action probabilities</h4>
+              <p id="probabilities-unavailable" class="help"></p>
+              <ul id="inspector-probabilities" class="probabilities"></ul>
+            </section>
+            <section aria-labelledby="model-usage-title">
+              <h4 id="model-usage-title">Model &amp; usage</h4>
+              <dl class="decision-metadata">
+                <dt>Provider</dt><dd id="inspector-provider"></dd>
+                <dt>Requested model</dt><dd id="inspector-model"></dd>
+                <dt id="inspector-reported-model-label">Reported model</dt><dd id="inspector-reported-model"></dd>
+                <dt>API latency</dt><dd id="inspector-latency"></dd>
+                <dt>Reported total tokens</dt><dd id="inspector-total-tokens"></dd>
+              </dl>
+            </section>
+            <h4>Historical request screenshot</h4>
             <p id="inspector-image-status" class="help"></p>
             <img id="inspector-image" width="640" height="400" alt="Doom screenshot captured for this decision's request" hidden>
-            <h3>Request diagnostics</h3>
-            <pre id="inspector-diagnostics"></pre>
-            <h3>Token usage</h3>
-            <pre id="inspector-usage"></pre>
-            <h3>Decision result</h3>
-            <pre id="inspector-answer"></pre>
-            <h3>Exact request instructions</h3>
-            <pre id="inspector-instructions"></pre>
-            <h3>Exact request context</h3>
-            <pre id="inspector-context"></pre>
-            <h3>Permitted actions (request order)</h3>
-            <pre id="inspector-actions"></pre>
+            <details id="inspector-request" class="receipt">
+              <summary>Exact request</summary>
+              <h4>Instructions</h4>
+              <pre id="inspector-instructions"></pre>
+              <h4>Context</h4>
+              <pre id="inspector-context"></pre>
+              <h4>Permitted actions (request order)</h4>
+              <pre id="inspector-actions"></pre>
+            </details>
+            <details id="inspector-technical" class="receipt">
+              <summary>Technical receipt and diagnostics</summary>
+              <h4>Execution and rendering</h4>
+              <p id="inspector-duration" class="decision-execution"></p>
+              <p id="inspector-execution" class="decision-execution"></p>
+              <p id="inspector-result" class="decision-execution"></p>
+              <h4>Provider-reported token breakdown</h4>
+              <dl class="decision-metadata decision-usage">
+                <dt>Input / prompt</dt><dd id="inspector-input-tokens"></dd>
+                <dt>Output / completion</dt><dd id="inspector-output-tokens"></dd>
+              </dl>
+              <p class="help probability-note">Returned probabilities are not an explanation of the model’s reasoning. API confidence is a separate measure.</p>
+              <p id="inspector-request-state" class="help"></p>
+              <p id="inspector-confidence" class="help"></p>
+              <pre id="inspector-diagnostics"></pre>
+            </details>
           </div>
-        </dialog>
+        </div>
       </decision-history>
     </div>
     <dialog id="prompt-dialog" class="decision-prompt" aria-labelledby="prompt-title" aria-describedby="prompt-description">

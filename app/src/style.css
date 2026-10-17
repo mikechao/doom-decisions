@@ -611,17 +611,11 @@ summary:hover {
 .decision-prompt::backdrop {
   background: rgb(0 0 0 / 60%);
 }
-.decision-inspector h3 {
-  margin-top: 0.5rem;
-}
 #inspector-image {
   width: 100%;
+  max-width: 640px;
   height: auto;
   image-rendering: pixelated;
-}
-.inspect-decision,
-#close-inspector {
-  padding: 0.625rem 0.75rem;
 }
 .decision-prompt-content {
   display: grid;
@@ -797,10 +791,12 @@ canvas {
 .history-scroll-cue svg {
   flex-shrink: 0;
 }
-.history-panel[data-history-more="true"] .history-scroll-cue {
+.history-panel[data-history-view="list"][data-history-more="true"]
+  .history-scroll-cue {
   visibility: visible;
 }
 .history-panel > h2,
+#back-to-history,
 .history-order,
 #history-empty {
   flex-shrink: 0;
@@ -833,10 +829,18 @@ canvas {
   margin: 1rem 0 0;
   border-top: 1px solid var(--rule);
 }
-#history > li > details > summary::-webkit-details-marker {
+.history-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.history-panel [hidden] {
   display: none;
 }
-#history > li > details > summary::before {
+.decision-row::after {
   content: "";
   width: 8px;
   height: 8px;
@@ -849,20 +853,35 @@ canvas {
   justify-self: end;
   color: var(--muted);
 }
-#history > li > details[open] > summary::before {
-  transform: rotate(135deg);
-}
 :where(#history) > li {
   border-bottom: 1px solid var(--rule);
   overflow-wrap: anywhere;
 }
-#history > li > details > summary {
+.decision-row {
   display: grid;
   grid-template-columns: minmax(0, 3.25rem) minmax(0, 1fr) 0.625rem;
   gap: 0.25rem 0.875rem;
   align-items: start;
+  width: 100%;
   padding: 0.75rem 0.375rem;
-  list-style: none;
+  border: 0;
+  border-radius: 0;
+  color: var(--ivory);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+:where(#history > li[data-selected="true"]) {
+  background: #1c2117;
+}
+.decision-row:hover {
+  background: #1c2117;
+}
+.decision-row:focus-visible,
+#history:focus-visible,
+#detail-scroll:focus-visible,
+#back-to-history:focus-visible {
+  outline-offset: -3px;
 }
 .decision-heading {
   display: contents;
@@ -892,10 +911,7 @@ canvas {
   line-height: 1.2;
   letter-spacing: -0.015em;
 }
-#history > li:has(> details[open]) {
-  background: #1c2117;
-}
-.decision-latency {
+.decision-metrics {
   min-width: 0;
   color: var(--muted);
   font-size: 0.75rem;
@@ -912,13 +928,94 @@ canvas {
   line-height: 1.5;
   color: var(--muted);
 }
-.probability-content {
-  padding: 0.25rem 0.75rem 0.75rem;
+#detail-header {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+  margin-top: 0.375rem;
+  padding: 0.375rem;
+  overflow-wrap: anywhere;
+}
+#detail-header .history-order {
+  margin-top: 0;
+}
+#back-to-history {
+  align-self: flex-start;
+  margin-top: 0;
+  padding: 0.5rem 0.75rem;
+  color: var(--ivory);
+  background: transparent;
+  cursor: pointer;
+}
+#back-to-history:hover {
+  background: #30352a;
+}
+#detail-scroll {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  margin-top: 0.75rem;
+  padding: 0.375rem 0.375rem 1rem;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  overflow-wrap: anywhere;
   font-size: 0.875rem;
 }
-.probability-title {
+#inspector-title {
+  min-width: 0;
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.5rem;
+  font-weight: 500;
+  line-height: 1.25;
+}
+#inspector-state {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+#inspector-preview-note {
+  color: var(--ivory);
+}
+.decision-execution {
+  margin-top: 0.375rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+#detail-scroll h4 {
+  margin: 1rem 0 0.5rem;
+  color: var(--ivory);
+  font-size: 0.875rem;
   font-weight: 600;
-  margin-bottom: 0.5rem;
+}
+#detail-scroll .help {
+  font-size: 0.8125rem;
+}
+.probability-note {
+  margin-top: 0.5rem;
+}
+.decision-metadata {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+  font-size: 0.8125rem;
+}
+.decision-metadata dt {
+  color: var(--muted);
+}
+.decision-metadata dd {
+  min-width: 0;
+  margin: 0;
+}
+.decision-usage {
+  margin-top: 0.375rem;
+  font-variant-numeric: tabular-nums;
 }
 .probabilities {
   list-style: none;
@@ -928,14 +1025,12 @@ canvas {
 .probabilities li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.375rem 0.75rem;
-  padding: 0.625rem 0;
+  gap: 0.1875rem 0.75rem;
+  padding: 0.375rem 0.5rem;
   color: var(--muted);
 }
 .probabilities li[data-selected="true"] {
   --probability: var(--ivory);
-  margin-inline: -0.5rem;
-  padding-inline: 0.5rem;
   color: var(--ivory);
   background: #3b4533;
   border-radius: 2px;
@@ -983,14 +1078,6 @@ canvas {
   background: var(--probability);
   border-radius: 3px;
 }
-.decision-confidence {
-  margin-top: 1rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--rule);
-  color: var(--muted);
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
-}
 .receipt {
   margin-top: 0.75rem;
   border-top: 1px solid var(--rule);
@@ -1004,11 +1091,6 @@ pre {
   font:
     0.8125rem / 1.6 ui-monospace,
     monospace;
-}
-.decision-inspector pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 0.875rem;
 }
 .advanced {
   margin-top: 1.5rem;

@@ -13,7 +13,8 @@ export function observeHistoryScroll(
       scheduled = false;
       if (!active) return;
       panel.dataset.historyMore = String(
-        history.clientHeight > 0 &&
+        panel.dataset.historyView !== 'detail' &&
+          history.clientHeight > 0 &&
           history.scrollHeight - history.clientHeight - history.scrollTop > 1,
       );
     });
@@ -37,11 +38,11 @@ export function observeHistoryScroll(
     update();
   };
   const mutations = new MutationObserver(observeRows);
-  mutations.observe(history, {
+  mutations.observe(panel, {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['open', 'hidden'],
+    attributeFilter: ['hidden', 'data-history-view'],
   });
   history.addEventListener('scroll', update, { passive: true });
   observeRows();

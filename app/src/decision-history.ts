@@ -60,11 +60,29 @@ function decisionStatus(entry: HistoryEntry) {
     return 'Choice received; checking unchanged game state';
   return entry.status;
 }
+const tokenCount = new Intl.NumberFormat('en');
+function tokensPending(entry: HistoryEntry) {
+  return (
+    entry.stage === 'requesting' &&
+    entry.sdkInvoked === true &&
+    !entry.responseMetadata &&
+    !entry.action &&
+    entry.latencyMs === null &&
+    entry.http == null
+  );
+}
 export function projectDecisionHistorySummary(entry: HistoryEntry) {
   const pending = entry.stage === 'capturing' || entry.stage === 'requesting';
+  const total = entry.responseMetadata?.usage.total;
   return {
     action: entry.action ?? (pending ? 'Action pending' : 'Action unavailable'),
     latency: `API ${entry.latencyMs === null ? (pending ? 'latency pending' : 'latency unavailable') : `${entry.latencyMs} ms`}`,
+    tokens:
+      total != null
+        ? `${tokenCount.format(total)} tokens`
+        : tokensPending(entry)
+          ? 'Tokens pending'
+          : 'Total tokens unavailable',
     status: decisionStatus(entry),
   };
 }
@@ -72,8 +90,11 @@ function createHistoryRow(number: number, inspect: (number: number) => void) {
   const item = document.createElement('li');
   item.id = `decision-${number}`;
   item.value = number;
-  const details = document.createElement('details');
-  const summary = document.createElement('summary');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'decision-row';
+  button.setAttribute('aria-controls', 'decision-detail');
+  button.addEventListener('click', () => inspect(number));
   const heading = document.createElement('span');
   heading.className = 'decision-heading';
   const decisionNumber = document.createElement('span');
@@ -82,32 +103,21 @@ function createHistoryRow(number: number, inspect: (number: number) => void) {
   const action = document.createElement('span');
   action.className = 'decision-action';
   heading.append(decisionNumber, action);
-  const latency = document.createElement('span');
-  latency.className = 'decision-latency';
+  const metrics = document.createElement('span');
+  metrics.className = 'decision-metrics';
   const status = document.createElement('span');
   status.className = 'decision-status';
-  summary.append(heading, latency, status);
-  const content = document.createElement('div');
-  content.className = 'probability-content';
-  const inspectButton = document.createElement('button');
-  inspectButton.type = 'button';
-  inspectButton.className = 'inspect-decision';
-  inspectButton.textContent = `Inspect decision #${number}`;
-  inspectButton.setAttribute('aria-haspopup', 'dialog');
-  inspectButton.setAttribute('aria-controls', 'decision-inspector');
-  inspectButton.addEventListener('click', () => inspect(number));
-  const title = document.createElement('p');
-  title.className = 'probability-title';
-  title.textContent = 'Action probabilities';
-  const unavailable = document.createElement('p');
-  unavailable.textContent = 'Action probabilities unavailable.';
-  const probabilities = document.createElement('ul');
-  probabilities.className = 'probabilities';
-  const options = actionNames.map((action) => {
+  button.append(heading, status, metrics);
+  item.append(button);
+  return { item, button, action, metrics, status };
+}
+function createProbabilities(probabilities: HTMLUListElement) {
+  return actionNames.map((action) => {
     const row = document.createElement('li');
     const label = document.createElement('span');
     label.className = 'probability-label';
     const name = document.createElement('span');
+    name.textContent = action;
     const selected = document.createElement('span');
     selected.className = 'probability-selected';
     selected.textContent = 'Selected';
@@ -122,48 +132,17 @@ function createHistoryRow(number: number, inspect: (number: number) => void) {
     bar.setAttribute('aria-hidden', 'true');
     row.append(label, value, bar);
     probabilities.append(row);
-    return { action, row, name, selected, value, bar };
+    return { action, row, selected, value, bar };
   });
-  const confidence = document.createElement('p');
-  confidence.className = 'decision-confidence';
-  confidence.hidden = true;
-  const technical = document.createElement('details');
-  technical.className = 'receipt';
-  const technicalSummary = document.createElement('summary');
-  technicalSummary.textContent = 'Technical receipt';
-  const receipt = document.createElement('pre');
-  technical.append(technicalSummary, receipt);
-  content.append(
-    inspectButton,
-    title,
-    unavailable,
-    probabilities,
-    confidence,
-    technical,
-  );
-  details.append(summary, content);
-  item.append(details);
-  return {
-    item,
-    inspectButton,
-    action,
-    latency,
-    status,
-    unavailable,
-    probabilities,
-    options,
-    confidence,
-    receipt,
-  };
 }
 function createDecisionHistory(
   history: HTMLOListElement,
   empty: HTMLParagraphElement,
   inspect: (number: number) => void,
 ) {
-  // Keep disclosure/focus-bearing nodes for the lifetime of each history entry.
+  // Keep focus-bearing nodes for the lifetime of each history entry.
   const historyRows = new Map<number, ReturnType<typeof createHistoryRow>>();
-  function displayHistory(entries: readonly HistoryEntry[]) {
+  function displayHistory(entries: readonly HistoryEntry[], preview: boolean) {
     empty.hidden = entries.length > 0;
     const numbers = new Set(entries.map((entry) => entry.number));
     for (const [number, row] of historyRows) {
@@ -181,53 +160,41 @@ function createDecisionHistory(
       }
       const summary = projectDecisionHistorySummary(entry);
       view.action.textContent = summary.action;
-      view.latency.textContent = summary.latency;
-      view.status.textContent = summary.status;
-      const values = entry.choice?.probabilities;
-      view.unavailable.hidden = !!values;
-      view.probabilities.hidden = !values;
-      if (values) {
-        const sorted = [...values].sort(
-          (a, b) =>
-            b.probability - a.probability ||
-            actionNames.indexOf(a.value) - actionNames.indexOf(b.value),
-        );
-        for (const [index, option] of sorted.entries()) {
-          const node = view.options.find(
-            (item) => item.action === option.value,
-          );
-          if (!node) continue;
-          const selected = option.value === entry.action;
-          node.name.textContent = option.value;
-          node.selected.hidden = !selected;
-          node.value.textContent = probabilityText(option.probability);
-          node.bar.value = option.probability;
-          node.row.dataset.selected = String(selected);
-          if (view.probabilities.children[index] !== node.row)
-            view.probabilities.insertBefore(
-              node.row,
-              view.probabilities.children[index] ?? null,
-            );
-        }
-      }
-      const confidence = entry.choice?.confidence;
-      view.confidence.hidden = confidence === null || confidence === undefined;
-      view.confidence.textContent =
-        confidence === null || confidence === undefined
-          ? ''
-          : `API confidence: ${probabilityText(confidence)}`;
-      const execution = entry.execution;
-      view.receipt.textContent = [
-        `Decision ${entry.number}: ${entry.status}`,
-        `Action: ${entry.action ?? 'unavailable'} · human-selected N: ${entry.selectedTics}`,
-        `Native requested / reported / independently verified: ${execution?.requestedTics ?? 'not dispatched'} / ${execution?.reportedCompletedTics ?? 'unknown'} / ${execution?.independentlyVerifiedTics ?? 0}`,
-        `Cumulative verified tic: ${entry.cumulativeVerifiedTics}${execution?.completionUncertain ? ' (lower bound; completion uncertain)' : ''}`,
-        `Observed tic: ${entry.observation?.tic ?? 'unavailable'} · resulting tic: ${entry.result?.tic ?? 'frame unavailable'}`,
-        `API request ID: ${entry.requestId ?? 'unavailable'} · API latency: ${entry.latencyMs === null ? 'unavailable' : `${entry.latencyMs} ms`}`,
-      ].join('\n');
+      view.metrics.textContent = `${summary.latency} · ${summary.tokens}`;
+      view.status.textContent = preview ? previewStatus(entry) : summary.status;
     }
   }
   return { displayHistory, historyRows };
+}
+function previewStatus(entry: HistoryEntry) {
+  return entry.stage === 'completed'
+    ? 'Sample completion · synthetic'
+    : `Sample · ${decisionStatus(entry)}`;
+}
+function detailStatus(entry: HistoryEntry) {
+  const execution = entry.execution;
+  const verified = execution?.independentlyVerifiedTics ?? 0;
+  const verifiedTics = `${verified} ${verified === 1 ? 'tic' : 'tics'}`;
+  if (entry.stage === 'stepping') return 'Native verification in progress';
+  if (execution?.completionUncertain)
+    return `Completion uncertain · at least ${verifiedTics} verified · reload required`;
+  if (entry.stage === 'completed')
+    return execution?.complete &&
+      entry.result &&
+      execution.requestedTics === entry.selectedTics &&
+      execution.reportedCompletedTics === entry.selectedTics &&
+      execution.independentlyVerifiedTics === entry.selectedTics
+      ? `Completed · ${verifiedTics} independently verified`
+      : 'Completion evidence unavailable';
+  if (execution?.complete && !entry.result)
+    return `Action verified · resulting frame ${entry.stage === 'rendering' ? 'pending' : 'unavailable'}`;
+  if (!execution && entry.stage === 'requesting')
+    return `${entry.action ? 'Choice received' : 'Request pending'} · no native dispatch`;
+  if (!execution && entry.stage === 'capturing')
+    return 'Capturing request input · no native dispatch';
+  // Retain controller-owned failure and terminal-prefix wording, including
+  // death/exit-pending signals and frame availability, rather than infer an outcome.
+  return decisionStatus(entry);
 }
 
 export interface DecisionHistoryElement extends HTMLElement {
@@ -247,7 +214,10 @@ export function defineDecisionHistory() {
       private requests: Readonly<Record<number, DecisionRequest>> = {};
       private selected?: number;
       private origin?: HTMLButtonElement;
+      private listScroll = 0;
+      private rowOffset = 0;
       private renderer?: ReturnType<typeof createDecisionHistory>;
+      private options?: ReturnType<typeof createProbabilities>;
       private stopObserving?: () => void;
       private imagePng?: string;
 
@@ -265,25 +235,19 @@ export function defineDecisionHistory() {
             this.element('#history-empty'),
             (number) => this.inspect(number),
           );
-          const dialog = this.element<HTMLDialogElement>('#decision-inspector');
-          this.element('#close-inspector').addEventListener('click', () =>
-            dialog.close(),
+          this.options = createProbabilities(
+            this.element('#inspector-probabilities'),
           );
-          dialog.addEventListener('close', () => {
-            this.selected = undefined;
-            this.imagePng = undefined;
-            this.element('#inspector-image').removeAttribute('src');
-            this.element('#inspector-image').hidden = true;
-            if (this.origin?.isConnected)
-              this.origin.focus({ preventScroll: true });
-            this.origin = undefined;
-          });
+          this.element('#back-to-history').addEventListener('click', () =>
+            this.showHistory(),
+          );
           this.element('#inspector-image').addEventListener('error', () => {
             this.element('#inspector-image').hidden = true;
             this.element('#inspector-image-status').textContent =
               'Historical screenshot could not be displayed.';
           });
         }
+        this.dataset.historyView = 'list';
         this.stopObserving = observeHistoryScroll(this, history);
         this.display(this.entries, this.requests);
       }
@@ -291,8 +255,7 @@ export function defineDecisionHistory() {
       disconnectedCallback() {
         this.stopObserving?.();
         this.stopObserving = undefined;
-        const dialog = this.element<HTMLDialogElement>('#decision-inspector');
-        if (dialog.open) dialog.close();
+        this.showHistory(false);
       }
 
       display(
@@ -301,23 +264,63 @@ export function defineDecisionHistory() {
       ) {
         this.entries = entries;
         this.requests = requests;
-        this.renderer?.displayHistory(entries);
-        const dialog = this.element<HTMLDialogElement>('#decision-inspector');
-        if (dialog.open) {
+        this.renderer?.displayHistory(entries, this.isPreview());
+        if (this.selected !== undefined) {
           if (entries.some((entry) => entry.number === this.selected))
             this.renderInspector();
-          else dialog.close();
+          else this.showHistory();
         }
+      }
+
+      private isPreview() {
+        return !this.element('#history-preview-note').hidden;
       }
 
       private inspect(number: number) {
         if (!this.entries.some((entry) => entry.number === number)) return;
+        const history = this.element<HTMLOListElement>('#history');
         this.selected = number;
-        this.origin = this.renderer?.historyRows.get(number)?.inspectButton;
+        this.origin = this.renderer?.historyRows.get(number)?.button;
+        this.listScroll = history.scrollTop;
+        this.rowOffset = this.origin
+          ? this.origin.getBoundingClientRect().top -
+            history.getBoundingClientRect().top
+          : 0;
+        for (const [key, row] of this.renderer?.historyRows ?? [])
+          row.item.dataset.selected = String(key === number);
+        this.element<HTMLDetailsElement>('#inspector-request').open = false;
+        this.element<HTMLDetailsElement>('#inspector-technical').open = false;
         this.renderInspector();
-        const dialog = this.element<HTMLDialogElement>('#decision-inspector');
-        if (!dialog.open) dialog.showModal();
-        this.element('#close-inspector').focus();
+        this.element('#history-list-view').hidden = true;
+        this.element('#decision-detail').hidden = false;
+        this.dataset.historyView = 'detail';
+        this.dataset.historyMore = 'false';
+        this.element('#detail-scroll').scrollTop = 0;
+        this.element('#inspector-title').focus();
+      }
+
+      private showHistory(restoreFocus = true) {
+        const wasInspecting = this.selected !== undefined;
+        this.selected = undefined;
+        this.element('#decision-detail').hidden = true;
+        this.element('#history-list-view').hidden = false;
+        this.dataset.historyView = 'list';
+        this.imagePng = undefined;
+        this.element('#inspector-image').removeAttribute('src');
+        this.element('#inspector-image').hidden = true;
+        if (wasInspecting && restoreFocus) {
+          const history = this.element<HTMLOListElement>('#history');
+          history.scrollTop = this.listScroll;
+          if (this.origin?.isConnected) {
+            // Restore the row's visual offset even after newer rows were prepended.
+            history.scrollTop +=
+              this.origin.getBoundingClientRect().top -
+              history.getBoundingClientRect().top -
+              this.rowOffset;
+            this.origin.focus({ preventScroll: true });
+          } else history.focus({ preventScroll: true });
+        }
+        this.origin = undefined;
       }
 
       private renderInspector() {
@@ -330,12 +333,16 @@ export function defineDecisionHistory() {
           entry.stage === 'capturing' || entry.stage === 'requesting';
         const missing = pending ? 'Pending' : 'Unavailable';
         const write = (id: string, text: string) => {
-          this.element(id).textContent = text;
+          const node = this.element(id);
+          // Keep text selection intact when presentation updates repeat a request.
+          if (node.textContent !== text) node.textContent = text;
         };
-        write('#inspector-title', `Decision #${entry.number}`);
+        const preview = this.isPreview();
+        const summary = projectDecisionHistorySummary(entry);
+        write('#inspector-title', `#${entry.number} · ${summary.action}`);
         write(
           '#inspector-state',
-          `${decisionStatus(entry)} · stage: ${entry.stage}`,
+          preview ? previewStatus(entry) : detailStatus(entry),
         );
         write(
           '#inspector-request-state',
@@ -367,47 +374,124 @@ export function defineDecisionHistory() {
           );
         } else if (!png)
           write('#inspector-image-status', `Screenshot: ${missing}`);
+        const execution = entry.execution;
+        write(
+          '#inspector-duration',
+          `Human-selected duration: ${entry.selectedTics} tics`,
+        );
+        write(
+          '#inspector-execution',
+          execution
+            ? `${preview ? 'Synthetic receipt · ' : ''}Native requested: ${execution.requestedTics} · Worker-reported: ${execution.reportedCompletedTics ?? 'unknown'} · Independently verified: ${execution.independentlyVerifiedTics} tics${execution.completionUncertain ? ' (lower bound; completion uncertain)' : ''}.`
+            : entry.stage === 'stepping'
+              ? 'Awaiting native execution evidence.'
+              : 'No native action dispatched.',
+        );
+        write(
+          '#inspector-result',
+          preview
+            ? 'Illustrative execution and rendering only; no native or API proof.'
+            : entry.stage === 'stepping'
+              ? 'Native verification in progress; completion is not yet established.'
+              : execution?.completionUncertain
+                ? 'Native completion uncertain. Reload required; do not replay this action.'
+                : entry.result
+                  ? 'Historical resulting frame verified and rendered; it may no longer be the displayed frame.'
+                  : execution?.complete
+                    ? entry.stage === 'ended'
+                      ? 'Action verified; resulting frame unavailable. Reload required.'
+                      : 'Action verified; resulting frame not yet available.'
+                    : 'Verified resulting frame unavailable. A returned action alone does not prove execution.',
+        );
+        const probabilities = this.element<HTMLUListElement>(
+          '#inspector-probabilities',
+        );
+        // Metrics come from controller validation. Never display a partial distribution.
+        const values = entry.choice?.probabilities;
+        const available = values?.length === actionNames.length;
+        probabilities.hidden = !available;
+        this.element('#probabilities-unavailable').hidden = available;
+        write(
+          '#probabilities-unavailable',
+          pending && !entry.choice
+            ? 'Action probabilities pending.'
+            : 'Action probabilities unavailable.',
+        );
+        if (values && available) {
+          const sorted = [...values].sort(
+            (a, b) =>
+              b.probability - a.probability ||
+              actionNames.indexOf(a.value) - actionNames.indexOf(b.value),
+          );
+          for (const [index, option] of sorted.entries()) {
+            const node = this.options?.find(
+              (item) => item.action === option.value,
+            );
+            if (!node) continue;
+            const selected = option.value === entry.action;
+            node.selected.hidden = !selected;
+            node.value.textContent = probabilityText(option.probability);
+            node.bar.value = option.probability;
+            node.row.dataset.selected = String(selected);
+            if (probabilities.children[index] !== node.row)
+              probabilities.insertBefore(
+                node.row,
+                probabilities.children[index] ?? null,
+              );
+          }
+        }
         const metadata = entry.responseMetadata;
         const usage = metadata?.usage;
+        const usageMissing = tokensPending(entry) ? 'Pending' : 'Unavailable';
+        write(
+          '#inspector-provider',
+          entry.requestIdentity?.provider ?? 'Unavailable',
+        );
+        write(
+          '#inspector-model',
+          entry.requestIdentity?.requestedModel ?? 'Unavailable',
+        );
+        write('#inspector-reported-model', metadata?.reportedModel ?? missing);
+        const distinctModel =
+          metadata?.reportedModel != null &&
+          metadata.reportedModel !== entry.requestIdentity?.requestedModel;
+        this.element('#inspector-reported-model-label').hidden = !distinctModel;
+        this.element('#inspector-reported-model').hidden = !distinctModel;
+        write(
+          '#inspector-latency',
+          entry.latencyMs === null ? missing : `${entry.latencyMs} ms`,
+        );
+        write(
+          '#inspector-input-tokens',
+          usage?.input == null ? usageMissing : tokenCount.format(usage.input),
+        );
+        write(
+          '#inspector-output-tokens',
+          usage?.output == null
+            ? usageMissing
+            : tokenCount.format(usage.output),
+        );
+        write(
+          '#inspector-total-tokens',
+          usage?.total == null ? usageMissing : tokenCount.format(usage.total),
+        );
+        write(
+          '#inspector-confidence',
+          `API confidence (separate from action probabilities): ${entry.choice?.confidence == null ? 'Unavailable' : probabilityText(entry.choice.confidence)}`,
+        );
         write(
           '#inspector-diagnostics',
           [
-            `Provider: ${entry.requestIdentity?.provider ?? 'Unavailable'}`,
+            `Decision ${entry.number}: ${entry.status}`,
+            `Stage: ${entry.stage}`,
             `Requested model${entry.sdkInvoked ? '' : ' (not invoked)'}: ${entry.requestIdentity?.requestedModel ?? 'Unavailable'}`,
-            `Provider-reported model: ${metadata?.reportedModel ?? 'Unavailable'}`,
-            `API latency: ${entry.latencyMs === null ? missing : `${entry.latencyMs} ms`}`,
+            `Provider-reported model: ${metadata?.reportedModel ?? missing}`,
             `API request ID: ${entry.requestId ?? 'Unavailable'}`,
             `HTTP status: ${entry.http ?? 'Unavailable'}`,
             `Human-selected N: ${entry.selectedTics}`,
+            `Native requested / reported / independently verified: ${execution?.requestedTics ?? 'not dispatched'} / ${execution?.reportedCompletedTics ?? 'unknown'} / ${execution?.independentlyVerifiedTics ?? 0}`,
+            `Cumulative verified tic: ${entry.cumulativeVerifiedTics}${execution?.completionUncertain ? ' (lower bound; completion uncertain)' : ''}`,
             `Observation tic: ${entry.observation?.tic ?? 'Unavailable'} · resulting tic: ${entry.result?.tic ?? 'Unavailable'}`,
-          ].join('\n'),
-        );
-        write(
-          '#inspector-usage',
-          [
-            !usage ||
-            [usage.input, usage.output, usage.total].every(
-              (count) => count === null,
-            )
-              ? pending && entry.sdkInvoked && !metadata
-                ? 'Token usage pending'
-                : 'Token usage unavailable'
-              : 'Provider-reported token usage',
-            `Input / prompt tokens: ${usage?.input ?? 'Unavailable'}`,
-            `Output / completion tokens: ${usage?.output ?? 'Unavailable'}`,
-            `Reported total tokens: ${usage?.total ?? 'Unavailable'}`,
-          ].join('\n'),
-        );
-        write(
-          '#inspector-answer',
-          [
-            `Chosen action: ${entry.action ?? missing}`,
-            `API confidence: ${entry.choice?.confidence == null ? 'Unavailable' : probabilityText(entry.choice.confidence)}`,
-            'Validated action probabilities:',
-            ...(entry.choice?.probabilities?.map(
-              (option) =>
-                `${option.value}: ${probabilityText(option.probability)}${option.value === entry.action ? ' · Selected' : ''}`,
-            ) ?? [missing]),
           ].join('\n'),
         );
       }

@@ -8,7 +8,7 @@ import { defineDecisionHistory } from '../src/decision-history.ts';
 import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
 import { entries as sampleEntries, requests as sampleRequests } from '../src/sample-history.ts';
 
-let document, root, history, dialog, nodes, frames, observers, registry;
+let document, root, history, detail, list, nodes, frames, observers, registry;
 class Element extends EventTarget {
   children: Element[] = [];
   parentElement: Element | null = null;
@@ -45,17 +45,16 @@ class Element extends EventTarget {
   }
   setAttribute(name, value) { this.attributes.set(name, value); }
   removeAttribute(name) { this.attributes.delete(name); }
-  focus() { document.activeElement = this; }
-  click() {
-    if (this.tagName === 'summary' && this.parentElement) this.parentElement.open = !this.parentElement.open;
-    this.dispatchEvent(new Event('click'));
+  focus(options?) { document.activeElement = this; document.focusOptions = options; }
+  getBoundingClientRect() {
+    // Synthetic 100px row geometry exercises anchoring, not browser layout.
+    const top = this.parentElement
+      ? this.parentElement.getBoundingClientRect().top - this.parentElement.scrollTop +
+        (this.parentElement.tagName === 'ol' ? this.parentElement.children.indexOf(this) * 100 : 0)
+      : 0;
+    return { top };
   }
-}
-class Dialog extends Element {
-  constructor() { super('dialog'); }
-  showModal = vi.fn(() => { this.open = true; });
-  close() { if (this.open) { this.open = false; this.dispatchEvent(new Event('close')); } }
-  escape() { if (this.dispatchEvent(new Event('cancel', { cancelable: true }))) this.close(); }
+  click() { this.dispatchEvent(new Event('click')); }
 }
 class Observer {
   observed = new Set();
@@ -77,6 +76,10 @@ const entry = (number = 1, changes = {}) => ({
 const row = number => history.children.find(node => node.id === `decision-${number}`);
 const inspect = number => row(number).querySelector('button');
 const text = id => nodes.get(id).textContent;
+const back = () => nodes.get('back-to-history').click();
+const distribution = (selected = 'neutral') => Object.keys(masks).map(value => ({
+  value, probability: value === selected ? 0.4 : value === 'fire' ? 0.6 : 0,
+}));
 beforeEach(() => {
   frames = new Map(); observers = []; registry = new Map(); nodes = new Map();
   document = { activeElement: null, createElement: tag => new Element(tag) };
@@ -92,181 +95,216 @@ beforeEach(() => {
   root = new (registry.get('decision-history'))();
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const markup = html.match(/<decision-history\b[^>]*>([\s\S]*?)<\/decision-history>/)![1];
-  // Build only the static element tree needed by the component, using real IDs
-  // from the shipped markup. Text/CSS/native-browser behavior is outside this fake.
+  // Build the static element tree using real IDs and hidden attributes. Native
+  // focus/keyboard behavior and CSS are deliberately outside this fake.
   const stack = [root];
   for (const token of markup.matchAll(/<\/?[a-z][^>]*>/g)) {
     const tag = token[0].match(/^<\/?([a-z0-9-]+)/)![1];
     if (token[0].startsWith('</')) { stack.pop(); continue; }
-    const node = tag === 'dialog' ? new Dialog() : new Element(tag);
+    const node = new Element(tag);
     const id = token[0].match(/\bid="([^"]+)"/)?.[1];
     if (id) { node.id = id; nodes.set(id, node); }
+    node.hidden = /\shidden(?:\s|>)/.test(token[0]);
     stack.at(-1).append(node);
     if (!['img', 'input', 'br', 'hr'].includes(tag)) stack.push(node);
   }
-  history = nodes.get('history'); dialog = nodes.get('decision-inspector');
+  history = nodes.get('history'); detail = nodes.get('decision-detail'); list = nodes.get('history-list-view');
   root.connectedCallback(); flush();
 });
 afterEach(() => { root.disconnectedCallback(); vi.unstubAllGlobals(); });
 
-it('renders all twelve synthetic completions with coherent receipts and populated inspectors', () => {
+it('browses all twelve synthetic decisions through one list/detail path with totals and receipts', () => {
+  nodes.get('history-preview-note').hidden = false;
+  nodes.get('inspector-preview-note').hidden = false;
   root.display(sampleEntries, sampleRequests);
   assert.deepEqual(history.children.map(node => node.id),
     Array.from({ length: 12 }, (_, index) => `decision-${12 - index}`));
   assert.equal(nodes.get('history-empty').hidden, true);
-  assert.equal(new Set(sampleEntries.map(entry => entry.action).filter(Boolean)).size, 7);
-  let previousTic = 1;
+  assert.equal(list.hidden, false); assert.equal(detail.hidden, true);
+  assert.equal(root.querySelector('dialog'), null);
+  const header = nodes.get('detail-header');
+  assert.equal(header.parentElement, detail);
+  for (const id of ['back-to-history', 'inspector-title', 'inspector-preview-note'])
+    assert.equal(nodes.get(id).parentElement, header, `${id} stays outside the scrolling body`);
+  assert.equal(nodes.get('detail-scroll').querySelector('#inspector-title'), null, 'No duplicate title in the body');
+  assert.equal(nodes.get('detail-scroll').children[0], nodes.get('inspector-state'));
+  assert.equal(new Set(sampleEntries.map(entry => entry.action)).size, 7);
   for (const entry of sampleEntries) {
-    const request = sampleRequests[entry.number];
-    assert.equal(entry.stage, 'completed');
-    assert.match(entry.status, /sample/i);
-    assert.ok(Object.hasOwn(masks, entry.action));
-    assert.ok(Number.isSafeInteger(entry.selectedTics) && entry.selectedTics > 0);
-    assert.equal(entry.observation.tic, previousTic);
-    assert.equal(entry.result.tic, previousTic + entry.selectedTics);
-    assert.equal(entry.cumulativeVerifiedTics, entry.result.tic);
-    previousTic = entry.result.tic;
-    assert.deepEqual(entry.execution, {
-      complete: true, requestedTics: entry.selectedTics,
-      reportedCompletedTics: entry.selectedTics,
-      independentlyVerifiedTics: entry.selectedTics, completionUncertain: false,
-    });
-    assert.ok(entry.latencyMs > 0);
-    assert.equal(entry.requestId, `sample-ui-preview-${entry.number}`);
-    assert.equal(entry.http, 200); assert.equal(entry.sdkInvoked, true);
-    assert.equal(entry.requestIdentity.provider, 'OpenRouter');
-    assert.match(entry.requestIdentity.requestedModel, /^sample\//);
-    assert.match(entry.responseMetadata.reportedModel, /^sample\//);
-    const usage = entry.responseMetadata.usage;
-    for (const count of Object.values(usage)) assert.ok(Number.isSafeInteger(count) && count > 0);
-    assert.equal(usage.total, usage.input + usage.output);
-    assert.deepEqual(request.permittedActions, Object.keys(masks));
-    assert.equal(request.png, '');
-    const probabilities = entry.choice.probabilities;
-    assert.deepEqual(probabilities.map(item => item.value), request.permittedActions);
-    assert.ok(probabilities.every(item => Number.isFinite(item.probability) && item.probability >= 0 && item.probability <= 1));
-    assert.ok(Math.abs(probabilities.reduce((sum, item) => sum + item.probability, 0) - 1) < 1e-12);
-    const selected = probabilities.find(item => item.value === entry.action);
-    assert.equal(selected.probability, Math.max(...probabilities.map(item => item.probability)));
-    assert.equal(entry.choice.confidence, selected.probability);
-
-    const details = row(entry.number).querySelector('details');
-    assert.match(details.querySelector('summary').textContent, /Completed · verified and rendered/);
-    details.querySelector('summary').click();
-    const probabilityList = row(entry.number).querySelector('ul');
-    assert.equal(probabilityList.hidden, false);
-    assert.equal(probabilityList.children.length, 7);
-    assert.equal(probabilityList.children.filter(node => node.dataset.selected === 'true').length, 1);
-    assert.match(probabilityList.children.find(node => node.dataset.selected === 'true').textContent, new RegExp(`${entry.action}Selected`));
-    assert.equal(probabilityList.parentElement.children.find(node => node.textContent === 'Action probabilities unavailable.').hidden, true);
-    const receipt = row(entry.number).querySelector('pre').textContent;
-    assert.match(receipt, /Sample: synthetic completion/);
-    assert.match(receipt, new RegExp(`Native requested / reported / independently verified: ${entry.selectedTics} / ${entry.selectedTics} / ${entry.selectedTics}`));
-
-    const trigger = inspect(entry.number);
+    const request = sampleRequests[entry.number], trigger = inspect(entry.number);
+    assert.equal(row(entry.number).querySelector('details'), null);
+    assert.match(trigger.textContent, /Sample completion · synthetic/);
+    assert.doesNotMatch(trigger.textContent, /verified and rendered/);
+    assert.ok(trigger.textContent.includes(`${entry.responseMetadata.usage.total.toLocaleString('en')} tokens`));
     trigger.focus(); trigger.click();
-    assert.equal(text('inspector-title'), `Decision #${entry.number}`);
-    assert.match(text('inspector-state'), /stage: completed/);
-    assert.equal(text('inspector-request-state'), 'SDK invocation attempted.');
-    assert.match(text('inspector-instructions'), /SAMPLE DATA · UI PREVIEW/);
+    assert.equal(list.hidden, true); assert.equal(detail.hidden, false);
+    assert.equal(nodes.get('inspector-preview-note').hidden, false);
+    assert.equal(document.activeElement, nodes.get('inspector-title'));
+    assert.equal(text('inspector-title'), `#${entry.number} · ${entry.action}`);
+    assert.equal(text('inspector-state'), 'Sample completion · synthetic');
+    assert.equal(nodes.get('inspector-execution').parentElement, nodes.get('inspector-technical'));
+    assert.equal(nodes.get('inspector-input-tokens').parentElement.parentElement, nodes.get('inspector-technical'));
+    assert.match(text('inspector-execution'), /Synthetic receipt/);
+    assert.match(text('inspector-result'), /no native or API proof/);
+    const probabilities = nodes.get('inspector-probabilities');
+    assert.equal(probabilities.hidden, false);
+    assert.equal(probabilities.children.length, 7);
+    const selected = probabilities.children.filter(node => node.dataset.selected === 'true');
+    assert.equal(selected.length, 1);
+    assert.match(selected[0].textContent, new RegExp(`${entry.action}Selected`));
+    assert.equal(nodes.get('inspector-request').open, false);
+    assert.equal(nodes.get('inspector-technical').open, false);
     assert.equal(text('inspector-instructions'), request.instructions);
     assert.equal(text('inspector-context'), request.context);
     assert.equal(text('inspector-actions'), request.permittedActions.join('\n'));
     assert.equal(text('inspector-image-status'), 'Screenshot: Unavailable');
     assert.equal(nodes.get('inspector-image').attributes.has('src'), false);
-    for (const field of ['inspector-diagnostics', 'inspector-usage', 'inspector-answer'])
-      assert.doesNotMatch(text(field), /Unavailable|Pending/);
-    assert.ok(text('inspector-diagnostics').includes(entry.requestIdentity.requestedModel));
-    assert.ok(text('inspector-diagnostics').includes(entry.responseMetadata.reportedModel));
-    assert.match(text('inspector-usage'), new RegExp(`Reported total tokens: ${usage.total}`));
-    assert.match(text('inspector-answer'), new RegExp(`Chosen action: ${entry.action}`));
-    assert.equal((text('inspector-answer').match(/ · Selected/g) ?? []).length, 1);
+    assert.equal(text('inspector-model'), entry.requestIdentity.requestedModel);
+    assert.equal(text('inspector-reported-model'), entry.responseMetadata.reportedModel);
+    assert.equal(text('inspector-total-tokens'), entry.responseMetadata.usage.total.toLocaleString('en'));
+    assert.match(text('inspector-diagnostics'), /Sample: synthetic completion/);
     root.display(sampleEntries, sampleRequests);
-    assert.equal(row(entry.number).querySelector('details'), details);
-    assert.equal(details.open, true); assert.equal(dialog.open, true);
-    if (entry.number % 2) dialog.escape();
-    else nodes.get('close-inspector').click();
-    assert.equal(dialog.open, false); assert.equal(document.activeElement, trigger);
+    assert.equal(inspect(entry.number), trigger);
+    assert.equal(detail.hidden, false);
+    back();
+    assert.equal(list.hidden, false); assert.equal(detail.hidden, true);
+    assert.equal(document.activeElement, trigger);
   }
-  assert.equal(Object.keys(sampleRequests).length, 12);
-  assert.equal(new Set(sampleEntries.map(entry => entry.choice.confidence)).size, 3);
-  assert.equal(new Set(sampleEntries.map(entry => entry.requestIdentity.requestedModel)).size, 3);
-  assert.equal(new Set(sampleEntries.map(entry => entry.responseMetadata.usage.total)).size, 12);
-  assert.equal(new Set(Object.values(sampleRequests).map(request => request.instructions)).size, 12);
-  assert.ok(new Set(Object.values(sampleRequests).map(request => request.context.length)).size >= 3);
   assert.equal(fetch.mock.calls.length, 0); assert.equal(Worker.mock.calls.length, 0);
 });
 
-it('keeps newest-first row nodes/disclosures/focus while inspecting the original historical request', () => {
+it('keeps historical selection, focus, disclosures and scroll across updates, then restores the row anchor', () => {
   const first = entry();
   const request1 = buildDefaultDecisionRequest(1, 2, 'data:image/png;base64,first');
   root.display([first], Object.freeze({ 1: request1 }));
-  const firstRow = row(1), details = firstRow.querySelector('details'), trigger = inspect(1);
-  details.querySelector('summary').click(); trigger.focus(); trigger.click();
-  assert.equal(details.open, true); assert.equal(dialog.open, true);
-  assert.equal(document.activeElement, nodes.get('close-inspector'));
+  const firstRow = row(1), trigger = inspect(1);
+  const title = nodes.get('inspector-title');
+  history.scrollTop = 40;
+  trigger.focus(); trigger.click();
   assert.equal(trigger.type, 'button');
-  assert.equal(trigger.textContent, 'Inspect decision #1');
-  assert.equal(trigger.attributes.get('aria-haspopup'), 'dialog');
-  assert.equal(trigger.attributes.get('aria-controls'), 'decision-inspector');
+  assert.equal(trigger.attributes.get('aria-controls'), 'decision-detail');
+  assert.equal(trigger.attributes.has('aria-haspopup'), false);
   assert.equal(nodes.get('inspector-image').attributes.get('src'), request1.png);
-  const completed = { ...first, stage: 'completed', action: 'neutral', latencyMs: 0, status: 'Complete', result: { tic: 3 }, execution: { complete: true },
+  nodes.get('inspector-request').open = true;
+  nodes.get('inspector-context').focus();
+  nodes.get('detail-scroll').scrollTop = 200;
+  const completed = { ...first, stage: 'completed', action: 'neutral', latencyMs: 0, status: 'Complete', result: { tic: 3 },
+    execution: { complete: true, requestedTics: 2, reportedCompletedTics: 2, independentlyVerifiedTics: 2, completionUncertain: false },
     responseMetadata: { reportedModel: 'different-response-model', usage: { input: 9, output: 0, total: null } },
-    choice: { confidence: 0, probabilities: [{ value: 'neutral', probability: 1 }, { value: 'fire', probability: 0 }] } };
-  const second = entry(2, { selectedTics: 5, observation: { tic: 3 }, requestIdentity: { provider: 'OpenAI', requestedModel: 'second-request-model' } });
+    choice: { confidence: 0, probabilities: distribution() } };
+  const second = entry(2, { requestIdentity: { provider: 'OpenAI', requestedModel: 'second-request-model' } });
   const request2 = buildDefaultDecisionRequest(3, 5, 'data:image/png;base64,second');
   root.display([completed, second], Object.freeze({ 1: request1, 2: request2 }));
   assert.deepEqual(history.children.map(node => node.id), ['decision-2', 'decision-1']);
-  assert.equal(row(1), firstRow); assert.equal(details.open, true);
-  assert.equal(document.activeElement, nodes.get('close-inspector'));
-  assert.equal(text('inspector-title'), 'Decision #1', 'New entries do not steal selection');
+  assert.equal(row(1), firstRow);
+  assert.equal(detail.hidden, false);
+  assert.equal(document.activeElement, nodes.get('inspector-context'));
+  assert.equal(nodes.get('inspector-request').open, true);
+  assert.equal(nodes.get('detail-scroll').scrollTop, 200);
+  assert.equal(text('inspector-title'), '#1 · neutral', 'New entries do not steal selection');
+  assert.equal(nodes.get('inspector-title'), title);
+  assert.equal(title.parentElement, nodes.get('detail-header'), 'Updated identity stays in the persistent header');
   assert.equal(text('inspector-instructions'), request1.instructions);
   assert.equal(text('inspector-context'), request1.context);
   assert.equal(text('inspector-actions'), request1.permittedActions.join('\n'));
-  assert.match(text('inspector-diagnostics'), /first-request-model/);
-  assert.match(text('inspector-diagnostics'), /different-response-model/);
-  assert.doesNotMatch(text('inspector-diagnostics'), /second-request-model/);
-  assert.match(text('inspector-usage'), /Output \/ completion tokens: 0/);
-  assert.match(text('inspector-usage'), /Reported total tokens: Unavailable/);
-  assert.match(text('inspector-answer'), /neutral: 100% · Selected/);
-  assert.match(text('inspector-answer'), /API confidence: 0%/);
-  for (const dismiss of [() => dialog.escape(), () => nodes.get('close-inspector').click()]) {
-    dismiss(); assert.equal(dialog.open, false); assert.equal(document.activeElement, trigger);
-    assert.equal(nodes.get('inspector-image').attributes.has('src'), false, 'Release the selected decoded image on close');
-    trigger.click(); assert.equal(nodes.get('inspector-image').attributes.get('src'), request1.png);
-  }
-  dialog.close(); inspect(2).click();
-  assert.equal(text('inspector-title'), 'Decision #2');
+  assert.equal(text('inspector-model'), 'first-request-model');
+  assert.equal(text('inspector-reported-model'), 'different-response-model');
+  assert.equal(nodes.get('inspector-reported-model').hidden, false);
+  assert.equal(nodes.get('inspector-reported-model-label').hidden, false);
+  assert.equal(text('inspector-output-tokens'), '0');
+  assert.equal(text('inspector-total-tokens'), 'Unavailable');
+  assert.equal(text('inspector-state'), 'Completed · 2 tics independently verified');
+  assert.match(text('inspector-result'), /may no longer be the displayed frame/);
+  const probabilities = nodes.get('inspector-probabilities').children;
+  assert.match(probabilities[0].textContent, /^fire/);
+  assert.equal(probabilities[0].dataset.selected, 'false');
+  assert.equal(probabilities[1].dataset.selected, 'true', 'Selection need not have the highest probability');
+  assert.equal(probabilities[1].children[1].textContent, '40%');
+  assert.match(text('inspector-confidence'), /separate from action probabilities.*0%/);
+  history.scrollTop = 0; // A hidden list may lose its browser scroll offset.
+  back();
+  assert.equal(history.scrollTop, 140, 'Restore offset plus the prepended row height');
+  assert.equal(document.activeElement, trigger);
+  assert.deepEqual(document.focusOptions, { preventScroll: true });
+  assert.equal(nodes.get('inspector-image').attributes.has('src'), false);
+  inspect(2).click();
+  assert.equal(text('inspector-title'), '#2 · Action pending');
+  assert.equal(nodes.get('inspector-request').open, false);
+  assert.equal(nodes.get('detail-scroll').scrollTop, 0);
   assert.equal(nodes.get('inspector-image').attributes.get('src'), request2.png);
-  assert.equal(text('inspector-context'), request2.context);
   assert.equal(fetch.mock.calls.length, 0); assert.equal(Worker.mock.calls.length, 0);
 });
 
-it('distinguishes capturing, prepared/uninvoked, pending, canceled and unavailable fields safely', () => {
+it('distinguishes pending, prepared/uninvoked, canceled and unavailable evidence without executing anything', () => {
   const input = buildDefaultDecisionRequest(1, 2, 'data:image/png;base64,stored');
   root.display([entry(1, { stage: 'capturing', sdkInvoked: false, requestIdentity: undefined })], {});
   inspect(1).click();
   assert.match(text('inspector-request-state'), /not yet prepared/);
-  assert.equal(nodes.get('inspector-image').attributes.has('src'), false);
+  assert.match(text('inspector-execution'), /No native action dispatched/);
   assert.equal(text('inspector-instructions'), 'Pending');
+  assert.equal(text('inspector-total-tokens'), 'Unavailable');
   assert.match(text('inspector-diagnostics'), /Requested model \(not invoked\): Unavailable/);
   root.display([entry(1, { sdkInvoked: false })], { 1: input });
   assert.match(text('inspector-request-state'), /Request prepared; SDK invocation not attempted/);
   root.display([entry()], { 1: input });
-  assert.match(text('inspector-usage'), /Token usage pending/);
+  assert.equal(text('inspector-total-tokens'), 'Pending');
+  root.display([entry(1, { responseMetadata: {
+    reportedModel: 'first-request-model', usage: { input: 0, output: 0, total: 0 },
+  } })], { 1: input });
+  assert.equal(text('inspector-total-tokens'), '0');
+  assert.equal(nodes.get('inspector-reported-model').hidden, true);
+  assert.equal(nodes.get('inspector-reported-model-label').hidden, true);
+  assert.match(text('inspector-diagnostics'), /Provider-reported model: first-request-model/);
   root.display([entry(1, { stage: 'ended', status: 'Stopped by user', http: 429 })], { 1: input });
-  assert.match(text('inspector-state'), /Stopped by user · stage: ended/);
-  assert.match(text('inspector-usage'), /Token usage unavailable/);
-  assert.match(text('inspector-answer'), /Chosen action: Unavailable/);
+  assert.equal(text('inspector-state'), 'Stopped by user');
+  assert.equal(text('inspector-total-tokens'), 'Unavailable');
+  assert.equal(nodes.get('inspector-probabilities').hidden, true);
+  assert.equal(text('probabilities-unavailable'), 'Action probabilities unavailable.');
   assert.match(text('inspector-diagnostics'), /HTTP status: 429/);
-  root.display([entry(1, { stage: 'ended', status: '<img src=bad>', sdkInvoked: false, requestIdentity: undefined })], {});
-  assert.match(text('inspector-state'), /<img src=bad>/);
-  assert.equal(nodes.get('inspector-state').children.length, 0, 'Untrusted strings remain text');
-  assert.equal(text('inspector-instructions'), 'Unavailable');
-  assert.equal(nodes.get('inspector-image').attributes.has('src'), false);
+  const longText = `<img src=bad> ${'long-unbroken-context'.repeat(500)}`;
+  root.display([entry(1, { stage: 'ended', status: '<img src=bad>', sdkInvoked: false, requestIdentity: undefined })], {
+    1: { ...input, instructions: longText, context: longText },
+  });
+  assert.equal(text('inspector-state'), '<img src=bad>');
+  assert.equal(nodes.get('inspector-state').children.length, 0);
+  assert.equal(text('inspector-context'), longText);
+  assert.equal(nodes.get('inspector-context').children.length, 0, 'Request text stays text, even when long');
+  nodes.get('inspector-image').dispatchEvent(new Event('error'));
+  assert.equal(nodes.get('inspector-image').hidden, true);
+  assert.match(text('inspector-image-status'), /could not be displayed/);
 });
 
-it('updates the scroll cue after rows/disclosure/resize/scroll and cleans up on disconnect', () => {
+it('keeps action selection, execution verification and resulting frame evidence separate', () => {
+  const chosen = entry(1, { stage: 'rendering', action: 'use', execution: {
+    complete: true, requestedTics: 2, reportedCompletedTics: 2, independentlyVerifiedTics: 2, completionUncertain: false,
+  } });
+  root.display([chosen], {}); inspect(1).click();
+  assert.match(text('inspector-execution'), /Native requested: 2 · Worker-reported: 2 · Independently verified: 2/);
+  assert.match(text('inspector-result'), /Action verified; resulting frame not yet available/);
+  assert.equal(text('inspector-state'), 'Action verified · resulting frame pending');
+  root.display([{ ...chosen, stage: 'stepping', execution: { ...chosen.execution,
+    complete: false, reportedCompletedTics: null, independentlyVerifiedTics: 0, completionUncertain: true,
+  } }], {});
+  assert.match(text('inspector-result'), /verification in progress/);
+  assert.equal(text('inspector-state'), 'Native verification in progress');
+  assert.doesNotMatch(text('inspector-result'), /Reload required/);
+  root.display([{ ...chosen, stage: 'ended', execution: { ...chosen.execution,
+    complete: false, reportedCompletedTics: null, independentlyVerifiedTics: 1, completionUncertain: true,
+  } }], {});
+  assert.match(text('inspector-execution'), /1 tics \(lower bound; completion uncertain\)/);
+  assert.match(text('inspector-result'), /completion uncertain.*do not replay/);
+  assert.match(text('inspector-state'), /Completion uncertain · at least 1 tic verified/);
+  root.display([entry(1, { action: 'use' })], {});
+  assert.equal(text('inspector-state'), 'Choice received · no native dispatch');
+  assert.match(text('inspector-execution'), /No native action dispatched/);
+  assert.doesNotMatch(text('inspector-result'), /Action verified;/);
+  const terminalStatus = 'Player dead at tic 2; 1 of 2 tics verified; frame retained.';
+  root.display([{ ...chosen, stage: 'ended', status: terminalStatus, result: { tic: 2 },
+    execution: { ...chosen.execution, complete: false, independentlyVerifiedTics: 1 },
+  }], {});
+  assert.equal(text('inspector-state'), terminalStatus, 'Retain the controller-verified terminal prefix');
+});
+
+it('updates the list-only scroll cue and cleans up observers on disconnect', () => {
   root.display([entry()], {});
   history.scrollHeight = 250;
   observers[1].callback(); flush();
@@ -274,10 +312,13 @@ it('updates the scroll cue after rows/disclosure/resize/scroll and cleans up on 
   assert.equal(observers[0].observed.has(row(1)), true);
   history.scrollTop = 149; history.dispatchEvent(new Event('scroll')); flush();
   assert.equal(root.dataset.historyMore, 'false', 'One-pixel tolerance at bottom');
-  history.scrollTop = 0; history.clientHeight = 0; observers[0].callback(); flush();
-  assert.equal(root.dataset.historyMore, 'false');
-  history.clientHeight = 100; observers[0].callback(); flush();
+  history.scrollTop = 0;
+  inspect(1).click(); observers[1].callback(); flush();
+  assert.equal(root.dataset.historyMore, 'false', 'No list cue while inspecting');
+  back(); observers[1].callback(); flush();
   assert.equal(root.dataset.historyMore, 'true');
+  history.clientHeight = 0; observers[0].callback(); flush();
+  assert.equal(root.dataset.historyMore, 'false');
   const oldRow = row(1); root.display([], {}); observers[1].callback(); flush();
   assert.equal(observers[0].observed.has(oldRow), false);
   assert.equal(history.children.length, 0);
@@ -288,15 +329,15 @@ it('updates the scroll cue after rows/disclosure/resize/scroll and cleans up on 
   assert.equal(frames.size, 0);
 });
 
-it('clears removed selections and reconnects without duplicate rows or event handlers', () => {
+it('returns safely when the selection disappears and reconnects without duplicate handlers', () => {
   root.display([entry()], {}); inspect(1).click();
-  const oldTrigger = inspect(1);
   root.display([], {});
-  assert.equal(dialog.open, false);
-  assert.notEqual(document.activeElement, oldTrigger, 'Do not restore focus to a removed trigger');
+  assert.equal(detail.hidden, true); assert.equal(list.hidden, false);
+  assert.equal(document.activeElement, history, 'Removed trigger gets a focusable list fallback');
+  assert.equal(nodes.get('inspector-image').attributes.has('src'), false);
   root.disconnectedCallback(); root.connectedCallback();
   root.display([entry()], {});
   assert.equal(history.children.length, 1);
-  inspect(1).click(); dialog.escape();
+  inspect(1).click(); back();
   assert.equal(document.activeElement, inspect(1));
 });

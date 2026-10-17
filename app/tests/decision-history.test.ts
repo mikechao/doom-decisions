@@ -39,6 +39,7 @@ it('uses stages for pending action and latency regardless of status copy', () =>
       assert.deepEqual(project({ stage, status }), {
         action: pending ? 'Action pending' : 'Action unavailable',
         latency: pending ? 'API latency pending' : 'API latency unavailable',
+        tokens: 'Total tokens unavailable',
         status,
       });
     }
@@ -52,6 +53,7 @@ it('shows a received choice during requesting and retains actual latency', () =>
       {
         action: 'use',
         latency: 'API 12 ms',
+        tokens: 'Total tokens unavailable',
         status: 'Choice received; checking unchanged game state',
       },
     );
@@ -59,6 +61,22 @@ it('shows a received choice during requesting and retains actual latency', () =>
       project({ stage: 'ended', action: 'use', status }).status,
       status,
     );
+  }
+});
+
+it('shows only provider-reported totals, preserving zero and honest missing states', () => {
+  const responseMetadata = (usage) => ({ reportedModel: null, usage });
+  assert.equal(project({ responseMetadata: responseMetadata({ input: 0, output: 0, total: 0 }) }).tokens, '0 tokens');
+  assert.equal(project({ responseMetadata: responseMetadata({ input: 900, output: 20, total: 1234 }) }).tokens, '1,234 tokens');
+  assert.equal(project({ responseMetadata: responseMetadata({ input: 900, output: 20, total: null }) }).tokens, 'Total tokens unavailable');
+  const requesting = { stage: 'requesting', sdkInvoked: true };
+  assert.equal(project(requesting).tokens, 'Tokens pending');
+  for (const change of [
+    { sdkInvoked: false }, { stage: 'capturing' }, { stage: 'ended' },
+    { stage: 'cleanup' }, { action: 'use' }, { latencyMs: 0 }, { http: 429 },
+    { responseMetadata: responseMetadata({ input: null, output: null, total: null }) },
+  ]) {
+    assert.equal(project({ ...requesting, ...change }).tokens, 'Total tokens unavailable');
   }
 });
 
