@@ -219,7 +219,9 @@ function displayOAuth() {
   $('#openrouter-signin-button').setAttribute('aria-busy', String(oauth.busy));
   $('#openrouter-signin-button').textContent = oauth.busy
     ? 'Connecting…'
-    : 'Sign in with OpenRouter';
+    : oauth.hasKey
+      ? 'OpenRouter sign-in complete'
+      : 'Sign in with OpenRouter';
   $('#openrouter-manual').disabled = oauth.busy || oauth.closed;
   $('#openrouter-back').disabled = oauth.busy || oauth.closed;
   $('#openrouter-auth-status').textContent = latestSession?.hasClient

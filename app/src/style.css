@@ -344,7 +344,7 @@ summary:hover {
   font-size: 0.75rem;
   font-weight: 500;
   line-height: 1.25;
-  text-align: center;
+  text-align: left;
 }
 #openrouter-auth-note.auth-charge-note {
   margin-top: 0.25rem;
@@ -1022,10 +1022,11 @@ pre {
 }
 footer {
   margin-top: 1.5rem;
-  max-width: 90ch;
+  width: 100%;
+  max-width: none;
 }
-footer > p:first-child {
-  width: min(calc(100vw - 3rem), 82rem);
+footer > p {
+  width: 100%;
   max-width: none;
 }
 footer p + p {
