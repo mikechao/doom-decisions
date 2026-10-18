@@ -3,9 +3,19 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, it } from 'vitest';
 import { stageFreedoom, verifyFreedoom } from '../../scripts/stage_web.mjs';
 import identity from '../src/freedoom-identity.json';
+
+let baselineTemporary, baseline;
+beforeAll(() => {
+  baselineTemporary = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'doom-freedoom-baseline-')));
+  baseline = path.join(baselineTemporary, 'public');
+  stageFreedoom(baseline);
+});
+afterAll(() => {
+  if (baselineTemporary) fs.rmSync(baselineTemporary, { recursive: true, force: true });
+});
 
 let temporary, source, target;
 beforeEach(() => {
@@ -48,7 +58,7 @@ for (const fault of ['missing', 'corrupt', 'truncated', 'directory', 'symlink'])
 
 for (const relative of ['other.wad', 'nested/OTHER.WAD', 'other.wad.gz', 'nested/freedoom1.wad.gz', 'iwads/FREEDOOM1.WAD.GZ']) {
   it(`rejects unexpected static asset ${relative}`, () => {
-    stageFreedoom(target, source);
+    fs.cpSync(baseline, target, { recursive: true }); // Keep the shared baseline immutable.
     const file = path.join(target, relative);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     // Create the uppercase directory entry even on case-insensitive filesystems.
@@ -60,7 +70,7 @@ for (const relative of ['other.wad', 'nested/OTHER.WAD', 'other.wad.gz', 'nested
 }
 
 it('rejects missing/changed gzip and notices in both public and dist', () => {
-  stageFreedoom(target, source);
+  fs.cpSync(baseline, target, { recursive: true });
   for (const directory of [target, path.join(temporary, 'dist')]) {
     if (directory !== target) fs.cpSync(target, directory, { recursive: true });
     for (const relative of [identity.gzip.path, ...identity.notices.map(n => 'notices/freedoom/' + n.name)]) {
