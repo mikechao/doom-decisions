@@ -198,19 +198,19 @@ it('leaves hidden on the host, with an explicit shadow host visibility rule', ()
   assert.match(css, /:host\(\[hidden\]\)\s*\{\s*display: none;/);
 });
 
-it('migrates exactly the ten static controls and retains native history-row creation and typed selectors', () => {
+it('uses eleven static controls and retains native history-row creation and typed selectors', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
   const history = readFileSync(new URL('../src/decision-history.ts', import.meta.url), 'utf8');
   const expected = {
     'openrouter-signin-button': 'primary', 'openrouter-manual': 'text',
-    'included-freedoom': 'neutral', 'openrouter-back': 'text', next: 'primary',
+    'included-freedoom': 'neutral', 'iwad-picker': 'neutral', 'openrouter-back': 'text', next: 'primary',
     start: 'secondary', stop: 'outline', 'view-prompt': 'outline',
     'back-to-history': 'outline', 'close-prompt': 'outline',
   };
   const markup = [...html.matchAll(/<doom-button id="([^"]+)" appearance="([^"]+)"/g)];
   assert.deepEqual(Object.fromEntries(markup.map(match => [match[1], match[2]])), expected);
-  assert.equal(markup.length, 10);
+  assert.equal(markup.length, 11);
   assert.doesNotMatch(html, /<button\b/);
   for (const id of Object.keys(expected).filter(id => id !== 'back-to-history'))
     assert.ok(main.includes(`'#${id}': DoomButtonElement;`));

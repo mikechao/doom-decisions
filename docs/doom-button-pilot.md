@@ -1,8 +1,8 @@
 # Static Doom buttons
 
-All ten static action controls use `<doom-button>`. The original View Prompt
+All eleven static action controls use `<doom-button>`. The original View Prompt
 pilot remains part of this implementation. Dynamic `.decision-row` history
-buttons, the IWAD label/input, and the GitHub link retain their native elements.
+buttons, the IWAD file input, and the GitHub link retain their native elements.
 
 ## Component contract
 
@@ -85,6 +85,21 @@ require reload show `Reload to retry`. Existing selection locks still own disabl
 state. These labels are application presentation, using the component's existing
 busy/disabled support without a new component API.
 
+The local IWAD trigger uses the existing neutral appearance and start-icon slot.
+Its native file input is a hidden sibling, so only the trigger is a tab stop and
+input clicks cannot bubble back into the trigger. The guarded click handler calls
+the input's native `click()` synchronously; cancellation leaves selection intact.
+The label shows `Preparing NAME.WAD…` during local preparation and the full
+`file.name` after the session reports `prepared`. The confirmed filename remains
+through later retirement; reselection still requires refresh. Visually clipped
+name text and a screen-reader-only loaded/refresh suffix supply the native button's
+accessible name without a new ARIA forwarding API. Long names also have a title.
+Only the redundant successful local `NAME.WAD · prepared` line is cleared;
+pending/error status, included-Freedoom status, and privacy guidance remain.
+The picker follow-up passed typechecking, lint, non-writing source formatting and
+diff checks. Focused regression cases were added but not run; the new browser,
+native-picker activation, layout and accessibility behavior awaits owner checks.
+
 The state-label follow-up passed `npm --prefix app run check`: all three
 TypeScript configurations, static Worker packaging, 226 tests across 25 files,
 and Biome. These remain offline checks; browser/CSP/accessibility verification
@@ -117,7 +132,7 @@ the authorized offline suite, not native Doom/WASM runtime evidence.
 Owner browser checklist (after separately authorized build/serving; Codex does not
 launch Chrome):
 
-1. Check all ten controls at desktop and narrow widths: resting, hover, focus,
+1. Check all eleven controls at desktop and narrow widths: resting, hover, focus,
    pressed, disabled and busy states; spacing, Oswald sizes, text alignment, one
    tab stop/focus ring, and no flash or clipping. Compare sign-in versus Next's
    distinct amber recipes. Preview unavailable states in an isolated inert UI;
@@ -128,6 +143,9 @@ launch Chrome):
    authorization; synthetic state presentation alone is not OAuth evidence.
 3. Check Freedoom's enabled/disabled neutral appearance. Actual selection fetches
    the asset and prepares WASM, requiring separate asset/runtime authorization.
+   Check local picker mouse/Enter/Space activation, cancellation, long filenames,
+   centered icon/text, preparing/prepared/error labels and full accessible names.
+   Actual local preparation also requires separate asset/runtime authorization.
 4. Check Next/Start/Stop readiness and disabled behavior without credentials or
    API calls. Exercise enabled/busy/Stop presentation in an inert fixture or the
    authorized offline mocks. Live gameplay and billable requests are separate.

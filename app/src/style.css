@@ -161,7 +161,6 @@ label {
   font-size: 0.875rem;
   font-weight: 500;
 }
-label[for="iwad"],
 label[for="key"] {
   font:
     500 0.875rem / 1.5 system-ui,
@@ -316,18 +315,6 @@ summary:hover {
   width: 100%;
   text-align: center;
 }
-:where(.setup-file) > .iwad-picker {
-  justify-content: center;
-}
-:where(.setup-file) > .iwad-picker > .iwad-folder-icon {
-  position: absolute;
-  top: 50%;
-  left: 0.75rem;
-  transform: translateY(-50%);
-}
-:where(.setup-file) > .iwad-picker > span {
-  text-align: center;
-}
 .setup-file > #setup-asset {
   margin-top: 0;
 }
@@ -353,70 +340,26 @@ summary:hover {
   line-height: 1.25;
 }
 .iwad-picker {
-  position: relative;
-  display: flex;
-  align-items: center;
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-  margin: 0;
-  padding: 0.5rem 0.625rem;
-  border: 1px solid var(--boundary);
-  border-radius: 2px;
-  color: var(--light-action);
-  background: var(--surface);
   font:
     500 0.875rem / 1.25 system-ui,
     sans-serif;
-  cursor: pointer;
 }
-.setup-file > .iwad-picker {
-  grid-column: 1 / -1;
+#iwad-picker-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.iwad-picker:focus-within {
-  outline: 3px solid var(--focus);
-  outline-offset: 3px;
-}
-.iwad-picker:hover:not(:has(input:disabled)) {
-  border-color: #b2b4aa;
-}
-.iwad-picker:has(input:disabled) {
-  border-color: var(--rule);
-  color: var(--muted);
-  background: #242923;
-  cursor: default;
-}
-.iwad-picker > input[type="file"] {
+#iwad-picker-state {
   position: absolute;
   width: 1px;
   height: 1px;
-  min-height: 1px;
-  max-width: none;
-  margin: 0;
-  padding: 0;
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
 }
-.iwad-picker--quiet {
-  padding-inline: 0.25rem;
-  border-color: transparent;
-  border-bottom-color: var(--rule);
-  border-radius: 0;
-  color: var(--muted);
-  background: transparent;
-}
-.iwad-picker--quiet:hover:not(:has(input:disabled)) {
-  border-bottom-color: var(--boundary);
-  color: var(--ivory);
-}
-.iwad-picker--folder {
-  gap: 0.75rem;
-  padding-inline: 0.75rem;
-  color: var(--ivory);
-  background: #1d211b;
-}
-.iwad-picker--folder .iwad-folder-icon {
+.iwad-picker .iwad-folder-icon {
   width: 1.25rem;
   height: 1.125rem;
   flex: 0 0 auto;

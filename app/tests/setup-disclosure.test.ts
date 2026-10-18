@@ -30,6 +30,7 @@ vi.mock('../src/doom-button', () => ({ defineDoomButton: () => {} }));
 
 class Element extends EventTarget {
   display = vi.fn();
+  click = vi.fn();
   value = '';
   valueAsNumber = 2;
   disabled = false;
@@ -279,7 +280,7 @@ describe('Setup disclosure', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     assert.match(html, /<details id="setup"[^>]* open[^>]*>/);
     assert.match(html, /<summary><h2 id="setup-title">Setup<\/h2><\/summary>/);
-    assert.match(html, /<label class="iwad-picker[^\"]*" for="iwad">[\s\S]*?<svg class="iwad-folder-icon"[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/svg>\s*<span>Choose local IWAD<\/span>[\s\S]*?<input id="iwad" type="file" accept="\.wad" aria-describedby="asset-note" disabled>\s*<\/label>/);
+    assert.match(html, /<doom-button id="iwad-picker" appearance="neutral" class="iwad-picker" aria-describedby="asset-note" disabled>\s*<svg class="iwad-folder-icon" slot="start"[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/svg>\s*<span id="iwad-picker-label">Choose local IWAD<\/span>\s*<span id="iwad-picker-state"><\/span>\s*<\/doom-button>\s*<input id="iwad" type="file" accept="\.wad" aria-label="Choose local IWAD" aria-describedby="asset-note" hidden disabled>/);
     assert.match(html, /<doom-button id="included-freedoom" appearance="neutral"[^>]* disabled>Use included Freedoom<\/doom-button>/);
     assert.match(html, /<p id="asset-note" class="help asset-note">Freedoom download: ~9\.83 MiB\. Local files stay in your browser\. Refresh to change the game file\.<\/p>/);
     assert.match(html, /<details class="setup-details">\s*<summary>Privacy &amp; API key details<\/summary>/);
@@ -430,5 +431,135 @@ describe('Setup disclosure', () => {
     document.activeElement = null;
     emit(element('#setup'), 'focusout', { relatedTarget: element('#next') });
     assert.equal(element('#setup').open, false);
+  });
+});
+
+describe('Local IWAD picker presentation and delegation', () => {
+  const unprepared = () => show({ phase: 'unprepared', prepared: false,
+    controls: { ready: false, stop: false, tics: false, iwad: true } });
+  const preparing = () => show({ phase: 'preparing', prepared: false });
+
+  it('delegates synchronously once to the native input and respects all selection locks', () => {
+    const picker = element('#iwad-picker'), input = element('#iwad');
+    emit(picker, 'click');
+    assert.equal(input.click.mock.calls.length, 0, 'Startup is not ready');
+    session.ports.present({ iwadEnabled: true });
+    unprepared();
+    emit(picker, 'click');
+    assert.equal(input.click.mock.calls.length, 1, 'No async boundary before opening the picker');
+    assert.equal(session.controller.prepare.mock.calls.length, 0);
+    picker.disabled = true;
+    emit(picker, 'click');
+    picker.disabled = false;
+    input.disabled = true;
+    emit(picker, 'click');
+    assert.equal(input.click.mock.calls.length, 1, 'Both disabled states are respected');
+    preparing();
+    emit(picker, 'click');
+    assert.equal(input.click.mock.calls.length, 1);
+    show();
+    emit(picker, 'click');
+    assert.equal(input.click.mock.calls.length, 1, 'A prepared game cannot be replaced');
+  });
+
+  it('leaves cancellation inert without clearing an existing selection or claiming preparation', () => {
+    session.ports.present({ iwadEnabled: true });
+    const input = element('#iwad');
+    emit(input, 'cancel');
+    emit(input, 'change'); // Defensive empty selection; real cancel need not emit change.
+    assert.equal(session.controller.prepare.mock.calls.length, 0);
+    assert.equal(element('#iwad-picker-label').textContent, 'Choose local IWAD');
+    assert.equal(element('#iwad-picker').attributes.get('aria-busy'), 'false');
+    input.files = [{ name: 'previous.wad' }];
+    emit(input, 'change');
+    unprepared(); // Recoverable validation failure permits another choice.
+    const status = element('#setup-asset').textContent;
+    emit(input, 'cancel');
+    assert.equal(input.files[0].name, 'previous.wad', 'Native file selection is not cleared');
+    assert.equal(element('#setup-asset').textContent, status);
+    assert.equal(session.controller.prepare.mock.calls.length, 1);
+    assert.equal(element('#iwad-picker-label').textContent, 'Choose local IWAD');
+  });
+
+  it('shows preparation before success, retains the full filename text, and removes only the prepared duplicate', () => {
+    session.ports.present({ iwadEnabled: true });
+    const name = `${'LONG_FILENAME_'.repeat(30)}<DOOM>&.WAD`;
+    const file = { name };
+    const input = element('#iwad'), picker = element('#iwad-picker');
+    input.value = 'C:\\fakepath\\different.wad';
+    input.files = [file];
+    session.controller.prepare.mockImplementationOnce(() => { preparing(); return Promise.resolve(); });
+    emit(input, 'change');
+    assert.deepEqual(session.controller.prepare.mock.calls, [[file]]);
+    assert.equal(element('#iwad-picker-label').textContent, `Preparing ${name}…`);
+    assert.equal(picker.attributes.get('aria-busy'), 'true');
+    assert.equal(picker.disabled, true);
+    assert.equal(input.disabled, true);
+    assert.equal(element('#iwad-picker-state').textContent, '');
+    assert.equal(element('#setup-asset').textContent, `${name} · selected`);
+    show({ prepared: false });
+    assert.equal(element('#iwad-picker-label').textContent, 'Choose local IWAD', 'Phase alone cannot prove preparation');
+    show();
+    assert.equal(element('#iwad-picker-label').textContent, name);
+    assert.equal(element('#iwad-picker-state').textContent, ' loaded. Refresh to choose another game file.');
+    assert.equal(picker.title, name);
+    assert.equal(picker.attributes.get('aria-busy'), 'false');
+    assert.equal(picker.disabled, true);
+    assert.equal(element('#setup-asset').textContent, '');
+    assert.equal(input.value, 'C:\\fakepath\\different.wad', 'The input value is neither used as a label nor reset');
+    for (const phase of ['busy', 'error', 'terminal']) {
+      show({ phase, prepared: phase === 'busy' });
+      assert.equal(element('#iwad-picker-label').textContent, name);
+      assert.equal(element('#setup-asset').textContent, '');
+      assert.equal(picker.disabled, true);
+    }
+  });
+
+  it('preserves retryable and reload-required failures without a prepared-file label', () => {
+    session.ports.present({ iwadEnabled: true });
+    const input = element('#iwad'), picker = element('#iwad-picker');
+    input.files = [{ name: 'invalid.wad' }];
+    emit(input, 'change');
+    preparing();
+    session.ports.present({ status: 'Preparation failed: invalid WAD. Choose an IWAD again to retry preparation.' });
+    unprepared();
+    assert.equal(picker.disabled, false);
+    assert.equal(picker.attributes.get('aria-busy'), 'false');
+    assert.equal(element('#iwad-picker-label').textContent, 'Choose local IWAD');
+    assert.equal(element('#iwad-picker-state').textContent, '');
+    assert.match(element('#status').textContent, /invalid WAD/);
+    assert.equal(element('#setup-asset').textContent, 'invalid.wad · selected');
+    input.files = [{ name: 'another.wad' }];
+    emit(input, 'change');
+    preparing();
+    session.ports.present({ status: 'Preparation failed: verification failed. Reload to restart.' });
+    show({ phase: 'error', prepared: false });
+    assert.equal(picker.disabled, true);
+    assert.equal(picker.attributes.get('aria-busy'), 'false');
+    assert.equal(element('#iwad-picker-label').textContent, 'Choose local IWAD');
+    assert.match(element('#iwad-picker-state').textContent, /Preparation failed\. Refresh/);
+    assert.match(element('#status').textContent, /verification failed/);
+    input.files = [{ name: 'blocked.wad' }];
+    emit(input, 'change');
+    assert.equal(session.controller.prepare.mock.calls.length, 2);
+    assert.equal(element('#setup-asset').textContent, 'another.wad · selected');
+  });
+
+  it('keeps included Freedoom status without attributing it to a previous local filename', () => {
+    session.ports.present({ iwadEnabled: true });
+    element('#iwad').files = [{ name: 'failed-local.wad' }];
+    emit(element('#iwad'), 'change');
+    unprepared();
+    session.controller.prepare.mockImplementationOnce(() => { preparing(); return Promise.resolve(); });
+    emit(element('#included-freedoom'), 'click');
+    assert.equal(element('#iwad-picker-label').textContent, 'Choose local IWAD');
+    assert.equal(element('#iwad-picker').title, '');
+    assert.equal(element('#iwad-picker').attributes.get('aria-busy'), 'false');
+    assert.equal(element('#iwad-picker').disabled, true);
+    show();
+    assert.equal(element('#iwad-picker-label').textContent, 'Choose local IWAD');
+    assert.equal(element('#iwad-picker-state').textContent, '');
+    assert.equal(element('#setup-asset').textContent, 'Included Freedoom Phase 1 v0.13.0 · prepared');
+    assert.equal(element('#included-freedoom').textContent, 'Doom loaded');
   });
 });

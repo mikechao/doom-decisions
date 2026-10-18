@@ -48,13 +48,14 @@
             </div>
             <div class="setup-file">
               <doom-button id="included-freedoom" appearance="neutral" aria-describedby="asset-note" disabled>Use included Freedoom</doom-button>
-              <label class="iwad-picker iwad-picker--quiet iwad-picker--folder" for="iwad">
-                <svg class="iwad-folder-icon" viewBox="0 0 24 18" aria-hidden="true" focusable="false">
+              <doom-button id="iwad-picker" appearance="neutral" class="iwad-picker" aria-describedby="asset-note" disabled>
+                <svg class="iwad-folder-icon" slot="start" viewBox="0 0 24 18" aria-hidden="true" focusable="false">
                   <path d="M2.25 6V3.75c0-.55.45-1 1-1h4.6l2.05 2h10.85c.55 0 1 .45 1 1V6M2.25 6h19.5l-2.1 8.25H4.45L2.25 6Z" />
                 </svg>
-                <span>Choose local IWAD</span>
-                <input id="iwad" type="file" accept=".wad" aria-describedby="asset-note" disabled>
-              </label>
+                <span id="iwad-picker-label">Choose local IWAD</span>
+                <span id="iwad-picker-state"></span>
+              </doom-button>
+              <input id="iwad" type="file" accept=".wad" aria-label="Choose local IWAD" aria-describedby="asset-note" hidden disabled>
               <span id="setup-asset" aria-live="polite" aria-atomic="true"></span>
               <p id="asset-note" class="help asset-note">Freedoom download: ~9.83 MiB. Local files stay in your browser. Refresh to change the game file.</p>
             </div>

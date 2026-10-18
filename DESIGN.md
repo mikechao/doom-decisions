@@ -325,10 +325,10 @@ sign-in uses its inline monochrome logo.
 Setup is an initially open native disclosure titled “Setup”. It groups account
 connection, game-file choice, manual credentials, and privacy guidance. After
 preparation and credential readiness, it collapses once when focus and pointer
-activity have left setup. Users can reopen it. The selected asset is labeled
-selected or prepared; there is no invented “Loaded” light. Included Freedoom and
-local IWAD selection each prepare automatically after explicit choice;
-refreshing is the way to change a prepared game file.
+activity have left setup. Users can reopen it. A prepared local filename appears
+inside its picker; other selected-asset status remains below the controls.
+Included Freedoom and local IWAD selection each prepare automatically after
+explicit choice; refreshing is the way to change a prepared game file.
 
 OpenRouter mode leads with a full-width amber sign-in button and inline logo
 (22px square), a compact charge note, and native radio choices for GPT-6 Luna
@@ -338,15 +338,17 @@ text buttons reveal manual API-key entry or return to sign-in. Busy sign-in says
 “Connecting…” and uses a wait cursor; completion is explicit text.
 
 The game-file group uses a full-width “Use included Freedoom” button and a
-full-width “Choose local IWAD” label with a left-aligned amber folder icon and
-centered text. The latter combines a quiet bottom-border treatment with a dark
-folder-button fill. Its native file input is visually clipped, remains labeled,
-and gives the enclosing label a visible focus-within outline. Compact guidance
-states the bundled download size and local-file behavior. Neither choice starts
-on page load.
+full-width neutral `<doom-button>` for “Choose local IWAD”, with the amber folder
+icon immediately left of the label, centered together. During local preparation
+it reads “Preparing NAME.WAD…”; after confirmed preparation it shows the filename
+and remains disabled until refresh. Long filenames use visual ellipsis while
+the full name and loaded/refresh context remain accessible. A hidden, named native
+file input is activated synchronously by the trigger and adds no tab stop.
+Compact guidance states the bundled download size and local-file behavior.
+Neither choice starts on page load.
 
 Use native labeled password and number inputs with visible borders and dark
-fill, plus the labeled native file input inside its custom affordance. Visible
+fill, plus the native file input activated by its custom button. Visible
 input controls and file affordances have at least 44px height. Enabled hover
 brightens boundaries; disabled fields get a muted fill. Keep the password field's
 autocomplete, spellcheck, and capitalization settings, privacy disclosure, and

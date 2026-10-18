@@ -50,6 +50,9 @@ const jevKeyStatus =
 type Elements = {
   '#screen': HTMLCanvasElement;
   '#iwad': HTMLInputElement;
+  '#iwad-picker': DoomButtonElement;
+  '#iwad-picker-label': HTMLSpanElement;
+  '#iwad-picker-state': HTMLSpanElement;
   '#included-freedoom': DoomButtonElement;
   '#key': HTMLInputElement;
   '#key-label': HTMLLabelElement;
@@ -142,9 +145,10 @@ async function localFetch(name: string, json = false): Promise<unknown> {
 }
 function displaySetupStatus(run: NonNullable<SessionPresentation['session']>) {
   const prepared = run.prepared;
-  $('#setup-asset').textContent = selectedAssetName
-    ? `${selectedAssetName} · ${prepared ? 'prepared' : 'selected'}`
-    : '';
+  $('#setup-asset').textContent =
+    selectedAssetName && !localIwadPrepared()
+      ? `${selectedAssetName} · ${prepared ? 'prepared' : 'selected'}`
+      : '';
 }
 defineDecisionHistory();
 const history = $('#decision-history');
@@ -156,6 +160,7 @@ let setupPointerActive = false;
 let startupReady = false;
 let wadSelected = false;
 let selectedAssetName = '';
+let selectedAssetSource: 'included' | 'local' | undefined;
 let doomLoaded = false;
 let manualKeyVisible = false;
 let selectedModel: OpenRouterModel = defaultOpenRouterModel;
@@ -204,12 +209,32 @@ function assetSelectionAllowed() {
     (!latestSession || latestSession.controls.iwad)
   );
 }
+function localIwadPrepared() {
+  // doomLoaded is set only by a session presentation with prepared === true.
+  return selectedAssetSource === 'local' && doomLoaded;
+}
 function displayAssetControls() {
   const disabled = !assetSelectionAllowed();
   const loading = latestSession?.phase === 'preparing';
   const needsReload =
     latestSession?.phase === 'error' || latestSession?.phase === 'terminal';
   $('#iwad').disabled = disabled;
+  const localLoading = selectedAssetSource === 'local' && loading;
+  const localPrepared = localIwadPrepared();
+  const picker = $('#iwad-picker');
+  picker.disabled = disabled;
+  picker.setAttribute('aria-busy', String(localLoading));
+  picker.title = localLoading || localPrepared ? selectedAssetName : '';
+  $('#iwad-picker-label').textContent = localLoading
+    ? `Preparing ${selectedAssetName}…`
+    : localPrepared
+      ? selectedAssetName
+      : 'Choose local IWAD';
+  $('#iwad-picker-state').textContent = localPrepared
+    ? ' loaded. Refresh to choose another game file.'
+    : selectedAssetSource === 'local' && needsReload
+      ? ' Preparation failed. Refresh to try again.'
+      : '';
   const button = $('#included-freedoom');
   button.disabled = disabled;
   button.setAttribute('aria-busy', String(loading));
@@ -544,12 +569,15 @@ const refreshOpenDecisionPrompt = () => {
 };
 $('#tics').addEventListener('input', refreshOpenDecisionPrompt);
 $('#tics').addEventListener('change', refreshOpenDecisionPrompt);
-function selectIwad(file?: LocalIwad, name = '') {
+function selectIwad(
+  file: LocalIwad,
+  name: string,
+  source: 'included' | 'local',
+) {
   if (!assetSelectionAllowed()) return;
-  if (file) {
-    wadSelected = true;
-    selectedAssetName = name;
-  }
+  wadSelected = true;
+  selectedAssetName = name;
+  selectedAssetSource = source;
   displayOAuth();
   void controller.prepare(file);
 }
@@ -557,12 +585,21 @@ $('#included-freedoom').addEventListener('click', () => {
   selectIwad(
     createIncludedFreedoom(import.meta.env.BASE_URL),
     'Included Freedoom Phase 1 v0.13.0',
+    'included',
   );
+});
+$('#iwad-picker').addEventListener('click', () => {
+  if (
+    !assetSelectionAllowed() ||
+    $('#iwad-picker').disabled ||
+    $('#iwad').disabled
+  )
+    return;
+  $('#iwad').click();
 });
 $('#iwad').addEventListener('change', () => {
   const file = $('#iwad').files?.[0];
-  if (file) $('#setup-asset').textContent = file.name;
-  selectIwad(file, file?.name);
+  if (file) selectIwad(file, file.name, 'local');
 });
 window.addEventListener('pagehide', () => controller.close());
 window.addEventListener('pageshow', (event) =>
