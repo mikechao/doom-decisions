@@ -1,6 +1,7 @@
 import type { ActionName, Execution } from './decision';
 import { masks } from './decision';
 import type { DecisionDiagnostics, DecisionRequest } from './decision-provider';
+import type { DoomButtonElement } from './doom-button';
 import { observeHistoryScroll } from './history-scroll';
 import type { DecisionStage } from './session-controller';
 
@@ -233,8 +234,9 @@ export function defineDecisionHistory() {
           this.options = createProbabilities(
             this.element('#inspector-probabilities'),
           );
-          this.element('#back-to-history').addEventListener('click', () =>
-            this.showHistory(),
+          this.element<DoomButtonElement>('#back-to-history').addEventListener(
+            'click',
+            () => this.showHistory(),
           );
           this.element('#inspector-image').addEventListener('error', () => {
             this.element('#inspector-image').hidden = true;

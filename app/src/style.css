@@ -234,52 +234,17 @@ footer,
   margin-top: 0;
 }
 #openrouter-signin-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.625rem;
   width: 100%;
-  padding: 0.625rem 0.75rem;
-  color: var(--ink);
-  background: var(--amber);
-  border-color: var(--amber);
+  --doom-button-padding: 0.625rem 0.75rem;
   font-family: var(--display);
   font-size: 1.125rem;
   font-weight: 500;
   letter-spacing: 0.005em;
-  cursor: pointer;
-}
-#openrouter-signin-button:enabled:hover {
-  background: var(--light-action);
-  border-color: var(--light-action);
-}
-#openrouter-signin-button:enabled:active {
-  background: var(--amber);
-  border-color: var(--amber);
-}
-#openrouter-signin-logo {
-  display: block;
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
 }
 #openrouter-manual,
 #openrouter-back {
   margin-top: 0;
-  padding: 0.375rem 0;
-  border: 0;
-  border-radius: 0;
-  color: var(--muted);
-  background: transparent;
   font-size: 0.8125rem;
-  text-align: left;
-  text-decoration: underline;
-  text-underline-offset: 0.2em;
-  cursor: pointer;
-}
-#openrouter-manual:enabled:hover,
-#openrouter-back:enabled:hover {
-  color: var(--ivory);
 }
 #openrouter-model {
   display: flex;
@@ -315,20 +280,6 @@ footer,
 #openrouter-model:disabled label {
   color: var(--muted);
 }
-#openrouter-signin-button:disabled {
-  color: var(--muted);
-  background: var(--surface);
-  border-color: var(--boundary);
-  cursor: default;
-}
-#openrouter-manual:disabled,
-#openrouter-back:disabled {
-  color: var(--muted);
-  cursor: default;
-}
-#openrouter-signin-button[aria-busy="true"] {
-  cursor: wait;
-}
 summary {
   min-height: 44px;
   padding: 0.625rem 0.25rem;
@@ -356,12 +307,12 @@ summary:hover {
   padding-top: 0.75rem;
   border-top: 1px solid var(--rule);
 }
-.setup-file > button,
+.setup-file > doom-button,
 .setup-file > #setup-asset,
 .setup-file > #asset-note {
   grid-column: 1 / -1;
 }
-.setup-file > button {
+.setup-file > doom-button {
   width: 100%;
   text-align: center;
 }
@@ -529,66 +480,15 @@ summary:hover {
 #start,
 #stop {
   width: 100%;
-  min-height: 50px;
-  padding: 0.625rem 0.5rem;
+  --doom-button-min-height: 50px;
   font-family: var(--display);
   font-size: 1.25rem;
   font-weight: 500;
   line-height: 1.25;
-  color: var(--ink);
-  background: var(--amber);
-  border-color: var(--amber);
-  cursor: pointer;
 }
 #next {
-  min-height: 56px;
+  --doom-button-min-height: 56px;
   font-size: 1.5rem;
-}
-#start {
-  background: var(--light-action);
-  border-color: var(--light-action);
-}
-#stop,
-#view-prompt,
-#close-prompt {
-  color: var(--ivory);
-  background: transparent;
-  border-color: var(--boundary);
-}
-#next:hover:enabled {
-  background: #ffca70;
-  border-color: #ffca70;
-}
-#start:hover:enabled {
-  background: var(--ivory);
-  border-color: var(--ivory);
-}
-#stop:hover:enabled,
-#view-prompt:hover:enabled,
-#close-prompt:hover:enabled {
-  background: #30352a;
-}
-#next:active:enabled {
-  background: #dda139;
-}
-#start:active:enabled {
-  background: #c4b594;
-}
-#stop:active:enabled,
-#view-prompt:active:enabled,
-#close-prompt:active:enabled {
-  background: #20251b;
-}
-#next:disabled,
-#start:disabled,
-#stop:disabled {
-  color: #a29f92;
-  background: #2b2d25;
-  border-color: #55594b;
-  cursor: default;
-}
-#next[aria-busy="true"] {
-  cursor: wait;
 }
 .control-bar--amber-gate > h2 {
   color: var(--amber);
@@ -618,13 +518,6 @@ summary:hover {
 .control-bar--amber-gate .continuous-group {
   border-top-color: var(--boundary);
 }
-.control-bar--amber-gate #next:disabled,
-.control-bar--amber-gate #start:disabled,
-.control-bar--amber-gate #stop:disabled {
-  color: var(--muted);
-  border-color: var(--boundary);
-  background: var(--surface);
-}
 .control-guidance {
   margin-top: 0.5rem;
   color: var(--muted);
@@ -643,8 +536,6 @@ summary:hover {
 }
 #view-prompt {
   width: 100%;
-  padding: 0.625rem 0.5rem;
-  cursor: pointer;
 }
 .decision-prompt {
   width: min(44rem, calc(100% - 2rem));
@@ -684,8 +575,7 @@ summary:hover {
   text-transform: none;
 }
 #close-prompt {
-  padding: 0.5rem 1rem;
-  cursor: pointer;
+  --doom-button-padding: 0.5rem 1rem;
 }
 #prompt-text {
   overflow-wrap: anywhere;
@@ -928,8 +818,7 @@ canvas {
 }
 .decision-row:focus-visible,
 #history:focus-visible,
-#detail-scroll:focus-visible,
-#back-to-history:focus-visible {
+#detail-scroll:focus-visible {
   outline-offset: -3px;
 }
 .decision-heading {
@@ -993,13 +882,8 @@ canvas {
 #back-to-history {
   align-self: flex-start;
   margin-top: 0;
-  padding: 0.5rem 0.75rem;
-  color: var(--ivory);
-  background: transparent;
-  cursor: pointer;
-}
-#back-to-history:hover {
-  background: #30352a;
+  --doom-button-padding: 0.5rem 0.75rem;
+  --doom-button-focus-offset: -3px;
 }
 #detail-scroll {
   flex: 1;

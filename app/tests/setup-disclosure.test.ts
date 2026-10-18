@@ -25,6 +25,8 @@ vi.mock('../src/session-controller', () => ({
 vi.mock('../src/decision-history', () => ({
   defineDecisionHistory: () => {},
 }));
+// These presentation fixtures do not exercise the real shadow button or its focus.
+vi.mock('../src/doom-button', () => ({ defineDoomButton: () => {} }));
 
 class Element extends EventTarget {
   display = vi.fn();
@@ -182,12 +184,12 @@ it('production with Jev mode honors the explicit OpenAI key opt-in', async () =>
 });
 
 describe('Read-only decision prompt preview', () => {
-  it('keeps the trigger after limits guidance and labels the native read-only dialog', () => {
+  it('keeps the custom trigger after limits guidance and labels the native read-only dialog', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-    assert.match(html, /<p id="stop-note"[^>]*>[^<]*<\/p>\s*<\/details>\s*<div class="prompt-group">\s*<hr>\s*<button id="view-prompt" type="button" aria-haspopup="dialog" aria-controls="prompt-dialog">View Prompt<\/button>/);
+    assert.match(html, /<p id="stop-note"[^>]*>[^<]*<\/p>\s*<\/details>\s*<div class="prompt-group">\s*<hr>\s*<doom-button id="view-prompt" appearance="outline" aria-haspopup="dialog" aria-controls="prompt-dialog">View Prompt<\/doom-button>/);
     assert.match(html, /<dialog id="prompt-dialog" class="decision-prompt" aria-labelledby="prompt-title" aria-describedby="prompt-description">/);
     assert.match(html, /<h2 id="prompt-title">Decision Prompt<\/h2>/);
-    assert.match(html, /<button id="close-prompt" type="button" autofocus>Close<\/button>/);
+    assert.match(html, /<doom-button id="close-prompt" appearance="outline" autofocus>Close<\/doom-button>/);
     assert.match(html, /<p id="prompt-description" class="help">/);
     assert.match(html, /<p id="prompt-text"><\/p>/);
     assert.doesNotMatch(html, /prompt-panel|contenteditable/);
@@ -278,7 +280,7 @@ describe('Setup disclosure', () => {
     assert.match(html, /<details id="setup"[^>]* open[^>]*>/);
     assert.match(html, /<summary><h2 id="setup-title">Setup<\/h2><\/summary>/);
     assert.match(html, /<label class="iwad-picker[^\"]*" for="iwad">[\s\S]*?<svg class="iwad-folder-icon"[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/svg>\s*<span>Choose local IWAD<\/span>[\s\S]*?<input id="iwad" type="file" accept="\.wad" aria-describedby="asset-note" disabled>\s*<\/label>/);
-    assert.match(html, /<button id="included-freedoom"[^>]* disabled>Use included Freedoom<\/button>/);
+    assert.match(html, /<doom-button id="included-freedoom" appearance="neutral"[^>]* disabled>Use included Freedoom<\/doom-button>/);
     assert.match(html, /<p id="asset-note" class="help asset-note">Freedoom download: ~9\.83 MiB\. Local files stay in your browser\. Refresh to change the game file\.<\/p>/);
     assert.match(html, /<details class="setup-details">\s*<summary>Privacy &amp; API key details<\/summary>/);
     const details = html.match(/<details class="setup-details">([\s\S]*?)<\/details>/)![1];

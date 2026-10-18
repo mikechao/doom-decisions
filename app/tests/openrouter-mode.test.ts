@@ -20,6 +20,8 @@ vi.mock('../src/session-controller', () => ({
   },
 }));
 vi.mock('../src/decision-history', () => ({ defineDecisionHistory: () => {} }));
+// Provider/controller fixtures retain fake DOM behavior, not Shadow DOM coverage.
+vi.mock('../src/doom-button', () => ({ defineDoomButton: () => {} }));
 afterEach(() => {
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetAllMocks(); vi.restoreAllMocks();
 });
@@ -159,9 +161,9 @@ async function settleStartup() {
 
 it('labels exactly two native model choices beneath sign-in in the shared OpenRouter container', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  assert.match(html, /<div id="openrouter-connect" hidden>\s*<div id="openrouter-signin">\s*<button id="openrouter-signin-button"[^>]*>[\s\S]*?<\/button>\s*<\/div>\s*<p id="openrouter-auth-note" class="help auth-charge-note">API usage will incur charges\.<\/p>\s*<fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>/);
-  const buttonContents = html.match(/<button id="openrouter-signin-button"[^>]*>([\s\S]*?)<\/button>/)![1];
-  assert.match(buttonContents, /<svg id="openrouter-signin-logo" class="openrouter-signin-logo" viewBox="0 0 401\.4 293\.7" xmlns="http:\/\/www\.w3\.org\/2000\/svg" fill="currentColor" aria-hidden="true" focusable="false">\s*<path d="M303\.9475,/);
+  assert.match(html, /<div id="openrouter-connect" hidden>\s*<div id="openrouter-signin">\s*<doom-button id="openrouter-signin-button"[^>]*>[\s\S]*?<\/doom-button>\s*<\/div>\s*<p id="openrouter-auth-note" class="help auth-charge-note">API usage will incur charges\.<\/p>\s*<fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>/);
+  const buttonContents = html.match(/<doom-button id="openrouter-signin-button"[^>]*>([\s\S]*?)<\/doom-button>/)![1];
+  assert.match(buttonContents, /<svg id="openrouter-signin-logo" class="openrouter-signin-logo" slot="start" viewBox="0 0 401\.4 293\.7" xmlns="http:\/\/www\.w3\.org\/2000\/svg" fill="currentColor" aria-hidden="true" focusable="false">\s*<path d="M303\.9475,/);
   assert.match(buttonContents, /<span id="openrouter-signin-label">Sign in with OpenRouter<\/span>/);
   assert.match(html, /OpenRouter logo: <a href="\.\/notices\/openrouter-sign-in\/LICENSE\.txt">MIT license<\/a>/);
   const group = html.match(/<fieldset id="openrouter-model"[^>]*>([\s\S]*?)<\/fieldset>/)![1];
@@ -169,7 +171,7 @@ it('labels exactly two native model choices beneath sign-in in the shared OpenRo
   assert.equal((group.match(/type="radio"/g) ?? []).length, 2);
   assert.match(group, /<label><input id="openrouter-model-gpt" type="radio" name="openrouter-model" value="openai\/gpt-6-luna-decisions" checked> GPT-6 Luna Decisions<\/label>/);
   assert.match(group, /<label><input id="openrouter-model-jev" type="radio" name="openrouter-model" value="typesafe\/jev-1\.14"> Jev 1.14<\/label>/);
-  assert.ok(html.indexOf('</fieldset>') < html.indexOf('<button id="openrouter-manual"'));
+  assert.ok(html.indexOf('</fieldset>') < html.indexOf('<doom-button id="openrouter-manual"'));
   assert.match(html, /<p id="openrouter-model-help" class="help" role="status"><\/p>/);
   assert.match(html, /<p id="openrouter-auth-status" class="help" role="status" aria-live="polite" aria-atomic="true"><\/p>/);
 });

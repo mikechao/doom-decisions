@@ -29,12 +29,12 @@
           <div class="setup-content">
             <div id="openrouter-connect" hidden>
               <div id="openrouter-signin">
-                <button id="openrouter-signin-button" type="button" aria-describedby="openrouter-auth-note openrouter-auth-status" disabled>
-                  <svg id="openrouter-signin-logo" class="openrouter-signin-logo" viewBox="0 0 401.4 293.7" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true" focusable="false">
+                <doom-button id="openrouter-signin-button" appearance="primary" class="button-signin" aria-describedby="openrouter-auth-note openrouter-auth-status" disabled>
+                  <svg id="openrouter-signin-logo" class="openrouter-signin-logo" slot="start" viewBox="0 0 401.4 293.7" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true" focusable="false">
                     <path d="M303.9475,17.19926c42.79734,0,77.48933,34.69327,77.48933,77.48933s-34.69199,77.48933-77.48933,77.48933l76.86166,76.86244c9.76367,9.76313,2.84903,26.45667-10.95697,26.45667h-220.88335c-71.32686,0-129.14889-57.82202-129.14889-129.14889S77.64197,17.19926,148.96884,17.19926h154.97866ZM148.96884,68.85881c-42.79607,0-77.48933,34.69327-77.48933,77.48933s34.69327,77.48933,77.48933,77.48933,77.48933-34.69327,77.48933-77.48933-34.69327-77.48933-77.48933-77.48933Z" />
                   </svg>
                   <span id="openrouter-signin-label">Sign in with OpenRouter</span>
-                </button>
+                </doom-button>
               </div>
               <p id="openrouter-auth-note" class="help auth-charge-note">API usage will incur charges.</p>
               <fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>
@@ -43,11 +43,11 @@
                 <label><input id="openrouter-model-jev" type="radio" name="openrouter-model" value="typesafe/jev-1.14"> Jev 1.14</label>
               </fieldset>
               <p id="openrouter-model-help" class="help" role="status"></p>
-              <button id="openrouter-manual" type="button" aria-controls="manual-key" aria-expanded="false">Use an API key instead</button>
+              <doom-button id="openrouter-manual" appearance="text" aria-controls="manual-key" aria-expanded="false">Use an API key instead</doom-button>
               <p id="openrouter-auth-status" class="help" role="status" aria-live="polite" aria-atomic="true"></p>
             </div>
             <div class="setup-file">
-              <button id="included-freedoom" type="button" aria-describedby="asset-note" disabled>Use included Freedoom</button>
+              <doom-button id="included-freedoom" appearance="neutral" aria-describedby="asset-note" disabled>Use included Freedoom</doom-button>
               <label class="iwad-picker iwad-picker--quiet iwad-picker--folder" for="iwad">
                 <svg class="iwad-folder-icon" viewBox="0 0 24 18" aria-hidden="true" focusable="false">
                   <path d="M2.25 6V3.75c0-.55.45-1 1-1h4.6l2.05 2h10.85c.55 0 1 .45 1 1V6M2.25 6h19.5l-2.1 8.25H4.45L2.25 6Z" />
@@ -62,7 +62,7 @@
               <label id="key-label" for="key">Temporary OpenRouter API key</label>
               <input id="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="key-state key-note" disabled>
               <p id="key-state" class="help">Client in memory • Refresh clears it</p>
-              <button id="openrouter-back" type="button" aria-controls="manual-key openrouter-signin" hidden>Use sign-in instead</button>
+              <doom-button id="openrouter-back" appearance="text" aria-controls="manual-key openrouter-signin" hidden>Use sign-in instead</doom-button>
             </div>
             <details class="setup-details">
               <summary>Privacy &amp; API key details</summary>
@@ -82,7 +82,7 @@
                 <input id="tics" type="number" min="1" step="1" value="6" aria-describedby="tic-rate duration-note" disabled>
               </div>
             </div>
-            <button id="next" type="button" disabled>Next Decision</button>
+            <doom-button id="next" appearance="primary" disabled>Next Decision</doom-button>
           </div>
           <div class="continuous-group" role="group" aria-labelledby="continuous-mode-title">
             <h2 id="continuous-mode-title">Continuous Mode</h2>
@@ -91,8 +91,8 @@
               <input id="budget" type="number" min="1" max="9007199254740991" step="1" value="2" aria-describedby="continuous-note duration-note" disabled>
             </div>
             <div class="mode-actions">
-              <button id="start" type="button" disabled>Start Continuous Mode</button>
-              <button id="stop" type="button" aria-describedby="stop-note" disabled>Stop</button>
+              <doom-button id="start" appearance="secondary" disabled>Start Continuous Mode</doom-button>
+              <doom-button id="stop" appearance="outline" aria-describedby="stop-note" disabled>Stop</doom-button>
             </div>
           </div>
           <details class="control-guidance">
@@ -103,7 +103,7 @@
           </details>
           <div class="prompt-group">
             <hr>
-            <button id="view-prompt" type="button" aria-haspopup="dialog" aria-controls="prompt-dialog">View Prompt</button>
+            <doom-button id="view-prompt" appearance="outline" aria-haspopup="dialog" aria-controls="prompt-dialog">View Prompt</doom-button>
           </div>
         </section>
       </div>
@@ -145,7 +145,7 @@
         </div>
         <div id="decision-detail" class="history-view" hidden>
           <div id="detail-header">
-            <button id="back-to-history" type="button" aria-controls="history-list-view">Back to history</button>
+            <doom-button id="back-to-history" appearance="outline" class="button-history" aria-controls="history-list-view">Back to history</doom-button>
             <h3 id="inspector-title" tabindex="-1">Decision detail</h3>
           </div>
           <div id="detail-scroll" tabindex="0" role="region" aria-labelledby="inspector-title">
@@ -201,7 +201,7 @@
       <div class="decision-prompt-content">
         <div class="decision-prompt-heading">
           <h2 id="prompt-title">Decision Prompt</h2>
-          <button id="close-prompt" type="button" autofocus>Close</button>
+          <doom-button id="close-prompt" appearance="outline" autofocus>Close</doom-button>
         </div>
         <p id="prompt-description" class="help">Preview of the default next_action instructions using the current tic selection. In-flight decisions retain their captured duration.</p>
         <p id="prompt-text"></p>

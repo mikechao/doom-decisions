@@ -6,6 +6,7 @@ import {
 import { deriveDecisionControls } from './decision-controls';
 import { formatDefaultDecisionInstructions } from './decision-request';
 import type { DecisionProviderFactory } from './decision-provider';
+import { defineDoomButton, type DoomButtonElement } from './doom-button';
 import { jevDecisionProviderFactory } from './jev-decision-provider';
 import { projectLatestOutcome } from './latest-outcome';
 import { openAiDecisionProviderFactory } from './openai-decision-provider';
@@ -49,7 +50,7 @@ const jevKeyStatus =
 type Elements = {
   '#screen': HTMLCanvasElement;
   '#iwad': HTMLInputElement;
-  '#included-freedoom': HTMLButtonElement;
+  '#included-freedoom': DoomButtonElement;
   '#key': HTMLInputElement;
   '#key-label': HTMLLabelElement;
   '#key-note': HTMLParagraphElement;
@@ -57,10 +58,10 @@ type Elements = {
   '#manual-key': HTMLDivElement;
   '#openrouter-connect': HTMLDivElement;
   '#openrouter-signin': HTMLDivElement;
-  '#openrouter-signin-button': HTMLButtonElement;
+  '#openrouter-signin-button': DoomButtonElement;
   '#openrouter-signin-label': HTMLSpanElement;
-  '#openrouter-manual': HTMLButtonElement;
-  '#openrouter-back': HTMLButtonElement;
+  '#openrouter-manual': DoomButtonElement;
+  '#openrouter-back': DoomButtonElement;
   '#openrouter-auth-status': HTMLParagraphElement;
   '#openrouter-key-settings': HTMLParagraphElement;
   '#openrouter-model': HTMLFieldSetElement;
@@ -71,13 +72,13 @@ type Elements = {
   '#setup-asset': HTMLSpanElement;
   '#control-prerequisite': HTMLParagraphElement;
   '#tics': HTMLInputElement;
-  '#next': HTMLButtonElement;
-  '#start': HTMLButtonElement;
-  '#stop': HTMLButtonElement;
+  '#next': DoomButtonElement;
+  '#start': DoomButtonElement;
+  '#stop': DoomButtonElement;
   '#budget': HTMLInputElement;
-  '#view-prompt': HTMLButtonElement;
+  '#view-prompt': DoomButtonElement;
   '#prompt-dialog': HTMLDialogElement;
-  '#close-prompt': HTMLButtonElement;
+  '#close-prompt': DoomButtonElement;
   '#prompt-text': HTMLParagraphElement;
   '#continuous-state': HTMLParagraphElement;
   '#decision-history': DecisionHistoryElement;
@@ -95,6 +96,7 @@ const $ = <S extends keyof Elements>(selector: S) => {
   check(element, `Missing required element ${selector}.`);
   return element;
 };
+defineDoomButton();
 const canvas = $('#screen'),
   context = canvasContext(canvas);
 function canvasContext(screen: HTMLCanvasElement) {

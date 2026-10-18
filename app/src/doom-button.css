@@ -1,0 +1,109 @@
+:host {
+  --button-color: var(--ivory);
+  --button-background: transparent;
+  --button-border: var(--boundary);
+  --button-hover-background: #30352a;
+  --button-hover-border: var(--button-border);
+  --button-active-background: #20251b;
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+}
+:host([hidden]) {
+  display: none;
+}
+:host(:focus-visible) {
+  /* biome-ignore lint/complexity/noImportantStyles: Shadow importance overrides the outer page's focus rule; the inner button owns the ring. */
+  outline: none !important;
+}
+button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--doom-button-min-height, 44px);
+  max-width: 100%;
+  padding: var(--doom-button-padding, 0.625rem 0.5rem);
+  border: 1px solid var(--button-border);
+  border-radius: 2px;
+  font: inherit;
+  color: var(--button-color);
+  background: var(--button-background);
+  cursor: pointer;
+}
+button:hover:enabled {
+  color: var(--button-hover-color, var(--button-color));
+  background: var(--button-hover-background);
+  border-color: var(--button-hover-border);
+}
+:host(:not(.button-history)) button:active:enabled {
+  background: var(--button-active-background);
+}
+button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: var(--doom-button-focus-offset, 3px);
+}
+:host([appearance="primary"]) {
+  --button-color: var(--ink);
+  --button-background: var(--amber);
+  --button-border: var(--amber);
+  --button-hover-background: #ffca70;
+  --button-hover-border: #ffca70;
+  --button-active-background: #dda139;
+}
+:host(.button-signin) {
+  --button-hover-background: var(--light-action);
+  --button-hover-border: var(--light-action);
+  --button-active-background: var(--amber);
+}
+:host(.button-signin) button:active:enabled {
+  border-color: var(--amber);
+}
+:host([appearance="secondary"]) {
+  --button-color: var(--ink);
+  --button-background: var(--light-action);
+  --button-border: var(--light-action);
+  --button-hover-background: var(--ivory);
+  --button-hover-border: var(--ivory);
+  --button-active-background: #c4b594;
+}
+:host([appearance="neutral"]) {
+  --button-background: #242923;
+  --button-hover-border: #b2b4aa;
+}
+:host([appearance="text"]) {
+  --button-color: var(--muted);
+  --button-hover-color: var(--ivory);
+  --button-hover-background: transparent;
+  --button-active-background: transparent;
+}
+:host([appearance="text"]) button {
+  justify-content: flex-start;
+  padding: 0.375rem 0;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+button:disabled {
+  color: var(--muted);
+  background: var(--surface);
+  border-color: var(--boundary);
+  cursor: default;
+}
+:host([appearance="text"]) button:disabled {
+  background: transparent;
+}
+button[aria-busy="true"] {
+  cursor: wait;
+}
+::slotted([slot="start"]) {
+  display: block;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+}
