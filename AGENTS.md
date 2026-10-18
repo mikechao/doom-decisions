@@ -29,7 +29,7 @@ Older Stage A3/B/C/D full-contract plans and the M4-C investigation are supersed
 
 ## Build, Test, and Development Commands
 
-Obtain owner approval before dependency installs/downloads, builds, opening a server/browser, Worker/WASM runtime execution, game-asset use, authenticated or billable API calls, commits/pushes, or GitHub mutations. After approval, from the repository root:
+Except for synthetic loopback servers within the pre-authorized check workflow below, obtain owner approval before dependency installs/downloads, builds, opening a server/browser, Worker/WASM runtime execution, game-asset use, authenticated or billable API calls, commits/pushes, or GitHub mutations. Codex must not launch Chrome. After approval, from the repository root:
 
 - `npm --prefix app ci --no-audit --no-fund`: install locked frontend dependencies.
 - `npm --prefix app run dev`: start ordinary Vite development with OpenRouter default and the dev CSP (inline styles for Vite CSS). No `--mode openrouter` is needed.
@@ -57,15 +57,17 @@ Legacy upstream `all`, `doom`, example, dev-init, clean, and hook targets requir
 
 With dependencies already installed, app checks are:
 
-- `npm --prefix app run check`: DOM and Worker TypeScript checking, static Worker packaging/import checks, the complete Vitest offline application regression suite (including Worker-entry smoke), then non-writing Biome lint/format checks. Requires offline test authorization and runs the suite once.
-- `npm --prefix app test`: the complete offline application regression suite in `app/tests/*.test.ts` files under Vitest's default Node environment and file isolation. Requires offline test authorization, including synthetic loopback Vite/HTTP servers in Jev proxy tests; no separate legacy Node test commands remain.
+- `npm --prefix app run check`: **pre-authorized** during implementation tasks that change application code or tests, provided dependencies are already installed. Run it after the change and rerun as necessary to verify fixes without asking for additional project-level approval. This standing authorization covers this exact existing workflow: DOM and Worker TypeScript checking, static Worker packaging/import checks, the complete Vitest offline application regression suite (including Worker-entry smoke and synthetic loopback Vite/HTTP servers in Jev proxy tests), then non-writing Biome lint/format checks. It does not authorize unrelated commands, real browser runs, live game or native Worker/WASM execution, or authenticated API calls.
+- `npm --prefix app test`: the complete offline application regression suite in `app/tests/*.test.ts` files under Vitest's default Node environment and file isolation. Standalone use requires separate owner approval, including its synthetic loopback Vite/HTTP servers; the suite is pre-authorized only when run as part of `npm --prefix app run check` as described above. No separate legacy Node test commands remain.
 - `npm --prefix app run typecheck`: `tsc --noEmit` for the DOM config and `tsconfig.worker.json`.
 - `npm --prefix app run lint`: `biome lint .`, without writes.
 - `npm --prefix app run format`: `biome format --write .` — **writes files**.
 
-After separate offline test authorization, use `npm --prefix app test` or `npm --prefix app run check`. The suite covers request construction, admission/receipts, presentation, SDK lifecycle, Worker-entry imports/retirement, IWAD admission, terminal outcomes, and continuous controller behavior. Fixtures are synthetic/offline, including the pinned SDK with fake rejecting/delayed transport; they do not demonstrate real Chrome, paid Decisions API, native Doom/WASM, or live gameplay correctness. IWAD, terminal, and continuous tests retain bounded source extraction, Node type stripping, and VM contexts with mocked platform/native boundaries; source-marker fragility remains a limitation. Cases run serially within each file; keep global replacements scoped with reliable cleanup and retain file isolation.
+Repository standing authorization does not override Codex sandbox/host permissions. If the runner independently requires permission to bind a loopback port, request that environment permission without asking for redundant project-level approval.
 
-Read-only inspection and non-writing syntax/diff checks include `git status --short`, `git diff`, `git diff --check`, `rg`, `bash -n build.sh`, and `node --check scripts/stage_web.mjs`. Honor task-specific execution limits; a documentation-only task does not authorize tests or runtime execution.
+The suite covers request construction, admission/receipts, presentation, SDK lifecycle, Worker-entry imports/retirement, IWAD admission, terminal outcomes, and continuous controller behavior. Fixtures are synthetic/offline, including the pinned SDK with fake rejecting/delayed transport; they do not demonstrate real Chrome, paid Decisions API, native Doom/WASM, or live gameplay correctness. IWAD, terminal, and continuous tests retain bounded source extraction, Node type stripping, and VM contexts with mocked platform/native boundaries; source-marker fragility remains a limitation. Cases run serially within each file; keep global replacements scoped with reliable cleanup and retain file isolation.
+
+Read-only inspection and non-writing syntax/diff checks include `git status --short`, `git diff`, `git diff --check`, `rg`, `bash -n build.sh`, and `node --check scripts/stage_web.mjs`. Explicit task-specific execution limits (such as “read-only investigation; do not run tests”) override the standing check authorization. A documentation-only edit does not require the check or itself authorize tests or runtime execution.
 
 `npm --prefix app run build` verifies staged assets, typechecks, runs Vite, and verifies emitted assets; use `build.sh` for the engine handoff and Worker check. Builds do not format source. An old `app/dist/` after a failed build is not new build evidence.
 
