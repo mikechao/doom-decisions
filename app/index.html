@@ -128,21 +128,18 @@
             </div>
             <div class="game-status">
               <p id="status" role="status" aria-live="polite">Loading engine identity…</p>
-              <div class="continuous-status">
-                <p id="continuous-state" role="status" aria-live="polite">Continuous mode stopped · default limit 2 API attempts</p>
-              </div>
+              <dl class="outcome-session-metrics" aria-label="Current session metrics">
+                <div>
+                  <dt>Reported input tokens</dt>
+                  <dd><span id="session-input-tokens">—</span> <small id="session-input-partial" title="Some invoked API attempts have no reported input count." hidden>Partial</small></dd>
+                </div>
+                <div>
+                  <dt>Avg API latency</dt>
+                  <dd id="session-api-latency">—</dd>
+                </div>
+              </dl>
             </div>
           </div>
-          <dl class="outcome-session-metrics" aria-label="Current session metrics">
-            <div>
-              <dt>Reported input tokens</dt>
-              <dd><span id="session-input-tokens">—</span> <small id="session-input-partial" title="Some invoked API attempts have no reported input count." hidden>Partial</small></dd>
-            </div>
-            <div>
-              <dt>Avg API latency</dt>
-              <dd id="session-api-latency">—</dd>
-            </div>
-          </dl>
         </section>
       </section>
       <decision-history id="decision-history" class="history-panel" role="region" aria-labelledby="history-title">

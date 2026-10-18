@@ -85,7 +85,6 @@ type Elements = {
   '#prompt-dialog': HTMLDialogElement;
   '#close-prompt': DoomButtonElement;
   '#prompt-text': HTMLParagraphElement;
-  '#continuous-state': HTMLParagraphElement;
   '#decision-history': DecisionHistoryElement;
   '#outcome-number': HTMLSpanElement;
   '#outcome-action': HTMLSpanElement;
@@ -357,18 +356,6 @@ function display(view: SessionPresentation) {
   $('#status').dataset.phase = run.phase;
   if (!openRouterMode)
     $('#evidence').textContent = JSON.stringify(run.evidence, null, 2);
-  const continuous = run.continuous;
-  const continuousStatus = continuous?.active
-    ? continuous.stopRequested
-      ? continuous.dispatched
-        ? 'Stopping after current decision'
-        : 'Stopping before native dispatch'
-      : 'Running'
-    : continuous
-      ? `${run.phase === 'terminal' ? 'Terminal' : 'Stopped'}: ${continuous.reason}`
-      : 'Continuous mode stopped';
-  $('#continuous-state').textContent =
-    `${continuousStatus}${continuous ? ` · API attempts ${continuous.used} / ${continuous.limit}` : ''} · verified tic ${run.verifiedTics}${run.waitingForSdk ? ' · waiting for API response cleanup' : ''}`;
   $('#key-state').textContent = jevMode
     ? jevKeyStatus
     : run.hasClient

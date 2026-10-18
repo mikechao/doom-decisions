@@ -152,8 +152,8 @@ export function projectLatestOutcome(
       ? entry.action[0].toUpperCase() +
         entry.action.slice(1).replaceAll('_', ' ')
       : entry.stage === 'capturing' || entry.stage === 'requesting'
-        ? 'Action pending'
-        : 'Action unavailable',
+        ? 'Pending'
+        : 'No action',
     evidence,
   };
 }

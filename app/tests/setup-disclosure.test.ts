@@ -80,7 +80,8 @@ let elements, document;
 const element = (id) => elements.get(id);
 const emit = (target, type, properties = {}) =>
   target.dispatchEvent(Object.assign(new Event(type), properties));
-const show = (overrides = {}) => session.ports.present({
+const show = (overrides = {}, status = undefined) => session.ports.present({
+  status,
   session: {
     phase: 'ready',
     prepared: true,
@@ -148,11 +149,14 @@ async function mount(mode = 'test', dev = true) {
 beforeEach(() => mount());
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
-describe('Latest Outcome session metrics', () => {
-  it('places two initially unknown readouts below the outcome and status', () => {
+describe('Latest Outcome status and session metrics', () => {
+  it('places two initially unknown readouts directly after the only status in the right column', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     const panel = html.match(/<section class="latest-outcome"[\s\S]*?<\/section>/)[0];
-    assert.ok(panel.indexOf('outcome-session-metrics') > panel.indexOf('id="continuous-state"'));
+    assert.equal((panel.match(/role="status"/g) ?? []).length, 1);
+    assert.equal((panel.match(/aria-live=/g) ?? []).length, 1);
+    assert.match(panel, /<div class="game-status">\s*<p id="status" role="status" aria-live="polite">Loading engine identity…<\/p>\s*<dl class="outcome-session-metrics"[\s\S]*?<\/dl>\s*<\/div>/);
+    assert.doesNotMatch(panel, /continuous-state|continuous-status/);
     assert.match(panel, /<dt>Reported input tokens<\/dt>\s*<dd><span id="session-input-tokens">—<\/span>/);
     assert.match(panel, /id="session-input-partial"[^>]* hidden>Partial<\/small>/);
     assert.match(panel, /<dt>Avg API latency<\/dt>\s*<dd id="session-api-latency">—<\/dd>/);
@@ -160,6 +164,29 @@ describe('Latest Outcome session metrics', () => {
     assert.equal(element('#session-input-tokens').textContent, '—');
     assert.equal(element('#session-api-latency').textContent, '—');
     assert.equal(element('#session-input-partial').hidden, true);
+  });
+
+  it('preserves the primary message across preparation, running, stopped, failure and terminal states', () => {
+    session.ports.present({ status: 'Loading engine identity…' });
+    assert.equal(element('#status').textContent, 'Loading engine identity…');
+    for (const [phase, status, continuous, waitingForSdk] of [
+      ['ready', 'Ready at tic 1 — neutral 1/1/1; passive checks unchanged.'],
+      ['busy', 'Requesting one action', { active: true, used: 1, limit: 5 }],
+      ['busy', 'Waiting for API cleanup', { active: true, stopRequested: true, dispatched: false, used: 4, limit: 5 }, true],
+      ['busy', 'Verifying resulting frame', { active: true, stopRequested: true, dispatched: true, used: 4, limit: 5 }],
+      ['ready', 'Stopped by user; no native action dispatched. Ready at tic 25.', { active: false, reason: 'Stopped by user; no native action dispatched', used: 4, limit: 5 }],
+      ['error', 'Resulting frame unavailable. Reload to restart.'],
+      ['terminal', 'Player death verified; frame retained. Reload to restart.', { active: false, reason: 'Player death verified', used: 4, limit: 5 }],
+      ['terminal', 'E1M1 exit pending; frame retained. Reload to restart.'],
+    ]) {
+      show({ phase, continuous, waitingForSdk }, status);
+      assert.equal(element('#status').textContent, status);
+      assert.equal(element('#status').dataset.phase, phase);
+      assert.equal(elements.has('#continuous-state'), false);
+      // A session-only refresh must retain the primary message too.
+      show({ phase, continuous, waitingForSdk });
+      assert.equal(element('#status').textContent, status);
+    }
   });
 
   it('refreshes during continuous lifecycle updates and retains metrics on status-only updates', () => {
@@ -171,10 +198,15 @@ describe('Latest Outcome session metrics', () => {
     };
     const later = { ...entry, number: 2, stage: 'requesting', action: null,
       latencyMs: null, responseMetadata: undefined };
-    const present = (decisions) => show({
+    const present = (decisions, overrides = {}, status = 'Requesting one action') => show({
       phase: 'busy', evidence: { decisions },
       continuous: { active: true, used: decisions.length, limit: 3 },
-    });
+      ...overrides,
+    }, status);
+    present([entry]);
+    assert.equal(element('#session-input-tokens').textContent, '1,000');
+    assert.equal(element('#session-api-latency').textContent, '200 ms');
+    assert.equal(element('#session-input-partial').hidden, true);
     present([entry, later]);
     assert.equal(element('#session-input-tokens').textContent, '1,000');
     assert.equal(element('#session-api-latency').textContent, '200 ms');
@@ -187,9 +219,20 @@ describe('Latest Outcome session metrics', () => {
       assert.equal(element('#session-api-latency').textContent, '383 ms');
       assert.equal(element('#session-input-partial').hidden, true);
       assert.match(element('#outcome-number').textContent, /#2/);
-      assert.match(element('#continuous-state').textContent, /Running/);
+      assert.equal(element('#status').textContent, 'Requesting one action');
+      assert.equal(elements.has('#continuous-state'), false);
     }
+    present([entry, { ...updated, stage: 'completed' }], {
+      phase: 'ready',
+      continuous: { active: false, reason: 'Stopped by user', used: 2, limit: 3 },
+    }, 'Stopped by user. Ready at tic 13.');
+    assert.equal(element('#status').textContent, 'Stopped by user. Ready at tic 13.');
+    assert.equal(element('#session-input-tokens').textContent, '1,166');
+    assert.equal(element('#session-api-latency').textContent, '383 ms');
+    assert.equal(element('#session-input-partial').hidden, true);
+    assert.equal(elements.has('#continuous-state'), false);
     session.ports.present({ status: 'Cleanup finished' });
+    assert.equal(element('#status').textContent, 'Cleanup finished');
     assert.equal(element('#session-input-tokens').textContent, '1,166');
     assert.equal(element('#session-api-latency').textContent, '383 ms');
   });

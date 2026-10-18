@@ -195,7 +195,7 @@ describe('latest-outcome', () => {
     }
     assert.deepEqual(project(pending, frame(1)), {
       number: '#27',
-      action: 'Action pending',
+      action: 'Pending',
       evidence: 'Capturing current frame',
     });
     assert.equal(
@@ -204,7 +204,7 @@ describe('latest-outcome', () => {
         stage: 'requesting',
         status: 'Requesting one action',
       }).action,
-      'Action pending',
+      'Pending',
     );
     assert.equal(
       project({
@@ -234,6 +234,7 @@ describe('latest-outcome', () => {
       const outcome = project({ ...pending, stage, status });
       assert.equal(outcome.number, '#27');
       assert.equal(outcome.evidence, status);
+      if (stage === 'ended') assert.equal(outcome.action, 'No action');
       noVerifiedOutcome(outcome);
     }
     // Even a fully verified action and a painted/matching frame cannot shortcut stage.
@@ -395,7 +396,7 @@ describe('latest-outcome', () => {
     ]) {
       for (const stage of ['capturing', 'requesting']) {
         const outcome = project({ ...pending, stage, status });
-        assert.equal(outcome.action, 'Action pending');
+        assert.equal(outcome.action, 'Pending');
         assert.equal(outcome.evidence, status);
         noVerifiedOutcome(outcome);
       }
@@ -415,7 +416,7 @@ describe('latest-outcome', () => {
       for (const stage of ['stepping', 'rendering', 'cleanup', 'ended']) {
         assert.equal(
           project({ ...pending, stage, status }).action,
-          'Action unavailable',
+          'No action',
         );
         noVerifiedOutcome(
           project({ ...completed, stage, status }, completed.result),
