@@ -6,7 +6,7 @@ import { setImmediate } from 'node:timers/promises';
 import { OpenAI } from 'openai/client';
 import { Decisions } from 'openai/resources/decisions';
 import { vi } from 'vitest';
-import { defaultDecisionGuidance } from '../../src/decision-request.ts';
+import { defaultDecisionInstructionTemplate } from '../../src/decision-request.ts';
 import { openAiDecisionProviderFactory } from '../../src/openai-decision-provider.ts';
 import {
   createSessionController,
@@ -309,7 +309,7 @@ export function fixture(configuration = {}) {
       return worker as unknown as Worker;
     },
     readTics: () => browserInputs.tics,
-    readSavedGuidance: () => defaultDecisionGuidance,
+    readInstructionTemplate: () => defaultDecisionInstructionTemplate,
     takeKey() {
       const captured = key;
       key = '';

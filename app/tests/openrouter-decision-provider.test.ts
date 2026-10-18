@@ -389,20 +389,20 @@ it('verifies one synthetic manual action and recovers invalid SDK answers withou
 });
 
 for (const mode of ['manual', 'continuous'] as const) {
-  it(`serializes admission-captured guidance and preserves history across a ${mode} edit race`, async () => {
+  it(`serializes full templates without appended text and preserves history across a ${mode} edit race`, async () => {
     const h = fixture({ providerFactory: openRouterDecisionProviderFactory });
-    const originalGuidance = '  Follow corridors.\nLook for doors.  ';
-    const editedGuidance = '  Favor exploration.\nAvoid waiting.  ';
-    let savedGuidance = originalGuidance;
-    const readGuidance = vi.fn(() => savedGuidance);
-    h.ports.readSavedGuidance = readGuidance;
+    const originalTemplate = 'Fire for {{tics}} tics; choose wisely. Again: {{tics}}.';
+    const editedTemplate = 'Use fire.';
+    let savedInstructionTemplate = originalTemplate;
+    const readTemplate = vi.fn(() => savedInstructionTemplate);
+    h.ports.readInstructionTemplate = readTemplate;
     const payloads = [];
     const snapshots = [];
     let pending;
     let barrier;
     try {
       await h.prepare();
-      assert.equal(readGuidance.mock.calls.length, 0, 'Preparation does not read guidance');
+      assert.equal(readTemplate.mock.calls.length, 0, 'Preparation does not read the template');
       const capture = h.ports.capture;
       h.ports.capture = () => ({ ...capture(), png });
       const transport = vi.fn(async (request: Request) => {
@@ -412,27 +412,26 @@ for (const mode of ['manual', 'continuous'] as const) {
         return response(answer('neutral'));
       });
       vi.stubGlobal('fetch', transport);
-      h.browserInputs.tics = 2;
+      h.browserInputs.tics = 6;
       h.browserInputs.budget = 2;
       barrier = h.hold('snapshot');
       pending = mode === 'manual' ? h.next() : h.start();
-      assert.equal(readGuidance.mock.calls.length, 1, 'Guidance sampled synchronously at admission');
+      assert.equal(readTemplate.mock.calls.length, 1, 'Template sampled synchronously at admission');
       await barrier.waiting;
       assert.equal(transport.mock.calls.length, 0, 'Barrier precedes request construction');
-      savedGuidance = editedGuidance;
+      savedInstructionTemplate = editedTemplate;
       h.browserInputs.tics = 3;
       h.browserInputs.budget = 1000;
       assert.equal(await h.next(), 'not-admitted');
-      assert.equal(readGuidance.mock.calls.length, 1, 'Rejected admissions do not sample guidance');
+      assert.equal(readTemplate.mock.calls.length, 1, 'Rejected admissions do not sample the template');
       barrier.release(); barrier = undefined;
       await pending;
       if (mode === 'manual') assert.equal(await h.next(), 'completed');
       assert.equal(transport.mock.calls.length, 2);
-      assert.equal(readGuidance.mock.calls.length, 2);
+      assert.equal(readTemplate.mock.calls.length, 2);
       const requests = h.view.session.inspectorRequests;
-      for (const [index, guidance] of [originalGuidance, editedGuidance].entries()) {
-        const n = index === 0 ? 2 : 3;
-        const expected = `${guidance} The human selected exactly ${n} gameplay tics for this action. Choose only the action, never its duration. The game advances only through verified actions admitted by manual steps or explicitly started continuous mode; API waits do not advance gameplay. Do not assume unseen game state.`;
+      for (const [index, expected] of ['Fire for 6 tics; choose wisely. Again: 6.', 'Use fire.'].entries()) {
+        const n = index === 0 ? 6 : 3;
         assert.equal(payloads[index].questions.next_action.instructions, expected);
         assert.equal(payloads[index].questions.next_action.type, 'choice');
         assert.deepEqual(payloads[index].questions.next_action.criteria, Object.fromEntries(actions.map(action => [action, null])));
@@ -444,10 +443,10 @@ for (const mode of ['manual', 'continuous'] as const) {
         assert.equal(entry.execution.independentlyVerifiedTics, n);
         assert.equal(entry.result.nativeSha256, entry.result.canvasSha256);
       }
-      savedGuidance = 'A still later edit';
+      savedInstructionTemplate = 'A still later edit';
       assert.equal(requests[1], snapshots[0][1], 'Later admissions keep the original history object');
       assert.equal(snapshots[0][2], undefined, 'Earlier history containers remain frozen');
-      assert.deepEqual(h.actions, [{ mask: 0, tics: 1 }, { mask: 0, tics: 2 }, { mask: 0, tics: 3 }]);
+      assert.deepEqual(h.actions, [{ mask: 0, tics: 1 }, { mask: 0, tics: 6 }, { mask: 0, tics: 3 }]);
       assert.equal(h.creations, 1);
       assert.equal(h.view.session.controls.ready, true);
       if (mode === 'continuous') {

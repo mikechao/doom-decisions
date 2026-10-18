@@ -221,10 +221,10 @@
         <div class="decision-prompt-heading">
           <h2 id="prompt-title">Edit Prompt</h2>
         </div>
-        <p id="prompt-description" class="help">Save guidance for future decisions. The app controls available actions and uses your Tics per decision selection for each action. Decisions already admitted keep their captured guidance and duration.</p>
+        <p id="prompt-description" class="help">Edit the full text sent as next_action.instructions. Each {{tics}} is replaced with the tic count captured when a decision is admitted; no other text is added. The app still enforces allowed actions and actual tic duration. Save applies to future admissions; decisions already admitted keep their captured template and duration.</p>
         <div class="prompt-field">
-          <label for="prompt-guidance">Gameplay guidance</label>
-          <textarea id="prompt-guidance" rows="8" aria-describedby="prompt-description prompt-error" aria-invalid="false" autofocus></textarea>
+          <label for="prompt-instructions">Decision instructions</label>
+          <textarea id="prompt-instructions" rows="8" aria-describedby="prompt-description prompt-error" aria-invalid="false" autofocus></textarea>
           <p id="prompt-error" class="help" role="alert" hidden></p>
         </div>
         <p class="help">Continuous mode keeps running while this dialog is open. Cancel or press Escape to discard edits and return to the controls.</p>

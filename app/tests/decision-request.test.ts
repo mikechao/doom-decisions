@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildDefaultDecisionRequest,
-  defaultDecisionGuidance,
-  formatDecisionInstructions,
+  defaultDecisionInstructionTemplate,
+  resolveDecisionInstructions,
 } from '../src/decision-request.ts';
 import { validateChoice } from '../src/decision.ts';
 import {
@@ -60,7 +60,7 @@ describe('buildDefaultDecisionRequest', () => {
         buildDefaultDecisionRequest(tic, n, png),
       );
       expect(first).toStrictEqual(expected);
-      expect(formatDecisionInstructions(n)).toBe(
+      expect(resolveDecisionInstructions(n)).toBe(
         expected.questions[0].instructions,
       );
       expect(second).toStrictEqual(first);
@@ -94,15 +94,21 @@ describe('buildDefaultDecisionRequest', () => {
   );
 });
 
-it('preserves custom guidance verbatim while generating app instructions from N', () => {
-  const guidance = '  Follow corridors.\nLook for doors.  ';
-  expect(defaultDecisionGuidance).not.toContain('gameplay tics');
-  for (const n of [2, 35]) {
-    const input = buildDefaultDecisionRequest(73, n, 'data:image/png;base64,local', undefined, guidance);
-    expect(input.instructions).toBe(`${guidance} The human selected exactly ${n} gameplay tics for this action. Choose only the action, never its duration. The game advances only through verified actions admitted by manual steps or explicitly started continuous mode; API waits do not advance gameplay. Do not assume unseen game state.`);
-    const wire = encodeOpenAIDecisionRequest(input);
-    expect(wire.questions[0].instructions).toBe(input.instructions);
-    expect(wire.questions[0].choices).toEqual(input.permittedActions.map(value => ({ value })));
+it('resolves only every literal {{tics}} and otherwise preserves the entire template', () => {
+  expect(defaultDecisionInstructionTemplate).toContain('exactly {{tics}} gameplay tics');
+  for (const n of [6, 35]) {
+    for (const [template, expected] of [
+      ['Use fire.', 'Use fire.'],
+      ['  Follow corridors.\nLook for doors.  ', '  Follow corridors.\nLook for doors.  '],
+      ['Fire for {{tics}} tics; choose wisely.', `Fire for ${n} tics; choose wisely.`],
+      ['  {{tics}} tics.\nAgain: {{tics}}. {{unknown}}  ', `  ${n} tics.\nAgain: ${n}. {{unknown}}  `],
+    ]) {
+      const input = buildDefaultDecisionRequest(73, n, 'data:image/png;base64,local', undefined, template);
+      expect(input.instructions).toBe(expected);
+      const wire = encodeOpenAIDecisionRequest(input);
+      expect(wire.questions[0].instructions).toBe(expected);
+      expect(wire.questions[0].choices).toEqual(input.permittedActions.map(value => ({ value })));
+    }
   }
 });
 

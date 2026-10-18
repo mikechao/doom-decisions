@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, it, vi } from 'vitest';
-import { defaultDecisionGuidance } from '../src/decision-request.ts';
+import { defaultDecisionInstructionTemplate } from '../src/decision-request.ts';
 
 const session = vi.hoisted(() => ({
   ports: undefined,
@@ -64,7 +64,7 @@ class Dialog extends Element {
   open = false;
   showModal = vi.fn(() => {
     this.open = true;
-    element('#prompt-guidance').focus();
+    element('#prompt-instructions').focus();
   });
   close() {
     this.open = false;
@@ -375,20 +375,23 @@ it('production with Jev mode honors the explicit OpenAI key opt-in', async () =>
   assert.equal(element('#key').value, '');
 });
 
-describe('Gameplay guidance editor', () => {
+describe('Decision instructions editor', () => {
   it('labels the native dialog, textarea, validation and explicit actions without a form', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     const dialog = html.match(/<dialog id="prompt-dialog"[\s\S]*?<\/dialog>/)[0];
     assert.match(html, /<doom-button id="view-prompt" appearance="outline" aria-haspopup="dialog" aria-controls="prompt-dialog">Edit Prompt<\/doom-button>/);
     assert.match(dialog, /aria-labelledby="prompt-title" aria-describedby="prompt-description"/);
     assert.match(dialog, /<h2 id="prompt-title">Edit Prompt<\/h2>/);
-    assert.match(dialog, /<label for="prompt-guidance">Gameplay guidance<\/label>/);
-    assert.match(dialog, /<textarea id="prompt-guidance"[^>]*aria-describedby="prompt-description prompt-error"[^>]*autofocus/);
+    assert.match(dialog, /<label for="prompt-instructions">Decision instructions<\/label>/);
+    assert.match(dialog, /<textarea id="prompt-instructions"[^>]*aria-describedby="prompt-description prompt-error"[^>]*autofocus/);
     assert.match(dialog, /<p id="prompt-error"[^>]*role="alert" hidden>/);
     assert.match(dialog, /id="save-prompt"[^>]*>Save</);
     assert.match(dialog, /id="close-prompt"[^>]*>Cancel</);
     assert.match(dialog, /id="reset-prompt"[^>]*>Reset to Default</);
-    assert.match(dialog, /app controls available actions/);
+    assert.match(dialog, /full text sent as next_action\.instructions/);
+    assert.match(dialog, /Each \{\{tics\}\} is replaced with the tic count captured/);
+    assert.match(dialog, /no other text is added/);
+    assert.match(dialog, /app still enforces allowed actions and actual tic duration/);
     assert.match(dialog, /Continuous mode keeps running/);
     assert.doesNotMatch(dialog, /<form|contenteditable/);
   });
@@ -396,7 +399,7 @@ describe('Gameplay guidance editor', () => {
   it('discards drafts on Cancel, Escape and native close, then restores saved text and focus', () => {
     const button = element('#view-prompt');
     const dialog = element('#prompt-dialog');
-    const field = element('#prompt-guidance');
+    const field = element('#prompt-instructions');
     const calls = Object.values(session.controller).map(method => method.mock.calls.length);
     assert.equal(button.disabled, false, 'Available before preparation');
     for (const dismiss of [
@@ -407,14 +410,16 @@ describe('Gameplay guidance editor', () => {
       emit(button, 'click');
       assert.equal(dialog.open, true);
       assert.equal(document.activeElement, field);
-      assert.equal(field.value, defaultDecisionGuidance);
+      assert.equal(field.value, defaultDecisionInstructionTemplate);
+      assert.ok(field.value.includes('{{tics}}'));
+      assert.ok(field.value.endsWith('Do not assume unseen game state.'));
       field.value = 'Unsaved draft';
       emit(field, 'input');
-      assert.equal(session.ports.readSavedGuidance(), defaultDecisionGuidance);
+      assert.equal(session.ports.readInstructionTemplate(), defaultDecisionInstructionTemplate);
       dismiss();
       assert.equal(dialog.open, false);
       assert.equal(document.activeElement, button);
-      assert.equal(field.value, defaultDecisionGuidance);
+      assert.equal(field.value, defaultDecisionInstructionTemplate);
       assert.equal(element('#prompt-error').hidden, true);
     }
     assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
@@ -424,41 +429,41 @@ describe('Gameplay guidance editor', () => {
     const calls = Object.values(session.controller).map(method => method.mock.calls.length);
     const transport = vi.fn(() => { throw Error('Unexpected transport'); });
     vi.stubGlobal('fetch', transport);
-    const guidance = '  Follow corridors.\nLook for doors.  ';
+    const template = '  Fire for {{tics}} tics.\nUse fire. {{tics}}  ';
     emit(element('#view-prompt'), 'click');
-    element('#prompt-guidance').value = guidance;
+    element('#prompt-instructions').value = template;
     emit(element('#save-prompt'), 'click');
     assert.equal(element('#prompt-dialog').open, false);
-    assert.equal(session.ports.readSavedGuidance(), guidance);
+    assert.equal(session.ports.readInstructionTemplate(), template);
     assert.equal(document.activeElement, element('#view-prompt'));
     emit(element('#view-prompt'), 'click');
-    assert.equal(element('#prompt-guidance').value, guidance);
-    element('#prompt-guidance').value = 'Another unsaved draft';
+    assert.equal(element('#prompt-instructions').value, template);
+    element('#prompt-instructions').value = 'Another unsaved draft';
     element('#prompt-dialog').escape();
     emit(element('#view-prompt'), 'click');
-    assert.equal(element('#prompt-guidance').value, guidance);
+    assert.equal(element('#prompt-instructions').value, template);
     assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
     assert.equal(transport.mock.calls.length, 0);
   });
 
-  it('requires Save after Reset to Default and lets Cancel preserve saved guidance', () => {
-    const field = element('#prompt-guidance');
+  it('requires Save after Reset to Default and lets Cancel preserve saved instructions', () => {
+    const field = element('#prompt-instructions');
     emit(element('#view-prompt'), 'click');
-    field.value = 'Saved custom guidance';
+    field.value = 'Use fire.';
     emit(element('#save-prompt'), 'click');
     for (const save of [false, true]) {
       emit(element('#view-prompt'), 'click');
       emit(element('#reset-prompt'), 'click');
-      assert.equal(field.value, defaultDecisionGuidance);
+      assert.equal(field.value, defaultDecisionInstructionTemplate);
       assert.equal(document.activeElement, field);
-      assert.equal(session.ports.readSavedGuidance(), 'Saved custom guidance');
+      assert.equal(session.ports.readInstructionTemplate(), 'Use fire.');
       emit(element(save ? '#save-prompt' : '#close-prompt'), 'click');
-      assert.equal(session.ports.readSavedGuidance(), save ? defaultDecisionGuidance : 'Saved custom guidance');
+      assert.equal(session.ports.readInstructionTemplate(), save ? defaultDecisionInstructionTemplate : 'Use fire.');
     }
   });
 
   it('rejects blank drafts accessibly and clears validation on editing, Reset and dismissal', () => {
-    const field = element('#prompt-guidance');
+    const field = element('#prompt-instructions');
     const button = element('#view-prompt');
     emit(button, 'click');
     const error = element('#prompt-error');
@@ -466,13 +471,13 @@ describe('Gameplay guidance editor', () => {
       field.value = value;
       emit(element('#save-prompt'), 'click');
       assert.equal(element('#prompt-dialog').open, true);
-      assert.equal(session.ports.readSavedGuidance(), defaultDecisionGuidance);
+      assert.equal(session.ports.readInstructionTemplate(), defaultDecisionInstructionTemplate);
       assert.equal(field.attributes.get('aria-invalid'), 'true');
       assert.equal(error.hidden, false);
-      assert.equal(error.textContent, 'Enter gameplay guidance before saving.');
+      assert.equal(error.textContent, 'Enter decision instructions before saving.');
       assert.equal(document.activeElement, field);
     }
-    field.value = 'Corrected guidance';
+    field.value = 'Corrected instructions';
     emit(field, 'input');
     assert.equal(error.hidden, true);
     assert.equal(field.attributes.get('aria-invalid'), 'false');
@@ -487,20 +492,20 @@ describe('Gameplay guidance editor', () => {
     assert.equal(error.textContent, '');
     assert.equal(field.attributes.get('aria-invalid'), 'false');
     emit(button, 'click');
-    assert.equal(field.value, defaultDecisionGuidance);
+    assert.equal(field.value, defaultDecisionInstructionTemplate);
   });
 
   it('allows saving during continuous play without changing tics or invoking controls', () => {
     show({ phase: 'busy', continuous: { active: true }, controls: { ready: false, stop: true, tics: true, iwad: false } });
     const calls = Object.values(session.controller).map(method => method.mock.calls.length);
     emit(element('#view-prompt'), 'click');
-    element('#prompt-guidance').value = 'Explore carefully';
+    element('#prompt-instructions').value = 'Explore carefully';
     element('#tics').valueAsNumber = 35;
     emit(element('#tics'), 'input');
-    assert.equal(element('#prompt-guidance').value, 'Explore carefully');
-    assert.equal(session.ports.readSavedGuidance(), defaultDecisionGuidance);
+    assert.equal(element('#prompt-instructions').value, 'Explore carefully');
+    assert.equal(session.ports.readInstructionTemplate(), defaultDecisionInstructionTemplate);
     emit(element('#save-prompt'), 'click');
-    assert.equal(session.ports.readSavedGuidance(), 'Explore carefully');
+    assert.equal(session.ports.readInstructionTemplate(), 'Explore carefully');
     assert.equal(session.ports.readTics(), 35);
     assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
   });

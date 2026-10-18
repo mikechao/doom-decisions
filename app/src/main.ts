@@ -4,7 +4,7 @@ import {
   type DecisionHistoryElement,
 } from './decision-history';
 import { deriveDecisionControls } from './decision-controls';
-import { defaultDecisionGuidance } from './decision-request';
+import { defaultDecisionInstructionTemplate } from './decision-request';
 import type { DecisionProviderFactory } from './decision-provider';
 import { defineDoomButton, type DoomButtonElement } from './doom-button';
 import { jevDecisionProviderFactory } from './jev-decision-provider';
@@ -89,7 +89,7 @@ type Elements = {
   '#close-prompt': DoomButtonElement;
   '#save-prompt': DoomButtonElement;
   '#reset-prompt': DoomButtonElement;
-  '#prompt-guidance': HTMLTextAreaElement;
+  '#prompt-instructions': HTMLTextAreaElement;
   '#prompt-error': HTMLParagraphElement;
   '#decision-history': DecisionHistoryElement;
   '#outcome-number': HTMLSpanElement;
@@ -182,7 +182,7 @@ let selectedAssetName = '';
 let selectedAssetSource: 'included' | 'local' | undefined;
 let doomLoaded = false;
 let manualKeyVisible = false;
-let savedGuidance = defaultDecisionGuidance;
+let savedInstructionTemplate = defaultDecisionInstructionTemplate;
 let selectedModel: OpenRouterModel = defaultOpenRouterModel;
 let modelLocked = false;
 let modelFactory = createOpenRouterDecisionProviderFactory(selectedModel);
@@ -431,7 +431,7 @@ const controller = createSessionController(
         type: 'module',
       }),
     readTics: () => $('#tics').valueAsNumber,
-    readSavedGuidance: () => savedGuidance,
+    readInstructionTemplate: () => savedInstructionTemplate,
     takeKey: () => {
       if (jevMode) {
         $('#key').value = '';
@@ -591,36 +591,37 @@ $('#stop').addEventListener('click', () => controller.stop());
 function clearPromptError() {
   $('#prompt-error').textContent = '';
   $('#prompt-error').hidden = true;
-  $('#prompt-guidance').setAttribute('aria-invalid', 'false');
+  $('#prompt-instructions').setAttribute('aria-invalid', 'false');
 }
 $('#view-prompt').addEventListener('click', () => {
-  $('#prompt-guidance').value = savedGuidance;
+  $('#prompt-instructions').value = savedInstructionTemplate;
   clearPromptError();
   $('#prompt-dialog').showModal();
 });
 $('#save-prompt').addEventListener('click', () => {
   if (!$('#prompt-dialog').open) return;
-  const draft = $('#prompt-guidance').value;
+  const draft = $('#prompt-instructions').value;
   if (!draft.trim()) {
     $('#prompt-error').hidden = false;
-    $('#prompt-error').textContent = 'Enter gameplay guidance before saving.';
-    $('#prompt-guidance').setAttribute('aria-invalid', 'true');
-    $('#prompt-guidance').focus();
+    $('#prompt-error').textContent =
+      'Enter decision instructions before saving.';
+    $('#prompt-instructions').setAttribute('aria-invalid', 'true');
+    $('#prompt-instructions').focus();
     return;
   }
-  savedGuidance = draft;
+  savedInstructionTemplate = draft;
   $('#prompt-dialog').close();
 });
 $('#reset-prompt').addEventListener('click', () => {
-  $('#prompt-guidance').value = defaultDecisionGuidance;
+  $('#prompt-instructions').value = defaultDecisionInstructionTemplate;
   clearPromptError();
-  $('#prompt-guidance').focus();
+  $('#prompt-instructions').focus();
 });
-$('#prompt-guidance').addEventListener('input', clearPromptError);
+$('#prompt-instructions').addEventListener('input', clearPromptError);
 $('#close-prompt').addEventListener('click', () => $('#prompt-dialog').close());
 $('#prompt-dialog').addEventListener('close', () => {
   if ($('#prompt-dialog').open) return;
-  $('#prompt-guidance').value = savedGuidance;
+  $('#prompt-instructions').value = savedInstructionTemplate;
   clearPromptError();
   $('#view-prompt').focus();
 });
