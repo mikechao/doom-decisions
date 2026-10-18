@@ -22,7 +22,8 @@ const actions = ['neutral', 'forward', 'turn_right', 'backward', 'turn_left', 'f
 // A valid tiny PNG: only fake fetch sees it. Real Doom still captures 640×400.
 const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=';
 const png = `data:image/png;base64,${base64}`;
-const input = () => buildDefaultDecisionRequest(73, 6, png);
+const guidance = '  Follow corridors.\nLook for doors.  ';
+const input = () => buildDefaultDecisionRequest(73, 6, png, undefined, guidance);
 const answer = (action: unknown = 'forward') => ({
   model: 'jev-1.14.0',
   answers: {
@@ -115,6 +116,7 @@ it('uses one charged SDK invocation with unchanged PNG, prompt, context and seve
       type: 'choice', instructions: input().instructions,
       criteria: { neutral: null, forward: null, turn_right: null, backward: null, turn_left: null, fire: null, use: null },
     });
+    assert.ok(payload.questions.next_action.instructions.startsWith(`${guidance} The human selected exactly 6 gameplay tics`));
     assert.deepEqual(Object.keys(payload.questions.next_action.criteria), actions);
     const asset = payload.assets[payload.state.screenshot];
     assert.equal(asset.type, 'image');

@@ -4,7 +4,7 @@ import {
   type DecisionHistoryElement,
 } from './decision-history';
 import { deriveDecisionControls } from './decision-controls';
-import { formatDefaultDecisionInstructions } from './decision-request';
+import { defaultDecisionGuidance } from './decision-request';
 import type { DecisionProviderFactory } from './decision-provider';
 import { defineDoomButton, type DoomButtonElement } from './doom-button';
 import { jevDecisionProviderFactory } from './jev-decision-provider';
@@ -87,7 +87,10 @@ type Elements = {
   '#view-prompt': DoomButtonElement;
   '#prompt-dialog': HTMLDialogElement;
   '#close-prompt': DoomButtonElement;
-  '#prompt-text': HTMLParagraphElement;
+  '#save-prompt': DoomButtonElement;
+  '#reset-prompt': DoomButtonElement;
+  '#prompt-guidance': HTMLTextAreaElement;
+  '#prompt-error': HTMLParagraphElement;
   '#decision-history': DecisionHistoryElement;
   '#outcome-number': HTMLSpanElement;
   '#outcome-action': HTMLSpanElement;
@@ -179,6 +182,7 @@ let selectedAssetName = '';
 let selectedAssetSource: 'included' | 'local' | undefined;
 let doomLoaded = false;
 let manualKeyVisible = false;
+let savedGuidance = defaultDecisionGuidance;
 let selectedModel: OpenRouterModel = defaultOpenRouterModel;
 let modelLocked = false;
 let modelFactory = createOpenRouterDecisionProviderFactory(selectedModel);
@@ -427,6 +431,7 @@ const controller = createSessionController(
         type: 'module',
       }),
     readTics: () => $('#tics').valueAsNumber,
+    readSavedGuidance: () => savedGuidance,
     takeKey: () => {
       if (jevMode) {
         $('#key').value = '';
@@ -583,26 +588,42 @@ $('#start').addEventListener('click', () =>
   controller.startContinuous($('#budget').valueAsNumber),
 );
 $('#stop').addEventListener('click', () => controller.stop());
-function displayDecisionPrompt() {
-  const tics = $('#tics').valueAsNumber;
-  $('#prompt-text').textContent =
-    Number.isSafeInteger(tics) && tics >= 1
-      ? formatDefaultDecisionInstructions(tics)
-      : 'Enter a positive JavaScript safe integer for tics to preview instructions.';
+function clearPromptError() {
+  $('#prompt-error').textContent = '';
+  $('#prompt-error').hidden = true;
+  $('#prompt-guidance').setAttribute('aria-invalid', 'false');
 }
 $('#view-prompt').addEventListener('click', () => {
-  displayDecisionPrompt();
+  $('#prompt-guidance').value = savedGuidance;
+  clearPromptError();
   $('#prompt-dialog').showModal();
 });
+$('#save-prompt').addEventListener('click', () => {
+  if (!$('#prompt-dialog').open) return;
+  const draft = $('#prompt-guidance').value;
+  if (!draft.trim()) {
+    $('#prompt-error').hidden = false;
+    $('#prompt-error').textContent = 'Enter gameplay guidance before saving.';
+    $('#prompt-guidance').setAttribute('aria-invalid', 'true');
+    $('#prompt-guidance').focus();
+    return;
+  }
+  savedGuidance = draft;
+  $('#prompt-dialog').close();
+});
+$('#reset-prompt').addEventListener('click', () => {
+  $('#prompt-guidance').value = defaultDecisionGuidance;
+  clearPromptError();
+  $('#prompt-guidance').focus();
+});
+$('#prompt-guidance').addEventListener('input', clearPromptError);
 $('#close-prompt').addEventListener('click', () => $('#prompt-dialog').close());
 $('#prompt-dialog').addEventListener('close', () => {
-  if (!$('#prompt-dialog').open) $('#view-prompt').focus();
+  if ($('#prompt-dialog').open) return;
+  $('#prompt-guidance').value = savedGuidance;
+  clearPromptError();
+  $('#view-prompt').focus();
 });
-const refreshOpenDecisionPrompt = () => {
-  if ($('#prompt-dialog').open) displayDecisionPrompt();
-};
-$('#tics').addEventListener('input', refreshOpenDecisionPrompt);
-$('#tics').addEventListener('change', refreshOpenDecisionPrompt);
 function selectIwad(
   file: LocalIwad,
   name: string,

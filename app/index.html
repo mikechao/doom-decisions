@@ -107,7 +107,7 @@
           </details>
           <div class="prompt-group">
             <hr>
-            <doom-button id="view-prompt" appearance="outline" aria-haspopup="dialog" aria-controls="prompt-dialog">View Prompt</doom-button>
+            <doom-button id="view-prompt" appearance="outline" aria-haspopup="dialog" aria-controls="prompt-dialog">Edit Prompt</doom-button>
           </div>
         </section>
       </div>
@@ -219,11 +219,20 @@
     <dialog id="prompt-dialog" class="decision-prompt" aria-labelledby="prompt-title" aria-describedby="prompt-description">
       <div class="decision-prompt-content">
         <div class="decision-prompt-heading">
-          <h2 id="prompt-title">Decision Prompt</h2>
-          <doom-button id="close-prompt" appearance="outline" autofocus>Close</doom-button>
+          <h2 id="prompt-title">Edit Prompt</h2>
         </div>
-        <p id="prompt-description" class="help">Preview of the default next_action instructions using the current tic selection. In-flight decisions retain their captured duration.</p>
-        <p id="prompt-text"></p>
+        <p id="prompt-description" class="help">Save guidance for future decisions. The app controls available actions and uses your Tics per decision selection for each action. Decisions already admitted keep their captured guidance and duration.</p>
+        <div class="prompt-field">
+          <label for="prompt-guidance">Gameplay guidance</label>
+          <textarea id="prompt-guidance" rows="8" aria-describedby="prompt-description prompt-error" aria-invalid="false" autofocus></textarea>
+          <p id="prompt-error" class="help" role="alert" hidden></p>
+        </div>
+        <p class="help">Continuous mode keeps running while this dialog is open. Cancel or press Escape to discard edits and return to the controls.</p>
+        <div class="prompt-actions">
+          <doom-button id="reset-prompt" appearance="outline">Reset to Default</doom-button>
+          <doom-button id="close-prompt" appearance="outline">Cancel</doom-button>
+          <doom-button id="save-prompt" appearance="primary">Save</doom-button>
+        </div>
       </div>
     </dialog>
     <details class="advanced">

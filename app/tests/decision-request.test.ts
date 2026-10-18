@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildDefaultDecisionRequest,
-  formatDefaultDecisionInstructions,
+  defaultDecisionGuidance,
+  formatDecisionInstructions,
 } from '../src/decision-request.ts';
 import { validateChoice } from '../src/decision.ts';
 import {
@@ -59,7 +60,7 @@ describe('buildDefaultDecisionRequest', () => {
         buildDefaultDecisionRequest(tic, n, png),
       );
       expect(first).toStrictEqual(expected);
-      expect(formatDefaultDecisionInstructions(n)).toBe(
+      expect(formatDecisionInstructions(n)).toBe(
         expected.questions[0].instructions,
       );
       expect(second).toStrictEqual(first);
@@ -91,6 +92,18 @@ describe('buildDefaultDecisionRequest', () => {
       ).toStrictEqual(expected);
     },
   );
+});
+
+it('preserves custom guidance verbatim while generating app instructions from N', () => {
+  const guidance = '  Follow corridors.\nLook for doors.  ';
+  expect(defaultDecisionGuidance).not.toContain('gameplay tics');
+  for (const n of [2, 35]) {
+    const input = buildDefaultDecisionRequest(73, n, 'data:image/png;base64,local', undefined, guidance);
+    expect(input.instructions).toBe(`${guidance} The human selected exactly ${n} gameplay tics for this action. Choose only the action, never its duration. The game advances only through verified actions admitted by manual steps or explicitly started continuous mode; API waits do not advance gameplay. Do not assume unseen game state.`);
+    const wire = encodeOpenAIDecisionRequest(input);
+    expect(wire.questions[0].instructions).toBe(input.instructions);
+    expect(wire.questions[0].choices).toEqual(input.permittedActions.map(value => ({ value })));
+  }
 });
 
 it('builds only immutable domain evidence without telemetry or wire fields', () => {

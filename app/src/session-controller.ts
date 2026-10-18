@@ -164,6 +164,7 @@ export interface SessionBrowserPorts {
   localFetch(name: string, json?: false): Promise<ArrayBuffer>;
   createWorker(): Worker;
   readTics(): number;
+  readSavedGuidance(): string;
   takeKey(): string;
   clearKey(): void;
   focusBudget(): void;
@@ -385,6 +386,7 @@ export function createSessionController(
     entry: DecisionEntry,
     png: string,
     permittedActions: readonly ActionName[],
+    guidance: string,
     continuous?: ContinuousRun,
   ) {
     fence(run, attempt);
@@ -399,6 +401,7 @@ export function createSessionController(
       attempt.tics,
       png,
       permittedActions,
+      guidance,
     );
     run.inspectorRequests = Object.freeze({
       ...run.inspectorRequests,
@@ -487,6 +490,8 @@ export function createSessionController(
     // guard, rather than disabled styling alone, prevents overlapping admission.
     const attempt = admitDecision(run, tics);
     if (!attempt) return 'not-admitted';
+    // Capture saved guidance with this admission, before presentation or any await.
+    const guidance = ports.readSavedGuidance();
     const permittedActions = Object.freeze(Object.keys(masks) as ActionName[]);
     if (continuous) continuous.dispatched = false;
     const dispatchFence = () => {
@@ -552,6 +557,7 @@ export function createSessionController(
         entry,
         png,
         permittedActions,
+        guidance,
         continuous,
       );
       dispatchFence();
