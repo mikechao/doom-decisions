@@ -156,6 +156,7 @@ let setupPointerActive = false;
 let startupReady = false;
 let wadSelected = false;
 let selectedAssetName = '';
+let doomLoaded = false;
 let manualKeyVisible = false;
 let selectedModel: OpenRouterModel = defaultOpenRouterModel;
 let modelLocked = false;
@@ -205,8 +206,20 @@ function assetSelectionAllowed() {
 }
 function displayAssetControls() {
   const disabled = !assetSelectionAllowed();
+  const loading = latestSession?.phase === 'preparing';
+  const needsReload =
+    latestSession?.phase === 'error' || latestSession?.phase === 'terminal';
   $('#iwad').disabled = disabled;
-  $('#included-freedoom').disabled = disabled;
+  const button = $('#included-freedoom');
+  button.disabled = disabled;
+  button.setAttribute('aria-busy', String(loading));
+  button.textContent = loading
+    ? 'Loading Doom…'
+    : doomLoaded
+      ? 'Doom loaded'
+      : needsReload
+        ? 'Reload to retry'
+        : 'Use included Freedoom';
 }
 function displayOAuth() {
   displayAssetControls();
@@ -287,7 +300,11 @@ function display(view: SessionPresentation) {
         )
       : status;
   const run = view.session;
-  if (run) latestSession = run;
+  if (run) {
+    latestSession = run;
+    // Successful loading remains true after later gameplay errors or retirement.
+    doomLoaded ||= run.prepared;
+  }
   updateControlAvailability(latestSession);
   displayOAuth();
   collapseCompletedSetup();

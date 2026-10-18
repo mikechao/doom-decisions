@@ -513,6 +513,8 @@ it('blocks duplicate sign-in and WAD preparation while connecting and after WAD 
   assert.equal(h.element('#openrouter-model-gpt').checked, true);
   assert.equal(h.element('#iwad').disabled, true);
   assert.equal(h.element('#included-freedoom').disabled, true);
+  assert.equal(h.element('#included-freedoom').textContent, 'Use included Freedoom');
+  assert.equal(h.element('#included-freedoom').attributes.get('aria-busy'), 'false');
   h.element('#included-freedoom').dispatchEvent(new Event('click'));
   h.element('#iwad').files = [{}];
   h.element('#iwad').dispatchEvent(new Event('change'));
@@ -548,6 +550,9 @@ it('keeps both IWAD choices and sign-in available until preparation, then shares
   await settleStartup();
   assert.equal(h.element('#openrouter-signin-button').disabled, false);
   for (const id of ['#iwad', '#included-freedoom']) assert.equal(h.element(id).disabled, false);
+  const button = h.element('#included-freedoom');
+  assert.equal(button.textContent, 'Use included Freedoom');
+  assert.equal(button.attributes.get('aria-busy'), 'false');
   assert.equal(session.controller.prepare.mock.calls.length, 0);
   const present = (phase, iwad) => session.ports.present({ session: {
     phase, prepared: phase === 'ready', hasClient: false, verifiedTics: 0,
@@ -561,24 +566,56 @@ it('keeps both IWAD choices and sign-in available until preparation, then shares
   assert.equal(typeof file.arrayBuffer, 'function');
   assert.equal(h.element('#openrouter-signin-button').disabled, true);
   assert.match(h.element('#setup-asset').textContent, /Included Freedoom Phase 1 v0.13.0/);
-  for (const phase of ['preparing', 'ready', 'busy', 'error', 'terminal']) {
-    present(phase, false);
-    for (const id of ['#iwad', '#included-freedoom']) assert.equal(h.element(id).disabled, true);
-    h.element('#included-freedoom').dispatchEvent(new Event('click'));
-    h.element('#iwad').files = [{ name: 'local.wad' }];
-    h.element('#iwad').dispatchEvent(new Event('change'));
-    assert.equal(session.controller.prepare.mock.calls.length, 1);
-  }
+  assert.equal(button.textContent, 'Loading Doom…');
+  assert.equal(button.attributes.get('aria-busy'), 'true');
   present('unprepared', true);
   for (const id of ['#iwad', '#included-freedoom']) assert.equal(h.element(id).disabled, false);
+  assert.equal(button.textContent, 'Use included Freedoom');
+  assert.equal(button.attributes.get('aria-busy'), 'false');
   assert.equal(h.element('#openrouter-signin-button').disabled, true, 'Existing post-admission auth semantics remain');
+  h.element('#iwad').files = [{ name: 'local.wad' }];
   h.element('#iwad').dispatchEvent(new Event('change'));
   assert.equal(session.controller.prepare.mock.calls.length, 2);
   assert.match(h.element('#setup-asset').textContent, /local.wad/);
+  assert.equal(button.textContent, 'Loading Doom…');
+  assert.equal(button.attributes.get('aria-busy'), 'true');
+  for (const phase of ['preparing', 'ready', 'busy', 'error', 'terminal']) {
+    present(phase, false);
+    for (const id of ['#iwad', '#included-freedoom']) assert.equal(h.element(id).disabled, true);
+    assert.equal(button.textContent, phase === 'preparing' ? 'Loading Doom…' : 'Doom loaded');
+    assert.equal(button.attributes.get('aria-busy'), String(phase === 'preparing'));
+    h.element('#included-freedoom').dispatchEvent(new Event('click'));
+    h.element('#iwad').files = [{ name: 'local.wad' }];
+    h.element('#iwad').dispatchEvent(new Event('change'));
+    assert.equal(session.controller.prepare.mock.calls.length, 2);
+  }
   assert.equal(fetch.mock.calls.length, 0);
   assert.equal(h.worker.mock.calls.length, 0);
   assert.equal(session.controller.next.mock.calls.length, 0);
   assert.equal(session.controller.startContinuous.mock.calls.length, 0);
+});
+
+it('clears the loading presentation after preparation fails and requires reload', async () => {
+  vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'production'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture();
+  await import('../src/main.ts?included-freedoom-loading-failure-test');
+  await settleStartup();
+  const present = phase => session.ports.present({ session: {
+    phase, prepared: false, hasClient: false, verifiedTics: 0,
+    evidence: { decisions: [] }, controls: { ready: false, stop: false, tics: false, iwad: false },
+  } });
+  session.controller.prepare.mockImplementation(() => { present('preparing'); return Promise.resolve(); });
+  const button = h.element('#included-freedoom');
+  button.dispatchEvent(new Event('click'));
+  assert.equal(button.textContent, 'Loading Doom…');
+  assert.equal(button.attributes.get('aria-busy'), 'true');
+  present('error');
+  assert.equal(button.textContent, 'Reload to retry');
+  assert.equal(button.attributes.get('aria-busy'), 'false');
+  assert.equal(button.disabled, true);
+  button.dispatchEvent(new Event('click'));
+  assert.equal(session.controller.prepare.mock.calls.length, 1);
+  assert.equal(h.worker.mock.calls.length, 0);
 });
 
 it('shows fixed failure/cancellation status and preserves manual fallback with no native work', async () => {

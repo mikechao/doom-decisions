@@ -76,6 +76,20 @@ could consolidate the same recipes with less compatibility code. The component's
 benefit is a uniform typed boundary; it has not yet earned an unconditional runtime
 acceptance or a claim of lower total maintenance cost.
 
+The included-Freedoom control also reflects the shared IWAD preparation flow:
+`Use included Freedoom` becomes `Loading Doom…` with `aria-busy="true"` while
+either included or local assets prepare. Successful preparation changes it to
+`Doom loaded`, retained through later gameplay errors or terminal outcomes.
+Recoverable asset failures restore the original label; preparation failures that
+require reload show `Reload to retry`. Existing selection locks still own disabled
+state. These labels are application presentation, using the component's existing
+busy/disabled support without a new component API.
+
+The state-label follow-up passed `npm --prefix app run check`: all three
+TypeScript configurations, static Worker packaging, 226 tests across 25 files,
+and Biome. These remain offline checks; browser/CSP/accessibility verification
+was not run for the new labels.
+
 ## Evidence and remaining owner checks
 
 The original pilot passed `npm --prefix app run check`: 217 tests in 24 files,
