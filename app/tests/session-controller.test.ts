@@ -1,7 +1,7 @@
 // Ordinary-import lifecycle acceptance: local synthetic bytes/receipts and SDK
 // transport only. No browser entry, source extraction, VM, WASM or game assets.
 import assert from 'node:assert/strict';
-import { afterEach, it } from 'vitest';
+import { afterEach, it, vi } from 'vitest';
 import { DecisionFailure, verifyAction } from '../src/decision.ts';
 import type {
   DecisionProvider,
@@ -46,16 +46,20 @@ it('injects domain-only decisions while the controller freezes N and verifies ma
     diagnostics.latencyMs = 0;
     return Promise.resolve({ kind: 'choice', action: 'neutral', confidence: 0.7 });
   });
+  const create = vi.spyOn(providerFactory, 'create');
   const h = fixture({ providerFactory });
   try {
     await h.prepare();
+    assert.equal(create.mock.calls.length, 0, 'Preparation does not construct a provider client');
     assert.equal(h.view.sdkStatus, 'Offline fake available');
     assert.deepEqual(h.view.session.evidence.sdk, { provider: 'offline-fake' });
     h.browserInputs.tics = 2;
     const manual = h.next();
     assert.equal(await h.next(), 'not-admitted');
     assert.equal(await manual, 'completed');
+    assert.equal(create.mock.calls.length, 1, 'First decision constructs the client');
     await h.controller.startContinuous(1);
+    assert.equal(create.mock.calls.length, 1, 'Later decisions retain the client');
     const [first, second] = h.view.session.evidence.decisions;
     assert.match(inputs[0].instructions, /exactly 2 gameplay tics/);
     assert.match(inputs[1].instructions, /exactly 35 gameplay tics/);

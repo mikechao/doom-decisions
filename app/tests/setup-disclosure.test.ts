@@ -471,9 +471,11 @@ describe('Setup disclosure', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     assert.match(html, /<details id="setup"[^>]* open[^>]*>/);
     assert.match(html, /<summary><h2 id="setup-title">Setup<\/h2><\/summary>/);
-    assert.match(html, /<doom-button id="iwad-picker" appearance="neutral" class="iwad-picker" aria-describedby="asset-note" disabled>\s*<svg class="iwad-folder-icon" slot="start"[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/svg>\s*<span id="iwad-picker-label">Choose local IWAD<\/span>\s*<span id="iwad-picker-state"><\/span>\s*<\/doom-button>\s*<input id="iwad" type="file" accept="\.wad" aria-label="Choose local IWAD" aria-describedby="asset-note" hidden disabled>/);
-    assert.match(html, /<doom-button id="included-freedoom" appearance="neutral"[^>]* disabled>Use included Freedoom<\/doom-button>/);
-    assert.match(html, /<p id="asset-note" class="help asset-note">Freedoom download: ~9\.83 MiB\. Local files stay in your browser\. Refresh to change the game file\.<\/p>/);
+    assert.match(html, /<doom-button id="iwad-picker" appearance="neutral" class="iwad-picker" secondary-label="File stays in your browser" disabled>\s*<svg class="iwad-folder-icon" slot="start"[^>]*aria-hidden="true"[^>]*>[\s\S]*?<\/svg>\s*<span id="iwad-picker-label">Choose local IWAD<\/span>\s*<span id="iwad-picker-state"><\/span>\s*<\/doom-button>\s*<input id="iwad" type="file" accept="\.wad" aria-label="Choose local IWAD" hidden disabled>/);
+    assert.match(html, /<doom-button id="included-freedoom" appearance="neutral" secondary-label="~9\.83 MiB download" disabled>Use included Freedoom<\/doom-button>/);
+    assert.doesNotMatch(html, /asset-note|Refresh to change the game file/);
+    assert.equal((html.match(/ secondary-label=/g) ?? []).length, 2);
+    assert.match(html, /<div id="prepared-asset" role="status" aria-live="polite" aria-atomic="true" hidden>\s*<span id="prepared-asset-name"><\/span>\s*<span id="prepared-asset-detail"><\/span>\s*<\/div>\s*<span id="setup-asset"/);
     assert.match(html, /<details class="setup-details">\s*<summary>Privacy &amp; API key details<\/summary>/);
     const details = html.match(/<details class="setup-details">([\s\S]*?)<\/details>/)![1];
     assert.match(details, /<p id="openrouter-key-settings" class="help" hidden>Manage or revoke keys in <a href="https:\/\/openrouter.ai\/settings\/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings<\/a>\.<\/p>/);
@@ -672,7 +674,7 @@ describe('Local IWAD picker presentation and delegation', () => {
     assert.equal(element('#iwad-picker-label').textContent, 'Choose local IWAD');
   });
 
-  it('shows preparation before success, retains the full filename text, and removes only the prepared duplicate', () => {
+  it('shows preparation before success, retains the full filename, and shows refresh guidance only after preparation', () => {
     session.ports.present({ iwadEnabled: true });
     const name = `${'LONG_FILENAME_'.repeat(30)}<DOOM>&.WAD`;
     const file = { name };
@@ -688,21 +690,37 @@ describe('Local IWAD picker presentation and delegation', () => {
     assert.equal(input.disabled, true);
     assert.equal(element('#iwad-picker-state').textContent, '');
     assert.equal(element('#setup-asset').textContent, `${name} · selected`);
+    assert.doesNotMatch(element('#setup-asset').textContent, /Refresh/);
+    assert.equal(element('#prepared-asset').hidden, true);
+    assert.equal(element('#prepared-asset-detail').textContent, '');
+    assert.equal(picker.hidden, false);
+    assert.equal(element('#included-freedoom').hidden, false);
     show({ prepared: false });
     assert.equal(element('#iwad-picker-label').textContent, 'Choose local IWAD', 'Phase alone cannot prove preparation');
+    assert.equal(element('#prepared-asset').hidden, true, 'Phase alone cannot show a ready status');
     show();
+    assert.equal(element('#prepared-asset').hidden, false);
+    assert.equal(element('#prepared-asset-name').textContent, name, 'Full chosen filename is rendered as text');
+    assert.equal(element('#prepared-asset-detail').textContent, 'Local IWAD · Game ready');
+    assert.equal(picker.hidden, true);
+    assert.equal(element('#included-freedoom').hidden, true);
     assert.equal(element('#iwad-picker-label').textContent, name);
-    assert.equal(element('#iwad-picker-state').textContent, ' loaded. Refresh to choose another game file.');
+    assert.equal(element('#iwad-picker-state').textContent, ' loaded.');
     assert.equal(picker.title, name);
     assert.equal(picker.attributes.get('aria-busy'), 'false');
     assert.equal(picker.disabled, true);
-    assert.equal(element('#setup-asset').textContent, '');
+    assert.equal(element('#setup-asset').textContent, 'Refresh to change the game file.');
     assert.equal(input.value, 'C:\\fakepath\\different.wad', 'The input value is neither used as a label nor reset');
     for (const phase of ['busy', 'error', 'terminal']) {
       show({ phase, prepared: phase === 'busy' });
       assert.equal(element('#iwad-picker-label').textContent, name);
-      assert.equal(element('#setup-asset').textContent, '');
+      assert.equal(element('#setup-asset').textContent, 'Refresh to change the game file.');
       assert.equal(picker.disabled, true);
+      assert.equal(picker.hidden, true);
+      assert.equal(element('#included-freedoom').hidden, true);
+      assert.equal(element('#prepared-asset').hidden, false);
+      assert.equal(element('#prepared-asset-name').textContent, name);
+      assert.equal(element('#prepared-asset-detail').textContent, phase === 'busy' ? 'Local IWAD · Game ready' : 'Local IWAD');
     }
   });
 
@@ -720,6 +738,10 @@ describe('Local IWAD picker presentation and delegation', () => {
     assert.equal(element('#iwad-picker-state').textContent, '');
     assert.match(element('#status').textContent, /invalid WAD/);
     assert.equal(element('#setup-asset').textContent, 'invalid.wad · selected');
+    assert.equal(element('#prepared-asset').hidden, true);
+    assert.equal(element('#prepared-asset-detail').textContent, '');
+    assert.equal(picker.hidden, false);
+    assert.equal(element('#included-freedoom').hidden, false);
     input.files = [{ name: 'another.wad' }];
     emit(input, 'change');
     preparing();
@@ -730,6 +752,10 @@ describe('Local IWAD picker presentation and delegation', () => {
     assert.equal(element('#iwad-picker-label').textContent, 'Choose local IWAD');
     assert.match(element('#iwad-picker-state').textContent, /Preparation failed\. Refresh/);
     assert.match(element('#status').textContent, /verification failed/);
+    assert.equal(element('#prepared-asset').hidden, true);
+    assert.equal(element('#prepared-asset-detail').textContent, '');
+    assert.equal(picker.hidden, false);
+    assert.equal(element('#included-freedoom').hidden, false);
     input.files = [{ name: 'blocked.wad' }];
     emit(input, 'change');
     assert.equal(session.controller.prepare.mock.calls.length, 2);
@@ -747,10 +773,18 @@ describe('Local IWAD picker presentation and delegation', () => {
     assert.equal(element('#iwad-picker').title, '');
     assert.equal(element('#iwad-picker').attributes.get('aria-busy'), 'false');
     assert.equal(element('#iwad-picker').disabled, true);
+    assert.equal(element('#prepared-asset').hidden, true);
+    assert.equal(element('#included-freedoom').hidden, false);
+    assert.equal(element('#included-freedoom').textContent, 'Loading Doom…');
     show();
     assert.equal(element('#iwad-picker-label').textContent, 'Choose local IWAD');
     assert.equal(element('#iwad-picker-state').textContent, '');
-    assert.equal(element('#setup-asset').textContent, 'Included Freedoom Phase 1 v0.13.0 · prepared');
+    assert.equal(element('#setup-asset').textContent, 'Refresh to change the game file.');
+    assert.equal(element('#prepared-asset').hidden, false);
+    assert.equal(element('#prepared-asset-name').textContent, 'Freedoom Phase 1 v0.13.0');
+    assert.equal(element('#prepared-asset-detail').textContent, 'Included game · Game ready');
+    assert.equal(element('#iwad-picker').hidden, true);
+    assert.equal(element('#included-freedoom').hidden, true);
     assert.equal(element('#included-freedoom').textContent, 'Doom loaded');
   });
 });

@@ -34,6 +34,34 @@ button {
   background: var(--button-background);
   cursor: pointer;
 }
+/* Only buttons with a caption gain a second row; other layouts stay flat. */
+.primary-label {
+  display: contents;
+}
+:host([secondary-label]) button {
+  flex-direction: column;
+  gap: 0.25rem;
+  /* Reserve two lines, gap, padding and borders even while the caption is hidden. */
+  min-height: max(var(--doom-button-min-height, 44px), 4.125rem);
+}
+:host([secondary-label]) .primary-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.625rem;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 1rem;
+  line-height: 1.4;
+}
+.secondary-label {
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
 button:hover:enabled {
   color: var(--button-hover-color, var(--button-color));
   background: var(--button-hover-background);

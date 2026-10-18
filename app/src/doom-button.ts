@@ -24,10 +24,12 @@ export function defineDoomButton() {
         'aria-describedby',
         'aria-expanded',
         'aria-busy',
+        'secondary-label',
       ];
       private readonly button: HTMLButtonElement;
       private readonly start: HTMLSlotElement;
       private readonly spinner: HTMLSpanElement;
+      private readonly secondaryLabel: HTMLSpanElement;
 
       constructor() {
         super();
@@ -44,11 +46,17 @@ export function defineDoomButton() {
         this.spinner.className = 'spinner';
         this.spinner.setAttribute('aria-hidden', 'true');
         this.spinner.hidden = true;
-        this.button.append(
+        const primary = document.createElement('span');
+        primary.className = 'primary-label';
+        primary.append(
           this.start,
           this.spinner,
           document.createElement('slot'),
         );
+        this.secondaryLabel = document.createElement('span');
+        this.secondaryLabel.className = 'secondary-label';
+        this.secondaryLabel.hidden = true;
+        this.button.append(primary, this.secondaryLabel);
         root.append(stylesheet, this.button);
       }
 
@@ -78,6 +86,13 @@ export function defineDoomButton() {
         // Copying the attribute into the shadow root would lose the dialog target.
         this.button.ariaControlsElements = this.ariaControlsElements;
         this.button.ariaDescribedByElements = this.ariaDescribedByElements;
+        // Ordinary button text participates in its accessible name. Keep caller
+        // descriptions independent and let primary-label updates retain this text.
+        this.secondaryLabel.textContent =
+          this.getAttribute('secondary-label')?.trim() ?? '';
+        this.secondaryLabel.hidden =
+          !this.secondaryLabel.textContent ||
+          this.getAttribute('aria-busy') === 'true';
         this.syncSpinner();
       }
 

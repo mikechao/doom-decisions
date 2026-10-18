@@ -11,7 +11,7 @@ vi.mock('../src/doom-button.css?url&no-inline', () => ({
   default: '/assets/doom-button.css',
 }));
 
-let registry, targets, host, button, start, spinner;
+let registry, targets, host, button, primary, start, spinner, secondary;
 class FakeElement extends EventTarget {
   nodeType = 1;
   attributes = new Map();
@@ -89,7 +89,8 @@ beforeEach(() => {
   defineDoomButton();
   host = new (registry.get('doom-button'))();
   button = host.shadowRoot.children[1];
-  [start, spinner] = button.children;
+  [primary, secondary] = button.children;
+  [start, spinner] = primary.children;
   // Class-field spies on the fake base would mask the real component's methods.
   delete host.focus; delete host.click; delete host.disabled;
   host.connectedCallback();
@@ -102,10 +103,12 @@ it('registers once and creates one native action button, label slot, icon slot a
   assert.deepEqual(host.shadowRoot.options, { mode: 'open', delegatesFocus: true });
   assert.equal(button.tagName, 'button');
   assert.equal(button.type, 'button');
-  assert.equal(button.children.length, 3);
+  assert.equal(button.children.length, 2);
+  assert.equal(primary.children.length, 3);
+  assert.equal(secondary.hidden, true);
   assert.equal(start.name, 'start');
-  assert.equal(button.children[2].tagName, 'slot');
-  assert.equal(button.children[2].name ?? '', ''); // Default label slot.
+  assert.equal(primary.children[2].tagName, 'slot');
+  assert.equal(primary.children[2].name ?? '', ''); // Default label slot.
   const stylesheet = host.shadowRoot.children[0];
   assert.equal(stylesheet.rel, 'stylesheet');
   assert.match(stylesheet.href, /doom-button\.css/);
@@ -133,7 +136,7 @@ it('shows the decorative spinner only for aria-busy true with an empty start slo
   assert.equal(spinner.hidden, true);
   assert.deepEqual(host.constructor.observedAttributes, [
     'disabled', 'autofocus', 'aria-haspopup', 'aria-controls',
-    'aria-describedby', 'aria-expanded', 'aria-busy',
+    'aria-describedby', 'aria-expanded', 'aria-busy', 'secondary-label',
   ]);
 });
 
@@ -200,7 +203,8 @@ it('requires both native element-reference properties rather than silently assig
   assert.equal(registry.size, 0);
 });
 
-it('reflects disabled synchronously and delegates enabled/disabled click handling to the native button', () => {
+it.each([undefined, 'Secondary caption'])('delegates enabled/disabled activation to the native button with caption %s', (caption) => {
+  if (caption) host.setAttribute('secondary-label', caption);
   const clicks = [];
   const delivered = new Event('click', { bubbles: true, composed: true });
   host.addEventListener('click', event => clicks.push(event));
@@ -238,7 +242,8 @@ it('reflects disabled synchronously and delegates enabled/disabled click handlin
   assert.equal(button.disabled, false);
 });
 
-it('forwards focus options and autofocus without adding a host tab stop', () => {
+it.each([undefined, 'Secondary caption'])('forwards focus and autofocus without a host tab stop with caption %s', (caption) => {
+  if (caption) host.setAttribute('secondary-label', caption);
   host.focus({ preventScroll: true });
   assert.deepEqual(button.focus.mock.calls, [[{ preventScroll: true }]]);
   host.autofocus = true;
@@ -292,6 +297,72 @@ it('leaves hidden on the host, with an explicit shadow host visibility rule', ()
   assert.equal(host.hasAttribute('hidden'), false);
   const css = readFileSync(new URL('../src/doom-button.css', import.meta.url), 'utf8');
   assert.match(css, /:host\(\[hidden\]\)\s*\{\s*display: none;/);
+});
+
+it('renders optional secondary text inside the native button without extra ARIA or focus targets', () => {
+  assert.equal(secondary.hidden, true);
+  const note = {};
+  targets.set('note', note);
+  host.setAttribute('aria-describedby', 'note');
+  host.setAttribute('secondary-label', '  File stays <local> & private  ');
+  assert.equal(secondary.tagName, 'span');
+  assert.equal(secondary.textContent, 'File stays <local> & private');
+  assert.equal(secondary.hidden, false);
+  assert.equal(secondary.hasAttribute('aria-hidden'), false);
+  assert.equal(secondary.hasAttribute('tabindex'), false);
+  assert.equal(secondary.hasAttribute('role'), false);
+  assert.deepEqual(button.children, [primary, secondary]);
+  assert.deepEqual(button.ariaDescribedByElements, [note]);
+  host.disabled = true;
+  host.ariaBusy = 'true';
+  assert.equal(button.disabled, true);
+  assert.equal(button.ariaBusy, 'true');
+  assert.equal(spinner.hidden, false);
+  assert.equal(secondary.textContent, 'File stays <local> & private');
+  assert.equal(secondary.hidden, true);
+  host.setAttribute('secondary-label', 'Updated caption');
+  assert.equal(secondary.textContent, 'Updated caption');
+  host.setAttribute('secondary-label', '   ');
+  assert.equal(secondary.hidden, true);
+  host.setAttribute('secondary-label', 'Restored caption');
+  host.removeAttribute('secondary-label');
+  assert.equal(secondary.textContent, '');
+  assert.equal(secondary.hidden, true);
+  assert.deepEqual(button.ariaDescribedByElements, [note]);
+});
+
+it.each([false, true])('hides busy captions from layout and the accessible name with start icon %s', (withIcon) => {
+  host.setAttribute('secondary-label', '~9.83 MiB download');
+  if (withIcon) {
+    start.assignments = [new FakeElement('svg')];
+    start.dispatchEvent(new Event('slotchange'));
+  }
+  const note = {};
+  targets.set('note', note);
+  host.setAttribute('aria-describedby', 'note');
+  host.disabled = true;
+  for (const busy of ['true', 'false', 'true', null, 'true', '']) {
+    host.ariaBusy = busy;
+    assert.equal(secondary.hidden, busy === 'true', 'Native hidden removes caption from the accessible name');
+    assert.equal(secondary.textContent, '~9.83 MiB download', 'Caption is retained for restoration');
+    assert.equal(spinner.hidden, withIcon || busy !== 'true');
+    assert.equal(button.disabled, true);
+    assert.equal(button.ariaBusy, busy);
+    assert.deepEqual(button.ariaDescribedByElements, [note], 'No reference exposes the hidden caption');
+  }
+  host.ariaBusy = 'true';
+  host.removeAttribute('secondary-label');
+  host.ariaBusy = 'false';
+  assert.equal(secondary.hidden, true);
+});
+
+it('reserves the two-line variant height and typography independently of caption visibility', () => {
+  // Source assertions only; the fake DOM cannot verify geometry or computed styles.
+  const css = readFileSync(new URL('../src/doom-button.css', import.meta.url), 'utf8');
+  assert.match(css, /\.primary-label\s*\{\s*display: contents;/);
+  assert.match(css, /:host\(\[secondary-label\]\) button\s*\{[^}]*flex-direction: column;[^}]*gap: 0\.25rem;[^}]*min-height: max\(var\(--doom-button-min-height, 44px\), 4\.125rem\);/);
+  assert.match(css, /:host\(\[secondary-label\]\) \.primary-label\s*\{[^}]*align-items: center;[^}]*font-size: 1rem;/);
+  assert.match(css, /\.secondary-label\s*\{[^}]*color: var\(--muted\);[^}]*font-size: 0\.75rem;[^}]*overflow-wrap: anywhere;/);
 });
 
 it('uses eleven static controls and retains native history-row creation and typed selectors', () => {

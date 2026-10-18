@@ -231,7 +231,8 @@ it('selects the provider at the app edge, labels BYOK truthfully and retains cap
       assert.equal(element('#manual-key').hidden, false);
       assert.equal(element('#openrouter-signin').hidden, true);
       assert.equal(element('#openrouter-manual').attributes.get('aria-expanded'), 'true');
-      assert.equal(document.activeElement, element('#openrouter-back'));
+      assert.equal(element('#key').disabled, false, 'Manual BYOK is editable before game selection');
+      assert.equal(document.activeElement, element('#key'));
       ready();
       assert.match(element('#control-prerequisite').textContent, /OpenRouter/);
       assert.equal(element('#key').hidden, false);
@@ -254,9 +255,12 @@ it('selects the provider at the app edge, labels BYOK truthfully and retains cap
       assert.equal(element('#openrouter-signin-button').disabled, true);
       assert.equal(document.activeElement, element('#openrouter-manual'));
     } else if (expected === jevDecisionProviderFactory) {
+      for (const id of ['#iwad', '#iwad-picker', '#included-freedoom']) assert.equal(element(id).disabled, false);
       assert.equal(element('#key').hidden, true);
       assert.equal(session.ports.takeKey(), 'jev-vite-proxy-not-a-credential');
     } else {
+      for (const id of ['#iwad', '#iwad-picker', '#included-freedoom']) assert.equal(element(id).disabled, false);
+      assert.equal(element('#key').disabled, true, 'Direct OpenAI retains preparation-before-key behavior');
       assert.equal(element('#key-label').textContent, 'Temporary OpenAI API key (experimental)');
       assert.match(element('#key-note').textContent, /explicitly selected.*CORS.*unverified/);
     }
@@ -316,6 +320,7 @@ it('returns an OAuth key through the existing port only on an explicit decision,
   assert.equal(h.element('#openrouter-signin-button').contains(h.element('#openrouter-signin-logo')), true);
   assert.match(h.element('#openrouter-auth-status').textContent, /key received/);
   assert.equal(h.element('#openrouter-model').disabled, false);
+  for (const id of ['#iwad', '#iwad-picker', '#included-freedoom']) assert.equal(h.element(id).disabled, false, 'OAuth key enables selection');
   h.element('#openrouter-model-jev').checked = true;
   h.element('#openrouter-model-jev').dispatchEvent(new Event('change'));
   assert.equal(h.element('#openrouter-model-gpt').checked, false);
@@ -470,6 +475,82 @@ it('production page exit clears a received OAuth key without admitting Decisions
   assert.equal(h.worker.mock.calls.length, 0);
 });
 
+it.each([
+  ['local', 'manual', 'typesafe/jev-1.14', () => import('../src/main.ts?local-manual-model-after-prepare')],
+  ['included', 'manual', 'openai/gpt-6-luna-decisions', () => import('../src/main.ts?included-manual-model-after-prepare')],
+  ['local', 'oauth', 'openai/gpt-6-luna-decisions', () => import('../src/main.ts?local-oauth-model-after-prepare')],
+  ['included', 'oauth', 'typesafe/jev-1.14', () => import('../src/main.ts?included-oauth-model-after-prepare')],
+] as const)('keeps model choice open after %s preparation with %s credentials until first decision', async (source, auth, model, load) => {
+  vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'production'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture(auth === 'oauth' ? `?code=offline-code&state=${nonce}` : '', auth === 'oauth');
+  const fetch = vi.fn(() => assert.fail('No asset or live API fetch in this fixture'));
+  vi.stubGlobal('fetch', fetch);
+  await load();
+  await settleStartup();
+  if (auth === 'manual') {
+    h.element('#openrouter-manual').dispatchEvent(new Event('click'));
+    assert.equal(h.element('#key').disabled, false);
+    h.element('#key').value = 'offline-manual-selection';
+    h.element('#key').dispatchEvent(new Event('input'));
+  }
+  for (const id of ['#iwad', '#iwad-picker', '#included-freedoom']) assert.equal(h.element(id).disabled, false);
+  const create = vi.spyOn(session.factory, 'create');
+  session.controller.prepare.mockImplementation(() => {
+    session.ports.present({ session: {
+      phase: 'preparing', prepared: false, hasClient: false, verifiedTics: 0,
+      evidence: { decisions: [] }, controls: { ready: false, stop: false, tics: false, iwad: false },
+    } });
+    return Promise.resolve();
+  });
+  if (source === 'local') {
+    h.element('#iwad').files = [{ name: 'offline-local.wad' }];
+    h.element('#iwad').dispatchEvent(new Event('change'));
+  } else h.element('#included-freedoom').dispatchEvent(new Event('click'));
+  assert.equal(session.controller.prepare.mock.calls.length, 1);
+  for (const id of ['#iwad', '#iwad-picker', '#included-freedoom', '#key']) assert.equal(h.element(id).disabled, true);
+  assert.equal(h.element('#prepared-asset').hidden, true);
+  ready();
+  assert.equal(h.element('#prepared-asset').hidden, false);
+  assert.equal(create.mock.calls.length, 0);
+  assert.equal(h.element('#openrouter-model').disabled, false);
+  const choose = (id) => {
+    h.element(id).checked = true;
+    h.element(id).dispatchEvent(new Event('change'));
+  };
+  // Change after preparation, including away from and back to the default model.
+  choose('#openrouter-model-jev');
+  if (model === 'openai/gpt-6-luna-decisions') choose('#openrouter-model-gpt');
+  assert.match(h.element('#sdk').textContent, new RegExp(`configured model: ${model.replaceAll('.', '\\.')}`));
+  assert.equal(h.element('#openrouter-model-help').textContent, '');
+  const sdk = vi.spyOn(Decisions.prototype, 'create').mockResolvedValue({
+    answers: { next_action: { type: 'choice', choice: 'neutral' } },
+  } as never);
+  let decision;
+  const lifecycle = {};
+  session.controller.next.mockImplementation(() => {
+    const provider = session.factory.create(session.ports.takeKey());
+    decision = provider.request({
+      context: 'offline context', instructions: 'offline instructions',
+      png: 'data:image/png;base64,iVBORw0KGgo=', permittedActions: ['neutral'],
+    }, lifecycle, { requestId: null, http: null, latencyMs: null },
+    { assertFresh() {}, beforeCreate() {}, onReadStateChange() {} }, performance.now());
+    return decision;
+  });
+  h.element('#next').dispatchEvent(new Event('click'));
+  await decision;
+  await lifecycle.sdkRead;
+  assert.deepEqual(create.mock.calls, [[auth === 'oauth' ? minted : 'offline-manual-selection']]);
+  assert.equal(sdk.mock.calls.length, 1);
+  assert.equal(sdk.mock.calls[0][0].decisionsRequest.model, model);
+  assert.equal(h.element('#openrouter-model').disabled, true);
+  assert.match(h.element('#openrouter-model-help').textContent, /Model locked/);
+  choose(model === 'typesafe/jev-1.14' ? '#openrouter-model-gpt' : '#openrouter-model-jev');
+  assert.equal(h.element(model === 'typesafe/jev-1.14' ? '#openrouter-model-jev' : '#openrouter-model-gpt').checked, true);
+  assert.equal(fetch.mock.calls.length, 0);
+  assert.equal(h.worker.mock.calls.length, 0);
+  assert.equal(h.transport.mock.calls.length, auth === 'oauth' ? 1 : 0, 'Only fake OAuth exchange transport');
+});
+
 it('manual replacements discard unused OAuth keys, including invalid candidates; retirement clears memory', async () => {
   vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'production'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
   const h = browserFixture(`?code=offline-code&state=${nonce}`, true);
@@ -532,6 +613,9 @@ it('blocks duplicate sign-in and WAD preparation while connecting and after WAD 
   const selected = browserFixture();
   await import('../src/main.ts?oauth-after-wad-test');
   await settleStartup();
+  selected.element('#openrouter-manual').dispatchEvent(new Event('click'));
+  selected.element('#key').value = 'offline-selection-key';
+  selected.element('#key').dispatchEvent(new Event('input'));
   selected.element('#iwad').files = [{}];
   selected.element('#iwad').dispatchEvent(new Event('change'));
   assert.equal(session.controller.prepare.mock.calls.length, 1);
@@ -541,7 +625,7 @@ it('blocks duplicate sign-in and WAD preparation while connecting and after WAD 
   assert.equal(selected.location.assign.mock.calls.length, 0);
 });
 
-it('keeps both IWAD choices and sign-in available until preparation, then shares admission and retry locks', async () => {
+it('gates both IWAD choices on usable manual credentials, then shares admission and retry locks', async () => {
   vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'production'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
   const h = browserFixture();
   const fetch = vi.fn(() => assert.fail('No asset or provider fetch before the admitted file read'));
@@ -549,7 +633,30 @@ it('keeps both IWAD choices and sign-in available until preparation, then shares
   await import('../src/main.ts?included-freedoom-controls-test');
   await settleStartup();
   assert.equal(h.element('#openrouter-signin-button').disabled, false);
-  for (const id of ['#iwad', '#included-freedoom']) assert.equal(h.element(id).disabled, false);
+  for (const id of ['#iwad', '#iwad-picker', '#included-freedoom']) assert.equal(h.element(id).disabled, true);
+  h.element('#iwad').click = vi.fn();
+  const trySelection = () => {
+    h.element('#iwad-picker').dispatchEvent(new Event('click'));
+    h.element('#included-freedoom').dispatchEvent(new Event('click'));
+    h.element('#iwad').files = [{ name: 'blocked.wad' }];
+    h.element('#iwad').dispatchEvent(new Event('change'));
+    assert.equal(h.element('#iwad').click.mock.calls.length, 0);
+    assert.equal(session.controller.prepare.mock.calls.length, 0);
+  };
+  trySelection();
+  h.element('#openrouter-manual').dispatchEvent(new Event('click'));
+  assert.equal(h.element('#key').disabled, false);
+  for (const value of ['   ', 'invalid key', 'bad\u0001key', 'badékey']) {
+    h.element('#key').value = value;
+    h.element('#key').dispatchEvent(new Event('input'));
+    for (const id of ['#iwad', '#iwad-picker', '#included-freedoom']) assert.equal(h.element(id).disabled, true);
+    trySelection();
+  }
+  h.element('#key').value = '  offline-selection-key  ';
+  h.element('#key').dispatchEvent(new Event('input'));
+  for (const id of ['#iwad', '#iwad-picker', '#included-freedoom']) assert.equal(h.element(id).disabled, false);
+  h.element('#iwad-picker').dispatchEvent(new Event('click'));
+  assert.equal(h.element('#iwad').click.mock.calls.length, 1);
   const button = h.element('#included-freedoom');
   assert.equal(button.textContent, 'Use included Freedoom');
   assert.equal(button.attributes.get('aria-busy'), 'false');
@@ -569,6 +676,11 @@ it('keeps both IWAD choices and sign-in available until preparation, then shares
   assert.equal(button.textContent, 'Loading Doom…');
   assert.equal(button.attributes.get('aria-busy'), 'true');
   present('unprepared', true);
+  session.ports.clearKey(); // Real preparation failure retires the attempt and clears credentials.
+  for (const id of ['#iwad', '#iwad-picker', '#included-freedoom']) assert.equal(h.element(id).disabled, true);
+  assert.equal(h.element('#key').disabled, false, 'Retryable failure leaves manual credentials editable');
+  h.element('#key').value = 'offline-retry-key';
+  h.element('#key').dispatchEvent(new Event('input'));
   for (const id of ['#iwad', '#included-freedoom']) assert.equal(h.element(id).disabled, false);
   assert.equal(button.textContent, 'Use included Freedoom');
   assert.equal(button.attributes.get('aria-busy'), 'false');
@@ -600,6 +712,9 @@ it('clears the loading presentation after preparation fails and requires reload'
   const h = browserFixture();
   await import('../src/main.ts?included-freedoom-loading-failure-test');
   await settleStartup();
+  h.element('#openrouter-manual').dispatchEvent(new Event('click'));
+  h.element('#key').value = 'offline-selection-key';
+  h.element('#key').dispatchEvent(new Event('input'));
   const present = phase => session.ports.present({ session: {
     phase, prepared: false, hasClient: false, verifiedTics: 0,
     evidence: { decisions: [] }, controls: { ready: false, stop: false, tics: false, iwad: false },

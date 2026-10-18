@@ -47,17 +47,20 @@
               <p id="openrouter-auth-status" class="help" role="status" aria-live="polite" aria-atomic="true"></p>
             </div>
             <div class="setup-file">
-              <doom-button id="included-freedoom" appearance="neutral" aria-describedby="asset-note" disabled>Use included Freedoom</doom-button>
-              <doom-button id="iwad-picker" appearance="neutral" class="iwad-picker" aria-describedby="asset-note" disabled>
+              <doom-button id="included-freedoom" appearance="neutral" secondary-label="~9.83 MiB download" disabled>Use included Freedoom</doom-button>
+              <doom-button id="iwad-picker" appearance="neutral" class="iwad-picker" secondary-label="File stays in your browser" disabled>
                 <svg class="iwad-folder-icon" slot="start" viewBox="0 0 24 18" aria-hidden="true" focusable="false">
                   <path d="M2.25 6V3.75c0-.55.45-1 1-1h4.6l2.05 2h10.85c.55 0 1 .45 1 1V6M2.25 6h19.5l-2.1 8.25H4.45L2.25 6Z" />
                 </svg>
                 <span id="iwad-picker-label">Choose local IWAD</span>
                 <span id="iwad-picker-state"></span>
               </doom-button>
-              <input id="iwad" type="file" accept=".wad" aria-label="Choose local IWAD" aria-describedby="asset-note" hidden disabled>
+              <input id="iwad" type="file" accept=".wad" aria-label="Choose local IWAD" hidden disabled>
+              <div id="prepared-asset" role="status" aria-live="polite" aria-atomic="true" hidden>
+                <span id="prepared-asset-name"></span>
+                <span id="prepared-asset-detail"></span>
+              </div>
               <span id="setup-asset" aria-live="polite" aria-atomic="true"></span>
-              <p id="asset-note" class="help asset-note">Freedoom download: ~9.83 MiB. Local files stay in your browser. Refresh to change the game file.</p>
             </div>
             <div id="manual-key">
               <label id="key-label" for="key">Temporary OpenRouter API key</label>

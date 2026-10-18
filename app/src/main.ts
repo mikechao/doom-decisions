@@ -75,6 +75,9 @@ type Elements = {
   '#openrouter-model-help': HTMLParagraphElement;
   '#setup': HTMLDetailsElement;
   '#setup-asset': HTMLSpanElement;
+  '#prepared-asset': HTMLDivElement;
+  '#prepared-asset-name': HTMLSpanElement;
+  '#prepared-asset-detail': HTMLSpanElement;
   '#control-prerequisite': HTMLParagraphElement;
   '#tics': HTMLInputElement;
   '#next': DoomButtonElement;
@@ -148,10 +151,19 @@ async function localFetch(name: string, json = false): Promise<unknown> {
   return json ? response.json() : response.arrayBuffer();
 }
 function displaySetupStatus(run: NonNullable<SessionPresentation['session']>) {
-  const prepared = run.prepared;
-  $('#setup-asset').textContent =
-    selectedAssetName && !localIwadPrepared()
-      ? `${selectedAssetName} · ${prepared ? 'prepared' : 'selected'}`
+  const selected = doomLoaded && !!selectedAssetSource;
+  $('#prepared-asset-name').textContent = selected
+    ? selectedAssetSource === 'local'
+      ? selectedAssetName
+      : 'Freedoom Phase 1 v0.13.0'
+    : '';
+  $('#prepared-asset-detail').textContent = selected
+    ? `${selectedAssetSource === 'local' ? 'Local IWAD' : 'Included game'}${run.prepared ? ' · Game ready' : ''}`
+    : '';
+  $('#setup-asset').textContent = selected
+    ? 'Refresh to change the game file.'
+    : selectedAssetName
+      ? `${selectedAssetName} · selected`
       : '';
 }
 defineDecisionHistory();
@@ -210,6 +222,9 @@ function assetSelectionAllowed() {
     startupReady &&
     !oauth?.busy &&
     !oauth?.closed &&
+    (!openRouterMode ||
+      oauth?.hasKey ||
+      /^[\x21-\x7e]+$/.test($('#key').value.trim())) &&
     (!latestSession || latestSession.controls.iwad)
   );
 }
@@ -226,6 +241,10 @@ function displayAssetControls() {
   const localLoading = selectedAssetSource === 'local' && loading;
   const localPrepared = localIwadPrepared();
   const picker = $('#iwad-picker');
+  const selected = doomLoaded && !!selectedAssetSource;
+  picker.hidden = selected;
+  $('#included-freedoom').hidden = selected;
+  $('#prepared-asset').hidden = !selected;
   picker.disabled = disabled;
   picker.setAttribute('aria-busy', String(localLoading));
   picker.title = localLoading || localPrepared ? selectedAssetName : '';
@@ -235,7 +254,7 @@ function displayAssetControls() {
       ? selectedAssetName
       : 'Choose local IWAD';
   $('#iwad-picker-state').textContent = localPrepared
-    ? ' loaded. Refresh to choose another game file.'
+    ? ' loaded.'
     : selectedAssetSource === 'local' && needsReload
       ? ' Preparation failed. Refresh to try again.'
       : '';
@@ -307,10 +326,12 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
   prerequisite.hidden = readiness.bannerText === null;
   $('#next').disabled = !readiness.buttonsEnabled;
   $('#start').disabled = !readiness.buttonsEnabled;
+  const sessionReady = !!run?.controls.ready;
+  const manualSetupReady =
+    openRouterMode && startupReady && (!run || run.controls.iwad);
+  $('#key').disabled = jevMode || !(sessionReady || manualSetupReady);
   if (!run) return;
-  const sessionReady = run.controls.ready;
   $('#budget').disabled = !sessionReady;
-  $('#key').disabled = jevMode || !sessionReady;
   $('#stop').disabled = !run.controls.stop;
   $('#tics').disabled = !run.controls.tics;
   $('#next').setAttribute('aria-busy', String(run.phase === 'busy'));
@@ -472,7 +493,6 @@ if (oauth) {
     $('#openrouter-manual').hidden = true;
     $('#openrouter-manual').setAttribute('aria-expanded', 'true');
     displayModel();
-    // The existing key field becomes editable after successful preparation.
     ($('#key').disabled ? $('#openrouter-back') : $('#key')).focus();
   });
   $('#openrouter-back').addEventListener('click', () => {
@@ -596,6 +616,7 @@ function selectIwad(
   void controller.prepare(file);
 }
 $('#included-freedoom').addEventListener('click', () => {
+  if (!assetSelectionAllowed() || $('#included-freedoom').disabled) return;
   selectIwad(
     createIncludedFreedoom(import.meta.env.BASE_URL),
     'Included Freedoom Phase 1 v0.13.0',
