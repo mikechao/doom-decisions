@@ -135,6 +135,7 @@ async function mount(mode = 'test', dev = true) {
   const tics = document.querySelector('#tics');
   tics.value = '6';
   tics.valueAsNumber = 6;
+  document.querySelector('#game-model').hidden = true;
   elements.set('#prompt-dialog', new Dialog());
   const promptButton = document.querySelector('#view-prompt');
   promptButton.textContent = 'View Prompt';
@@ -146,6 +147,106 @@ async function mount(mode = 'test', dev = true) {
 }
 beforeEach(() => mount());
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+describe('Recorded model beside Game view', () => {
+  const identity = (requestedModel) => ({ provider: 'OpenRouter', requestedModel });
+  const entry = (overrides = {}) => ({
+    number: 1, selectedTics: 6, stage: 'requesting', status: 'Requesting decision',
+    action: null, requestIdentity: identity('typesafe/jev-1.14'),
+    observation: null, result: null, execution: null, cumulativeVerifiedTics: 1,
+    ...overrides,
+  });
+  const displayDecisions = (decisions, overrides = {}) => show({
+    evidence: { decisions }, ...overrides,
+  });
+  const assertLabel = (expected = '') => {
+    assert.equal(element('#game-model').textContent, expected);
+    assert.equal(element('#game-model').hidden, !expected);
+  };
+
+  it('starts hidden beside the semantic heading without a live announcement', () => {
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    assert.match(html, /<section class="game" aria-labelledby="game-title">\s*<div class="game-heading">\s*<h2 id="game-title">Game view<\/h2>\s*<span id="game-model" hidden><\/span>\s*<\/div>/);
+    assertLabel();
+    displayDecisions([], { phase: 'unprepared', prepared: false, verifiedTics: 0 });
+    assertLabel();
+  });
+
+  it('keeps the mandatory neutral preparation tic hidden', () => {
+    show({ evidence: { decisions: [], neutralFirst: {
+      mask: 0, requestedTics: 1, reportedCompletedTics: 1, independentlyVerifiedTics: 1,
+    } } });
+    assertLabel();
+  });
+
+  it('keeps a merely admitted or pending first request hidden, even with model metadata', () => {
+    for (const stage of ['capturing', 'requesting', 'ended']) {
+      displayDecisions([entry({ stage, sdkInvoked: stage !== 'capturing',
+        responseMetadata: { reportedModel: 'unproven-reported-model' } })]);
+      assertLabel();
+    }
+  });
+
+  for (const [requestedModel, label] of [
+    ['typesafe/jev-1.14', 'Jev 1.14'],
+    ['openai/gpt-6-luna-decisions', 'GPT-6 Luna Decisions'],
+    ['gpt-6-luna', 'GPT-6 Luna'],
+    ['jev-1.14.0', 'Jev 1.14'],
+    ['other/model-version', 'other/model-version'],
+  ]) {
+    it(`reveals the requested ${requestedModel} after a validated action`, () => {
+      displayDecisions([entry({ action: 'forward', requestIdentity: identity(requestedModel),
+        responseMetadata: { reportedModel: 'different-reported-model' } })]);
+      assertLabel(label);
+    });
+  }
+
+  it('also reveals a model-selected neutral action', () => {
+    displayDecisions([entry({ action: 'neutral' })]);
+    assertLabel('Jev 1.14');
+  });
+
+  it('retains the most recent selected model through later pending or failed attempts', () => {
+    const first = entry({ action: 'forward' });
+    const later = entry({ number: 2, requestIdentity: identity('openai/gpt-6-luna-decisions') });
+    displayDecisions([first]);
+    assertLabel('Jev 1.14');
+    for (const stage of ['capturing', 'requesting', 'cleanup', 'ended']) {
+      displayDecisions([first, { ...later, stage }]);
+      assertLabel('Jev 1.14');
+    }
+    const selected = { ...later, action: 'turn_right' };
+    displayDecisions([first, selected]);
+    assertLabel('GPT-6 Luna Decisions');
+    displayDecisions([first, selected, entry({ number: 3 })]);
+    assertLabel('GPT-6 Luna Decisions');
+  });
+
+  it('does not invent a model for selected actions missing usable request identity', () => {
+    const proven = entry({ action: 'fire' });
+    for (const requestIdentity of [undefined, {}, identity(''), identity('   ')]) {
+      const unidentified = entry({ number: 2, action: 'use', requestIdentity,
+        responseMetadata: { reportedModel: 'openai/gpt-6-luna-decisions' } });
+      displayDecisions([unidentified]);
+      assertLabel();
+      displayDecisions([proven, unidentified]);
+      assertLabel('Jev 1.14');
+    }
+    displayDecisions([]);
+    assertLabel();
+  });
+
+  it('retains the recorded model on Stop, terminal outcomes, errors and partial updates', () => {
+    for (const phase of ['ready', 'terminal', 'error']) {
+      displayDecisions([entry({ action: 'backward', stage: 'ended' })], {
+        phase, continuous: { active: false, stopRequested: true, reason: 'Stopped', used: 1, limit: 2 },
+      });
+      assertLabel('Jev 1.14');
+      session.ports.present({ status: 'Cleanup finished' });
+      assertLabel('Jev 1.14');
+    }
+  });
+});
 
 it('Jev uses a placeholder, hides and clears browser key input, and explains server configuration', async () => {
   await mount('jev');

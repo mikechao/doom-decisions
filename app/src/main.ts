@@ -14,6 +14,7 @@ import {
   createOpenRouterDecisionProviderFactory,
   defaultOpenRouterModel,
   isOpenRouterModel,
+  openRouterModels,
   type OpenRouterModel,
 } from './openrouter-decision-provider';
 import { createOpenRouterOAuth } from './openrouter-oauth';
@@ -49,6 +50,7 @@ const jevKeyStatus =
 
 type Elements = {
   '#screen': HTMLCanvasElement;
+  '#game-model': HTMLSpanElement;
   '#iwad': HTMLInputElement;
   '#iwad-picker': DoomButtonElement;
   '#iwad-picker-label': HTMLSpanElement;
@@ -311,6 +313,21 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
   $('#tics').disabled = !run.controls.tics;
   $('#next').setAttribute('aria-busy', String(run.phase === 'busy'));
 }
+function recordedModelLabel(
+  decisions: SessionRunPresentation['evidence']['decisions'],
+): string {
+  // Entries are chronological; action is recorded only after choice validation.
+  for (let i = decisions.length - 1; i >= 0; i--) {
+    const entry = decisions[i];
+    const model = entry.requestIdentity?.requestedModel;
+    if (!entry.action || !model?.trim()) continue;
+    if (isOpenRouterModel(model)) return openRouterModels[model];
+    if (model === 'gpt-6-luna') return 'GPT-6 Luna';
+    if (model === 'jev-1.14.0') return 'Jev 1.14';
+    return model;
+  }
+  return '';
+}
 function display(view: SessionPresentation) {
   if (view.sdkStatus !== undefined) $('#sdk').textContent = view.sdkStatus;
   if (view.frameStatus !== undefined)
@@ -355,6 +372,9 @@ function display(view: SessionPresentation) {
       ? 'Client in memory; blank keeps it. Authentication unverified.'
       : 'Client in memory • Refresh clears it';
   history.display(run.evidence.decisions, run.inspectorRequests);
+  const modelLabel = recordedModelLabel(run.evidence.decisions);
+  $('#game-model').textContent = modelLabel;
+  $('#game-model').hidden = !modelLabel;
   const outcome = projectLatestOutcome(
     run.evidence.decisions.at(-1),
     run.frame,

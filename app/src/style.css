@@ -530,14 +530,28 @@ summary:hover {
   padding: 1.25rem 0.625rem;
   border-top: 1px solid var(--rule);
 }
-.game > h2 {
+.game-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
   max-width: 640px;
   margin: 0 auto 0.75rem;
+}
+.game-heading > h2 {
+  flex-shrink: 0;
   font-size: 2rem;
   font-weight: 500;
   line-height: 1.2;
   letter-spacing: -0.015em;
   text-transform: none;
+}
+#game-model {
+  min-width: 0;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 .stage {
   display: flex;
