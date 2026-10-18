@@ -111,18 +111,18 @@ header {
 }
 .broadcast-label {
   grid-column: 2;
-  justify-self: end;
+  justify-self: start;
   max-width: 65ch;
   padding-left: 0;
   border-left: 0;
   color: var(--muted);
   font-family: system-ui, sans-serif;
-  font-size: 1rem;
-  line-height: 1.5;
+  font-size: 0.9375rem;
+  line-height: 1.4;
   letter-spacing: normal;
   text-transform: none;
   text-wrap: pretty;
-  text-align: right;
+  text-align: left;
 }
 .console {
   display: grid;
