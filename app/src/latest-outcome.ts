@@ -1,5 +1,50 @@
 import type { ActionName, Execution } from './decision';
+import type { DecisionDiagnostics } from './decision-provider';
 import type { DecisionStage } from './session-controller';
+
+const integer = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
+
+// Recompute from current records so lifecycle updates never accumulate twice.
+export function projectSessionMetrics(
+  entries: readonly Readonly<
+    Partial<
+      Pick<DecisionDiagnostics, 'responseMetadata' | 'latencyMs' | 'sdkInvoked'>
+    >
+  >[],
+) {
+  let inputTotal: number | null = null;
+  let missingInput = false;
+  let latencyTotal = 0;
+  let latencyCount = 0;
+  for (const entry of entries) {
+    const input = entry.responseMetadata?.usage?.input;
+    if (
+      typeof input === 'number' &&
+      Number.isSafeInteger(input) &&
+      input >= 0
+    ) {
+      inputTotal = (inputTotal ?? 0) + input;
+    } else if (entry.sdkInvoked === true) {
+      missingInput = true;
+    }
+    const latency = entry.latencyMs;
+    if (
+      typeof latency === 'number' &&
+      Number.isFinite(latency) &&
+      latency >= 0
+    ) {
+      latencyTotal += latency;
+      latencyCount++;
+    }
+  }
+  return {
+    inputTokens: inputTotal === null ? '—' : integer.format(inputTotal),
+    inputPartial: inputTotal !== null && missingInput,
+    averageLatency: latencyCount
+      ? `${integer.format(Math.round(latencyTotal / latencyCount))} ms`
+      : '—',
+  };
+}
 
 type Frame = Readonly<{
   tic: number;

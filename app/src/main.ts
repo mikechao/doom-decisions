@@ -8,7 +8,7 @@ import { formatDefaultDecisionInstructions } from './decision-request';
 import type { DecisionProviderFactory } from './decision-provider';
 import { defineDoomButton, type DoomButtonElement } from './doom-button';
 import { jevDecisionProviderFactory } from './jev-decision-provider';
-import { projectLatestOutcome } from './latest-outcome';
+import { projectLatestOutcome, projectSessionMetrics } from './latest-outcome';
 import { openAiDecisionProviderFactory } from './openai-decision-provider';
 import {
   createOpenRouterDecisionProviderFactory,
@@ -90,6 +90,9 @@ type Elements = {
   '#outcome-number': HTMLSpanElement;
   '#outcome-action': HTMLSpanElement;
   '#outcome-evidence': HTMLParagraphElement;
+  '#session-input-tokens': HTMLSpanElement;
+  '#session-input-partial': HTMLElement;
+  '#session-api-latency': HTMLElement;
   '#sdk': HTMLParagraphElement;
   '#status': HTMLParagraphElement;
   '#frame': HTMLParagraphElement;
@@ -384,6 +387,10 @@ function display(view: SessionPresentation) {
   $('#outcome-action').textContent = outcome.action;
   $('#outcome-evidence').textContent = outcome.evidence;
   $('#outcome-evidence').hidden = !outcome.evidence;
+  const metrics = projectSessionMetrics(run.evidence.decisions);
+  $('#session-input-tokens').textContent = metrics.inputTokens;
+  $('#session-input-partial').hidden = !metrics.inputPartial;
+  $('#session-api-latency').textContent = metrics.averageLatency;
   displaySetupStatus(run);
 }
 // The controller's startup probe precedes the user's choice. Keep its cached

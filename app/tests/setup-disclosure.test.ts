@@ -148,6 +148,53 @@ async function mount(mode = 'test', dev = true) {
 beforeEach(() => mount());
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
+describe('Latest Outcome session metrics', () => {
+  it('places two initially unknown readouts below the outcome and status', () => {
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    const panel = html.match(/<section class="latest-outcome"[\s\S]*?<\/section>/)[0];
+    assert.ok(panel.indexOf('outcome-session-metrics') > panel.indexOf('id="continuous-state"'));
+    assert.match(panel, /<dt>Reported input tokens<\/dt>\s*<dd><span id="session-input-tokens">—<\/span>/);
+    assert.match(panel, /id="session-input-partial"[^>]* hidden>Partial<\/small>/);
+    assert.match(panel, /<dt>Avg API latency<\/dt>\s*<dd id="session-api-latency">—<\/dd>/);
+    show(); // Preparation's neutral tic and model selection supply no decisions.
+    assert.equal(element('#session-input-tokens').textContent, '—');
+    assert.equal(element('#session-api-latency').textContent, '—');
+    assert.equal(element('#session-input-partial').hidden, true);
+  });
+
+  it('refreshes during continuous lifecycle updates and retains metrics on status-only updates', () => {
+    const entry = {
+      number: 1, selectedTics: 6, stage: 'completed', status: 'Complete',
+      action: 'forward', observation: null, result: null, execution: null,
+      cumulativeVerifiedTics: 1, sdkInvoked: true, latencyMs: 200,
+      responseMetadata: { reportedModel: null, usage: { input: 1000, output: null, total: null } },
+    };
+    const later = { ...entry, number: 2, stage: 'requesting', action: null,
+      latencyMs: null, responseMetadata: undefined };
+    const present = (decisions) => show({
+      phase: 'busy', evidence: { decisions },
+      continuous: { active: true, used: decisions.length, limit: 3 },
+    });
+    present([entry, later]);
+    assert.equal(element('#session-input-tokens').textContent, '1,000');
+    assert.equal(element('#session-api-latency').textContent, '200 ms');
+    assert.equal(element('#session-input-partial').hidden, false);
+    const updated = { ...later, latencyMs: 566,
+      responseMetadata: { reportedModel: null, usage: { input: 166, output: null, total: null } } };
+    for (const stage of ['requesting', 'stepping', 'rendering', 'completed']) {
+      present([entry, { ...updated, stage }]);
+      assert.equal(element('#session-input-tokens').textContent, '1,166');
+      assert.equal(element('#session-api-latency').textContent, '383 ms');
+      assert.equal(element('#session-input-partial').hidden, true);
+      assert.match(element('#outcome-number').textContent, /#2/);
+      assert.match(element('#continuous-state').textContent, /Running/);
+    }
+    session.ports.present({ status: 'Cleanup finished' });
+    assert.equal(element('#session-input-tokens').textContent, '1,166');
+    assert.equal(element('#session-api-latency').textContent, '383 ms');
+  });
+});
+
 describe('Recorded model beside Game view', () => {
   const identity = (requestedModel) => ({ provider: 'OpenRouter', requestedModel });
   const entry = (overrides = {}) => ({

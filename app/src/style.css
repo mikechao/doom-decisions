@@ -645,6 +645,28 @@ canvas {
   font-size: 0.8125rem;
   font-variant-numeric: tabular-nums;
 }
+.outcome-session-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 0.75rem 1.25rem;
+  margin: 1rem 0 0;
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--rule);
+}
+.outcome-session-metrics dt {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+.outcome-session-metrics dd {
+  margin: 0.25rem 0 0;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+.outcome-session-metrics small {
+  margin-left: 0.25rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
 @container (min-width: 34rem) {
   .outcome-content {
     grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);

@@ -1,7 +1,7 @@
 // Pure presentation fixtures only: no DOM, Worker/WASM, SDK or network execution.
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { projectLatestOutcome } from '../src/latest-outcome.ts';
+import { projectLatestOutcome, projectSessionMetrics } from '../src/latest-outcome.ts';
 
 const frame = (tic) => ({
   tic,
@@ -53,6 +53,119 @@ const execution = (changes) => ({ ...completed.execution, ...changes });
 const noVerifiedOutcome = (outcome) => {
   assert.doesNotMatch(outcome.evidence, /tics? completed|frame verified/i);
 };
+
+describe('session metrics', () => {
+  const report = (input) => ({
+    reportedModel: null,
+    usage: { input, output: 8, total: 9999 },
+  });
+  const measured = (input, latencyMs) => ({
+    ...completed,
+    sdkInvoked: true,
+    responseMetadata: report(input),
+    latencyMs,
+  });
+  const metrics = (entries) => projectSessionMetrics(freeze(entries));
+  const unknown = { inputTokens: '—', inputPartial: false, averageLatency: '—' };
+
+  it('has no measurements before decisions, preparation, or API invocation', () => {
+    assert.deepEqual(metrics([]), unknown);
+    for (const stage of ['capturing', 'requesting', 'ended']) {
+      assert.deepEqual(metrics([{ ...pending, stage, sdkInvoked: false, latencyMs: null }]), unknown);
+    }
+  });
+
+  it('formats one report and recomputes totals and rounded means across all entries', () => {
+    assert.deepEqual(metrics([measured(1000, 200)]), {
+      inputTokens: '1,000', inputPartial: false, averageLatency: '200 ms',
+    });
+    assert.deepEqual(metrics([measured(1000, 200), measured(166, 566)]), {
+      inputTokens: '1,166', inputPartial: false, averageLatency: '383 ms',
+    });
+    assert.equal(metrics([measured(1, 1000), measured(2, 1001)]).averageLatency, '1,001 ms');
+    assert.equal(metrics([measured(1, 1.25), measured(2, 2)]).averageLatency, '2 ms');
+  });
+
+  it('recomputes repeated lifecycle updates to the same decision without double counting', () => {
+    const first = measured(1000, 200);
+    const second = { ...pending, number: 2, sdkInvoked: true, stage: 'requesting' };
+    assert.deepEqual(metrics([first, second]), {
+      inputTokens: '1,000', inputPartial: true, averageLatency: '200 ms',
+    });
+    const reported = { ...second, responseMetadata: report(166), latencyMs: 566 };
+    for (const stage of ['requesting', 'stepping', 'rendering', 'completed']) {
+      for (let update = 0; update < 2; update++) {
+        assert.deepEqual(metrics([first, { ...reported, stage }]), {
+          inputTokens: '1,166', inputPartial: false, averageLatency: '383 ms',
+        });
+      }
+    }
+    assert.deepEqual(metrics([]), unknown, 'A fresh session retains no projection state');
+  });
+
+  it('excludes missing latency and keeps measured failures and cancellations', () => {
+    const failed = { ...measured(null, 100), stage: 'ended', status: 'HTTP failure (401)' };
+    const canceled = { ...pending, sdkInvoked: true, stage: 'cleanup', status: 'Stopped by user', latencyMs: 300 };
+    assert.deepEqual(metrics([
+      measured(12, null), failed, canceled,
+      { ...pending, sdkInvoked: true, latencyMs: undefined },
+    ]), {
+      inputTokens: '12', inputPartial: true, averageLatency: '200 ms',
+    });
+    assert.equal(metrics([{ ...canceled, stage: 'ended' }]).averageLatency, '300 ms');
+    assert.equal(metrics([measured(null, null)]).averageLatency, '—');
+  });
+
+  it('never derives input counts from other usage or probabilities', () => {
+    for (const responseMetadata of [undefined, report(null), report(undefined)]) {
+      assert.deepEqual(metrics([{
+        ...pending, sdkInvoked: true, responseMetadata,
+        choice: { confidence: 1, probabilities: [{ value: 'neutral', probability: 1 }] },
+      }]), unknown);
+      assert.deepEqual(metrics([measured(5, 0), { sdkInvoked: true, responseMetadata }]), {
+        inputTokens: '5', inputPartial: true, averageLatency: '0 ms',
+      });
+    }
+  });
+
+  it('marks partial reports only for invoked attempts, including pending ones', () => {
+    for (const sdkInvoked of [false, undefined, true]) {
+      for (const stage of ['capturing', 'requesting', 'cleanup', 'ended']) {
+        assert.deepEqual(metrics([measured(5, 20), { ...pending, stage, sdkInvoked }]), {
+          inputTokens: '5', inputPartial: sdkInvoked === true, averageLatency: '20 ms',
+        });
+      }
+    }
+  });
+
+  it('retains real measured zero independently for each metric and at any stage', () => {
+    assert.deepEqual(metrics([measured(0, null)]), {
+      inputTokens: '0', inputPartial: false, averageLatency: '—',
+    });
+    assert.deepEqual(metrics([measured(null, 0)]), {
+      inputTokens: '—', inputPartial: false, averageLatency: '0 ms',
+    });
+    for (const stage of ['requesting', 'cleanup', 'ended', 'completed']) {
+      assert.deepEqual(metrics([{ ...measured(0, 0), stage }]), {
+        inputTokens: '0', inputPartial: false, averageLatency: '0 ms',
+      });
+    }
+    assert.deepEqual(metrics([measured(0, 0), measured(10, 100)]), {
+      inputTokens: '10', inputPartial: false, averageLatency: '50 ms',
+    });
+  });
+
+  it('excludes invalid input counts and non-finite or negative latency', () => {
+    for (const input of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '12']) {
+      assert.deepEqual(metrics([measured(input, null)]), unknown);
+      assert.equal(metrics([measured(1, null), measured(input, null)]).inputPartial, true);
+    }
+    for (const latency of [-1, NaN, Infinity, -Infinity, '12']) {
+      assert.equal(metrics([measured(null, latency)]).averageLatency, '—');
+      assert.equal(metrics([measured(null, 12), measured(null, latency)]).averageLatency, '12 ms');
+    }
+  });
+});
 
 const terminal = {
   ...completed,
