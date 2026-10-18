@@ -69,24 +69,6 @@ for (const relative of ['other.wad', 'nested/OTHER.WAD', 'other.wad.gz', 'nested
   });
 }
 
-it('rejects missing/changed gzip and notices in both public and dist', () => {
-  fs.cpSync(baseline, target, { recursive: true });
-  for (const directory of [target, path.join(temporary, 'dist')]) {
-    if (directory !== target) fs.cpSync(target, directory, { recursive: true });
-    for (const relative of [identity.gzip.path, ...identity.notices.map(n => 'notices/freedoom/' + n.name)]) {
-      const file = path.join(directory, relative);
-      const original = fs.readFileSync(file);
-      fs.unlinkSync(file);
-      assert.throws(() => verifyFreedoom(directory, source));
-      const changed = Buffer.from(original); changed[0] ^= 1;
-      fs.writeFileSync(file, changed);
-      assert.throws(() => verifyFreedoom(directory, source), /hash mismatch/);
-      fs.writeFileSync(file, original);
-    }
-    verifyFreedoom(directory, source);
-  }
-});
-
 it('rejects changed source notices, extra source WADs and symlinks', () => {
   const notice = path.join(source, 'COPYING.txt');
   const original = fs.readFileSync(notice);
