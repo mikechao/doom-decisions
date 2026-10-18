@@ -1,5 +1,6 @@
 // Tests the actual component against small fake DOM/native boundaries. No browser:
 // native activation, composed propagation, focus, CSS and accessibility need Chrome QA.
+// Slot assignments and slotchange delivery are explicit fixtures, not DOM distribution.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, it, vi } from 'vitest';
@@ -10,10 +11,13 @@ vi.mock('../src/doom-button.css?url&no-inline', () => ({
   default: '/assets/doom-button.css',
 }));
 
-let registry, targets, host, button;
+let registry, targets, host, button, start, spinner;
 class FakeElement extends EventTarget {
+  nodeType = 1;
   attributes = new Map();
   children = [];
+  assignments = [];
+  assignedNodes = vi.fn(() => this.assignments);
   disabled = false;
   type = '';
   ariaExpanded = null;
@@ -76,6 +80,7 @@ beforeEach(() => {
   registry = new Map(); targets = new Map();
   vi.stubGlobal('Element', FakeElement);
   vi.stubGlobal('HTMLElement', FakeElement);
+  vi.stubGlobal('Node', { ELEMENT_NODE: 1, TEXT_NODE: 3 });
   vi.stubGlobal('document', { createElement: tag => new FakeElement(tag) });
   vi.stubGlobal('customElements', {
     get: name => registry.get(name),
@@ -84,6 +89,7 @@ beforeEach(() => {
   defineDoomButton();
   host = new (registry.get('doom-button'))();
   button = host.shadowRoot.children[1];
+  [start, spinner] = button.children;
   // Class-field spies on the fake base would mask the real component's methods.
   delete host.focus; delete host.click; delete host.disabled;
   host.connectedCallback();
@@ -96,15 +102,95 @@ it('registers once and creates one native action button, label slot, icon slot a
   assert.deepEqual(host.shadowRoot.options, { mode: 'open', delegatesFocus: true });
   assert.equal(button.tagName, 'button');
   assert.equal(button.type, 'button');
-  assert.equal(button.children.length, 2);
-  assert.equal(button.children[0].name, 'start');
-  assert.equal(button.children[1].name ?? '', ''); // Default label slot.
+  assert.equal(button.children.length, 3);
+  assert.equal(start.name, 'start');
+  assert.equal(button.children[2].tagName, 'slot');
+  assert.equal(button.children[2].name ?? '', ''); // Default label slot.
   const stylesheet = host.shadowRoot.children[0];
   assert.equal(stylesheet.rel, 'stylesheet');
   assert.match(stylesheet.href, /doom-button\.css/);
   assert.doesNotMatch(stylesheet.href, /^data:/);
   assert.equal(host.hasAttribute('tabindex'), false);
   assert.equal(host.hasAttribute('role'), false);
+});
+
+it('shows the decorative spinner only for aria-busy true with an empty start slot', () => {
+  assert.equal(spinner.tagName, 'span');
+  assert.equal(spinner.className, 'spinner');
+  assert.equal(spinner.getAttribute('aria-hidden'), 'true');
+  assert.equal(spinner.hasAttribute('tabindex'), false);
+  assert.equal(spinner.hasAttribute('role'), false);
+  assert.equal(spinner.hidden, true);
+  host.setAttribute('aria-busy', 'true');
+  assert.equal(spinner.hidden, false);
+  host.setAttribute('aria-busy', 'false');
+  assert.equal(spinner.hidden, true);
+  host.setAttribute('aria-busy', '');
+  assert.equal(spinner.hidden, true);
+  host.setAttribute('aria-busy', 'true');
+  assert.equal(spinner.hidden, false);
+  host.removeAttribute('aria-busy');
+  assert.equal(spinner.hidden, true);
+  assert.deepEqual(host.constructor.observedAttributes, [
+    'disabled', 'autofocus', 'aria-haspopup', 'aria-controls',
+    'aria-describedby', 'aria-expanded', 'aria-busy',
+  ]);
+});
+
+it('retains assigned logos/icons across busy transitions without a competing spinner', () => {
+  const logo = new FakeElement('svg'); // SVG icons need not have text content.
+  start.assignments = [logo];
+  start.dispatchEvent(new Event('slotchange'));
+  for (const busy of ['true', 'false', 'true']) {
+    host.ariaBusy = busy;
+    assert.equal(spinner.hidden, true);
+    assert.deepEqual(start.assignments, [logo]);
+    assert.equal(logo.hidden, false);
+    assert.equal(logo.attributes.size, 0);
+    assert.deepEqual(logo.children, []);
+  }
+  assert.deepEqual(start.assignedNodes.mock.lastCall, [{ flatten: true }]);
+});
+
+it('updates on slotchange while busy, ignoring whitespace and comments', () => {
+  const whitespace = { nodeType: 3, textContent: ' \n\t ' };
+  const comment = { nodeType: 8, textContent: 'incidental comment' };
+  host.ariaBusy = 'true';
+  for (const [assignments, hidden] of [
+    [[whitespace, comment], false],
+    [[whitespace, new FakeElement('svg')], true],
+    [[], false],
+    [[{ nodeType: 3, textContent: 'Leading content' }], true],
+    [[whitespace], false],
+  ]) {
+    start.assignments = assignments;
+    start.dispatchEvent(new Event('slotchange'));
+    assert.equal(spinner.hidden, hidden);
+  }
+  host.ariaBusy = 'false';
+  start.assignments = [];
+  start.dispatchEvent(new Event('slotchange'));
+  assert.equal(spinner.hidden, true);
+});
+
+it('refreshes slot presentation on connection without duplicating the native button', () => {
+  host.ariaBusy = 'true';
+  start.assignments = [new FakeElement('svg')];
+  host.connectedCallback();
+  assert.equal(spinner.hidden, true);
+  start.assignments = [];
+  host.connectedCallback();
+  assert.equal(spinner.hidden, false);
+  assert.equal(host.shadowRoot.children[1], button);
+});
+
+it('uses external CSS for the inherited-color spinner and disables its animation for reduced motion', () => {
+  // Source assertions only: this harness cannot compute CSS or indicator geometry.
+  const css = readFileSync(new URL('../src/doom-button.css', import.meta.url), 'utf8');
+  assert.match(css, /\.spinner\s*\{[^}]*border: 2px solid currentColor;/);
+  assert.match(css, /\.spinner:not\(\[hidden\]\)\s*\{\s*animation: busy-spin/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.spinner:not\(\[hidden\]\)\s*\{\s*animation: none;/);
+  assert.equal(host.shadowRoot.children.some(child => child.tagName === 'style'), false);
 });
 
 it('requires both native element-reference properties rather than silently assigning expandos', () => {
@@ -121,6 +207,13 @@ it('reflects disabled synchronously and delegates enabled/disabled click handlin
   // Model delivery of one composed native click at the host boundary. Real DOM
   // propagation/retargeting and disabled activation are deliberately not simulated.
   button.click.mockImplementation(() => { if (!button.disabled) host.dispatchEvent(delivered); });
+  host.ariaBusy = 'true';
+  assert.equal(host.disabled, false);
+  assert.equal(button.disabled, false);
+  host.click();
+  assert.deepEqual(clicks, [delivered]);
+  clicks.length = 0;
+  button.click.mockClear();
   host.disabled = true;
   assert.equal(host.hasAttribute('disabled'), true);
   assert.equal(button.disabled, true);
@@ -134,6 +227,9 @@ it('reflects disabled synchronously and delegates enabled/disabled click handlin
   assert.equal(clicks[0].bubbles, true);
   assert.equal(clicks[0].composed, true);
   assert.equal(button.click.mock.calls.length, 2);
+  host.ariaBusy = 'false';
+  assert.equal(host.disabled, false);
+  assert.equal(button.disabled, false);
   host.setAttribute('disabled', 'false');
   assert.equal(host.disabled, true);
   assert.equal(button.disabled, true);

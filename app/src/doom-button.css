@@ -101,6 +101,28 @@ button:disabled {
 button[aria-busy="true"] {
   cursor: wait;
 }
+.spinner {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: 0.75em;
+  height: 0.75em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+}
+.spinner:not([hidden]) {
+  animation: busy-spin 0.8s linear infinite;
+}
+@keyframes busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner:not([hidden]) {
+    animation: none;
+  }
+}
 ::slotted([slot="start"]) {
   display: block;
   flex: 0 0 auto;
