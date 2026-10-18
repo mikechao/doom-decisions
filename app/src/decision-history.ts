@@ -74,16 +74,16 @@ function tokensPending(entry: HistoryEntry) {
 }
 export function projectDecisionHistorySummary(entry: HistoryEntry) {
   const pending = entry.stage === 'capturing' || entry.stage === 'requesting';
-  const total = entry.responseMetadata?.usage.total;
+  const input = entry.responseMetadata?.usage.input;
   return {
     action: entry.action ?? (pending ? 'Action pending' : 'Action unavailable'),
     latency: `API ${entry.latencyMs === null ? (pending ? 'latency pending' : 'latency unavailable') : `${entry.latencyMs} ms`}`,
     tokens:
-      total != null
-        ? `${tokenCount.format(total)} tokens`
+      input != null
+        ? `Input ${tokenCount.format(input)} tokens`
         : tokensPending(entry)
-          ? 'Tokens pending'
-          : 'Total tokens unavailable',
+          ? 'Input tokens pending'
+          : 'Input tokens unavailable',
     status: decisionStatus(entry),
   };
 }
@@ -448,19 +448,15 @@ export function defineDecisionHistory() {
           '#inspector-latency',
           entry.latencyMs === null ? missing : `${entry.latencyMs} ms`,
         );
-        write(
-          '#inspector-input-tokens',
-          usage?.input == null ? usageMissing : tokenCount.format(usage.input),
-        );
+        const inputTokens =
+          usage?.input == null ? usageMissing : tokenCount.format(usage.input);
+        write('#inspector-summary-input-tokens', inputTokens);
+        write('#inspector-input-tokens', inputTokens);
         write(
           '#inspector-output-tokens',
           usage?.output == null
             ? usageMissing
             : tokenCount.format(usage.output),
-        );
-        write(
-          '#inspector-total-tokens',
-          usage?.total == null ? usageMissing : tokenCount.format(usage.total),
         );
         write(
           '#inspector-confidence',

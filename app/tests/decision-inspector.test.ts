@@ -75,6 +75,10 @@ const entry = (number = 1, changes = {}) => ({
 const row = number => history.children.find(node => node.id === `decision-${number}`);
 const inspect = number => row(number).querySelector('button');
 const text = id => nodes.get(id).textContent;
+const assertInputTokens = expected => {
+  assert.equal(text('inspector-summary-input-tokens'), expected);
+  assert.equal(text('inspector-input-tokens'), expected);
+};
 const back = () => nodes.get('back-to-history').click();
 const distribution = (selected = 'neutral') => Object.keys(masks).map(value => ({
   value, probability: value === selected ? 0.4 : value === 'fire' ? 0.6 : 0,
@@ -105,7 +109,7 @@ beforeEach(() => {
     if (id) { node.id = id; nodes.set(id, node); }
     node.hidden = /\shidden(?:\s|>)/.test(token[0]);
     stack.at(-1).append(node);
-    if (!['img', 'input', 'br', 'hr'].includes(tag)) stack.push(node);
+    if (!token[0].endsWith('/>') && !['img', 'input', 'br', 'hr'].includes(tag)) stack.push(node);
   }
   history = nodes.get('history'); detail = nodes.get('decision-detail'); list = nodes.get('history-list-view');
   root.connectedCallback(); flush();
@@ -149,12 +153,13 @@ it('browses a representative completed decision with probabilities, usage, reque
   assert.equal(header.parentElement, detail);
   for (const id of ['back-to-history', 'inspector-title'])
     assert.equal(nodes.get(id).parentElement, header, `${id} stays outside the scrolling body`);
+  assert.ok(nodes.get('back-to-history').querySelector('svg'));
   assert.equal(nodes.get('detail-scroll').querySelector('#inspector-title'), null, 'No duplicate title in the body');
   assert.equal(nodes.get('detail-scroll').children[0], nodes.get('inspector-state'));
   const trigger = inspect(1);
   assert.equal(row(1).querySelector('details'), null);
   assert.match(trigger.textContent, /Completed · verified and rendered/);
-  assert.ok(trigger.textContent.includes('128 tokens'));
+  assert.ok(trigger.textContent.includes('API 42 ms · Input 120 tokens'));
   trigger.focus(); trigger.click();
   assert.equal(list.hidden, true); assert.equal(detail.hidden, false);
   assert.equal(document.activeElement, nodes.get('inspector-title'));
@@ -181,7 +186,7 @@ it('browses a representative completed decision with probabilities, usage, reque
   assert.equal(nodes.get('inspector-image').attributes.get('src'), request.png);
   assert.equal(text('inspector-model'), 'test-model');
   assert.equal(text('inspector-reported-model'), 'test-model-response');
-  assert.equal(text('inspector-total-tokens'), '128');
+  assertInputTokens('120');
   assert.match(text('inspector-diagnostics'), /HTTP status: 200/);
   assert.equal(title.parentElement, header);
   root.display(decisions, requests);
@@ -233,7 +238,8 @@ it('keeps historical selection, focus, disclosures and scroll across updates, th
   assert.equal(nodes.get('inspector-reported-model').hidden, false);
   assert.equal(nodes.get('inspector-reported-model-label').hidden, false);
   assert.equal(text('inspector-output-tokens'), '0');
-  assert.equal(text('inspector-total-tokens'), 'Unavailable');
+  assertInputTokens('9');
+  assert.ok(trigger.textContent.includes('Input 9 tokens'));
   assert.equal(text('inspector-state'), 'Completed · 2 tics independently verified');
   assert.match(text('inspector-result'), /may no longer be the displayed frame/);
   const probabilities = nodes.get('inspector-probabilities').children;
@@ -263,22 +269,36 @@ it('distinguishes pending, prepared/uninvoked, canceled and unavailable evidence
   assert.match(text('inspector-request-state'), /not yet prepared/);
   assert.match(text('inspector-execution'), /No native action dispatched/);
   assert.equal(text('inspector-instructions'), 'Pending');
-  assert.equal(text('inspector-total-tokens'), 'Unavailable');
+  assertInputTokens('Unavailable');
+  assert.ok(inspect(1).textContent.includes('Input tokens unavailable'));
   assert.match(text('inspector-diagnostics'), /Requested model \(not invoked\): Unavailable/);
   root.display([entry(1, { sdkInvoked: false })], { 1: input });
   assert.match(text('inspector-request-state'), /Request prepared; SDK invocation not attempted/);
+  assertInputTokens('Unavailable');
   root.display([entry()], { 1: input });
-  assert.equal(text('inspector-total-tokens'), 'Pending');
+  assertInputTokens('Pending');
+  assert.ok(inspect(1).textContent.includes('Input tokens pending'));
   root.display([entry(1, { responseMetadata: {
     reportedModel: 'first-request-model', usage: { input: 0, output: 0, total: 0 },
   } })], { 1: input });
-  assert.equal(text('inspector-total-tokens'), '0');
+  assertInputTokens('0');
+  assert.ok(inspect(1).textContent.includes('Input 0 tokens'));
   assert.equal(nodes.get('inspector-reported-model').hidden, true);
   assert.equal(nodes.get('inspector-reported-model-label').hidden, true);
   assert.match(text('inspector-diagnostics'), /Provider-reported model: first-request-model/);
+  root.display([entry(1, { latencyMs: 1119, responseMetadata: {
+    reportedModel: 'first-request-model', usage: { input: 505, output: null, total: null },
+  } })], { 1: input });
+  assertInputTokens('505');
+  assert.ok(inspect(1).textContent.includes('API 1119 ms · Input 505 tokens'));
+  root.display([entry(1, { responseMetadata: {
+    reportedModel: 'first-request-model', usage: { input: null, output: 8, total: 128 },
+  } })], { 1: input });
+  assertInputTokens('Unavailable');
+  assert.ok(inspect(1).textContent.includes('Input tokens unavailable'), 'Reported total does not imply input tokens');
   root.display([entry(1, { stage: 'ended', status: 'Stopped by user', http: 429 })], { 1: input });
   assert.equal(text('inspector-state'), 'Stopped by user');
-  assert.equal(text('inspector-total-tokens'), 'Unavailable');
+  assertInputTokens('Unavailable');
   assert.equal(nodes.get('inspector-probabilities').hidden, true);
   assert.equal(text('probabilities-unavailable'), 'Action probabilities unavailable.');
   assert.match(text('inspector-diagnostics'), /HTTP status: 429/);

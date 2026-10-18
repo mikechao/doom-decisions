@@ -146,7 +146,12 @@
         </div>
         <div id="decision-detail" class="history-view" hidden>
           <div id="detail-header">
-            <doom-button id="back-to-history" appearance="outline" class="button-history" aria-controls="history-list-view">Back to history</doom-button>
+            <doom-button id="back-to-history" appearance="outline" class="button-history" aria-controls="history-list-view">
+              <svg slot="start" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
+                <path d="M16 10H4m5-5-5 5 5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Back to history
+            </doom-button>
             <h3 id="inspector-title" tabindex="-1">Decision detail</h3>
           </div>
           <div id="detail-scroll" tabindex="0" role="region" aria-labelledby="inspector-title">
@@ -163,7 +168,7 @@
                 <dt>Requested model</dt><dd id="inspector-model"></dd>
                 <dt id="inspector-reported-model-label">Reported model</dt><dd id="inspector-reported-model"></dd>
                 <dt>API latency</dt><dd id="inspector-latency"></dd>
-                <dt>Reported total tokens</dt><dd id="inspector-total-tokens"></dd>
+                <dt>Input tokens</dt><dd id="inspector-summary-input-tokens"></dd>
               </dl>
             </section>
             <h4>Historical request screenshot</h4>
