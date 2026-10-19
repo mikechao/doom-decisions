@@ -477,7 +477,7 @@ for (const includeReadyWeapon of [false, true]) {
         assert.equal(payloads.length, 1);
         const expectedState = ['Current rendered Doom E1M1 frame at verified tic 1.'];
         if (includeReadyWeapon) expectedState.push('Ready weapon: pistol (id: 1; ammo type: bullets)');
-        if (includeAmmo) expectedState.push('Ammo: bullets 50/200; shells 0/50; cells 0/300; rockets 0/50');
+        if (includeAmmo) expectedState.push('Ammo: bullets 50/200');
         assert.deepEqual(payloads[0].state, [expectedState.join('\n'), { type: 'image_url', image_url: { url: png } }]);
         assert.equal(payloads[0].questions.next_action.instructions, defaultDecisionInstructionTemplate.replaceAll('{{tics}}', '6'));
         assert.deepEqual(Object.keys(payloads[0].questions.next_action.criteria), actions);
@@ -538,7 +538,7 @@ for (const mode of ['manual', 'continuous'] as const) {
       if (mode === 'manual') assert.equal(await h.next(), 'completed');
       const instructions = ['1 tics. Again 1.', 'Next 2 tics'];
       const states = [
-        'Current rendered Doom E1M1 frame at verified tic 1.' + (!initialAmmo ? '\nReady weapon: pistol (id: 1; ammo type: bullets)' : '') + (initialAmmo ? '\nAmmo: bullets 50/200; shells 0/50; cells 0/300; rockets 0/50' : ''),
+        'Current rendered Doom E1M1 frame at verified tic 1.' + (!initialAmmo ? '\nReady weapon: pistol (id: 1; ammo type: bullets)' : '') + (initialAmmo ? '\nAmmo: bullets 50/200' : ''),
         'Current rendered Doom E1M1 frame at verified tic 2.' + (initialAmmo ? '\nReady weapon: rocket_launcher (id: 4; ammo type: rockets)' : '') + (!initialAmmo ? '\nAmmo: bullets 11/111; shells 22/222; cells 33/333; rockets 44/444' : ''),
       ];
       assert.equal(payloads.length, 2);

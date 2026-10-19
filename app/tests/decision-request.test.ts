@@ -126,7 +126,7 @@ it('reports unavailable state telemetry explicitly without inventing weapon or a
   const configuration = { ...defaultDecisionConfiguration, includeReadyWeapon: true, includeAmmo: true };
   const request = telemetry => buildDefaultDecisionRequest(73, 6, 'data:image/png;base64,local', undefined, configuration, telemetry);
   expect(request(undefined).context).toBe(
-    'Current rendered Doom E1M1 frame at verified tic 73.\nReady weapon: unavailable\nAmmo: bullets unavailable/unavailable; shells unavailable/unavailable; cells unavailable/unavailable; rockets unavailable/unavailable',
+    'Current rendered Doom E1M1 frame at verified tic 73.\nReady weapon: unavailable\nAmmo: unavailable',
   );
   expect(request({
     readyWeapon: { id: -1, name: 'unknown', ammoType: 'unknown' }, ammo: null,
@@ -134,6 +134,36 @@ it('reports unavailable state telemetry explicitly without inventing weapon or a
   expect(request({
     readyWeapon: { id: 0, name: 'fist', ammoType: 'none' }, ammo: null,
   }).context).toContain('Ready weapon: fist (id: 0; ammo type: none)');
+});
+
+it.each([
+  { counts: [49, 0, 0, 0], expected: 'Ammo: bullets 49/200' },
+  { counts: [0, 4, 0, 0], expected: 'Ammo: shells 4/50' },
+  { counts: [0, 4, 0, 2], expected: 'Ammo: shells 4/50; rockets 2/50' },
+  { counts: [0, 0, 0, 0], expected: 'Ammo: none' },
+  { counts: null, expected: 'Ammo: unavailable' },
+  { counts: undefined, expected: 'Ammo: unavailable' },
+])('includes only positive current ammo in outgoing state: $expected ($counts)', ({ counts, expected }) => {
+  const telemetry = counts === undefined ? undefined : {
+    readyWeapon: null,
+    ammo: counts === null ? null : {
+      bullets: { current: counts[0], max: 200 },
+      shells: { current: counts[1], max: 50 },
+      cells: { current: counts[2], max: 300 },
+      rockets: { current: counts[3], max: 50 },
+    },
+  };
+  const input = buildDefaultDecisionRequest(73, 6, 'data:image/png;base64,local', undefined, {
+    ...defaultDecisionConfiguration, includeAmmo: true,
+  }, telemetry);
+  const context = `Current rendered Doom E1M1 frame at verified tic 73.\n${expected}`;
+  expect(input.context).toBe(context);
+  const wire = encodeOpenAIDecisionRequest(input);
+  expect(wire.input).toEqual([{ role: 'user', content: [
+    { type: 'input_text', text: context },
+    { type: 'input_image', image_url: input.png },
+  ] }]);
+  expect(wire.questions[0].instructions).toBe(resolveDecisionInstructions(6));
 });
 
 it('forwards optional state and exact resolved instructions through the real OpenAI SDK to fake-fetch JSON', async () => {

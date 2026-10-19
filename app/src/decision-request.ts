@@ -35,12 +35,16 @@ function formatReadyWeapon(weapon: StateTelemetry['readyWeapon']): string {
 }
 
 function formatAmmo(ammo: StateTelemetry['ammo']): string {
-  return (['bullets', 'shells', 'cells', 'rockets'] as const)
-    .map(
-      (type) =>
-        `${type} ${quantity(ammo?.[type]?.current)}/${quantity(ammo?.[type]?.max)}`,
-    )
-    .join('; ');
+  if (!ammo) return 'unavailable';
+  return (
+    (['bullets', 'shells', 'cells', 'rockets'] as const)
+      .filter((type) => ammo[type].current > 0)
+      .map(
+        (type) =>
+          `${type} ${quantity(ammo[type].current)}/${quantity(ammo[type].max)}`,
+      )
+      .join('; ') || 'none'
+  );
 }
 
 export function resolveDecisionInstructions(
