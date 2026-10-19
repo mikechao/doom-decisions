@@ -27,26 +27,43 @@
         <details id="setup" class="setup" open aria-labelledby="setup-title">
           <summary><h2 id="setup-title">Setup</h2></summary>
           <div class="setup-content">
-            <div id="openrouter-connect" hidden>
-              <div id="openrouter-signin">
-                <doom-button id="openrouter-signin-button" appearance="primary" class="button-signin" aria-describedby="openrouter-auth-note openrouter-auth-status" disabled>
-                  <svg id="openrouter-signin-logo" class="openrouter-signin-logo" slot="start" viewBox="0 0 401.4 293.7" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true" focusable="false">
-                    <path d="M303.9475,17.19926c42.79734,0,77.48933,34.69327,77.48933,77.48933s-34.69199,77.48933-77.48933,77.48933l76.86166,76.86244c9.76367,9.76313,2.84903,26.45667-10.95697,26.45667h-220.88335c-71.32686,0-129.14889-57.82202-129.14889-129.14889S77.64197,17.19926,148.96884,17.19926h154.97866ZM148.96884,68.85881c-42.79607,0-77.48933,34.69327-77.48933,77.48933s34.69327,77.48933,77.48933,77.48933,77.48933-34.69327,77.48933-77.48933-34.69327-77.48933-77.48933-77.48933Z" />
-                  </svg>
-                  <span id="openrouter-signin-label">Sign in with OpenRouter</span>
-                </doom-button>
+            <div class="setup-group setup-inference">
+              <h3>1 Inference</h3>
+              <div id="openrouter-connect" hidden>
+                <div id="openrouter-signin">
+                  <doom-button id="openrouter-signin-button" appearance="primary" class="button-signin" aria-describedby="openrouter-auth-note openrouter-auth-status" disabled>
+                    <svg id="openrouter-signin-logo" class="openrouter-signin-logo" slot="start" viewBox="0 0 401.4 293.7" xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-hidden="true" focusable="false">
+                      <path d="M303.9475,17.19926c42.79734,0,77.48933,34.69327,77.48933,77.48933s-34.69199,77.48933-77.48933,77.48933l76.86166,76.86244c9.76367,9.76313,2.84903,26.45667-10.95697,26.45667h-220.88335c-71.32686,0-129.14889-57.82202-129.14889-129.14889S77.64197,17.19926,148.96884,17.19926h154.97866ZM148.96884,68.85881c-42.79607,0-77.48933,34.69327-77.48933,77.48933s34.69327,77.48933,77.48933,77.48933,77.48933-34.69327,77.48933-77.48933-34.69327-77.48933-77.48933-77.48933Z" />
+                    </svg>
+                    <span id="openrouter-signin-label">Sign in with OpenRouter</span>
+                  </doom-button>
+                </div>
+                <doom-button id="openrouter-manual" appearance="text" aria-controls="manual-key" aria-expanded="false">Use an API key instead</doom-button>
+                <p id="openrouter-auth-note" class="help auth-charge-note">API usage will incur charges.</p>
+                <p id="openrouter-auth-status" class="help" role="status" aria-live="polite" aria-atomic="true"></p>
               </div>
-              <p id="openrouter-auth-note" class="help auth-charge-note">API usage will incur charges.</p>
+              <div id="manual-key">
+                <label id="key-label" for="key">Temporary OpenRouter API key</label>
+                <input id="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="key-state key-note" disabled>
+                <p id="key-state" class="help">Client in memory • Refresh clears it</p>
+                <doom-button id="openrouter-back" appearance="text" aria-controls="manual-key openrouter-signin" hidden>Use sign-in instead</doom-button>
+              </div>
+              <details class="setup-details">
+                <summary>Privacy &amp; API key details</summary>
+                <p id="key-note" class="help">Sign-in authorizes OpenRouter to issue an API key for Doom Decisions. The key stays in page memory, not localStorage. Refresh clears the app's local access but does not revoke the issued key. Screenshots, context, instructions and decisions go directly to OpenRouter and may be sent to its selected model provider. API usage may incur charges on your OpenRouter account. Trust this app and its served scripts with your key.</p>
+                <p id="openrouter-key-settings" class="help" hidden>Manage or revoke keys in <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings</a>.</p>
+              </details>
+            </div>
+            <div class="setup-group setup-model">
               <fieldset id="openrouter-model" aria-describedby="openrouter-model-help" disabled>
-                <legend>AI model</legend>
+                <legend>2 AI Model</legend>
                 <label><input id="openrouter-model-gpt" type="radio" name="openrouter-model" value="openai/gpt-6-luna-decisions" checked> GPT-6 Luna Decisions</label>
                 <label><input id="openrouter-model-jev" type="radio" name="openrouter-model" value="typesafe/jev-1.14"> Jev 1.14</label>
               </fieldset>
               <p id="openrouter-model-help" class="help" role="status"></p>
-              <doom-button id="openrouter-manual" appearance="text" aria-controls="manual-key" aria-expanded="false">Use an API key instead</doom-button>
-              <p id="openrouter-auth-status" class="help" role="status" aria-live="polite" aria-atomic="true"></p>
             </div>
-            <div class="setup-file">
+            <div class="setup-file setup-group">
+              <h3>3 Game Data</h3>
               <doom-button id="included-freedoom" appearance="neutral" secondary-label="~9.83 MiB download" disabled>Use included Freedoom</doom-button>
               <doom-button id="iwad-picker" appearance="neutral" class="iwad-picker" secondary-label="File stays in your browser" disabled>
                 <svg class="iwad-folder-icon" slot="start" viewBox="0 0 24 18" aria-hidden="true" focusable="false">
@@ -62,17 +79,6 @@
               </div>
               <span id="setup-asset" aria-live="polite" aria-atomic="true"></span>
             </div>
-            <div id="manual-key">
-              <label id="key-label" for="key">Temporary OpenRouter API key</label>
-              <input id="key" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" aria-describedby="key-state key-note" disabled>
-              <p id="key-state" class="help">Client in memory • Refresh clears it</p>
-              <doom-button id="openrouter-back" appearance="text" aria-controls="manual-key openrouter-signin" hidden>Use sign-in instead</doom-button>
-            </div>
-            <details class="setup-details">
-              <summary>Privacy &amp; API key details</summary>
-              <p id="key-note" class="help">Sign-in authorizes OpenRouter to issue an API key for Doom Decisions. The key stays in page memory, not localStorage. Refresh clears the app's local access but does not revoke the issued key. Screenshots, context, instructions and decisions go directly to OpenRouter and may be sent to its selected model provider. API usage may incur charges on your OpenRouter account. Trust this app and its served scripts with your key.</p>
-              <p id="openrouter-key-settings" class="help" hidden>Manage or revoke keys in <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings</a>.</p>
-            </details>
           </div>
         </details>
         <section class="control-bar control-bar--amber-gate" aria-labelledby="controls-title">

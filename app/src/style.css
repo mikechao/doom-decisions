@@ -142,8 +142,30 @@ header {
 }
 .setup-content {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.75rem;
   margin-top: 0.375rem;
+}
+.setup-group > h3,
+#openrouter-model legend {
+  margin: 0 0 0.375rem;
+  padding: 0;
+  color: var(--ivory);
+  font:
+    500 0.8125rem / 1.5 system-ui,
+    sans-serif;
+}
+.setup-inference > #manual-key {
+  margin-top: 0.375rem;
+}
+.setup-model,
+.setup-file {
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--rule);
+}
+/* Model choices share the existing OpenRouter-only visibility state. */
+.setup-content:has(#openrouter-connect[hidden]) > .setup-model {
+  display: none;
 }
 #setup-asset {
   display: block;
@@ -269,16 +291,9 @@ footer,
   flex-wrap: wrap;
   column-gap: 1rem;
   min-width: 0;
-  margin: 0.5rem 0 0;
+  margin: 0;
   padding: 0;
   border: 0;
-}
-#openrouter-model legend {
-  margin-bottom: 0.125rem;
-  padding: 0;
-  color: var(--muted);
-  font-size: 0.8125rem;
-  font-weight: 500;
 }
 #openrouter-model label {
   display: flex;
@@ -322,9 +337,8 @@ summary:hover {
   column-gap: 0.75rem;
   row-gap: 0.375rem;
   align-items: center;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--rule);
 }
+.setup-file > h3,
 .setup-file > doom-button,
 .setup-file > #prepared-asset,
 .setup-file > #setup-asset {
@@ -1151,12 +1165,6 @@ a {
   }
 }
 @media (min-width: 760px) and (max-width: 1279px) {
-  .setup-content {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .setup-details {
-    grid-column: 1 / -1;
-  }
   .control-bar {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

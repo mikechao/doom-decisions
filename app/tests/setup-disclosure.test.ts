@@ -717,7 +717,7 @@ describe('Decision instructions editor', () => {
 });
 
 describe('Setup disclosure', () => {
-  it('starts with a native open disclosure, nested key guidance and controls immediately after it', () => {
+  it('starts with three ordered Setup groups, nested key guidance and controls immediately after it', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     assert.match(html, /<details id="setup"[^>]* open[^>]*>/);
     assert.match(html, /<summary><h2 id="setup-title">Setup<\/h2><\/summary>/);
@@ -730,7 +730,21 @@ describe('Setup disclosure', () => {
     const details = html.match(/<details class="setup-details">([\s\S]*?)<\/details>/)![1];
     assert.match(details, /<p id="openrouter-key-settings" class="help" hidden>Manage or revoke keys in <a href="https:\/\/openrouter.ai\/settings\/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings<\/a>\.<\/p>/);
     assert.equal((html.match(/https:\/\/openrouter.ai\/settings\/keys/g) ?? []).length, 1);
-    assert.match(html, /<\/details>\s*<\/div>\s*<\/details>\s*<section class="control-bar /);
+    const groups = html.match(/<div class="setup-content">\s*<div class="setup-group setup-inference">([\s\S]*?)<\/div>\s*<div class="setup-group setup-model">([\s\S]*?)<\/div>\s*<div class="setup-file setup-group">([\s\S]*?)<\/div>\s*<\/div>\s*<\/details>\s*<section class="control-bar /);
+    assert.ok(groups, 'All three groups stay inside Setup, before Decision controls');
+    const [, inference, model, file] = groups;
+    assert.match(inference, /^\s*<h3>1 Inference<\/h3>/);
+    assert.match(inference, /<div id="manual-key">[\s\S]*?<\/div>\s*<details class="setup-details">/);
+    assert.ok(inference.includes(details), 'Privacy remains with credentials');
+    assert.doesNotMatch(inference, /id="openrouter-model"|id="iwad"/);
+    assert.match(model, /^\s*<fieldset id="openrouter-model"/);
+    assert.match(model, /id="openrouter-model-help"/);
+    assert.match(file, /^\s*<h3>3 Game Data<\/h3>/);
+    for (const id of ['included-freedoom', 'iwad-picker', 'iwad', 'prepared-asset', 'setup-asset'])
+      assert.ok(file.includes(`id="${id}"`), `${id} stays in Game Data`);
+    const css = readFileSync(new URL('../src/style.css', import.meta.url), 'utf8');
+    assert.match(css, /\.setup-content\s*\{\s*display: grid;\s*grid-template-columns: minmax\(0, 1fr\);/);
+    assert.equal((css.match(/\.setup-content\s*\{/g) ?? []).length, 1, 'Setup stays stacked at intermediate widths too');
     assert.equal(element('#setup').open, true);
   });
 
