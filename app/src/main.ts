@@ -4,7 +4,10 @@ import {
   type DecisionHistoryElement,
 } from './decision-history';
 import { deriveDecisionControls } from './decision-controls';
-import { defaultDecisionInstructionTemplate } from './decision-request';
+import {
+  defaultDecisionConfiguration,
+  defaultDecisionInstructionTemplate,
+} from './decision-request';
 import type { DecisionProviderFactory } from './decision-provider';
 import { defineDoomButton, type DoomButtonElement } from './doom-button';
 import { jevDecisionProviderFactory } from './jev-decision-provider';
@@ -184,7 +187,7 @@ let selectedAssetName = '';
 let selectedAssetSource: 'included' | 'local' | undefined;
 let doomLoaded = false;
 let manualKeyVisible = false;
-let savedInstructionTemplate = defaultDecisionInstructionTemplate;
+let savedDecisionConfiguration = defaultDecisionConfiguration;
 let selectedModel: OpenRouterModel = defaultOpenRouterModel;
 let modelLocked = false;
 let modelFactory = createOpenRouterDecisionProviderFactory(selectedModel);
@@ -433,7 +436,7 @@ const controller = createSessionController(
         type: 'module',
       }),
     readTics: () => $('#tics').valueAsNumber,
-    readInstructionTemplate: () => savedInstructionTemplate,
+    readDecisionConfiguration: () => savedDecisionConfiguration,
     takeKey: () => {
       if (jevMode) {
         $('#key').value = '';
@@ -595,47 +598,16 @@ function clearPromptError() {
   $('#prompt-error').hidden = true;
   $('#prompt-instructions').setAttribute('aria-invalid', 'false');
 }
-const promptTelemetryOptions = [
-  {
-    selector: '#prompt-ready-weapon',
-    token: '{{readyWeapon}}',
-    line: 'Ready weapon: {{readyWeapon}}',
-  },
-  { selector: '#prompt-ammo', token: '{{ammo}}', line: 'Ammo: {{ammo}}' },
-] as const;
-function syncPromptTelemetry() {
-  const draft = $('#prompt-instructions').value;
-  for (const option of promptTelemetryOptions) {
-    const checkbox = $(option.selector);
-    checkbox.checked = draft.includes(option.token);
-    // Custom prose belongs to the textarea; a toggle removes only exact lines.
-    checkbox.disabled = draft
-      .split('\n')
-      .filter((line) => line !== option.line)
-      .join('\n')
-      .includes(option.token);
-  }
-}
-for (const option of promptTelemetryOptions) {
-  $(option.selector).addEventListener('change', () => {
-    const field = $('#prompt-instructions');
-    if ($(option.selector).checked) {
-      if (!field.value.includes(option.token))
-        field.value += `${field.value ? '\n' : ''}${option.line}`;
-    } else {
-      field.value = field.value
-        .split('\n')
-        .filter((line) => line !== option.line)
-        .join('\n');
-    }
-    clearPromptError();
-    syncPromptTelemetry();
-  });
+function loadDecisionDraft() {
+  $('#prompt-instructions').value =
+    savedDecisionConfiguration.instructionTemplate;
+  $('#prompt-ready-weapon').checked =
+    savedDecisionConfiguration.includeReadyWeapon;
+  $('#prompt-ammo').checked = savedDecisionConfiguration.includeAmmo;
+  clearPromptError();
 }
 $('#view-prompt').addEventListener('click', () => {
-  $('#prompt-instructions').value = savedInstructionTemplate;
-  clearPromptError();
-  syncPromptTelemetry();
+  loadDecisionDraft();
   $('#prompt-dialog').showModal();
 });
 $('#save-prompt').addEventListener('click', () => {
@@ -649,25 +621,25 @@ $('#save-prompt').addEventListener('click', () => {
     $('#prompt-instructions').focus();
     return;
   }
-  savedInstructionTemplate = draft;
+  savedDecisionConfiguration = Object.freeze({
+    instructionTemplate: draft,
+    includeReadyWeapon: $('#prompt-ready-weapon').checked,
+    includeAmmo: $('#prompt-ammo').checked,
+  });
   $('#prompt-dialog').close();
 });
 $('#reset-prompt').addEventListener('click', () => {
   $('#prompt-instructions').value = defaultDecisionInstructionTemplate;
+  $('#prompt-ready-weapon').checked = false;
+  $('#prompt-ammo').checked = false;
   clearPromptError();
-  syncPromptTelemetry();
   $('#prompt-instructions').focus();
 });
-$('#prompt-instructions').addEventListener('input', () => {
-  clearPromptError();
-  syncPromptTelemetry();
-});
+$('#prompt-instructions').addEventListener('input', clearPromptError);
 $('#close-prompt').addEventListener('click', () => $('#prompt-dialog').close());
 $('#prompt-dialog').addEventListener('close', () => {
   if ($('#prompt-dialog').open) return;
-  $('#prompt-instructions').value = savedInstructionTemplate;
-  clearPromptError();
-  syncPromptTelemetry();
+  loadDecisionDraft();
   $('#view-prompt').focus();
 });
 function selectIwad(

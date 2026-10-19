@@ -8,7 +8,10 @@ import {
   validateChoice,
   verifyAction,
 } from './decision';
-import { buildDefaultDecisionRequest } from './decision-request.ts';
+import {
+  buildDefaultDecisionRequest,
+  type DecisionConfiguration,
+} from './decision-request.ts';
 import type {
   DecisionDiagnostics,
   DecisionProvider,
@@ -164,7 +167,7 @@ export interface SessionBrowserPorts {
   localFetch(name: string, json?: false): Promise<ArrayBuffer>;
   createWorker(): Worker;
   readTics(): number;
-  readInstructionTemplate(): string;
+  readDecisionConfiguration(): DecisionConfiguration;
   takeKey(): string;
   clearKey(): void;
   focusBudget(): void;
@@ -386,7 +389,7 @@ export function createSessionController(
     entry: DecisionEntry,
     png: string,
     permittedActions: readonly ActionName[],
-    instructionTemplate: string,
+    configuration: DecisionConfiguration,
     observation: Observation,
     continuous?: ContinuousRun,
   ) {
@@ -402,7 +405,7 @@ export function createSessionController(
       attempt.tics,
       png,
       permittedActions,
-      instructionTemplate,
+      configuration,
       observation.native,
     );
     run.inspectorRequests = Object.freeze({
@@ -492,8 +495,10 @@ export function createSessionController(
     // guard, rather than disabled styling alone, prevents overlapping admission.
     const attempt = admitDecision(run, tics);
     if (!attempt) return 'not-admitted';
-    // Capture the saved instruction template with this admission, before presentation or any await.
-    const instructionTemplate = ports.readInstructionTemplate();
+    // Snapshot instructions and state options together before presentation or any await.
+    const configuration = Object.freeze({
+      ...ports.readDecisionConfiguration(),
+    });
     const permittedActions = Object.freeze(Object.keys(masks) as ActionName[]);
     if (continuous) continuous.dispatched = false;
     const dispatchFence = () => {
@@ -559,7 +564,7 @@ export function createSessionController(
         entry,
         png,
         permittedActions,
-        instructionTemplate,
+        configuration,
         observation,
         continuous,
       );

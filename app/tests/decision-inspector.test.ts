@@ -201,7 +201,15 @@ it('browses a representative completed decision with probabilities, usage, reque
 
 it('keeps historical selection, focus, disclosures and scroll across updates, then restores the row anchor', () => {
   const first = entry();
-  const request1 = buildDefaultDecisionRequest(1, 2, 'data:image/png;base64,first');
+  const request1 = buildDefaultDecisionRequest(1, 2, 'data:image/png;base64,first', undefined, {
+    instructionTemplate: 'Use {{tics}} tics', includeReadyWeapon: true, includeAmmo: true,
+  }, {
+    readyWeapon: { id: 1, name: 'pistol', ammoType: 'bullets' },
+    ammo: {
+      bullets: { current: 50, max: 200 }, shells: { current: 0, max: 50 },
+      cells: { current: 0, max: 300 }, rockets: { current: 0, max: 50 },
+    },
+  });
   root.display([first], Object.freeze({ 1: request1 }));
   const firstRow = row(1), trigger = inspect(1);
   const title = nodes.get('inspector-title');
@@ -232,6 +240,7 @@ it('keeps historical selection, focus, disclosures and scroll across updates, th
   assert.equal(title.parentElement, nodes.get('detail-header'), 'Updated identity stays in the persistent header');
   assert.equal(text('inspector-instructions'), request1.instructions);
   assert.equal(text('inspector-context'), request1.context);
+  assert.match(text('inspector-context'), /verified tic 1\.\nReady weapon: pistol.*\nAmmo: bullets 50\/200/);
   assert.equal(text('inspector-actions'), request1.permittedActions.join('\n'));
   assert.equal(text('inspector-model'), 'first-request-model');
   assert.equal(text('inspector-reported-model'), 'different-response-model');

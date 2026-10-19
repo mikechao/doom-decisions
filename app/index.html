@@ -107,7 +107,7 @@
           </details>
           <div class="prompt-group">
             <hr>
-            <doom-button id="view-prompt" appearance="outline" aria-haspopup="dialog" aria-controls="prompt-dialog">Edit Prompt</doom-button>
+            <doom-button id="view-prompt" appearance="outline" aria-haspopup="dialog" aria-controls="prompt-dialog">Configure AI Decision</doom-button>
           </div>
         </section>
       </div>
@@ -191,7 +191,7 @@
               <summary>Exact request</summary>
               <h4>Instructions</h4>
               <pre id="inspector-instructions"></pre>
-              <h4>Context</h4>
+              <h4>Game state text</h4>
               <pre id="inspector-context"></pre>
               <h4>Permitted actions (request order)</h4>
               <pre id="inspector-actions"></pre>
@@ -219,20 +219,25 @@
     <dialog id="prompt-dialog" class="decision-prompt" aria-labelledby="prompt-title" aria-describedby="prompt-description">
       <div class="decision-prompt-content">
         <div class="decision-prompt-heading">
-          <h2 id="prompt-title">Edit Prompt</h2>
+          <h2 id="prompt-title">Configure AI Decision</h2>
         </div>
-        <p id="prompt-description" class="help">Edit the full text sent as next_action.instructions. Each {{tics}} is replaced with the tic count captured when a decision is admitted; no other text is added. The app still enforces allowed actions and actual tic duration. Save applies to future admissions; decisions already admitted keep their captured template and duration.</p>
-        <div class="prompt-telemetry" role="group" aria-label="Include player telemetry" aria-describedby="prompt-telemetry-note">
-          <label><input id="prompt-ready-weapon" type="checkbox"> Ready weapon</label>
-          <label><input id="prompt-ammo" type="checkbox"> Ammo</label>
-        </div>
-        <p id="prompt-telemetry-note" class="help">{{readyWeapon}} and {{ammo}} use the verified frame for each decision. Checkboxes add or remove their labeled lines; edit placeholders in custom text directly.</p>
+        <p id="prompt-description" class="help">Choose what the AI can observe and how it should decide.</p>
+        <section class="prompt-field" aria-labelledby="prompt-state-title">
+          <h3 id="prompt-state-title">Game state</h3>
+          <p class="help">Current verified screenshot and tic — always included.</p>
+          <div class="prompt-telemetry" role="group" aria-label="Optional game state" aria-describedby="prompt-telemetry-note">
+            <label><input id="prompt-ready-weapon" type="checkbox"> Ready weapon</label>
+            <label><input id="prompt-ammo" type="checkbox"> Ammo</label>
+          </div>
+          <p id="prompt-telemetry-note" class="help">Enabled items are sampled from the verified observation for each decision and included in state.</p>
+        </section>
         <div class="prompt-field">
           <label for="prompt-instructions">Decision instructions</label>
-          <textarea id="prompt-instructions" rows="8" aria-describedby="prompt-description prompt-error" aria-invalid="false" autofocus></textarea>
+          <p id="prompt-instructions-note" class="help">Edit exactly questions.next_action.instructions. Each {{tics}} is replaced with the tic count captured at admission; all other text stays literal and no instructions are appended. The app controls available actions and tic duration.</p>
+          <textarea id="prompt-instructions" rows="8" aria-describedby="prompt-instructions-note prompt-error" aria-invalid="false" autofocus></textarea>
           <p id="prompt-error" class="help" role="alert" hidden></p>
         </div>
-        <p class="help">Continuous mode keeps running while this dialog is open. Cancel or press Escape to discard edits and return to the controls.</p>
+        <p class="help">Save applies both settings and instructions to future admissions. Continuous mode keeps running while this dialog is open. Cancel or press Escape to discard edits and return to the controls.</p>
         <div class="prompt-actions">
           <doom-button id="reset-prompt" appearance="outline">Reset to Default</doom-button>
           <doom-button id="close-prompt" appearance="outline">Cancel</doom-button>

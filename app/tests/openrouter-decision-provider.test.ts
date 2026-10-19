@@ -5,7 +5,7 @@ import { Decisions } from '@openrouter/sdk/sdk/decisions.js';
 import { afterEach, beforeEach, it, vi } from 'vitest';
 import { DecisionFailure, validateChoice } from '../src/decision.ts';
 import type { DecisionDiagnostics, DecisionLifecycle } from '../src/decision-provider.ts';
-import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
+import { buildDefaultDecisionRequest, defaultDecisionConfiguration, defaultDecisionInstructionTemplate } from '../src/decision-request.ts';
 import { openAiDecisionProviderFactory } from '../src/openai-decision-provider.ts';
 import { createOpenRouterDecisionProviderFactory, openRouterDecisionProviderFactory, openRouterModels } from '../src/openrouter-decision-provider.ts';
 import { checkpoint, cleanup, deferred, fixture } from './fixtures/session.ts';
@@ -394,8 +394,8 @@ for (const mode of ['manual', 'continuous'] as const) {
     const originalTemplate = 'Fire for {{tics}} tics; choose wisely. Again: {{tics}}.';
     const editedTemplate = 'Use fire';
     let savedInstructionTemplate = originalTemplate;
-    const readTemplate = vi.fn(() => savedInstructionTemplate);
-    h.ports.readInstructionTemplate = readTemplate;
+    const readTemplate = vi.fn(() => ({ ...defaultDecisionConfiguration, instructionTemplate: savedInstructionTemplate }));
+    h.ports.readDecisionConfiguration = readTemplate;
     const payloads = [];
     const snapshots = [];
     let pending;
@@ -458,33 +458,38 @@ for (const mode of ['manual', 'continuous'] as const) {
   });
 }
 
-for (const [template, expected] of [
-  ['Ready weapon: {{readyWeapon}}', 'Ready weapon: pistol (id: 1; ammo type: bullets)'],
-  ['Ammo: {{ammo}}', 'Ammo: bullets 50/200; shells 0/50; cells 0/300; rockets 0/50'],
-]) {
-  it(`serializes the observation's opt-in ${template} without other telemetry`, async () => {
-    const h = fixture({ providerFactory: openRouterDecisionProviderFactory });
-    try {
-      await h.prepare();
-      h.ports.readInstructionTemplate = () => template;
-      const capture = h.ports.capture;
-      h.ports.capture = () => ({ ...capture(), png });
-      const payloads = [];
-      vi.stubGlobal('fetch', async (request: Request) => {
-        assert.equal(request.url, 'https://openrouter.ai/api/alpha/decisions');
-        payloads.push(await request.json());
-        return response(answer('neutral'));
-      });
-      assert.equal(await h.next(), 'completed');
-      assert.equal(payloads.length, 1);
-      assert.equal(payloads[0].questions.next_action.instructions, expected);
-      assert.equal(h.view.session.inspectorRequests[1].instructions, expected);
-    } finally { await h.dispose(); }
-  });
+for (const includeReadyWeapon of [false, true]) {
+  for (const includeAmmo of [false, true]) {
+    it(`serializes verified OpenRouter state (weapon=${includeReadyWeapon}, ammo=${includeAmmo}) independently of instructions`, async () => {
+      const h = fixture({ providerFactory: openRouterDecisionProviderFactory });
+      try {
+        await h.prepare();
+        h.ports.readDecisionConfiguration = () => ({ ...defaultDecisionConfiguration, includeReadyWeapon, includeAmmo });
+        const capture = h.ports.capture;
+        h.ports.capture = () => ({ ...capture(), png });
+        const payloads = [];
+        vi.stubGlobal('fetch', async (request: Request) => {
+          assert.equal(request.url, 'https://openrouter.ai/api/alpha/decisions');
+          payloads.push(await request.json());
+          return response(answer('neutral'));
+        });
+        assert.equal(await h.next(), 'completed');
+        assert.equal(payloads.length, 1);
+        const expectedState = ['Current rendered Doom E1M1 frame at verified tic 1.'];
+        if (includeReadyWeapon) expectedState.push('Ready weapon: pistol (id: 1; ammo type: bullets)');
+        if (includeAmmo) expectedState.push('Ammo: bullets 50/200; shells 0/50; cells 0/300; rockets 0/50');
+        assert.deepEqual(payloads[0].state, [expectedState.join('\n'), { type: 'image_url', image_url: { url: png } }]);
+        assert.equal(payloads[0].questions.next_action.instructions, defaultDecisionInstructionTemplate.replaceAll('{{tics}}', '6'));
+        assert.deepEqual(Object.keys(payloads[0].questions.next_action.criteria), actions);
+        assert.equal(h.view.session.inspectorRequests[1].context, expectedState.join('\n'));
+        assert.equal(h.view.session.inspectorRequests[1].instructions, payloads[0].questions.next_action.instructions);
+      } finally { await h.dispose(); }
+    });
+  }
 }
 
 for (const mode of ['manual', 'continuous'] as const) {
-  it(`resolves telemetry from each verified ${mode} observation while preserving template admission and history`, async () => {
+  it.each([false, true])(`snapshots configuration before the first await and retains verified ${mode} state and history (initial ammo=%s)`, async (initialAmmo) => {
     const h = fixture({
       providerFactory: openRouterDecisionProviderFactory, at: 1,
       signals: {
@@ -495,16 +500,19 @@ for (const mode of ['manual', 'continuous'] as const) {
         },
       },
     });
-    const initialTemplate = '{{tics}} tics\nReady weapon: {{readyWeapon}}\nAmmo: {{ammo}}';
-    let saved = initialTemplate;
-    h.ports.readInstructionTemplate = () => saved;
+    // Mutate the returned object too: admission must own a copy, not a reference.
+    const saved = { instructionTemplate: '{{tics}} tics. Again {{tics}}.', includeReadyWeapon: !initialAmmo, includeAmmo: initialAmmo };
+    const readConfiguration = vi.fn(() => saved);
+    h.ports.readDecisionConfiguration = readConfiguration;
     const payloads = [];
     const history = [];
-    let barrier, pending;
+    const screenshots = [png, `data:image/png;base64,${btoa(atob(base64) + 'second')}`];
+    let barrier, pending, captures = 0;
     try {
       await h.prepare();
+      assert.equal(readConfiguration.mock.calls.length, 0);
       const capture = h.ports.capture;
-      h.ports.capture = () => ({ ...capture(), png });
+      h.ports.capture = () => ({ ...capture(), png: screenshots[captures++] });
       vi.stubGlobal('fetch', async (request: Request) => {
         assert.equal(request.url, 'https://openrouter.ai/api/alpha/decisions');
         payloads.push(await request.json());
@@ -515,32 +523,48 @@ for (const mode of ['manual', 'continuous'] as const) {
       h.browserInputs.budget = 2;
       barrier = h.hold('snapshot');
       pending = mode === 'manual' ? h.next() : h.start();
+      assert.equal(readConfiguration.mock.calls.length, 1, 'Whole configuration captured synchronously');
       await barrier.waiting;
       assert.equal(payloads.length, 0);
-      saved = `Next ${initialTemplate}`;
+      saved.instructionTemplate = 'Next {{tics}} tics';
+      saved.includeReadyWeapon = initialAmmo;
+      saved.includeAmmo = !initialAmmo;
       h.browserInputs.tics = 2;
       h.browserInputs.budget = 1000;
       assert.equal(await h.next(), 'not-admitted');
+      assert.equal(readConfiguration.mock.calls.length, 1, 'Rejected admissions do not sample configuration');
       barrier.release(); barrier = undefined;
       await pending;
       if (mode === 'manual') assert.equal(await h.next(), 'completed');
-      const expected = [
-        '1 tics\nReady weapon: pistol (id: 1; ammo type: bullets)\nAmmo: bullets 50/200; shells 0/50; cells 0/300; rockets 0/50',
-        'Next 2 tics\nReady weapon: rocket_launcher (id: 4; ammo type: rockets)\nAmmo: bullets 11/111; shells 22/222; cells 33/333; rockets 44/444',
+      const instructions = ['1 tics. Again 1.', 'Next 2 tics'];
+      const states = [
+        'Current rendered Doom E1M1 frame at verified tic 1.' + (!initialAmmo ? '\nReady weapon: pistol (id: 1; ammo type: bullets)' : '') + (initialAmmo ? '\nAmmo: bullets 50/200; shells 0/50; cells 0/300; rockets 0/50' : ''),
+        'Current rendered Doom E1M1 frame at verified tic 2.' + (initialAmmo ? '\nReady weapon: rocket_launcher (id: 4; ammo type: rockets)' : '') + (!initialAmmo ? '\nAmmo: bullets 11/111; shells 22/222; cells 33/333; rockets 44/444' : ''),
       ];
       assert.equal(payloads.length, 2);
-      for (const [index, instructions] of expected.entries()) {
+      assert.equal(readConfiguration.mock.calls.length, 2);
+      for (const [index, text] of instructions.entries()) {
         const wire = payloads[index].questions.next_action;
-        assert.equal(wire.instructions, instructions);
+        assert.equal(wire.instructions, text);
         assert.deepEqual(Object.keys(wire.criteria), actions);
-        assert.equal(h.view.session.inspectorRequests[index + 1].instructions, instructions);
+        assert.deepEqual(payloads[index].state, [states[index], { type: 'image_url', image_url: { url: screenshots[index] } }]);
+        const request = h.view.session.inspectorRequests[index + 1];
+        assert.equal(request.instructions, text);
+        assert.equal(request.context, states[index]);
+        assert.equal(request.png, screenshots[index]);
         const entry = h.view.session.evidence.decisions[index];
         assert.equal(entry.observation.tic, index + 1);
+        assert.equal(entry.selectedTics, index + 1);
         assert.equal(entry.execution.independentlyVerifiedTics, index + 1);
         assert.equal(entry.result.nativeSha256, entry.result.canvasSha256);
       }
+      saved.instructionTemplate = 'Later edit'; saved.includeAmmo = false;
       assert.equal(h.view.session.inspectorRequests[1], history[0][1]);
-      assert.equal(history[0][1].instructions, expected[0]);
+      assert.equal(history[0][1].instructions, instructions[0]);
+      assert.equal(history[0][1].context, states[0]);
+      assert.equal(history[0][1].png, screenshots[0]);
+      assert.equal(history[0][2], undefined);
+      assert.equal(Object.isFrozen(history[0]), true);
       assert.equal(Object.isFrozen(history[0][1]), true);
       assert.deepEqual(h.actions, [{ mask: 0, tics: 1 }, { mask: 0, tics: 1 }, { mask: 0, tics: 2 }]);
       if (mode === 'continuous') {

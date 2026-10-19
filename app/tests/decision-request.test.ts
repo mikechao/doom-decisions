@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildDefaultDecisionRequest,
+  defaultDecisionConfiguration,
   defaultDecisionInstructionTemplate,
   resolveDecisionInstructions,
 } from '../src/decision-request.ts';
@@ -30,7 +31,7 @@ describe('buildDefaultDecisionRequest', () => {
             content: [
               {
                 type: 'input_text',
-                text: `This is the currently rendered Doom E1M1 frame at verified tic ${tic}. You have only this image, not full game state.`,
+                text: `Current rendered Doom E1M1 frame at verified tic ${tic}.`,
               },
               { type: 'input_image', image_url: png },
             ],
@@ -103,7 +104,7 @@ it('resolves every literal {{tics}} and preserves other template text', () => {
       ['Fire for {{tics}} tics; choose wisely.', `Fire for ${n} tics; choose wisely.`],
       ['  {{tics}} tics.\nAgain: {{tics}}. {{unknown}}  ', `  ${n} tics.\nAgain: ${n}. {{unknown}}  `],
     ]) {
-      const input = buildDefaultDecisionRequest(73, n, 'data:image/png;base64,local', undefined, template);
+      const input = buildDefaultDecisionRequest(73, n, 'data:image/png;base64,local', undefined, { ...defaultDecisionConfiguration, instructionTemplate: template });
       expect(input.instructions).toBe(expected);
       const wire = encodeOpenAIDecisionRequest(input);
       expect(wire.questions[0].instructions).toBe(expected);
@@ -112,7 +113,30 @@ it('resolves every literal {{tics}} and preserves other template text', () => {
   }
 });
 
-it('resolves only explicitly requested player telemetry in deterministic order', () => {
+it('keeps obsolete telemetry placeholders literal, even when state telemetry is enabled', () => {
+  const instructionTemplate = '{{tics}} {{readyWeapon}} {{ammo}} {{tics}}';
+  const input = buildDefaultDecisionRequest(73, 6, 'data:image/png;base64,local', undefined, {
+    instructionTemplate, includeReadyWeapon: true, includeAmmo: true,
+  });
+  expect(input.instructions).toBe('6 {{readyWeapon}} {{ammo}} 6');
+  expect(encodeOpenAIDecisionRequest(input).questions[0].instructions).toBe(input.instructions);
+});
+
+it('reports unavailable state telemetry explicitly without inventing weapon or ammo values', () => {
+  const configuration = { ...defaultDecisionConfiguration, includeReadyWeapon: true, includeAmmo: true };
+  const request = telemetry => buildDefaultDecisionRequest(73, 6, 'data:image/png;base64,local', undefined, configuration, telemetry);
+  expect(request(undefined).context).toBe(
+    'Current rendered Doom E1M1 frame at verified tic 73.\nReady weapon: unavailable\nAmmo: bullets unavailable/unavailable; shells unavailable/unavailable; cells unavailable/unavailable; rockets unavailable/unavailable',
+  );
+  expect(request({
+    readyWeapon: { id: -1, name: 'unknown', ammoType: 'unknown' }, ammo: null,
+  }).context).toContain('Ready weapon: unavailable (id: unavailable; ammo type: unavailable)');
+  expect(request({
+    readyWeapon: { id: 0, name: 'fist', ammoType: 'none' }, ammo: null,
+  }).context).toContain('Ready weapon: fist (id: 0; ammo type: none)');
+});
+
+it('forwards optional state and exact resolved instructions through the real OpenAI SDK to fake-fetch JSON', async () => {
   const telemetry = {
     readyWeapon: { id: 2, name: 'shotgun', ammoType: 'shells' },
     ammo: {
@@ -120,30 +144,34 @@ it('resolves only explicitly requested player telemetry in deterministic order',
       cells: { current: 123, max: 301 }, rockets: { current: 9, max: 52 },
     },
   } as const;
-  const weapon = 'shotgun (id: 2; ammo type: shells)';
-  const ammo = 'bullets 13/201; shells 7/51; cells 123/301; rockets 9/52';
-  for (const [template, expected] of [
-    ['Use fire', 'Use fire'],
-    ['Ready weapon: {{readyWeapon}}', `Ready weapon: ${weapon}`],
-    ['Ammo: {{ammo}}', `Ammo: ${ammo}`],
-    ['  {{tics}}: {{readyWeapon}}\n{{ammo}}\n{{readyWeapon}} {{ammo}}  ', `  6: ${weapon}\n${ammo}\n${weapon} ${ammo}  `],
-  ]) {
-    const input = buildDefaultDecisionRequest(73, 6, 'data:image/png;base64,local', undefined, template, telemetry);
-    expect(input.instructions).toBe(expected);
-    expect(encodeOpenAIDecisionRequest(input).questions[0].instructions).toBe(expected);
-  }
-});
-
-it('reports unavailable telemetry explicitly without inventing weapon or ammo values', () => {
-  expect(resolveDecisionInstructions(6, 'Ready weapon: {{readyWeapon}}\nAmmo: {{ammo}}')).toBe(
-    'Ready weapon: unavailable\nAmmo: bullets unavailable/unavailable; shells unavailable/unavailable; cells unavailable/unavailable; rockets unavailable/unavailable',
-  );
-  expect(resolveDecisionInstructions(6, '{{readyWeapon}}', {
-    readyWeapon: { id: -1, name: 'unknown', ammoType: 'unknown' }, ammo: null,
-  })).toBe('unavailable (id: unavailable; ammo type: unavailable)');
-  expect(resolveDecisionInstructions(6, '{{readyWeapon}}', {
-    readyWeapon: { id: 0, name: 'fist', ammoType: 'none' }, ammo: null,
-  })).toBe('fist (id: 0; ammo type: none)');
+  const png = 'data:image/png;base64,local';
+  try {
+    for (const includeReadyWeapon of [false, true]) {
+      for (const includeAmmo of [false, true]) {
+        const configuration = { instructionTemplate: '  Use {{tics}} tics. Again {{tics}}.  ', includeReadyWeapon, includeAmmo };
+        const fetch = vi.fn(async (_url, init) => {
+          const wire = JSON.parse(init.body);
+          const expected = ['Current rendered Doom E1M1 frame at verified tic 73.'];
+          if (includeReadyWeapon) expected.push('Ready weapon: shotgun (id: 2; ammo type: shells)');
+          if (includeAmmo) expected.push('Ammo: bullets 13/201; shells 7/51; cells 123/301; rockets 9/52');
+          expect(wire.input).toEqual([{ role: 'user', content: [
+            { type: 'input_text', text: expected.join('\n') },
+            { type: 'input_image', image_url: png },
+          ] }]);
+          expect(wire.questions[0].instructions).toBe('  Use 6 tics. Again 6.  ');
+          expect(wire.questions[0].choices).toEqual(['neutral', 'forward', 'turn_right', 'backward', 'turn_left', 'fire', 'use'].map(value => ({ value })));
+          return new Response(JSON.stringify({ answers: [{ type: 'choice', name: 'next_action', choice: 'neutral' }] }), { headers: { 'content-type': 'application/json' } });
+        });
+        vi.stubGlobal('fetch', fetch);
+        const provider = openAiDecisionProviderFactory.create('offline-not-a-credential');
+        const lifecycle = {};
+        await provider.request(buildDefaultDecisionRequest(73, 6, png, undefined, configuration, telemetry), lifecycle, { requestId: null, http: null, latencyMs: null },
+          { assertFresh() {}, beforeCreate() {}, onReadStateChange() {} }, performance.now());
+        await lifecycle.sdkRead;
+        expect(fetch).toHaveBeenCalledTimes(1);
+      }
+    }
+  } finally { vi.unstubAllGlobals(); }
 });
 
 it('builds only immutable domain evidence without telemetry or wire fields', () => {

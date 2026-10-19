@@ -5,7 +5,7 @@ import { TypeSafeClient } from '@typesafe-ai/sdk';
 import { afterEach, beforeEach, it, vi } from 'vitest';
 import { DecisionFailure, validateChoice } from '../src/decision.ts';
 import type { DecisionDiagnostics, DecisionLifecycle } from '../src/decision-provider.ts';
-import { buildDefaultDecisionRequest } from '../src/decision-request.ts';
+import { buildDefaultDecisionRequest, defaultDecisionConfiguration } from '../src/decision-request.ts';
 import {
   decodeJevDecision,
   jevDecisionProviderFactory,
@@ -23,7 +23,7 @@ const actions = ['neutral', 'forward', 'turn_right', 'backward', 'turn_left', 'f
 const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=';
 const png = `data:image/png;base64,${base64}`;
 const template = '  Fire for {{tics}} tics.\nUse fire.  ';
-const input = () => buildDefaultDecisionRequest(73, 6, png, undefined, template);
+const input = () => buildDefaultDecisionRequest(73, 6, png, undefined, { ...defaultDecisionConfiguration, instructionTemplate: template });
 const answer = (action: unknown = 'forward') => ({
   model: 'jev-1.14.0',
   answers: {
@@ -74,7 +74,13 @@ it('fails closed outside Jev development, even for a previously created provider
   assert.equal(fetch.mock.calls.length, 0);
 });
 
-it('uses one charged SDK invocation with unchanged PNG, prompt, context and seven ordered choices', async () => {
+it.each([false, true])('uses one charged SDK invocation preserving PNG, instructions and optional state=%s', async (includeTelemetry) => {
+  const requestInput = buildDefaultDecisionRequest(73, 6, png, undefined, {
+    instructionTemplate: template, includeReadyWeapon: includeTelemetry, includeAmmo: includeTelemetry,
+  }, {
+    readyWeapon: { id: 1, name: 'pistol', ammoType: 'bullets' },
+    ammo: { bullets: { current: 49, max: 200 }, shells: { current: 0, max: 50 }, cells: { current: 0, max: 300 }, rockets: { current: 0, max: 50 } },
+  });
   let calls = 0;
   let charges = 0;
   const original = TypeSafeClient.prototype.systemOne;
@@ -110,7 +116,7 @@ it('uses one charged SDK invocation with unchanged PNG, prompt, context and seve
     assert.equal(typeof metadata, 'string');
     const payload = JSON.parse(metadata);
     assert.equal(payload.model, 'jev-1.14.0');
-    assert.equal(payload.state.context, input().context);
+    assert.equal(payload.state.context, 'Current rendered Doom E1M1 frame at verified tic 73.' + (includeTelemetry ? '\nReady weapon: pistol (id: 1; ammo type: bullets)\nAmmo: bullets 49/200; shells 0/50; cells 0/300; rockets 0/50' : ''));
     assert.deepEqual(Object.keys(payload.questions), ['next_action']);
     assert.deepEqual(payload.questions.next_action, {
       type: 'choice', instructions: input().instructions,
@@ -132,7 +138,7 @@ it('uses one charged SDK invocation with unchanged PNG, prompt, context and seve
   const diagnostics = { requestId: null, http: null, latencyMs: null };
   try {
     const pending = jevDecisionProviderFactory.create('offline-not-a-credential').request(
-      input(), lifecycle, diagnostics,
+      requestInput, lifecycle, diagnostics,
       { assertFresh() {}, beforeCreate() { ++charges; }, onReadStateChange() {} },
       performance.now(),
     );

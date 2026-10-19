@@ -554,6 +554,11 @@ summary:hover {
   display: grid;
   gap: 0.375rem;
 }
+.prompt-field > h3 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
 #prompt-instructions {
   width: 100%;
   min-width: 0;

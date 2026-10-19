@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, it, vi } from 'vitest';
-import { defaultDecisionInstructionTemplate } from '../src/decision-request.ts';
+import { defaultDecisionConfiguration, defaultDecisionInstructionTemplate } from '../src/decision-request.ts';
 
 const session = vi.hoisted(() => ({
   ports: undefined,
@@ -139,7 +139,7 @@ async function mount(mode = 'test', dev = true) {
   document.querySelector('#game-model').hidden = true;
   elements.set('#prompt-dialog', new Dialog());
   const promptButton = document.querySelector('#view-prompt');
-  promptButton.textContent = 'Edit Prompt';
+  promptButton.textContent = 'Configure AI Decision';
   promptButton.setAttribute('aria-haspopup', 'dialog');
   promptButton.setAttribute('aria-controls', 'prompt-dialog');
   vi.stubGlobal('document', document);
@@ -379,23 +379,27 @@ describe('Decision instructions editor', () => {
   it('labels the native dialog, textarea, validation and explicit actions without a form', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     const dialog = html.match(/<dialog id="prompt-dialog"[\s\S]*?<\/dialog>/)[0];
-    assert.match(html, /<doom-button id="view-prompt" appearance="outline" aria-haspopup="dialog" aria-controls="prompt-dialog">Edit Prompt<\/doom-button>/);
+    assert.match(html, /<doom-button id="view-prompt" appearance="outline" aria-haspopup="dialog" aria-controls="prompt-dialog">Configure AI Decision<\/doom-button>/);
     assert.match(dialog, /aria-labelledby="prompt-title" aria-describedby="prompt-description"/);
-    assert.match(dialog, /<h2 id="prompt-title">Edit Prompt<\/h2>/);
+    assert.match(dialog, /<h2 id="prompt-title">Configure AI Decision<\/h2>/);
     assert.match(dialog, /<label for="prompt-instructions">Decision instructions<\/label>/);
-    assert.match(dialog, /<textarea id="prompt-instructions"[^>]*aria-describedby="prompt-description prompt-error"[^>]*autofocus/);
+    assert.match(dialog, /<textarea id="prompt-instructions"[^>]*aria-describedby="prompt-instructions-note prompt-error"[^>]*autofocus/);
     assert.match(dialog, /<p id="prompt-error"[^>]*role="alert" hidden>/);
     assert.match(dialog, /id="save-prompt"[^>]*>Save</);
     assert.match(dialog, /id="close-prompt"[^>]*>Cancel</);
     assert.match(dialog, /id="reset-prompt"[^>]*>Reset to Default</);
-    assert.match(dialog, /full text sent as next_action\.instructions/);
+    assert.match(dialog, /Edit exactly questions\.next_action\.instructions/);
     assert.match(dialog, /Each \{\{tics\}\} is replaced with the tic count captured/);
-    assert.match(dialog, /no other text is added/);
-    assert.match(dialog, /app still enforces allowed actions and actual tic duration/);
-    assert.match(dialog, /role="group" aria-label="Include player telemetry" aria-describedby="prompt-telemetry-note"/);
+    assert.match(dialog, /no instructions are appended/);
+    assert.match(dialog, /app controls available actions and tic duration/);
+    assert.match(dialog, /role="group" aria-label="Optional game state" aria-describedby="prompt-telemetry-note"/);
     assert.match(dialog, /<label><input id="prompt-ready-weapon" type="checkbox"> Ready weapon<\/label>/);
     assert.match(dialog, /<label><input id="prompt-ammo" type="checkbox"> Ammo<\/label>/);
-    assert.match(dialog, /\{\{readyWeapon\}\} and \{\{ammo\}\} use the verified frame for each decision/);
+    assert.match(dialog, /Choose what the AI can observe and how it should decide/);
+    assert.match(dialog, /Current verified screenshot and tic — always included/);
+    assert.match(dialog, /sampled from the verified observation for each decision and included in state/);
+    assert.ok(dialog.indexOf('Game state</h3>') < dialog.indexOf('Decision instructions</label>'));
+    assert.doesNotMatch(dialog, /readyWeapon|\{\{ammo\}\}|add or remove/);
     assert.match(dialog, /Continuous mode keeps running/);
     assert.doesNotMatch(dialog, /<form|contenteditable/);
   });
@@ -419,7 +423,7 @@ describe('Decision instructions editor', () => {
       assert.ok(field.value.endsWith('Do not assume unseen game state.'));
       field.value = 'Unsaved draft';
       emit(field, 'input');
-      assert.equal(session.ports.readInstructionTemplate(), defaultDecisionInstructionTemplate);
+      assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, defaultDecisionInstructionTemplate);
       dismiss();
       assert.equal(dialog.open, false);
       assert.equal(document.activeElement, button);
@@ -438,7 +442,7 @@ describe('Decision instructions editor', () => {
     element('#prompt-instructions').value = template;
     emit(element('#save-prompt'), 'click');
     assert.equal(element('#prompt-dialog').open, false);
-    assert.equal(session.ports.readInstructionTemplate(), template);
+    assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, template);
     assert.equal(document.activeElement, element('#view-prompt'));
     emit(element('#view-prompt'), 'click');
     assert.equal(element('#prompt-instructions').value, template);
@@ -460,9 +464,9 @@ describe('Decision instructions editor', () => {
       emit(element('#reset-prompt'), 'click');
       assert.equal(field.value, defaultDecisionInstructionTemplate);
       assert.equal(document.activeElement, field);
-      assert.equal(session.ports.readInstructionTemplate(), 'Use fire.');
+      assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, 'Use fire.');
       emit(element(save ? '#save-prompt' : '#close-prompt'), 'click');
-      assert.equal(session.ports.readInstructionTemplate(), save ? defaultDecisionInstructionTemplate : 'Use fire.');
+      assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, save ? defaultDecisionInstructionTemplate : 'Use fire.');
     }
   });
 
@@ -471,12 +475,14 @@ describe('Decision instructions editor', () => {
     const button = element('#view-prompt');
     emit(button, 'click');
     const error = element('#prompt-error');
+    element('#prompt-ammo').checked = true;
     for (const value of ['', ' \n\t ']) {
       field.value = value;
       emit(element('#save-prompt'), 'click');
       assert.equal(element('#prompt-dialog').open, true);
-      assert.equal(session.ports.readInstructionTemplate(), defaultDecisionInstructionTemplate);
+      assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, defaultDecisionInstructionTemplate);
       assert.equal(field.attributes.get('aria-invalid'), 'true');
+      assert.deepEqual(session.ports.readDecisionConfiguration(), defaultDecisionConfiguration);
       assert.equal(error.hidden, false);
       assert.equal(error.textContent, 'Enter decision instructions before saving.');
       assert.equal(document.activeElement, field);
@@ -507,14 +513,14 @@ describe('Decision instructions editor', () => {
     element('#tics').valueAsNumber = 35;
     emit(element('#tics'), 'input');
     assert.equal(element('#prompt-instructions').value, 'Explore carefully');
-    assert.equal(session.ports.readInstructionTemplate(), defaultDecisionInstructionTemplate);
+    assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, defaultDecisionInstructionTemplate);
     emit(element('#save-prompt'), 'click');
-    assert.equal(session.ports.readInstructionTemplate(), 'Explore carefully');
+    assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, 'Explore carefully');
     assert.equal(session.ports.readTics(), 35);
     assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
   });
 
-  it('toggles visible telemetry lines without duplicates, hidden state or controller/transport work', () => {
+  it('toggles optional state independently without editing instructions or invoking controller/transport work', () => {
     const calls = Object.values(session.controller).map(method => method.mock.calls.length);
     const transport = vi.fn(() => { throw Error('Unexpected transport'); });
     vi.stubGlobal('fetch', transport);
@@ -522,18 +528,15 @@ describe('Decision instructions editor', () => {
     const field = element('#prompt-instructions');
     field.value = 'Use fire\n';
     emit(field, 'input');
-    for (const [id, line] of [
-      ['#prompt-ready-weapon', 'Ready weapon: {{readyWeapon}}'],
-      ['#prompt-ammo', 'Ammo: {{ammo}}'],
-    ]) {
+    for (const id of ['#prompt-ready-weapon', '#prompt-ammo']) {
       const checkbox = element(id);
       assert.equal(checkbox.checked, false);
       checkbox.checked = true;
       emit(checkbox, 'change');
       emit(checkbox, 'change');
-      assert.equal(field.value.split(line).length, 2, 'Only one managed line');
+      assert.equal(field.value, 'Use fire\n', 'Toggles never edit instructions');
       assert.equal(checkbox.disabled, false);
-      assert.equal(session.ports.readInstructionTemplate(), defaultDecisionInstructionTemplate);
+      assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, defaultDecisionInstructionTemplate);
     }
     for (const id of ['#prompt-ready-weapon', '#prompt-ammo']) {
       element(id).checked = false;
@@ -541,7 +544,7 @@ describe('Decision instructions editor', () => {
     }
     assert.equal(field.value, 'Use fire\n', 'Unrelated text and trailing newline survive toggling');
     emit(element('#save-prompt'), 'click');
-    assert.equal(session.ports.readInstructionTemplate(), 'Use fire\n');
+    assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, 'Use fire\n');
     assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
     assert.equal(transport.mock.calls.length, 0);
   });
@@ -555,9 +558,13 @@ describe('Decision instructions editor', () => {
       checkbox.checked = true;
       emit(checkbox, 'change');
     }
+    field.value = 'Saved instructions for {{tics}}';
     const saved = field.value;
     emit(element('#save-prompt'), 'click');
-    assert.equal(session.ports.readInstructionTemplate(), saved);
+    const savedConfiguration = session.ports.readDecisionConfiguration();
+    assert.deepEqual(savedConfiguration, { instructionTemplate: saved, includeReadyWeapon: true, includeAmmo: true });
+    assert.equal(Object.isFrozen(savedConfiguration), true);
+    assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, saved);
     for (const dismiss of [
       () => emit(element('#close-prompt'), 'click'),
       () => element('#prompt-dialog').escape(),
@@ -569,7 +576,10 @@ describe('Decision instructions editor', () => {
         checkbox.checked = false;
         emit(checkbox, 'change');
       }
+      field.value = 'Discard these instructions too';
       dismiss();
+      assert.equal(session.ports.readDecisionConfiguration(), savedConfiguration);
+      assert.equal(document.activeElement, element('#view-prompt'));
       emit(element('#view-prompt'), 'click');
       assert.equal(field.value, saved);
       assert.equal(readyWeapon.checked, true);
@@ -581,32 +591,35 @@ describe('Decision instructions editor', () => {
     assert.equal(field.value, defaultDecisionInstructionTemplate);
     assert.equal(readyWeapon.checked, false);
     assert.equal(ammo.checked, false);
-    assert.equal(session.ports.readInstructionTemplate(), saved);
+    assert.equal(session.ports.readDecisionConfiguration(), savedConfiguration);
+    emit(element('#close-prompt'), 'click');
+    assert.equal(session.ports.readDecisionConfiguration(), savedConfiguration);
+    emit(element('#view-prompt'), 'click');
+    assert.equal(readyWeapon.checked, true);
+    assert.equal(ammo.checked, true);
+    emit(element('#reset-prompt'), 'click');
     emit(element('#save-prompt'), 'click');
-    assert.equal(session.ports.readInstructionTemplate(), defaultDecisionInstructionTemplate);
+    assert.deepEqual(session.ports.readDecisionConfiguration(), defaultDecisionConfiguration);
+    assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, defaultDecisionInstructionTemplate);
   });
 
-  it('derives checkboxes from manual placeholder edits and protects custom prose from removal', () => {
+  it('leaves obsolete telemetry tokens literal and independent from checkboxes', () => {
     emit(element('#view-prompt'), 'click');
     const field = element('#prompt-instructions');
-    const readyWeapon = element('#prompt-ready-weapon');
-    const ammo = element('#prompt-ammo');
     field.value = 'Choose with {{readyWeapon}} and {{ammo}}. Keep this text.';
     emit(field, 'input');
-    for (const checkbox of [readyWeapon, ammo]) {
-      assert.equal(checkbox.checked, true);
-      assert.equal(checkbox.disabled, true, 'Custom placeholders are edited in the textarea');
+    for (const id of ['#prompt-ready-weapon', '#prompt-ammo']) {
+      const checkbox = element(id);
+      assert.equal(checkbox.checked, false);
+      assert.equal(checkbox.disabled, false);
+      checkbox.checked = true;
+      emit(checkbox, 'change');
     }
     assert.equal(field.value, 'Choose with {{readyWeapon}} and {{ammo}}. Keep this text.');
-    field.value = 'Keep this text.\nReady weapon: {{readyWeapon}}\nReady weapon: {{readyWeapon}}';
-    emit(field, 'input');
-    assert.equal(readyWeapon.disabled, false);
-    assert.equal(ammo.checked, false);
-    readyWeapon.checked = false;
-    emit(readyWeapon, 'change');
-    assert.equal(field.value, 'Keep this text.');
-    assert.equal(readyWeapon.checked, false);
-    assert.equal(ammo.disabled, false);
+    emit(element('#save-prompt'), 'click');
+    assert.deepEqual(session.ports.readDecisionConfiguration(), {
+      instructionTemplate: field.value, includeReadyWeapon: true, includeAmmo: true,
+    });
   });
 });
 
