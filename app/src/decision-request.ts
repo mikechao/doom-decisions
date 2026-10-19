@@ -68,7 +68,7 @@ export function formatDecisionState(
   telemetry?: StateTelemetry,
 ): string {
   const context = [
-    `Current rendered Doom E1M1 frame at verified tic ${verifiedTic}.`,
+    `Current rendered Doom frame at verified tic ${verifiedTic}.`,
   ];
   if (configuration.includeReadyWeapon)
     context.push(
