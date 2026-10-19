@@ -54,14 +54,14 @@ export function resolveDecisionInstructions(
   return template.replace(/\{\{tics\}\}/g, String(tics));
 }
 
-export function buildDefaultDecisionRequest(
+export function formatDecisionState(
   verifiedTic: number,
-  tics: number,
-  png: string,
-  permittedActions: readonly ActionName[] = Object.keys(masks) as ActionName[],
-  configuration = defaultDecisionConfiguration,
+  configuration: Pick<
+    DecisionConfiguration,
+    'includeReadyWeapon' | 'includeAmmo'
+  > = defaultDecisionConfiguration,
   telemetry?: StateTelemetry,
-): DecisionRequest {
+): string {
   const context = [
     `Current rendered Doom E1M1 frame at verified tic ${verifiedTic}.`,
   ];
@@ -71,12 +71,23 @@ export function buildDefaultDecisionRequest(
     );
   if (configuration.includeAmmo)
     context.push(`Ammo: ${formatAmmo(telemetry?.ammo ?? null)}`);
+  return context.join('\n');
+}
+
+export function buildDefaultDecisionRequest(
+  verifiedTic: number,
+  tics: number,
+  png: string,
+  permittedActions: readonly ActionName[] = Object.keys(masks) as ActionName[],
+  configuration = defaultDecisionConfiguration,
+  telemetry?: StateTelemetry,
+): DecisionRequest {
   return Object.freeze({
     instructions: resolveDecisionInstructions(
       tics,
       configuration.instructionTemplate,
     ),
-    context: context.join('\n'),
+    context: formatDecisionState(verifiedTic, configuration, telemetry),
     png,
     permittedActions: Object.freeze([...permittedActions]),
   });

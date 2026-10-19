@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, it, vi } from 'vitest';
-import { defaultDecisionConfiguration, defaultDecisionInstructionTemplate } from '../src/decision-request.ts';
+import { buildDefaultDecisionRequest, defaultDecisionConfiguration, defaultDecisionInstructionTemplate, formatDecisionState } from '../src/decision-request.ts';
+import { observation } from './fixtures/synthetic-doom.ts';
 
 const session = vi.hoisted(() => ({
   ports: undefined,
@@ -138,6 +139,7 @@ async function mount(mode = 'test', dev = true) {
   tics.valueAsNumber = 6;
   document.querySelector('#game-model').hidden = true;
   elements.set('#prompt-dialog', new Dialog());
+  document.querySelector('#prompt-state-preview').open = false;
   const promptButton = document.querySelector('#view-prompt');
   promptButton.textContent = 'Configure AI Decision';
   promptButton.setAttribute('aria-haspopup', 'dialog');
@@ -376,6 +378,85 @@ it('production with Jev mode honors the explicit OpenAI key opt-in', async () =>
 });
 
 describe('Decision instructions editor', () => {
+  it('uses a closed native state disclosure and an explicit empty preview without starting work', () => {
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    const disclosure = html.match(/<details id="prompt-state-preview">[\s\S]*?<\/details>/)?.[0];
+    assert.ok(disclosure, 'No open attribute: closed by default');
+    assert.match(disclosure, /<summary>State preview<\/summary>/);
+    assert.match(disclosure, /<pre id="prompt-state-preview-text"><\/pre>/);
+    assert.match(disclosure, /The screenshot is included separately\. Future decisions obtain their own verified observation\./);
+    assert.doesNotMatch(disclosure, /textarea|input|contenteditable/);
+    assert.ok(html.indexOf('id="prompt-telemetry-note" class=') < html.indexOf(disclosure));
+    assert.ok(html.indexOf(disclosure) < html.indexOf('for="prompt-instructions"'));
+    const calls = Object.values(session.controller).map(method => method.mock.calls.length);
+    const transport = vi.fn(() => assert.fail('Preview must not use transport'));
+    vi.stubGlobal('fetch', transport);
+    const saved = session.ports.readDecisionConfiguration();
+    emit(element('#view-prompt'), 'click');
+    assert.equal(element('#prompt-state-preview').open, false);
+    element('#prompt-state-preview').open = true; // Simulate native summary activation.
+    emit(element('#prompt-state-preview'), 'toggle');
+    element('#prompt-ammo').checked = true;
+    emit(element('#prompt-ammo'), 'change');
+    assert.equal(element('#prompt-state-preview-note').textContent, 'Preview available after a verified game observation.');
+    assert.equal(element('#prompt-state-preview-text').textContent, '');
+    assert.equal(session.ports.readDecisionConfiguration(), saved);
+    assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
+    assert.equal(transport.mock.calls.length, 0);
+  });
+
+  it('formats verified data with every draft selection and refreshes passively while preserving saved config and history', () => {
+    const native = observation(73).native;
+    const verified = { tic: 73, readyWeapon: native.readyWeapon, ammo: native.ammo };
+    const historical = buildDefaultDecisionRequest(1, 6, 'data:image/png;base64,historical');
+    const requests = Object.freeze({ 1: historical });
+    show({ inspectorRequests: requests });
+    session.ports.present({ verifiedObservation: verified });
+    const calls = Object.values(session.controller).map(method => method.mock.calls.length);
+    const saved = session.ports.readDecisionConfiguration();
+    const originalRequest = JSON.stringify(historical);
+    emit(element('#view-prompt'), 'click');
+    element('#prompt-state-preview').open = true;
+    const assertPreview = (options, source = verified) => {
+      const expected = formatDecisionState(source.tic, options, source);
+      assert.equal(element('#prompt-state-preview-text').textContent, expected);
+      assert.equal(expected, buildDefaultDecisionRequest(source.tic, 6, historical.png, undefined, { ...saved, ...options }, source).context);
+      assert.equal(element('#prompt-state-preview-note').textContent, `Preview based on last verified observation at tic ${source.tic}.`);
+    };
+    for (const [includeReadyWeapon, includeAmmo] of [[false, false], [true, false], [false, true], [true, true]]) {
+      element('#prompt-ready-weapon').checked = includeReadyWeapon;
+      emit(element('#prompt-ready-weapon'), 'change');
+      element('#prompt-ammo').checked = includeAmmo;
+      emit(element('#prompt-ammo'), 'change');
+      assertPreview({ includeReadyWeapon, includeAmmo });
+      assert.equal(session.ports.readDecisionConfiguration(), saved);
+    }
+    // A new verified render during continuous play updates the draft preview.
+    const later = { ...verified, tic: 79, readyWeapon: null, ammo: null };
+    session.ports.present({ verifiedObservation: later });
+    assertPreview({ includeReadyWeapon: true, includeAmmo: true }, later);
+    emit(element('#reset-prompt'), 'click');
+    assertPreview(defaultDecisionConfiguration, later);
+    assert.equal(element('#prompt-state-preview').open, true, 'Reset leaves native disclosure state alone');
+    assert.equal(session.ports.readDecisionConfiguration(), saved);
+    for (const dismiss of [() => emit(element('#close-prompt'), 'click'), () => element('#prompt-dialog').escape()]) {
+      element('#prompt-ammo').checked = true;
+      emit(element('#prompt-ammo'), 'change');
+      dismiss();
+      assert.equal(session.ports.readDecisionConfiguration(), saved);
+      assert.equal(document.activeElement, element('#view-prompt'));
+      emit(element('#view-prompt'), 'click');
+      assertPreview(saved, later);
+      assert.equal(element('#prompt-state-preview').open, true);
+    }
+    emit(element('#save-prompt'), 'click');
+    assert.deepEqual(session.ports.readDecisionConfiguration(), saved);
+    assert.equal(element('#prompt-state-preview').open, true);
+    assert.equal(JSON.stringify(historical), originalRequest);
+    assert.equal(element('#decision-history').display.mock.calls.at(-1)[1], requests);
+    assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
+  });
+
   it('labels the native dialog, textarea, validation and explicit actions without a form', () => {
     const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
     const dialog = html.match(/<dialog id="prompt-dialog"[\s\S]*?<\/dialog>/)[0];

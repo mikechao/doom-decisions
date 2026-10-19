@@ -217,7 +217,7 @@
       </decision-history>
     </div>
     <dialog id="prompt-dialog" class="decision-prompt" aria-labelledby="prompt-title" aria-describedby="prompt-description">
-      <div class="decision-prompt-content">
+      <div class="decision-prompt-content" tabindex="0" role="region" aria-labelledby="prompt-title">
         <div class="decision-prompt-heading">
           <h2 id="prompt-title">Configure AI Decision</h2>
         </div>
@@ -230,6 +230,12 @@
             <label><input id="prompt-ammo" type="checkbox"> Ammo</label>
           </div>
           <p id="prompt-telemetry-note" class="help">Selected details update with each decision and are sent as <code>state</code>.</p>
+          <details id="prompt-state-preview">
+            <summary>State preview</summary>
+            <p id="prompt-state-preview-note" class="help">Preview available after a verified game observation.</p>
+            <pre id="prompt-state-preview-text"></pre>
+            <p class="help">Text in <code>state</code> for your draft selections. The screenshot is included separately. Future decisions obtain their own verified observation.</p>
+          </details>
         </section>
         <div class="prompt-field">
           <label for="prompt-instructions">Decision instructions</label>
@@ -238,11 +244,11 @@
           <p id="prompt-error" class="help" role="alert" hidden></p>
         </div>
         <p class="help">Changes apply to future decisions. Continuous Mode keeps running while this dialog is open.</p>
-        <div class="prompt-actions">
-          <doom-button id="reset-prompt" appearance="outline">Reset to Default</doom-button>
-          <doom-button id="close-prompt" appearance="outline">Cancel</doom-button>
-          <doom-button id="save-prompt" appearance="primary">Save</doom-button>
-        </div>
+      </div>
+      <div class="prompt-actions">
+        <doom-button id="reset-prompt" appearance="outline">Reset to Default</doom-button>
+        <doom-button id="close-prompt" appearance="outline">Cancel</doom-button>
+        <doom-button id="save-prompt" appearance="primary">Save</doom-button>
       </div>
     </dialog>
     <details class="advanced">

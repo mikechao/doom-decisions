@@ -148,6 +148,12 @@ export type SessionPresentation = Readonly<{
   status?: string;
   sdkStatus?: string;
   frameStatus?: string;
+  // Published only after the existing render/native/Canvas verification succeeds.
+  verifiedObservation?: ReadonlyData<{
+    tic: number;
+    readyWeapon: NativeObservation['readyWeapon'];
+    ammo: NativeObservation['ammo'];
+  }>;
   iwadEnabled?: boolean;
   session?: ReadonlyData<{
     phase: Phase;
@@ -346,6 +352,11 @@ export function createSessionController(
     run.evidence.frames.push(run.frame);
     ports.present({
       frameStatus: `E1M1 · tic ${run.verifiedTics} · 640×400 · RGBA SHA-256 ${canvasSha256}`,
+      verifiedObservation: structuredClone({
+        tic: run.verifiedTics,
+        readyWeapon: result.native.readyWeapon,
+        ammo: result.native.ammo,
+      }),
     });
   }
 

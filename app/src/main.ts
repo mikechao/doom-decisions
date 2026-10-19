@@ -7,6 +7,7 @@ import { deriveDecisionControls } from './decision-controls';
 import {
   defaultDecisionConfiguration,
   defaultDecisionInstructionTemplate,
+  formatDecisionState,
 } from './decision-request';
 import type { DecisionProviderFactory } from './decision-provider';
 import { defineDoomButton, type DoomButtonElement } from './doom-button';
@@ -95,6 +96,8 @@ type Elements = {
   '#prompt-instructions': HTMLTextAreaElement;
   '#prompt-ready-weapon': HTMLInputElement;
   '#prompt-ammo': HTMLInputElement;
+  '#prompt-state-preview-note': HTMLParagraphElement;
+  '#prompt-state-preview-text': HTMLPreElement;
   '#prompt-error': HTMLParagraphElement;
   '#decision-history': DecisionHistoryElement;
   '#outcome-number': HTMLSpanElement;
@@ -178,6 +181,7 @@ defineDecisionHistory();
 const history = $('#decision-history');
 type SessionRunPresentation = NonNullable<SessionPresentation['session']>;
 let latestSession: SessionRunPresentation | undefined;
+let latestVerifiedObservation: SessionPresentation['verifiedObservation'];
 let setupAutoCollapseDone = false;
 let keyCommitted = false;
 let setupPointerActive = false;
@@ -361,6 +365,10 @@ function recordedModelLabel(
   return '';
 }
 function display(view: SessionPresentation) {
+  if (view.verifiedObservation) {
+    latestVerifiedObservation = view.verifiedObservation;
+    updateStatePreview();
+  }
   if (view.sdkStatus !== undefined) $('#sdk').textContent = view.sdkStatus;
   if (view.frameStatus !== undefined)
     $('#frame').textContent = view.frameStatus;
@@ -598,12 +606,29 @@ function clearPromptError() {
   $('#prompt-error').hidden = true;
   $('#prompt-instructions').setAttribute('aria-invalid', 'false');
 }
+function updateStatePreview() {
+  const observation = latestVerifiedObservation;
+  $('#prompt-state-preview-note').textContent = observation
+    ? `Preview based on last verified observation at tic ${observation.tic}.`
+    : 'Preview available after a verified game observation.';
+  $('#prompt-state-preview-text').textContent = observation
+    ? formatDecisionState(
+        observation.tic,
+        {
+          includeReadyWeapon: $('#prompt-ready-weapon').checked,
+          includeAmmo: $('#prompt-ammo').checked,
+        },
+        observation,
+      )
+    : '';
+}
 function loadDecisionDraft() {
   $('#prompt-instructions').value =
     savedDecisionConfiguration.instructionTemplate;
   $('#prompt-ready-weapon').checked =
     savedDecisionConfiguration.includeReadyWeapon;
   $('#prompt-ammo').checked = savedDecisionConfiguration.includeAmmo;
+  updateStatePreview();
   clearPromptError();
 }
 $('#view-prompt').addEventListener('click', () => {
@@ -632,10 +657,13 @@ $('#reset-prompt').addEventListener('click', () => {
   $('#prompt-instructions').value = defaultDecisionInstructionTemplate;
   $('#prompt-ready-weapon').checked = false;
   $('#prompt-ammo').checked = false;
+  updateStatePreview();
   clearPromptError();
   $('#prompt-instructions').focus();
 });
 $('#prompt-instructions').addEventListener('input', clearPromptError);
+$('#prompt-ready-weapon').addEventListener('change', updateStatePreview);
+$('#prompt-ammo').addEventListener('change', updateStatePreview);
 $('#close-prompt').addEventListener('click', () => $('#prompt-dialog').close());
 $('#prompt-dialog').addEventListener('close', () => {
   if ($('#prompt-dialog').open) return;

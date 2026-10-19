@@ -262,7 +262,9 @@ describe('terminal', () => {
       { trapAt: 2 },
     ])
       await withSession(options, async (h) => {
+        const preview = h.view.verifiedObservation;
         assert.equal(await h.next(), 'retired');
+        assert.equal(h.view.verifiedObservation, preview, 'Unverified results never replace the preview');
         const session = h.view.session;
         assert.equal(session.evidence.decisions[0].stage, 'ended');
         assert.equal(session.controls.ready, false);

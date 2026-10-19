@@ -312,6 +312,11 @@ it('presents player telemetry from preparation snapshots through action and rend
     assert.equal(initial.result.native.readyWeapon, null);
     assert.equal(initial.result.native.ammo, null);
     const before = h.native.observe();
+    const previewBefore = h.view.verifiedObservation;
+    assert.deepEqual(previewBefore, {
+      tic: 1, readyWeapon: before.native.readyWeapon, ammo: before.native.ammo,
+    });
+    assert.notEqual(previewBefore.ammo, prepared.evidence.operations.at(-1).result.native.ammo);
     for (const { op, result } of prepared.evidence.operations) {
       if (op === 'snapshot' || op === 'render' || op === 'prepare') {
         assert.equal(result.native.health, 100);
@@ -332,6 +337,12 @@ it('presents player telemetry from preparation snapshots through action and rend
     const rendered = presented.evidence.operations.at(-1);
     assert.equal(rendered.op, 'render');
     assert.equal(rendered.result.counters.gametic, 2);
+    assert.deepEqual(h.view.verifiedObservation, {
+      tic: 2, readyWeapon: telemetry.readyWeapon, ammo: telemetry.ammo,
+    });
+    assert.notEqual(h.view.verifiedObservation.ammo, rendered.result.native.ammo);
+    assert.equal(previewBefore.tic, 1);
+    assert.equal(previewBefore.ammo.rockets.current, 0, 'Prior preview stays detached');
     for (const native of [
       action.native,
       action.steps[0].native,
