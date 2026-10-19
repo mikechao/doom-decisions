@@ -145,8 +145,6 @@ if (openRouterMode) {
   $('#key').hidden = true;
   $('#key-label').textContent = 'Temporary OpenRouter API key';
   $('#openrouter-key-settings').hidden = false;
-  $('#key-note').textContent =
-    "Sign-in authorizes OpenRouter to issue an API key for Doom Decisions. The key stays in page memory, not localStorage. Refresh clears the app's local access but does not revoke the issued key. Screenshots, context, instructions and decisions go directly to OpenRouter and may be sent to its selected model provider. API usage may incur charges on your OpenRouter account. Trust this app and its served scripts with your key. The manual key field clears on capture; a blank field keeps the current client. A manual key replaces an unused sign-in key on Next Decision or Start, even if invalid.";
 } else if (!jevMode) {
   $('#key-label').textContent = 'Temporary OpenAI API key (experimental)';
   $('#key-note').textContent =

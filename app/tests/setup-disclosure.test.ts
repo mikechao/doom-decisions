@@ -726,7 +726,7 @@ describe('Setup disclosure', () => {
     assert.doesNotMatch(html, /asset-note|Refresh to change the game file/);
     assert.equal((html.match(/ secondary-label=/g) ?? []).length, 2);
     assert.match(html, /<div id="prepared-asset" role="status" aria-live="polite" aria-atomic="true" hidden>\s*<span id="prepared-asset-name"><\/span>\s*<span id="prepared-asset-detail"><\/span>\s*<\/div>\s*<span id="setup-asset"/);
-    assert.match(html, /<details class="setup-details">\s*<summary>Privacy &amp; API key details<\/summary>/);
+    assert.match(html, /<details class="setup-details">\s*<summary>Privacy &amp; API Keys<\/summary>/);
     const details = html.match(/<details class="setup-details">([\s\S]*?)<\/details>/)![1];
     assert.match(details, /<p id="openrouter-key-settings" class="help" hidden>Manage or revoke keys in <a href="https:\/\/openrouter.ai\/settings\/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings<\/a>\.<\/p>/);
     assert.equal((html.match(/https:\/\/openrouter.ai\/settings\/keys/g) ?? []).length, 1);

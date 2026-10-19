@@ -49,8 +49,10 @@
                 <doom-button id="openrouter-back" appearance="text" aria-controls="manual-key openrouter-signin" hidden>Use sign-in instead</doom-button>
               </div>
               <details class="setup-details">
-                <summary>Privacy &amp; API key details</summary>
-                <p id="key-note" class="help">Sign-in authorizes OpenRouter to issue an API key for Doom Decisions. The key stays in page memory, not localStorage. Refresh clears the app's local access but does not revoke the issued key. Screenshots, context, instructions and decisions go directly to OpenRouter and may be sent to its selected model provider. API usage may incur charges on your OpenRouter account. Trust this app and its served scripts with your key.</p>
+                <summary>Privacy &amp; API Keys</summary>
+                <p id="key-note" class="help"><strong>Your API key</strong><br>Signing in with OpenRouter issues an API key for Doom Decisions. The app keeps it in page memory, not localStorage. Refreshing clears the app's local access but does not revoke the issued key.</p>
+                <p class="help"><strong>What gets sent</strong><br>When using OpenRouter, your browser sends Doom screenshots, instructions, and game context directly to OpenRouter. OpenRouter may forward the request to the selected model provider.</p>
+                <p class="help"><strong>Inspect the code</strong><br>The deployed site includes source maps, so you can inspect its TypeScript. In Chrome, open <strong>DevTools → Sources</strong> to explore the code or <strong>Network</strong> to inspect API requests. Don't share network captures containing API credentials.</p>
                 <p id="openrouter-key-settings" class="help" hidden>Manage or revoke keys in <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">OpenRouter key settings</a>.</p>
               </details>
             </div>

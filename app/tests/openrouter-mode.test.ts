@@ -116,6 +116,8 @@ function browserFixture(query = '', hasPending = false) {
   element('#openrouter-signin-button').appendChild(element('#openrouter-signin-logo'));
   element('#openrouter-signin-button').appendChild(element('#openrouter-signin-label'));
   element('#key-label').textContent = 'Temporary OpenRouter API key';
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  element('#key-note').textContent = html.match(/<p id="key-note" class="help">([\s\S]*?)<\/p>/)![1].replace(/<[^>]+>/g, '');
   element('#openrouter-connect').hidden = true;
   element('#openrouter-back').hidden = true;
   element('#openrouter-key-settings').hidden = true;
@@ -215,12 +217,10 @@ it('selects the provider at the app edge, labels BYOK truthfully and retains cap
     } else assert.equal(session.factory, expected);
     if (expected === openRouterDecisionProviderFactory) {
       assert.equal(element('#key-label').textContent, 'Temporary OpenRouter API key');
-      assert.match(element('#key-note').textContent, /Sign-in authorizes OpenRouter to issue an API key for Doom Decisions/);
+      assert.match(element('#key-note').textContent, /Your API key/);
+      assert.match(element('#key-note').textContent, /Signing in with OpenRouter issues an API key for Doom Decisions/);
       assert.match(element('#key-note').textContent, /page memory, not localStorage/);
-      assert.match(element('#key-note').textContent, /Refresh clears the app's local access but does not revoke the issued key/);
-      assert.match(element('#key-note').textContent, /Screenshots, context, instructions and decisions.*OpenRouter.*selected model provider/);
-      assert.match(element('#key-note').textContent, /charges on your OpenRouter account/);
-      assert.match(element('#key-note').textContent, /Trust this app and its served scripts with your key/);
+      assert.match(element('#key-note').textContent, /Refreshing clears the app's local access but does not revoke the issued key/);
       assert.equal(element('#openrouter-key-settings').hidden, false);
       assert.equal(element('#openrouter-connect').hidden, false);
       assert.equal(element('#openrouter-model').disabled, true);
