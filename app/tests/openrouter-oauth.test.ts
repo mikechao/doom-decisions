@@ -85,6 +85,7 @@ it('generates independent random values, encodes the exact callback and prevents
   const authorize = new URL(h.location.assign.mock.calls[0][0]);
   assert.equal(authorize.origin + authorize.pathname, 'https://openrouter.ai/auth');
   assert.equal(authorize.searchParams.get('callback_url'), flow.callback);
+  assert.equal(authorize.searchParams.get('key_label'), 'Doom Decisions');
   assert.equal(authorize.searchParams.get('state'), flow.state);
   assert.equal(authorize.searchParams.get('code_challenge_method'), 'S256');
   assert.equal(authorize.searchParams.get('code_challenge'),

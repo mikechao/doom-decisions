@@ -208,6 +208,7 @@ export function createOpenRouterOAuth(browser: Browser) {
         const authorize = new URL('https://openrouter.ai/auth');
         authorize.search = new URLSearchParams({
           callback_url: callback,
+          key_label: 'Doom Decisions',
           code_challenge: challenge,
           code_challenge_method: 'S256',
           state,
