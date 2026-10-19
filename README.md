@@ -1,6 +1,8 @@
 # Doom Decisions
 
-When OpenAI announced their [Decisions API](https://developers.openai.com/api/docs/guides/decisions) the lane choosing example looked like a game to me. So I thought since this model is multimodal can it "play" Doom. That is what this small project is. It's just a small wrapper around [doom.wasm](https://github.com/jacobenget/doom.wasm) with the Decisions API hooked up.
+When OpenAI announced their [Decisions API](https://developers.openai.com/api/docs/guides/decisions) the lane choosing example looked like a game to me. So I thought since this model is multimodal could it "play" Doom. That is what this small project is. It's just a small wrapper around [doom.wasm](https://github.com/jacobenget/doom.wasm) with the Decisions API hooked up.
+
+Doom Decisions uses OpenRouter for inference, which lets you choose between different models. You can use your existing OpenAI or TypeSafe API keys through OpenRouter, or add credits to your OpenRouter account. When signing in with OpenRouter, you can also limit the key given to Doom Decisions to one hour.
 
 The basic flow is the following.
 
@@ -12,9 +14,15 @@ There are 2 modes
 1. "Next Decision" - Where the flow above is execute once per button click.
 2. "Continuous Mode" - Where the flow above repeats up to a preconfigured maximum number of API attempts.
 
+## Deployed at
+There is current version of this deployed at [Doom Decisions](https://doom-decisions.pages.dev/)
+
 ## Start a "game"
 
-Choose **Sign in with OpenRouter** before either game-file choice. Authorization creates an OpenRouter API key held only in page memory. Then choose **Use included Freedoom** (official Phase 1 v0.13.0, about 9.83 MiB downloaded only on click), or **Choose local IWAD** for your own Doom/Freedoom `.wad`. Preparation verifies one neutral tic and makes no Decisions request. **Use an API key instead** provides a manual OpenRouter-key alternative after preparation. Prompts and screenshots go directly through OpenRouter and may reach its downstream model provider; Decisions can incur charges. Refresh clears local access without revoking the remote key. This prototype requires trusting the page and its scripts. See [key handling](app/README.md#temporary-browser-direct-credentials) and [included Freedoom provenance/notices](third_party/freedoom/0.13.0/PROVENANCE.md).
+1. Choose **Sign in with OpenRouter** or **Usage an API key instead** for inference.
+2. Select the AI Model (GPT-6 Luna Decisions or Jev 1.14)
+3. Select **Use include Freedoom** to down the include Freedoom Game Data or
+Select **Choose local IWAD** to select a local Doom Game Data file.
 
 Click "Next Decision"
 or
@@ -45,13 +53,6 @@ These instructions target macOS arm64 and require Node 22.20.0 and npm; see the 
    npm --prefix app run dev
    ```
    To run the development Vite server
-
-OpenRouter is the default in ordinary development and production builds; no
-`--mode openrouter` is required. Direct OpenAI is an experimental operator opt-in:
-set `VITE_DECISION_PROVIDER=openai` at dev startup or production build time.
-Browser CORS has failed in earlier direct OpenAI trials; it is not a verified
-production fallback. There is no automatic provider switching. See
-[provider selection and static hosting](app/README.md#provider-selection-and-static-hosting).
 
 For linked worktrees, install the repository-local [automatic local-tool setup](docs/local-worktrees.md)
 once to copy the existing Doom toolchain and Impeccable inputs on `git worktree add`.
