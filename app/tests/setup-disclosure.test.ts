@@ -388,19 +388,17 @@ describe('Decision instructions editor', () => {
     assert.match(dialog, /id="save-prompt"[^>]*>Save</);
     assert.match(dialog, /id="close-prompt"[^>]*>Cancel</);
     assert.match(dialog, /id="reset-prompt"[^>]*>Reset to Default</);
-    assert.match(dialog, /Edit exactly questions\.next_action\.instructions/);
-    assert.match(dialog, /Each \{\{tics\}\} is replaced with the tic count captured/);
-    assert.match(dialog, /no instructions are appended/);
-    assert.match(dialog, /app controls available actions and tic duration/);
+    assert.match(dialog, /Tell the AI how to play\. This text is sent as <code>next_action\.instructions<\/code>, with <code>\{\{tics\}\}<\/code> replaced by the selected tic count\. Nothing else is added\./);
+    assert.match(dialog, /The game still controls valid actions and actual duration\./);
     assert.match(dialog, /role="group" aria-label="Optional game state" aria-describedby="prompt-telemetry-note"/);
     assert.match(dialog, /<label><input id="prompt-ready-weapon" type="checkbox"> Ready weapon<\/label>/);
     assert.match(dialog, /<label><input id="prompt-ammo" type="checkbox"> Ammo<\/label>/);
-    assert.match(dialog, /Choose what the AI can observe and how it should decide/);
-    assert.match(dialog, /Current verified screenshot and tic — always included/);
-    assert.match(dialog, /sampled from the verified observation for each decision and included in state/);
+    assert.match(dialog, /Choose what the AI sees and how it plays\./);
+    assert.match(dialog, /The current screenshot and verified tic are always included\./);
+    assert.match(dialog, /Selected details update with each decision and are sent as <code>state<\/code>\./);
     assert.ok(dialog.indexOf('Game state</h3>') < dialog.indexOf('Decision instructions</label>'));
     assert.doesNotMatch(dialog, /readyWeapon|\{\{ammo\}\}|add or remove/);
-    assert.match(dialog, /Continuous mode keeps running/);
+    assert.match(dialog, /Changes apply to future decisions\. Continuous Mode keeps running while this dialog is open\./);
     assert.doesNotMatch(dialog, /<form|contenteditable/);
   });
 

@@ -221,23 +221,23 @@
         <div class="decision-prompt-heading">
           <h2 id="prompt-title">Configure AI Decision</h2>
         </div>
-        <p id="prompt-description" class="help">Choose what the AI can observe and how it should decide.</p>
+        <p id="prompt-description" class="help">Choose what the AI sees and how it plays.</p>
         <section class="prompt-field" aria-labelledby="prompt-state-title">
           <h3 id="prompt-state-title">Game state</h3>
-          <p class="help">Current verified screenshot and tic — always included.</p>
+          <p class="help">The current screenshot and verified tic are always included.</p>
           <div class="prompt-telemetry" role="group" aria-label="Optional game state" aria-describedby="prompt-telemetry-note">
             <label><input id="prompt-ready-weapon" type="checkbox"> Ready weapon</label>
             <label><input id="prompt-ammo" type="checkbox"> Ammo</label>
           </div>
-          <p id="prompt-telemetry-note" class="help">Enabled items are sampled from the verified observation for each decision and included in state.</p>
+          <p id="prompt-telemetry-note" class="help">Selected details update with each decision and are sent as <code>state</code>.</p>
         </section>
         <div class="prompt-field">
           <label for="prompt-instructions">Decision instructions</label>
-          <p id="prompt-instructions-note" class="help">Edit exactly questions.next_action.instructions. Each {{tics}} is replaced with the tic count captured at admission; all other text stays literal and no instructions are appended. The app controls available actions and tic duration.</p>
+          <p id="prompt-instructions-note" class="help">Tell the AI how to play. This text is sent as <code>next_action.instructions</code>, with <code>{{tics}}</code> replaced by the selected tic count. Nothing else is added. The game still controls valid actions and actual duration.</p>
           <textarea id="prompt-instructions" rows="8" aria-describedby="prompt-instructions-note prompt-error" aria-invalid="false" autofocus></textarea>
           <p id="prompt-error" class="help" role="alert" hidden></p>
         </div>
-        <p class="help">Save applies both settings and instructions to future admissions. Continuous mode keeps running while this dialog is open. Cancel or press Escape to discard edits and return to the controls.</p>
+        <p class="help">Changes apply to future decisions. Continuous Mode keeps running while this dialog is open.</p>
         <div class="prompt-actions">
           <doom-button id="reset-prompt" appearance="outline">Reset to Default</doom-button>
           <doom-button id="close-prompt" appearance="outline">Cancel</doom-button>
