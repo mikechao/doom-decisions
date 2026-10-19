@@ -74,6 +74,8 @@ commands; other indices mix game state, diagnostics, and player fields.
 | 80 / 84 | `ammo[am_shell]` / `maxammo[am_shell]` → `ammo.shells.current` / `.max` |
 | 81 / 85 | `ammo[am_cell]` / `maxammo[am_cell]` → `ammo.cells.current` / `.max` |
 | 82 / 86 | `ammo[am_misl]` / `maxammo[am_misl]` → `ammo.rockets.current` / `.max` |
+| 87 | Completed collision sample boundary → `collisionSampleTic` |
+| 88 / 89 | Latched XY trial events / rejection reasons → `movementFlags` / `rejectionMask` |
 
 Actor fields fall back to `0` when `mo` is absent; zero is not proof of a valid
 actor. Coordinates/momentum remain native fixed-point numbers. The angle getter
@@ -108,6 +110,35 @@ available for terminal receipts and the final render, until session retirement.
 Unknown dispatcher indices and busy observation reads return `-1`; this sentinel
 must not be interpreted as a valid inventory quantity.
 
+### Collision experiment 1
+
+Indices 87–89 are diagnostic integers, all `-1` until the first successfully
+completed native tic (including through preparation at tic zero). Afterward,
+`collisionSampleTic` equals the completed `gametic`. `movementFlags` uses
+`trial=1`, `success=2`, `rejected=4`, `slide=8`; `rejectionMask` uses
+`solid_line=1`, `solid_thing=2`, `clearance=4`, `unknown=8`. Both masks OR events
+within that one tic. A trial records a completed `P_TryMove` call, not a tic or
+proof of nonzero translation. Zero flags mean no relevant trial; flags 3 with
+zero reasons mean at least one accepted trial and no observed rejection.
+Success and rejection may coexist, including successful slide recovery.
+
+`P_XYTryMove` wraps only `P_XYMovement` and its slide-recovery trials. Callback
+reasons are assigned at actual false return sites, handed immediately through
+`P_CheckPosition` and `P_TryMove`, then recorded only for the admitted controlled
+actor after its verified player entry. Dedicated synchronous reason handoffs
+are not sampled through getters; unrelated position/height checks never publish
+events. Pending masks reset only after admission, and publish after successful
+tic closeout and its checks. Refusal preserves the previous sample. Completed
+terminal/unsupported tics retain their event record; no further stepping is
+authorized by its availability. Faults retain the previous published boundary,
+which must never be treated as proof of the uncertain tic.
+
+These are movement events during an admitted tic, not input causality, a stuck
+verdict, visible-wall recognition, or door identification. Existing momentum,
+damage, teleports and reaction delay remain relevant. No facing query, extra
+collision query, C multi-tic accumulator, prompt or Decisions request change is
+included. See the [pending native validation procedure](issue-18-native-collision.md).
+
 ## Sampling and correctness boundaries
 
 Preserve the existing synchronous read order and object/property insertion order.
@@ -119,9 +150,11 @@ synthetic tests explicitly assert ordering. In `observations()`:
 3. Read extra indices 52–75, built command 32–41, then entered command 42–51.
 4. If loaded, read armor 76 and paired current/max slots in order:
    `79,83,80,84,81,85,82,86`.
+5. Read collision indices `87,88,89` unconditionally, preserving `-1` sentinels.
 
 The returned native object's order is base, extra, `built`, `entered`,
-`armorpoints`, `readyWeapon`, `ammo`; weapon properties are `id`, `name`,
+`armorpoints`, `readyWeapon`, `ammo`, `collisionSampleTic`, `movementFlags`,
+`rejectionMask`; weapon properties are `id`, `name`,
 `ammoType`, and ammo entries are bullets/shells/cells/rockets with `current`,
 `max`. Weapon reads happen earlier than their placement in this object.
 

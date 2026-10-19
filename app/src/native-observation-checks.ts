@@ -4,6 +4,7 @@ import type {
   Observation,
   StatusObservation,
 } from './worker-shared.ts';
+import { collisionObservationValid } from './worker-shared.ts';
 
 function check(ok: unknown, message: string): asserts ok {
   if (!ok) throw Error(message);
@@ -58,6 +59,10 @@ export function checkPrepared(
   result: StatusObservation,
 ) {
   healthy(result);
+  check(
+    collisionObservationValid(result),
+    'Invalid preparation collision sample.',
+  );
   check(
     result.status === 0,
     `Native ${op} failed (status ${result.status}); this IWAD may be incompatible.`,

@@ -105,6 +105,9 @@ function state(n) {
       dclicks2: 0,
       built: command,
       entered: { ...command },
+      collisionSampleTic: n === 0 ? -1 : n,
+      movementFlags: n === 0 ? -1 : 0,
+      rejectionMask: n === 0 ? -1 : 0,
     },
   };
 }

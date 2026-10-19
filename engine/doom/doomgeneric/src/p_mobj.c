@@ -32,6 +32,7 @@
 #include "s_sound.h"
 
 #include "doomstat.h"
+#include "g_game.h"
 
 void G_PlayerReborn(int player);
 void P_SpawnMapThing(mapthing_t *mthing);
@@ -139,9 +140,10 @@ void P_XYMovement(mobj_t *mo) {
       xmove = ymove = 0;
     }
 
-    if (!P_TryMove(mo, ptryx, ptryy)) {
+    if (!P_XYTryMove(mo, ptryx, ptryy)) {
       // blocked move
       if (mo->player) { // try to slide along it
+        G_A21RecordSlide(mo);
         P_SlideMove(mo);
       } else if (mo->flags & MF_MISSILE) {
         // explode a missile

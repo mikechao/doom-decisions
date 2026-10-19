@@ -2004,6 +2004,35 @@ static ticcmd_t a21_built, a21_entered;
 static int a21_events[A21_EVENT_LIMIT];
 static int a21_build_tick;
 static boolean a21_install_equal, a21_entry_equal, a21_actor_equal;
+#ifndef DOOM_A1_NO_FIXTURES
+/* Pending events are never observations. Only successful tic closeout publishes. */
+static int a21_pending_movement, a21_pending_rejections;
+static int a21_collision_sample_tic = -1;
+static int a21_movement_flags = -1, a21_rejection_mask = -1;
+
+static boolean A21MovementActor(mobj_t *actor) {
+  return a21_active && actor && actor == a21_actor &&
+         actor == players[0].mo && actor->player == &players[0] &&
+         a21_events[A21_ENTRY] == a21_events[A21_OUTER] + 1;
+}
+
+void G_A21RecordMovement(mobj_t *actor, boolean accepted, int reason) {
+  if (!A21MovementActor(actor))
+    return;
+  a21_pending_movement |= A21_MOVE_TRIAL;
+  if (accepted)
+    a21_pending_movement |= A21_MOVE_SUCCESS;
+  else {
+    a21_pending_movement |= A21_MOVE_REJECTED;
+    a21_pending_rejections |= reason;
+  }
+}
+
+void G_A21RecordSlide(mobj_t *actor) {
+  if (A21MovementActor(actor))
+    a21_pending_movement |= A21_MOVE_SLIDE;
+}
+#endif
 extern boolean advancedemo;
 extern int D_A1TitleReady(void);
 
@@ -2222,6 +2251,9 @@ int G_A21Step(int input) {
   A21Require(n < 0x7fffffff && turnheld < 0x7fffffff &&
              dclicktime < 0x7fffffff && dclicktime2 < 0x7fffffff);
   a21_active = true;
+#ifndef DOOM_A1_NO_FIXTURES
+  a21_pending_movement = a21_pending_rejections = 0;
+#endif
   M_Ticker();
   G_A21Boundary(A21_MENU);
   A21Require(A21GameEligible() && players[0].mo == a21_actor &&
@@ -2260,6 +2292,11 @@ int G_A21Step(int input) {
   A1_COUNT(A1_OUTER_COMPLETE);
   a21_active = false;
   G_A21CheckPassive();
+#ifndef DOOM_A1_NO_FIXTURES
+  a21_collision_sample_tic = gametic;
+  a21_movement_flags = a21_pending_movement;
+  a21_rejection_mask = a21_pending_rejections;
+#endif
   return 0;
 }
 
@@ -2412,6 +2449,14 @@ int G_A21Observe(int index) {
   case 85:
   case 86:
     return A21ObservePlayerInventory(&players[0], index);
+
+  /* Latched at completed-tic closeout; -1 until the first accepted tic. */
+  case 87:
+    return a21_collision_sample_tic;
+  case 88:
+    return a21_movement_flags;
+  case 89:
+    return a21_rejection_mask;
 
   default:
     return -1;

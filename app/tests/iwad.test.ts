@@ -353,16 +353,22 @@ describe('iwad', () => {
               85,
               82,
               86,
+              87,
+              88,
+              89,
             ],
           );
           const native = reply.result.native;
           assert.equal(Object.keys(native)[20], 'health');
-          assert.deepEqual(Object.keys(native).slice(-5), [
+          assert.deepEqual(Object.keys(native).slice(-8), [
             'built',
             'entered',
             'armorpoints',
             'readyWeapon',
             'ammo',
+            'collisionSampleTic',
+            'movementFlags',
+            'rejectionMask',
           ]);
           assert.deepEqual(Object.keys(native.readyWeapon), [
             'id',
@@ -387,6 +393,7 @@ describe('iwad', () => {
     await withWorker(
       {
         readObservation(index) {
+          if (index >= 87 && index <= 89) return -1;
           assert.ok(index < 76, 'Unprepared observation must not read inventory');
           return 0;
         },
@@ -400,11 +407,16 @@ describe('iwad', () => {
         assert.equal(reply.result.native.armorpoints, null);
         assert.equal(reply.result.native.readyWeapon, null);
         assert.equal(reply.result.native.ammo, null);
-        assert.deepEqual(Object.keys(reply.result.native).slice(-3), [
+        assert.deepEqual(Object.keys(reply.result.native).slice(-6), [
           'armorpoints',
           'readyWeapon',
           'ammo',
+          'collisionSampleTic',
+          'movementFlags',
+          'rejectionMask',
         ]);
+        for (const field of ['collisionSampleTic', 'movementFlags', 'rejectionMask'])
+          assert.equal(reply.result.native[field], -1);
       },
     );
   });
@@ -419,6 +431,29 @@ describe('iwad', () => {
       assert.match((await h.load(smallWad)).error, /Synthetic compile failure/);
       assert.equal(h.closed, true);
     });
+  });
+
+  it('copies all collision indices verbatim through repeated Worker snapshots', async () => {
+    // Synthetic getter values only, including unavailable and terminal samples.
+    for (const [tic, flags, reasons] of [[-1, -1, -1], [1, 0, 0], [2, 3, 0], [3, 15, 3], [4, 13, 4], [5, 13, 8]]) {
+      const reads = [];
+      await withWorker({ readObservation(index) {
+        reads.push(index);
+        return ({ 10: 1, 19: 1, 87: tic, 88: flags, 89: reasons })[index] ?? 0;
+      } }, async h => {
+        assert.equal((await h.load(smallWad)).ok, true);
+        let previous;
+        for (let repeat = 0; repeat < 2; repeat++) {
+          reads.length = 0;
+          await h.scope.onmessage({ data: { op: 'snapshot' } });
+          const native = h.replies.at(-1).result.native;
+          assert.deepEqual(reads.slice(-3), [87, 88, 89]);
+          assert.deepEqual([native.collisionSampleTic, native.movementFlags, native.rejectionMask], [tic, flags, reasons]);
+          if (previous) assert.deepEqual(native, previous);
+          previous = native;
+        }
+      });
+    }
   });
 
   it('retires on preparation refusal diagnostics and one-shot counter mismatches', async () => {
@@ -457,6 +492,9 @@ describe('iwad', () => {
 
   it('includes every new telemetry value in passive snapshot and render checks', async () => {
     const mutations = [
+      ...['collisionSampleTic', 'movementFlags', 'rejectionMask'].map(field => native => {
+        native[field]++;
+      }),
       (native) => {
         native.armorpoints++;
       },

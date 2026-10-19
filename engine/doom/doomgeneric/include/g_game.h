@@ -93,13 +93,27 @@ void G_A21Install(int player, const ticcmd_t *cmd);
 void G_A21PlayerEntry(player_t *player);
 void G_A21Boundary(int event);
 #ifndef DOOM_A1_NO_FIXTURES
+/* Per-completed-tic XY trial events, not input causality or a stuck verdict. */
+enum {
+  A21_MOVE_TRIAL = 1, A21_MOVE_SUCCESS = 2,
+  A21_MOVE_REJECTED = 4, A21_MOVE_SLIDE = 8
+};
+enum {
+  A21_REJECT_SOLID_LINE = 1, A21_REJECT_SOLID_THING = 2,
+  A21_REJECT_CLEARANCE = 4, A21_REJECT_UNKNOWN = 8
+};
+void G_A21RecordMovement(mobj_t *actor, boolean accepted, int reason);
+void G_A21RecordSlide(mobj_t *actor);
 int G_A21Observe(int index);
+#else
+#define G_A21RecordSlide(actor) ((void)0)
 #endif
 #else
 #define G_A21BuildEntry(tick) ((void)0)
 #define G_A21Install(player, cmd) ((void)0)
 #define G_A21PlayerEntry(player) ((void)0)
 #define G_A21Boundary(event) ((void)0)
+#define G_A21RecordSlide(actor) ((void)0)
 #endif
 
 extern int vanilla_savegame_limit;

@@ -124,6 +124,10 @@ export function observation(n: number): Observation {
       flags: 0,
       built: command,
       entered: { ...command },
+      // Protocol defaults only; these fixtures do not simulate collisions.
+      collisionSampleTic: n === 0 ? -1 : n,
+      movementFlags: n === 0 ? -1 : 0,
+      rejectionMask: n === 0 ? -1 : 0,
     } satisfies NativeObservation,
   };
 }
