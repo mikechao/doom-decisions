@@ -76,8 +76,9 @@ it('fails closed outside Jev development, even for a previously created provider
 
 it.each([false, true])('uses one charged SDK invocation preserving PNG, instructions and optional state=%s', async (includeTelemetry) => {
   const requestInput = buildDefaultDecisionRequest(73, 6, png, undefined, {
-    instructionTemplate: template, includeReadyWeapon: includeTelemetry, includeAmmo: includeTelemetry,
+    instructionTemplate: template, includeReadyWeapon: includeTelemetry, includeAmmo: includeTelemetry, includeHealth: includeTelemetry,
   }, {
+    health: 87,
     readyWeapon: { id: 1, name: 'pistol', ammoType: 'bullets' },
     ammo: { bullets: { current: 49, max: 200 }, shells: { current: 0, max: 50 }, cells: { current: 0, max: 300 }, rockets: { current: 0, max: 50 } },
   });
@@ -116,7 +117,7 @@ it.each([false, true])('uses one charged SDK invocation preserving PNG, instruct
     assert.equal(typeof metadata, 'string');
     const payload = JSON.parse(metadata);
     assert.equal(payload.model, 'jev-1.14.0');
-    assert.equal(payload.state.context, 'Current rendered Doom E1M1 frame at verified tic 73.' + (includeTelemetry ? '\nReady weapon: pistol (id: 1; ammo type: bullets)\nAmmo: bullets 49/200' : ''));
+    assert.equal(payload.state.context, 'Current rendered Doom E1M1 frame at verified tic 73.' + (includeTelemetry ? '\nReady weapon: pistol (id: 1; ammo type: bullets)\nAmmo: bullets 49/200\nHealth: 87' : ''));
     assert.deepEqual(Object.keys(payload.questions), ['next_action']);
     assert.deepEqual(payload.questions.next_action, {
       type: 'choice', instructions: input().instructions,

@@ -398,6 +398,8 @@ describe('Decision instructions editor', () => {
     emit(element('#prompt-state-preview'), 'toggle');
     element('#prompt-ammo').checked = true;
     emit(element('#prompt-ammo'), 'change');
+    element('#prompt-health').checked = true;
+    emit(element('#prompt-health'), 'change');
     assert.equal(element('#prompt-state-preview-note').textContent, 'Preview available after a verified game observation.');
     assert.equal(element('#prompt-state-preview-text').textContent, '');
     assert.equal(session.ports.readDecisionConfiguration(), saved);
@@ -407,7 +409,7 @@ describe('Decision instructions editor', () => {
 
   it('formats verified data with every draft selection and refreshes passively while preserving saved config and history', () => {
     const native = observation(73).native;
-    const verified = { tic: 73, readyWeapon: native.readyWeapon, ammo: native.ammo };
+    const verified = { tic: 73, readyWeapon: native.readyWeapon, ammo: native.ammo, health: native.health };
     const historical = buildDefaultDecisionRequest(1, 6, 'data:image/png;base64,historical');
     const requests = Object.freeze({ 1: historical });
     show({ inspectorRequests: requests });
@@ -428,13 +430,18 @@ describe('Decision instructions editor', () => {
       emit(element('#prompt-ready-weapon'), 'change');
       element('#prompt-ammo').checked = includeAmmo;
       emit(element('#prompt-ammo'), 'change');
-      assertPreview({ includeReadyWeapon, includeAmmo });
+      for (const includeHealth of [false, true]) {
+        element('#prompt-health').checked = includeHealth;
+        emit(element('#prompt-health'), 'change');
+        assertPreview({ includeReadyWeapon, includeAmmo, includeHealth });
+      }
       assert.equal(session.ports.readDecisionConfiguration(), saved);
     }
     // A new verified render during continuous play updates the draft preview.
-    const later = { ...verified, tic: 79, readyWeapon: null, ammo: null };
+    const later = { ...verified, tic: 79, readyWeapon: null, ammo: null, health: 0 };
     session.ports.present({ verifiedObservation: later });
-    assertPreview({ includeReadyWeapon: true, includeAmmo: true }, later);
+    assertPreview({ includeReadyWeapon: true, includeAmmo: true, includeHealth: true }, later);
+    assert.match(element('#prompt-state-preview-text').textContent, /\nHealth: 0$/);
     emit(element('#reset-prompt'), 'click');
     assertPreview(defaultDecisionConfiguration, later);
     assert.equal(element('#prompt-state-preview').open, true, 'Reset leaves native disclosure state alone');
@@ -442,6 +449,8 @@ describe('Decision instructions editor', () => {
     for (const dismiss of [() => emit(element('#close-prompt'), 'click'), () => element('#prompt-dialog').escape()]) {
       element('#prompt-ammo').checked = true;
       emit(element('#prompt-ammo'), 'change');
+      element('#prompt-health').checked = true;
+      emit(element('#prompt-health'), 'change');
       dismiss();
       assert.equal(session.ports.readDecisionConfiguration(), saved);
       assert.equal(document.activeElement, element('#view-prompt'));
@@ -607,7 +616,7 @@ describe('Decision instructions editor', () => {
     const field = element('#prompt-instructions');
     field.value = 'Use fire\n';
     emit(field, 'input');
-    for (const id of ['#prompt-ready-weapon', '#prompt-ammo']) {
+    for (const id of ['#prompt-ready-weapon', '#prompt-ammo', '#prompt-health']) {
       const checkbox = element(id);
       assert.equal(checkbox.checked, false);
       checkbox.checked = true;
@@ -617,7 +626,7 @@ describe('Decision instructions editor', () => {
       assert.equal(checkbox.disabled, false);
       assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, defaultDecisionInstructionTemplate);
     }
-    for (const id of ['#prompt-ready-weapon', '#prompt-ammo']) {
+    for (const id of ['#prompt-ready-weapon', '#prompt-ammo', '#prompt-health']) {
       element(id).checked = false;
       emit(element(id), 'change');
     }
@@ -633,7 +642,8 @@ describe('Decision instructions editor', () => {
     const field = element('#prompt-instructions');
     const readyWeapon = element('#prompt-ready-weapon');
     const ammo = element('#prompt-ammo');
-    for (const checkbox of [readyWeapon, ammo]) {
+    const health = element('#prompt-health');
+    for (const checkbox of [readyWeapon, ammo, health]) {
       checkbox.checked = true;
       emit(checkbox, 'change');
     }
@@ -641,7 +651,7 @@ describe('Decision instructions editor', () => {
     const saved = field.value;
     emit(element('#save-prompt'), 'click');
     const savedConfiguration = session.ports.readDecisionConfiguration();
-    assert.deepEqual(savedConfiguration, { instructionTemplate: saved, includeReadyWeapon: true, includeAmmo: true });
+    assert.deepEqual(savedConfiguration, { instructionTemplate: saved, includeReadyWeapon: true, includeAmmo: true, includeHealth: true });
     assert.equal(Object.isFrozen(savedConfiguration), true);
     assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, saved);
     for (const dismiss of [
@@ -651,7 +661,8 @@ describe('Decision instructions editor', () => {
       emit(element('#view-prompt'), 'click');
       assert.equal(readyWeapon.checked, true);
       assert.equal(ammo.checked, true);
-      for (const checkbox of [readyWeapon, ammo]) {
+      assert.equal(health.checked, true);
+      for (const checkbox of [readyWeapon, ammo, health]) {
         checkbox.checked = false;
         emit(checkbox, 'change');
       }
@@ -663,6 +674,7 @@ describe('Decision instructions editor', () => {
       assert.equal(field.value, saved);
       assert.equal(readyWeapon.checked, true);
       assert.equal(ammo.checked, true);
+      assert.equal(health.checked, true);
       emit(element('#close-prompt'), 'click');
     }
     emit(element('#view-prompt'), 'click');
@@ -670,12 +682,14 @@ describe('Decision instructions editor', () => {
     assert.equal(field.value, defaultDecisionInstructionTemplate);
     assert.equal(readyWeapon.checked, false);
     assert.equal(ammo.checked, false);
+    assert.equal(health.checked, false);
     assert.equal(session.ports.readDecisionConfiguration(), savedConfiguration);
     emit(element('#close-prompt'), 'click');
     assert.equal(session.ports.readDecisionConfiguration(), savedConfiguration);
     emit(element('#view-prompt'), 'click');
     assert.equal(readyWeapon.checked, true);
     assert.equal(ammo.checked, true);
+    assert.equal(health.checked, true);
     emit(element('#reset-prompt'), 'click');
     emit(element('#save-prompt'), 'click');
     assert.deepEqual(session.ports.readDecisionConfiguration(), defaultDecisionConfiguration);
@@ -687,7 +701,7 @@ describe('Decision instructions editor', () => {
     const field = element('#prompt-instructions');
     field.value = 'Choose with {{readyWeapon}} and {{ammo}}. Keep this text.';
     emit(field, 'input');
-    for (const id of ['#prompt-ready-weapon', '#prompt-ammo']) {
+    for (const id of ['#prompt-ready-weapon', '#prompt-ammo', '#prompt-health']) {
       const checkbox = element(id);
       assert.equal(checkbox.checked, false);
       assert.equal(checkbox.disabled, false);
@@ -697,7 +711,7 @@ describe('Decision instructions editor', () => {
     assert.equal(field.value, 'Choose with {{readyWeapon}} and {{ammo}}. Keep this text.');
     emit(element('#save-prompt'), 'click');
     assert.deepEqual(session.ports.readDecisionConfiguration(), {
-      instructionTemplate: field.value, includeReadyWeapon: true, includeAmmo: true,
+      instructionTemplate: field.value, includeReadyWeapon: true, includeAmmo: true, includeHealth: true,
     });
   });
 });

@@ -460,11 +460,11 @@ for (const mode of ['manual', 'continuous'] as const) {
 
 for (const includeReadyWeapon of [false, true]) {
   for (const includeAmmo of [false, true]) {
-    it(`serializes verified OpenRouter state (weapon=${includeReadyWeapon}, ammo=${includeAmmo}) independently of instructions`, async () => {
+    it.each([false, true])(`serializes verified OpenRouter state (weapon=${includeReadyWeapon}, ammo=${includeAmmo}, health=%s) independently of instructions`, async (includeHealth) => {
       const h = fixture({ providerFactory: openRouterDecisionProviderFactory });
       try {
         await h.prepare();
-        h.ports.readDecisionConfiguration = () => ({ ...defaultDecisionConfiguration, includeReadyWeapon, includeAmmo });
+        h.ports.readDecisionConfiguration = () => ({ ...defaultDecisionConfiguration, includeReadyWeapon, includeAmmo, includeHealth });
         const capture = h.ports.capture;
         h.ports.capture = () => ({ ...capture(), png });
         const payloads = [];
@@ -478,6 +478,7 @@ for (const includeReadyWeapon of [false, true]) {
         const expectedState = ['Current rendered Doom E1M1 frame at verified tic 1.'];
         if (includeReadyWeapon) expectedState.push('Ready weapon: pistol (id: 1; ammo type: bullets)');
         if (includeAmmo) expectedState.push('Ammo: bullets 50/200');
+        if (includeHealth) expectedState.push('Health: 100');
         assert.deepEqual(payloads[0].state, [expectedState.join('\n'), { type: 'image_url', image_url: { url: png } }]);
         assert.equal(payloads[0].questions.next_action.instructions, defaultDecisionInstructionTemplate.replaceAll('{{tics}}', '6'));
         assert.deepEqual(Object.keys(payloads[0].questions.next_action.criteria), actions);
@@ -493,6 +494,7 @@ for (const mode of ['manual', 'continuous'] as const) {
     const h = fixture({
       providerFactory: openRouterDecisionProviderFactory, at: 1,
       signals: {
+        health: 87,
         readyWeapon: { id: 4, name: 'rocket_launcher', ammoType: 'rockets' },
         ammo: {
           bullets: { current: 11, max: 111 }, shells: { current: 22, max: 222 },
@@ -501,7 +503,7 @@ for (const mode of ['manual', 'continuous'] as const) {
       },
     });
     // Mutate the returned object too: admission must own a copy, not a reference.
-    const saved = { instructionTemplate: '{{tics}} tics. Again {{tics}}.', includeReadyWeapon: !initialAmmo, includeAmmo: initialAmmo };
+    const saved = { instructionTemplate: '{{tics}} tics. Again {{tics}}.', includeReadyWeapon: !initialAmmo, includeAmmo: initialAmmo, includeHealth: initialAmmo };
     const readConfiguration = vi.fn(() => saved);
     h.ports.readDecisionConfiguration = readConfiguration;
     const payloads = [];
@@ -529,6 +531,7 @@ for (const mode of ['manual', 'continuous'] as const) {
       saved.instructionTemplate = 'Next {{tics}} tics';
       saved.includeReadyWeapon = initialAmmo;
       saved.includeAmmo = !initialAmmo;
+      saved.includeHealth = !initialAmmo;
       h.browserInputs.tics = 2;
       h.browserInputs.budget = 1000;
       assert.equal(await h.next(), 'not-admitted');
@@ -538,8 +541,8 @@ for (const mode of ['manual', 'continuous'] as const) {
       if (mode === 'manual') assert.equal(await h.next(), 'completed');
       const instructions = ['1 tics. Again 1.', 'Next 2 tics'];
       const states = [
-        'Current rendered Doom E1M1 frame at verified tic 1.' + (!initialAmmo ? '\nReady weapon: pistol (id: 1; ammo type: bullets)' : '') + (initialAmmo ? '\nAmmo: bullets 50/200' : ''),
-        'Current rendered Doom E1M1 frame at verified tic 2.' + (initialAmmo ? '\nReady weapon: rocket_launcher (id: 4; ammo type: rockets)' : '') + (!initialAmmo ? '\nAmmo: bullets 11/111; shells 22/222; cells 33/333; rockets 44/444' : ''),
+        'Current rendered Doom E1M1 frame at verified tic 1.' + (!initialAmmo ? '\nReady weapon: pistol (id: 1; ammo type: bullets)' : '') + (initialAmmo ? '\nAmmo: bullets 50/200\nHealth: 100' : ''),
+        'Current rendered Doom E1M1 frame at verified tic 2.' + (initialAmmo ? '\nReady weapon: rocket_launcher (id: 4; ammo type: rockets)' : '') + (!initialAmmo ? '\nAmmo: bullets 11/111; shells 22/222; cells 33/333; rockets 44/444\nHealth: 87' : ''),
       ];
       assert.equal(payloads.length, 2);
       assert.equal(readConfiguration.mock.calls.length, 2);
@@ -558,7 +561,7 @@ for (const mode of ['manual', 'continuous'] as const) {
         assert.equal(entry.execution.independentlyVerifiedTics, index + 1);
         assert.equal(entry.result.nativeSha256, entry.result.canvasSha256);
       }
-      saved.instructionTemplate = 'Later edit'; saved.includeAmmo = false;
+      saved.instructionTemplate = 'Later edit'; saved.includeAmmo = false; saved.includeHealth = false;
       assert.equal(h.view.session.inspectorRequests[1], history[0][1]);
       assert.equal(history[0][1].instructions, instructions[0]);
       assert.equal(history[0][1].context, states[0]);

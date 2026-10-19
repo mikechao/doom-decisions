@@ -153,6 +153,7 @@ export type SessionPresentation = Readonly<{
     tic: number;
     readyWeapon: NativeObservation['readyWeapon'];
     ammo: NativeObservation['ammo'];
+    health: NativeObservation['health'];
   }>;
   iwadEnabled?: boolean;
   session?: ReadonlyData<{
@@ -356,6 +357,7 @@ export function createSessionController(
         tic: run.verifiedTics,
         readyWeapon: result.native.readyWeapon,
         ammo: result.native.ammo,
+        health: result.native.health,
       }),
     });
   }

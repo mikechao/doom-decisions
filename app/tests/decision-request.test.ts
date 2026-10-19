@@ -116,10 +116,27 @@ it('resolves every literal {{tics}} and preserves other template text', () => {
 it('keeps obsolete telemetry placeholders literal, even when state telemetry is enabled', () => {
   const instructionTemplate = '{{tics}} {{readyWeapon}} {{ammo}} {{tics}}';
   const input = buildDefaultDecisionRequest(73, 6, 'data:image/png;base64,local', undefined, {
-    instructionTemplate, includeReadyWeapon: true, includeAmmo: true,
+    instructionTemplate, includeReadyWeapon: true, includeAmmo: true, includeHealth: true,
   });
   expect(input.instructions).toBe('6 {{readyWeapon}} {{ammo}} 6');
   expect(encodeOpenAIDecisionRequest(input).questions[0].instructions).toBe(input.instructions);
+});
+
+it.each([
+  { health: 100, expected: '100' },
+  { health: 0, expected: '0' },
+  { health: 200, expected: '200' },
+  { health: -1, expected: 'unavailable' },
+  { health: undefined, expected: 'unavailable' },
+])('includes optional health without changing instructions ($health)', ({ health, expected }) => {
+  const telemetry = health === undefined ? undefined : { health, readyWeapon: null, ammo: null };
+  const context = 'Current rendered Doom E1M1 frame at verified tic 73.';
+  expect(defaultDecisionConfiguration.includeHealth).toBe(false);
+  const disabled = buildDefaultDecisionRequest(73, 6, 'png', undefined, defaultDecisionConfiguration, telemetry);
+  expect(disabled.context).toBe(context);
+  const enabled = buildDefaultDecisionRequest(73, 6, 'png', undefined, { ...defaultDecisionConfiguration, includeHealth: true }, telemetry);
+  expect(enabled.context).toBe(`${context}\nHealth: ${expected}`);
+  expect(enabled.instructions).toBe(disabled.instructions);
 });
 
 it('reports unavailable state telemetry explicitly without inventing weapon or ammo values', () => {
@@ -129,10 +146,10 @@ it('reports unavailable state telemetry explicitly without inventing weapon or a
     'Current rendered Doom E1M1 frame at verified tic 73.\nReady weapon: unavailable\nAmmo: unavailable',
   );
   expect(request({
-    readyWeapon: { id: -1, name: 'unknown', ammoType: 'unknown' }, ammo: null,
+    health: 100, readyWeapon: { id: -1, name: 'unknown', ammoType: 'unknown' }, ammo: null,
   }).context).toContain('Ready weapon: unavailable (id: unavailable; ammo type: unavailable)');
   expect(request({
-    readyWeapon: { id: 0, name: 'fist', ammoType: 'none' }, ammo: null,
+    health: 100, readyWeapon: { id: 0, name: 'fist', ammoType: 'none' }, ammo: null,
   }).context).toContain('Ready weapon: fist (id: 0; ammo type: none)');
 });
 
@@ -145,6 +162,7 @@ it.each([
   { counts: undefined, expected: 'Ammo: unavailable' },
 ])('includes only positive current ammo in outgoing state: $expected ($counts)', ({ counts, expected }) => {
   const telemetry = counts === undefined ? undefined : {
+    health: 100,
     readyWeapon: null,
     ammo: counts === null ? null : {
       bullets: { current: counts[0], max: 200 },
@@ -168,6 +186,7 @@ it.each([
 
 it('forwards optional state and exact resolved instructions through the real OpenAI SDK to fake-fetch JSON', async () => {
   const telemetry = {
+    health: 87,
     readyWeapon: { id: 2, name: 'shotgun', ammoType: 'shells' },
     ammo: {
       bullets: { current: 13, max: 201 }, shells: { current: 7, max: 51 },
@@ -178,12 +197,13 @@ it('forwards optional state and exact resolved instructions through the real Ope
   try {
     for (const includeReadyWeapon of [false, true]) {
       for (const includeAmmo of [false, true]) {
-        const configuration = { instructionTemplate: '  Use {{tics}} tics. Again {{tics}}.  ', includeReadyWeapon, includeAmmo };
+        const configuration = { instructionTemplate: '  Use {{tics}} tics. Again {{tics}}.  ', includeReadyWeapon, includeAmmo, includeHealth: includeAmmo };
         const fetch = vi.fn(async (_url, init) => {
           const wire = JSON.parse(init.body);
           const expected = ['Current rendered Doom E1M1 frame at verified tic 73.'];
           if (includeReadyWeapon) expected.push('Ready weapon: shotgun (id: 2; ammo type: shells)');
           if (includeAmmo) expected.push('Ammo: bullets 13/201; shells 7/51; cells 123/301; rockets 9/52');
+          if (configuration.includeHealth) expected.push('Health: 87');
           expect(wire.input).toEqual([{ role: 'user', content: [
             { type: 'input_text', text: expected.join('\n') },
             { type: 'input_image', image_url: png },

@@ -10,6 +10,7 @@ export type DecisionConfiguration = Readonly<{
   instructionTemplate: string;
   includeReadyWeapon: boolean;
   includeAmmo: boolean;
+  includeHealth: boolean;
 }>;
 
 export const defaultDecisionConfiguration: DecisionConfiguration =
@@ -17,9 +18,13 @@ export const defaultDecisionConfiguration: DecisionConfiguration =
     instructionTemplate: defaultDecisionInstructionTemplate,
     includeReadyWeapon: false,
     includeAmmo: false,
+    includeHealth: false,
   });
 
-type StateTelemetry = Pick<NativeObservation, 'readyWeapon' | 'ammo'>;
+type StateTelemetry = Pick<
+  NativeObservation,
+  'readyWeapon' | 'ammo' | 'health'
+>;
 
 const quantity = (value: number | undefined): string =>
   value !== undefined && Number.isSafeInteger(value) && value >= 0
@@ -58,7 +63,7 @@ export function formatDecisionState(
   verifiedTic: number,
   configuration: Pick<
     DecisionConfiguration,
-    'includeReadyWeapon' | 'includeAmmo'
+    'includeReadyWeapon' | 'includeAmmo' | 'includeHealth'
   > = defaultDecisionConfiguration,
   telemetry?: StateTelemetry,
 ): string {
@@ -71,6 +76,8 @@ export function formatDecisionState(
     );
   if (configuration.includeAmmo)
     context.push(`Ammo: ${formatAmmo(telemetry?.ammo ?? null)}`);
+  if (configuration.includeHealth)
+    context.push(`Health: ${quantity(telemetry?.health)}`);
   return context.join('\n');
 }
 

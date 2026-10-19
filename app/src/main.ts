@@ -96,6 +96,7 @@ type Elements = {
   '#prompt-instructions': HTMLTextAreaElement;
   '#prompt-ready-weapon': HTMLInputElement;
   '#prompt-ammo': HTMLInputElement;
+  '#prompt-health': HTMLInputElement;
   '#prompt-state-preview-note': HTMLParagraphElement;
   '#prompt-state-preview-text': HTMLPreElement;
   '#prompt-error': HTMLParagraphElement;
@@ -617,6 +618,7 @@ function updateStatePreview() {
         {
           includeReadyWeapon: $('#prompt-ready-weapon').checked,
           includeAmmo: $('#prompt-ammo').checked,
+          includeHealth: $('#prompt-health').checked,
         },
         observation,
       )
@@ -628,6 +630,7 @@ function loadDecisionDraft() {
   $('#prompt-ready-weapon').checked =
     savedDecisionConfiguration.includeReadyWeapon;
   $('#prompt-ammo').checked = savedDecisionConfiguration.includeAmmo;
+  $('#prompt-health').checked = savedDecisionConfiguration.includeHealth;
   updateStatePreview();
   clearPromptError();
 }
@@ -650,6 +653,7 @@ $('#save-prompt').addEventListener('click', () => {
     instructionTemplate: draft,
     includeReadyWeapon: $('#prompt-ready-weapon').checked,
     includeAmmo: $('#prompt-ammo').checked,
+    includeHealth: $('#prompt-health').checked,
   });
   $('#prompt-dialog').close();
 });
@@ -657,6 +661,7 @@ $('#reset-prompt').addEventListener('click', () => {
   $('#prompt-instructions').value = defaultDecisionInstructionTemplate;
   $('#prompt-ready-weapon').checked = false;
   $('#prompt-ammo').checked = false;
+  $('#prompt-health').checked = false;
   updateStatePreview();
   clearPromptError();
   $('#prompt-instructions').focus();
@@ -664,6 +669,7 @@ $('#reset-prompt').addEventListener('click', () => {
 $('#prompt-instructions').addEventListener('input', clearPromptError);
 $('#prompt-ready-weapon').addEventListener('change', updateStatePreview);
 $('#prompt-ammo').addEventListener('change', updateStatePreview);
+$('#prompt-health').addEventListener('change', updateStatePreview);
 $('#close-prompt').addEventListener('click', () => $('#prompt-dialog').close());
 $('#prompt-dialog').addEventListener('close', () => {
   if ($('#prompt-dialog').open) return;

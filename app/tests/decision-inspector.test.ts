@@ -202,8 +202,9 @@ it('browses a representative completed decision with probabilities, usage, reque
 it('keeps historical selection, focus, disclosures and scroll across updates, then restores the row anchor', () => {
   const first = entry();
   const request1 = buildDefaultDecisionRequest(1, 2, 'data:image/png;base64,first', undefined, {
-    instructionTemplate: 'Use {{tics}} tics', includeReadyWeapon: true, includeAmmo: true,
+    instructionTemplate: 'Use {{tics}} tics', includeReadyWeapon: true, includeAmmo: true, includeHealth: true,
   }, {
+    health: 100,
     readyWeapon: { id: 1, name: 'pistol', ammoType: 'bullets' },
     ammo: {
       bullets: { current: 50, max: 200 }, shells: { current: 0, max: 50 },

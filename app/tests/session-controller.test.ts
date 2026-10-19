@@ -291,6 +291,23 @@ it('initializes, prepares, and completes one verified decision through ordinary 
   }
 });
 
+it('preserves the last verified preview when a passive snapshot changes health', async () => {
+  const h = fixture({ faults: { corruptSnapshot: 1 } });
+  try {
+    await h.prepare();
+    const preview = h.view.verifiedObservation;
+    assert.equal(preview.health, 100);
+    assert.equal(await h.next(), 'retired');
+    assert.equal(h.view.verifiedObservation, preview);
+    assert.equal(h.view.verifiedObservation.health, 100);
+    assert.deepEqual(h.view.session.inspectorRequests, {});
+    assert.equal(h.sdkCalls, 0);
+    assert.equal(h.gameCalls, 0);
+  } finally {
+    await h.dispose();
+  }
+});
+
 it('presents player telemetry from preparation snapshots through action and render evidence', async () => {
   const telemetry = {
     health: 87,
@@ -314,7 +331,7 @@ it('presents player telemetry from preparation snapshots through action and rend
     const before = h.native.observe();
     const previewBefore = h.view.verifiedObservation;
     assert.deepEqual(previewBefore, {
-      tic: 1, readyWeapon: before.native.readyWeapon, ammo: before.native.ammo,
+      tic: 1, readyWeapon: before.native.readyWeapon, ammo: before.native.ammo, health: 100,
     });
     assert.notEqual(previewBefore.ammo, prepared.evidence.operations.at(-1).result.native.ammo);
     for (const { op, result } of prepared.evidence.operations) {
@@ -338,10 +355,11 @@ it('presents player telemetry from preparation snapshots through action and rend
     assert.equal(rendered.op, 'render');
     assert.equal(rendered.result.counters.gametic, 2);
     assert.deepEqual(h.view.verifiedObservation, {
-      tic: 2, readyWeapon: telemetry.readyWeapon, ammo: telemetry.ammo,
+      tic: 2, readyWeapon: telemetry.readyWeapon, ammo: telemetry.ammo, health: 87,
     });
     assert.notEqual(h.view.verifiedObservation.ammo, rendered.result.native.ammo);
     assert.equal(previewBefore.tic, 1);
+    assert.equal(previewBefore.health, 100);
     assert.equal(previewBefore.ammo.rockets.current, 0, 'Prior preview stays detached');
     for (const native of [
       action.native,
