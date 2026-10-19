@@ -30,12 +30,16 @@ Native framebuffer → Worker RGBA/hash → controller Canvas/hash + verified ti
   → buildDefaultDecisionRequest → decisions.create
 ```
 
-**Current Decisions requests do not include structured player telemetry.**
-[`buildDefaultDecisionRequest`](../app/src/decision-request.ts) receives only
-`verifiedTic`, `tics`, and `png`. It sends the screenshot and tic text plus a
-choice question with duration instructions and allowed actions. Health, armor,
-weapon, ammo, and the rest of `Observation.native` appear in local evidence, not
-as structured model input. The screenshot can of course show the native HUD.
+**Player telemetry is opt-in text in Decisions instructions.**
+[`buildDefaultDecisionRequest`](../app/src/decision-request.ts) resolves visible
+`{{readyWeapon}}` and `{{ammo}}` placeholders from the controller's verified
+pre-request `Observation.native`, alongside `{{tics}}` from the admitted duration.
+Edit Prompt checkboxes add or remove labeled placeholder lines in the draft;
+only Save applies edits. No telemetry text is appended when tokens are absent.
+The same verified observation is checked against the rendered tic and Canvas
+hash before request construction. The resolved instructions are frozen in history.
+Health, armor, and other native fields remain local evidence; the screenshot can
+also show the native HUD. No separate structured telemetry API field is added.
 
 ## Layer responsibilities
 

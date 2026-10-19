@@ -392,6 +392,10 @@ describe('Decision instructions editor', () => {
     assert.match(dialog, /Each \{\{tics\}\} is replaced with the tic count captured/);
     assert.match(dialog, /no other text is added/);
     assert.match(dialog, /app still enforces allowed actions and actual tic duration/);
+    assert.match(dialog, /role="group" aria-label="Include player telemetry" aria-describedby="prompt-telemetry-note"/);
+    assert.match(dialog, /<label><input id="prompt-ready-weapon" type="checkbox"> Ready weapon<\/label>/);
+    assert.match(dialog, /<label><input id="prompt-ammo" type="checkbox"> Ammo<\/label>/);
+    assert.match(dialog, /\{\{readyWeapon\}\} and \{\{ammo\}\} use the verified frame for each decision/);
     assert.match(dialog, /Continuous mode keeps running/);
     assert.doesNotMatch(dialog, /<form|contenteditable/);
   });
@@ -508,6 +512,101 @@ describe('Decision instructions editor', () => {
     assert.equal(session.ports.readInstructionTemplate(), 'Explore carefully');
     assert.equal(session.ports.readTics(), 35);
     assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
+  });
+
+  it('toggles visible telemetry lines without duplicates, hidden state or controller/transport work', () => {
+    const calls = Object.values(session.controller).map(method => method.mock.calls.length);
+    const transport = vi.fn(() => { throw Error('Unexpected transport'); });
+    vi.stubGlobal('fetch', transport);
+    emit(element('#view-prompt'), 'click');
+    const field = element('#prompt-instructions');
+    field.value = 'Use fire\n';
+    emit(field, 'input');
+    for (const [id, line] of [
+      ['#prompt-ready-weapon', 'Ready weapon: {{readyWeapon}}'],
+      ['#prompt-ammo', 'Ammo: {{ammo}}'],
+    ]) {
+      const checkbox = element(id);
+      assert.equal(checkbox.checked, false);
+      checkbox.checked = true;
+      emit(checkbox, 'change');
+      emit(checkbox, 'change');
+      assert.equal(field.value.split(line).length, 2, 'Only one managed line');
+      assert.equal(checkbox.disabled, false);
+      assert.equal(session.ports.readInstructionTemplate(), defaultDecisionInstructionTemplate);
+    }
+    for (const id of ['#prompt-ready-weapon', '#prompt-ammo']) {
+      element(id).checked = false;
+      emit(element(id), 'change');
+    }
+    assert.equal(field.value, 'Use fire\n', 'Unrelated text and trailing newline survive toggling');
+    emit(element('#save-prompt'), 'click');
+    assert.equal(session.ports.readInstructionTemplate(), 'Use fire\n');
+    assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
+    assert.equal(transport.mock.calls.length, 0);
+  });
+
+  it('saves checkbox edits but discards unsaved toggles on Cancel/Escape and resets only the draft', () => {
+    emit(element('#view-prompt'), 'click');
+    const field = element('#prompt-instructions');
+    const readyWeapon = element('#prompt-ready-weapon');
+    const ammo = element('#prompt-ammo');
+    for (const checkbox of [readyWeapon, ammo]) {
+      checkbox.checked = true;
+      emit(checkbox, 'change');
+    }
+    const saved = field.value;
+    emit(element('#save-prompt'), 'click');
+    assert.equal(session.ports.readInstructionTemplate(), saved);
+    for (const dismiss of [
+      () => emit(element('#close-prompt'), 'click'),
+      () => element('#prompt-dialog').escape(),
+    ]) {
+      emit(element('#view-prompt'), 'click');
+      assert.equal(readyWeapon.checked, true);
+      assert.equal(ammo.checked, true);
+      for (const checkbox of [readyWeapon, ammo]) {
+        checkbox.checked = false;
+        emit(checkbox, 'change');
+      }
+      dismiss();
+      emit(element('#view-prompt'), 'click');
+      assert.equal(field.value, saved);
+      assert.equal(readyWeapon.checked, true);
+      assert.equal(ammo.checked, true);
+      emit(element('#close-prompt'), 'click');
+    }
+    emit(element('#view-prompt'), 'click');
+    emit(element('#reset-prompt'), 'click');
+    assert.equal(field.value, defaultDecisionInstructionTemplate);
+    assert.equal(readyWeapon.checked, false);
+    assert.equal(ammo.checked, false);
+    assert.equal(session.ports.readInstructionTemplate(), saved);
+    emit(element('#save-prompt'), 'click');
+    assert.equal(session.ports.readInstructionTemplate(), defaultDecisionInstructionTemplate);
+  });
+
+  it('derives checkboxes from manual placeholder edits and protects custom prose from removal', () => {
+    emit(element('#view-prompt'), 'click');
+    const field = element('#prompt-instructions');
+    const readyWeapon = element('#prompt-ready-weapon');
+    const ammo = element('#prompt-ammo');
+    field.value = 'Choose with {{readyWeapon}} and {{ammo}}. Keep this text.';
+    emit(field, 'input');
+    for (const checkbox of [readyWeapon, ammo]) {
+      assert.equal(checkbox.checked, true);
+      assert.equal(checkbox.disabled, true, 'Custom placeholders are edited in the textarea');
+    }
+    assert.equal(field.value, 'Choose with {{readyWeapon}} and {{ammo}}. Keep this text.');
+    field.value = 'Keep this text.\nReady weapon: {{readyWeapon}}\nReady weapon: {{readyWeapon}}';
+    emit(field, 'input');
+    assert.equal(readyWeapon.disabled, false);
+    assert.equal(ammo.checked, false);
+    readyWeapon.checked = false;
+    emit(readyWeapon, 'change');
+    assert.equal(field.value, 'Keep this text.');
+    assert.equal(readyWeapon.checked, false);
+    assert.equal(ammo.disabled, false);
   });
 });
 

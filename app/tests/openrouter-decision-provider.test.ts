@@ -392,7 +392,7 @@ for (const mode of ['manual', 'continuous'] as const) {
   it(`serializes full templates without appended text and preserves history across a ${mode} edit race`, async () => {
     const h = fixture({ providerFactory: openRouterDecisionProviderFactory });
     const originalTemplate = 'Fire for {{tics}} tics; choose wisely. Again: {{tics}}.';
-    const editedTemplate = 'Use fire.';
+    const editedTemplate = 'Use fire';
     let savedInstructionTemplate = originalTemplate;
     const readTemplate = vi.fn(() => savedInstructionTemplate);
     h.ports.readInstructionTemplate = readTemplate;
@@ -430,7 +430,7 @@ for (const mode of ['manual', 'continuous'] as const) {
       assert.equal(transport.mock.calls.length, 2);
       assert.equal(readTemplate.mock.calls.length, 2);
       const requests = h.view.session.inspectorRequests;
-      for (const [index, expected] of ['Fire for 6 tics; choose wisely. Again: 6.', 'Use fire.'].entries()) {
+      for (const [index, expected] of ['Fire for 6 tics; choose wisely. Again: 6.', 'Use fire'].entries()) {
         const n = index === 0 ? 6 : 3;
         assert.equal(payloads[index].questions.next_action.instructions, expected);
         assert.equal(payloads[index].questions.next_action.type, 'choice');
@@ -449,6 +449,100 @@ for (const mode of ['manual', 'continuous'] as const) {
       assert.deepEqual(h.actions, [{ mask: 0, tics: 1 }, { mask: 0, tics: 6 }, { mask: 0, tics: 3 }]);
       assert.equal(h.creations, 1);
       assert.equal(h.view.session.controls.ready, true);
+      if (mode === 'continuous') {
+        assert.equal(h.view.session.continuous.limit, 2);
+        assert.equal(h.view.session.continuous.used, 2);
+        assert.equal(h.view.session.continuous.active, false);
+      }
+    } finally { barrier?.release(); await pending; await h.dispose(); }
+  });
+}
+
+for (const [template, expected] of [
+  ['Ready weapon: {{readyWeapon}}', 'Ready weapon: pistol (id: 1; ammo type: bullets)'],
+  ['Ammo: {{ammo}}', 'Ammo: bullets 50/200; shells 0/50; cells 0/300; rockets 0/50'],
+]) {
+  it(`serializes the observation's opt-in ${template} without other telemetry`, async () => {
+    const h = fixture({ providerFactory: openRouterDecisionProviderFactory });
+    try {
+      await h.prepare();
+      h.ports.readInstructionTemplate = () => template;
+      const capture = h.ports.capture;
+      h.ports.capture = () => ({ ...capture(), png });
+      const payloads = [];
+      vi.stubGlobal('fetch', async (request: Request) => {
+        assert.equal(request.url, 'https://openrouter.ai/api/alpha/decisions');
+        payloads.push(await request.json());
+        return response(answer('neutral'));
+      });
+      assert.equal(await h.next(), 'completed');
+      assert.equal(payloads.length, 1);
+      assert.equal(payloads[0].questions.next_action.instructions, expected);
+      assert.equal(h.view.session.inspectorRequests[1].instructions, expected);
+    } finally { await h.dispose(); }
+  });
+}
+
+for (const mode of ['manual', 'continuous'] as const) {
+  it(`resolves telemetry from each verified ${mode} observation while preserving template admission and history`, async () => {
+    const h = fixture({
+      providerFactory: openRouterDecisionProviderFactory, at: 1,
+      signals: {
+        readyWeapon: { id: 4, name: 'rocket_launcher', ammoType: 'rockets' },
+        ammo: {
+          bullets: { current: 11, max: 111 }, shells: { current: 22, max: 222 },
+          cells: { current: 33, max: 333 }, rockets: { current: 44, max: 444 },
+        },
+      },
+    });
+    const initialTemplate = '{{tics}} tics\nReady weapon: {{readyWeapon}}\nAmmo: {{ammo}}';
+    let saved = initialTemplate;
+    h.ports.readInstructionTemplate = () => saved;
+    const payloads = [];
+    const history = [];
+    let barrier, pending;
+    try {
+      await h.prepare();
+      const capture = h.ports.capture;
+      h.ports.capture = () => ({ ...capture(), png });
+      vi.stubGlobal('fetch', async (request: Request) => {
+        assert.equal(request.url, 'https://openrouter.ai/api/alpha/decisions');
+        payloads.push(await request.json());
+        history.push(h.view.session.inspectorRequests);
+        return response(answer('neutral'));
+      });
+      h.browserInputs.tics = 1;
+      h.browserInputs.budget = 2;
+      barrier = h.hold('snapshot');
+      pending = mode === 'manual' ? h.next() : h.start();
+      await barrier.waiting;
+      assert.equal(payloads.length, 0);
+      saved = `Next ${initialTemplate}`;
+      h.browserInputs.tics = 2;
+      h.browserInputs.budget = 1000;
+      assert.equal(await h.next(), 'not-admitted');
+      barrier.release(); barrier = undefined;
+      await pending;
+      if (mode === 'manual') assert.equal(await h.next(), 'completed');
+      const expected = [
+        '1 tics\nReady weapon: pistol (id: 1; ammo type: bullets)\nAmmo: bullets 50/200; shells 0/50; cells 0/300; rockets 0/50',
+        'Next 2 tics\nReady weapon: rocket_launcher (id: 4; ammo type: rockets)\nAmmo: bullets 11/111; shells 22/222; cells 33/333; rockets 44/444',
+      ];
+      assert.equal(payloads.length, 2);
+      for (const [index, instructions] of expected.entries()) {
+        const wire = payloads[index].questions.next_action;
+        assert.equal(wire.instructions, instructions);
+        assert.deepEqual(Object.keys(wire.criteria), actions);
+        assert.equal(h.view.session.inspectorRequests[index + 1].instructions, instructions);
+        const entry = h.view.session.evidence.decisions[index];
+        assert.equal(entry.observation.tic, index + 1);
+        assert.equal(entry.execution.independentlyVerifiedTics, index + 1);
+        assert.equal(entry.result.nativeSha256, entry.result.canvasSha256);
+      }
+      assert.equal(h.view.session.inspectorRequests[1], history[0][1]);
+      assert.equal(history[0][1].instructions, expected[0]);
+      assert.equal(Object.isFrozen(history[0][1]), true);
+      assert.deepEqual(h.actions, [{ mask: 0, tics: 1 }, { mask: 0, tics: 1 }, { mask: 0, tics: 2 }]);
       if (mode === 'continuous') {
         assert.equal(h.view.session.continuous.limit, 2);
         assert.equal(h.view.session.continuous.used, 2);

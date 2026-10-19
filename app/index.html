@@ -222,6 +222,11 @@
           <h2 id="prompt-title">Edit Prompt</h2>
         </div>
         <p id="prompt-description" class="help">Edit the full text sent as next_action.instructions. Each {{tics}} is replaced with the tic count captured when a decision is admitted; no other text is added. The app still enforces allowed actions and actual tic duration. Save applies to future admissions; decisions already admitted keep their captured template and duration.</p>
+        <div class="prompt-telemetry" role="group" aria-label="Include player telemetry" aria-describedby="prompt-telemetry-note">
+          <label><input id="prompt-ready-weapon" type="checkbox"> Ready weapon</label>
+          <label><input id="prompt-ammo" type="checkbox"> Ammo</label>
+        </div>
+        <p id="prompt-telemetry-note" class="help">{{readyWeapon}} and {{ammo}} use the verified frame for each decision. Checkboxes add or remove their labeled lines; edit placeholders in custom text directly.</p>
         <div class="prompt-field">
           <label for="prompt-instructions">Decision instructions</label>
           <textarea id="prompt-instructions" rows="8" aria-describedby="prompt-description prompt-error" aria-invalid="false" autofocus></textarea>

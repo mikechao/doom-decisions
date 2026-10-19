@@ -90,6 +90,8 @@ type Elements = {
   '#save-prompt': DoomButtonElement;
   '#reset-prompt': DoomButtonElement;
   '#prompt-instructions': HTMLTextAreaElement;
+  '#prompt-ready-weapon': HTMLInputElement;
+  '#prompt-ammo': HTMLInputElement;
   '#prompt-error': HTMLParagraphElement;
   '#decision-history': DecisionHistoryElement;
   '#outcome-number': HTMLSpanElement;
@@ -593,9 +595,47 @@ function clearPromptError() {
   $('#prompt-error').hidden = true;
   $('#prompt-instructions').setAttribute('aria-invalid', 'false');
 }
+const promptTelemetryOptions = [
+  {
+    selector: '#prompt-ready-weapon',
+    token: '{{readyWeapon}}',
+    line: 'Ready weapon: {{readyWeapon}}',
+  },
+  { selector: '#prompt-ammo', token: '{{ammo}}', line: 'Ammo: {{ammo}}' },
+] as const;
+function syncPromptTelemetry() {
+  const draft = $('#prompt-instructions').value;
+  for (const option of promptTelemetryOptions) {
+    const checkbox = $(option.selector);
+    checkbox.checked = draft.includes(option.token);
+    // Custom prose belongs to the textarea; a toggle removes only exact lines.
+    checkbox.disabled = draft
+      .split('\n')
+      .filter((line) => line !== option.line)
+      .join('\n')
+      .includes(option.token);
+  }
+}
+for (const option of promptTelemetryOptions) {
+  $(option.selector).addEventListener('change', () => {
+    const field = $('#prompt-instructions');
+    if ($(option.selector).checked) {
+      if (!field.value.includes(option.token))
+        field.value += `${field.value ? '\n' : ''}${option.line}`;
+    } else {
+      field.value = field.value
+        .split('\n')
+        .filter((line) => line !== option.line)
+        .join('\n');
+    }
+    clearPromptError();
+    syncPromptTelemetry();
+  });
+}
 $('#view-prompt').addEventListener('click', () => {
   $('#prompt-instructions').value = savedInstructionTemplate;
   clearPromptError();
+  syncPromptTelemetry();
   $('#prompt-dialog').showModal();
 });
 $('#save-prompt').addEventListener('click', () => {
@@ -615,14 +655,19 @@ $('#save-prompt').addEventListener('click', () => {
 $('#reset-prompt').addEventListener('click', () => {
   $('#prompt-instructions').value = defaultDecisionInstructionTemplate;
   clearPromptError();
+  syncPromptTelemetry();
   $('#prompt-instructions').focus();
 });
-$('#prompt-instructions').addEventListener('input', clearPromptError);
+$('#prompt-instructions').addEventListener('input', () => {
+  clearPromptError();
+  syncPromptTelemetry();
+});
 $('#close-prompt').addEventListener('click', () => $('#prompt-dialog').close());
 $('#prompt-dialog').addEventListener('close', () => {
   if ($('#prompt-dialog').open) return;
   $('#prompt-instructions').value = savedInstructionTemplate;
   clearPromptError();
+  syncPromptTelemetry();
   $('#view-prompt').focus();
 });
 function selectIwad(

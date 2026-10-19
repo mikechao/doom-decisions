@@ -387,6 +387,7 @@ export function createSessionController(
     png: string,
     permittedActions: readonly ActionName[],
     instructionTemplate: string,
+    observation: Observation,
     continuous?: ContinuousRun,
   ) {
     fence(run, attempt);
@@ -402,6 +403,7 @@ export function createSessionController(
       png,
       permittedActions,
       instructionTemplate,
+      observation.native,
     );
     run.inspectorRequests = Object.freeze({
       ...run.inspectorRequests,
@@ -558,6 +560,7 @@ export function createSessionController(
         png,
         permittedActions,
         instructionTemplate,
+        observation,
         continuous,
       );
       dispatchFence();

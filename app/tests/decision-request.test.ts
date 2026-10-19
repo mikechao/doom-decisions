@@ -94,11 +94,11 @@ describe('buildDefaultDecisionRequest', () => {
   );
 });
 
-it('resolves only every literal {{tics}} and otherwise preserves the entire template', () => {
+it('resolves every literal {{tics}} and preserves other template text', () => {
   expect(defaultDecisionInstructionTemplate).toContain('exactly {{tics}} gameplay tics');
   for (const n of [6, 35]) {
     for (const [template, expected] of [
-      ['Use fire.', 'Use fire.'],
+      ['Use fire', 'Use fire'],
       ['  Follow corridors.\nLook for doors.  ', '  Follow corridors.\nLook for doors.  '],
       ['Fire for {{tics}} tics; choose wisely.', `Fire for ${n} tics; choose wisely.`],
       ['  {{tics}} tics.\nAgain: {{tics}}. {{unknown}}  ', `  ${n} tics.\nAgain: ${n}. {{unknown}}  `],
@@ -110,6 +110,40 @@ it('resolves only every literal {{tics}} and otherwise preserves the entire temp
       expect(wire.questions[0].choices).toEqual(input.permittedActions.map(value => ({ value })));
     }
   }
+});
+
+it('resolves only explicitly requested player telemetry in deterministic order', () => {
+  const telemetry = {
+    readyWeapon: { id: 2, name: 'shotgun', ammoType: 'shells' },
+    ammo: {
+      bullets: { current: 13, max: 201 }, shells: { current: 7, max: 51 },
+      cells: { current: 123, max: 301 }, rockets: { current: 9, max: 52 },
+    },
+  } as const;
+  const weapon = 'shotgun (id: 2; ammo type: shells)';
+  const ammo = 'bullets 13/201; shells 7/51; cells 123/301; rockets 9/52';
+  for (const [template, expected] of [
+    ['Use fire', 'Use fire'],
+    ['Ready weapon: {{readyWeapon}}', `Ready weapon: ${weapon}`],
+    ['Ammo: {{ammo}}', `Ammo: ${ammo}`],
+    ['  {{tics}}: {{readyWeapon}}\n{{ammo}}\n{{readyWeapon}} {{ammo}}  ', `  6: ${weapon}\n${ammo}\n${weapon} ${ammo}  `],
+  ]) {
+    const input = buildDefaultDecisionRequest(73, 6, 'data:image/png;base64,local', undefined, template, telemetry);
+    expect(input.instructions).toBe(expected);
+    expect(encodeOpenAIDecisionRequest(input).questions[0].instructions).toBe(expected);
+  }
+});
+
+it('reports unavailable telemetry explicitly without inventing weapon or ammo values', () => {
+  expect(resolveDecisionInstructions(6, 'Ready weapon: {{readyWeapon}}\nAmmo: {{ammo}}')).toBe(
+    'Ready weapon: unavailable\nAmmo: bullets unavailable/unavailable; shells unavailable/unavailable; cells unavailable/unavailable; rockets unavailable/unavailable',
+  );
+  expect(resolveDecisionInstructions(6, '{{readyWeapon}}', {
+    readyWeapon: { id: -1, name: 'unknown', ammoType: 'unknown' }, ammo: null,
+  })).toBe('unavailable (id: unavailable; ammo type: unavailable)');
+  expect(resolveDecisionInstructions(6, '{{readyWeapon}}', {
+    readyWeapon: { id: 0, name: 'fist', ammoType: 'none' }, ammo: null,
+  })).toBe('fist (id: 0; ammo type: none)');
 });
 
 it('builds only immutable domain evidence without telemetry or wire fields', () => {

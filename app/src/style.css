@@ -183,6 +183,25 @@ input {
   background: #10120e;
   caret-color: var(--focus);
 }
+.prompt-telemetry {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+}
+.prompt-telemetry > label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+}
+.prompt-telemetry input {
+  width: 1.125rem;
+  min-height: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--amber);
+}
 input[type="file"] {
   padding: 0.25rem;
   font-size: 0.8125rem;
