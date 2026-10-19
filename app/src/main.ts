@@ -97,6 +97,7 @@ type Elements = {
   '#prompt-ready-weapon': HTMLInputElement;
   '#prompt-ammo': HTMLInputElement;
   '#prompt-health': HTMLInputElement;
+  '#prompt-previous-action': HTMLInputElement;
   '#prompt-state-preview-note': HTMLParagraphElement;
   '#prompt-state-preview-text': HTMLPreElement;
   '#prompt-error': HTMLParagraphElement;
@@ -610,6 +611,9 @@ function updateStatePreview() {
   $('#prompt-state-preview-note').textContent = observation
     ? `Preview based on last verified observation at tic ${observation.tic}.`
     : 'Preview available after a verified game observation.';
+  if ($('#prompt-previous-action').checked)
+    $('#prompt-state-preview-note').textContent +=
+      ' Previous action outcome is omitted from this preview; requests include it only after an eligible action and its resulting frame are verified.';
   $('#prompt-state-preview-text').textContent = observation
     ? formatDecisionState(
         observation.tic,
@@ -617,6 +621,7 @@ function updateStatePreview() {
           includeReadyWeapon: $('#prompt-ready-weapon').checked,
           includeAmmo: $('#prompt-ammo').checked,
           includeHealth: $('#prompt-health').checked,
+          includePreviousAction: $('#prompt-previous-action').checked,
         },
         observation,
       )
@@ -629,6 +634,8 @@ function loadDecisionDraft() {
     savedDecisionConfiguration.includeReadyWeapon;
   $('#prompt-ammo').checked = savedDecisionConfiguration.includeAmmo;
   $('#prompt-health').checked = savedDecisionConfiguration.includeHealth;
+  $('#prompt-previous-action').checked =
+    savedDecisionConfiguration.includePreviousAction;
   updateStatePreview();
   clearPromptError();
 }
@@ -652,6 +659,7 @@ $('#save-prompt').addEventListener('click', () => {
     includeReadyWeapon: $('#prompt-ready-weapon').checked,
     includeAmmo: $('#prompt-ammo').checked,
     includeHealth: $('#prompt-health').checked,
+    includePreviousAction: $('#prompt-previous-action').checked,
   });
   $('#prompt-dialog').close();
 });
@@ -660,6 +668,7 @@ $('#reset-prompt').addEventListener('click', () => {
   $('#prompt-ready-weapon').checked = false;
   $('#prompt-ammo').checked = false;
   $('#prompt-health').checked = false;
+  $('#prompt-previous-action').checked = false;
   updateStatePreview();
   clearPromptError();
   $('#prompt-instructions').focus();
@@ -668,6 +677,7 @@ $('#prompt-instructions').addEventListener('input', clearPromptError);
 $('#prompt-ready-weapon').addEventListener('change', updateStatePreview);
 $('#prompt-ammo').addEventListener('change', updateStatePreview);
 $('#prompt-health').addEventListener('change', updateStatePreview);
+$('#prompt-previous-action').addEventListener('change', updateStatePreview);
 $('#close-prompt').addEventListener('click', () => $('#prompt-dialog').close());
 $('#prompt-dialog').addEventListener('close', () => {
   if ($('#prompt-dialog').open) return;

@@ -1,6 +1,7 @@
 import type { ActionName } from './decision.ts';
 import { masks } from './decision.ts';
 import type { DecisionRequest } from './decision-provider.ts';
+import type { PreviousActionOutcome } from './previous-action.ts';
 import type { NativeObservation } from './worker-shared.ts';
 
 export const defaultDecisionInstructionTemplate =
@@ -11,6 +12,7 @@ export type DecisionConfiguration = Readonly<{
   includeReadyWeapon: boolean;
   includeAmmo: boolean;
   includeHealth: boolean;
+  includePreviousAction: boolean;
 }>;
 
 export const defaultDecisionConfiguration: DecisionConfiguration =
@@ -19,6 +21,7 @@ export const defaultDecisionConfiguration: DecisionConfiguration =
     includeReadyWeapon: false,
     includeAmmo: false,
     includeHealth: false,
+    includePreviousAction: false,
   });
 
 type StateTelemetry = Pick<
@@ -63,9 +66,13 @@ export function formatDecisionState(
   verifiedTic: number,
   configuration: Pick<
     DecisionConfiguration,
-    'includeReadyWeapon' | 'includeAmmo' | 'includeHealth'
+    | 'includeReadyWeapon'
+    | 'includeAmmo'
+    | 'includeHealth'
+    | 'includePreviousAction'
   > = defaultDecisionConfiguration,
   telemetry?: StateTelemetry,
+  previousAction?: PreviousActionOutcome,
 ): string {
   const context = [
     `Current rendered Doom frame at verified tic ${verifiedTic}.`,
@@ -78,6 +85,11 @@ export function formatDecisionState(
     context.push(`Ammo: ${formatAmmo(telemetry?.ammo ?? null)}`);
   if (configuration.includeHealth)
     context.push(`Health: ${quantity(telemetry?.health)}`);
+  if (
+    configuration.includePreviousAction &&
+    previousAction?.endTic === verifiedTic
+  )
+    context.push(previousAction.text);
   return context.join('\n');
 }
 
@@ -88,13 +100,19 @@ export function buildDefaultDecisionRequest(
   permittedActions: readonly ActionName[] = Object.keys(masks) as ActionName[],
   configuration = defaultDecisionConfiguration,
   telemetry?: StateTelemetry,
+  previousAction?: PreviousActionOutcome,
 ): DecisionRequest {
   return Object.freeze({
     instructions: resolveDecisionInstructions(
       tics,
       configuration.instructionTemplate,
     ),
-    context: formatDecisionState(verifiedTic, configuration, telemetry),
+    context: formatDecisionState(
+      verifiedTic,
+      configuration,
+      telemetry,
+      previousAction,
+    ),
     png,
     permittedActions: Object.freeze([...permittedActions]),
   });

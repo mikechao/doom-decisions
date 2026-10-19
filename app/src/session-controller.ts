@@ -19,6 +19,11 @@ import type {
   DecisionRequest,
 } from './decision-provider.ts';
 import { checkPrepared, passiveCheck } from './native-observation-checks.ts';
+import {
+  createPreviousActionOutcome,
+  type PreviousActionOutcome,
+  previousActionAt,
+} from './previous-action.ts';
 import type {
   Counters,
   E1M1Assessment,
@@ -120,6 +125,7 @@ type Run = {
   worker?: Worker | null;
   cancel?: ((error: Error) => void) | null;
   last?: Observation;
+  previousAction?: PreviousActionOutcome;
   terminal?: E1M1Assessment;
 };
 type ContinuousRun = {
@@ -240,6 +246,7 @@ export function createSessionController(
     });
   }
   function retire(run: Run, phase: 'error' | 'terminal' = 'error') {
+    run.previousAction = undefined;
     run.valid = false;
     run.phase = phase;
     run.attempt = undefined;
@@ -389,7 +396,7 @@ export function createSessionController(
       check(evidence.assessment, 'Missing terminal assessment.');
       run.terminal = evidence.assessment;
     }
-    return evidence;
+    return { execution: evidence, receipt: result };
   }
 
   function fence(run: Run, attempt: Attempt) {
@@ -420,6 +427,7 @@ export function createSessionController(
       permittedActions,
       configuration,
       observation.native,
+      previousActionAt(run.previousAction, observation),
     );
     run.inspectorRequests = Object.freeze({
       ...run.inspectorRequests,
@@ -609,7 +617,8 @@ export function createSessionController(
       // No await between the final identity fence and the one native dispatch.
       dispatchFence();
       if (continuous) continuous.dispatched = true;
-      const execution = await action(
+      run.previousAction = undefined;
+      const { execution, receipt } = await action(
         run,
         masks[entry.action],
         attempt.tics,
@@ -620,6 +629,12 @@ export function createSessionController(
         },
       );
       fence(run, attempt);
+      const previousAction = createPreviousActionOutcome(
+        entry.action,
+        afterWait,
+        receipt,
+        execution,
+      );
       entry.stage = 'rendering';
       entry.status = execution.terminal
         ? 'Terminal tic verified; rendering'
@@ -640,6 +655,7 @@ export function createSessionController(
         return 'terminal';
       }
       entry.stage = 'completed';
+      run.previousAction = previousAction;
       entry.status = 'Complete';
       run.attempt = undefined;
       run.phase = 'ready';
@@ -863,9 +879,15 @@ export function createSessionController(
         counters: before.counters,
         native: before.native,
       };
-      const neutral = await action(run, 0, 1, before, (evidence) => {
-        run.evidence.neutralFirst = evidence;
-      });
+      const { execution: neutral } = await action(
+        run,
+        0,
+        1,
+        before,
+        (evidence) => {
+          run.evidence.neutralFirst = evidence;
+        },
+      );
       await render(run);
       if (neutral.terminal) {
         retire(run, 'terminal');

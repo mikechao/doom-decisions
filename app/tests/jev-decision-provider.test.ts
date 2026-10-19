@@ -117,7 +117,7 @@ it.each([false, true])('uses one charged SDK invocation preserving PNG, instruct
     assert.equal(typeof metadata, 'string');
     const payload = JSON.parse(metadata);
     assert.equal(payload.model, 'jev-1.14.0');
-    assert.equal(payload.state.context, 'Current rendered Doom E1M1 frame at verified tic 73.' + (includeTelemetry ? '\nReady weapon: pistol (id: 1; ammo type: bullets)\nAmmo: bullets 49/200\nHealth: 87' : ''));
+    assert.equal(payload.state.context, 'Current rendered Doom frame at verified tic 73.' + (includeTelemetry ? '\nReady weapon: pistol (id: 1; ammo type: bullets)\nAmmo: bullets 49/200\nHealth: 87' : ''));
     assert.deepEqual(Object.keys(payload.questions), ['next_action']);
     assert.deepEqual(payload.questions.next_action, {
       type: 'choice', instructions: input().instructions,

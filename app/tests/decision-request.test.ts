@@ -31,7 +31,7 @@ describe('buildDefaultDecisionRequest', () => {
             content: [
               {
                 type: 'input_text',
-                text: `Current rendered Doom E1M1 frame at verified tic ${tic}.`,
+                text: `Current rendered Doom frame at verified tic ${tic}.`,
               },
               { type: 'input_image', image_url: png },
             ],
@@ -130,7 +130,7 @@ it.each([
   { health: undefined, expected: 'unavailable' },
 ])('includes optional health without changing instructions ($health)', ({ health, expected }) => {
   const telemetry = health === undefined ? undefined : { health, readyWeapon: null, ammo: null };
-  const context = 'Current rendered Doom E1M1 frame at verified tic 73.';
+  const context = 'Current rendered Doom frame at verified tic 73.';
   expect(defaultDecisionConfiguration.includeHealth).toBe(false);
   const disabled = buildDefaultDecisionRequest(73, 6, 'png', undefined, defaultDecisionConfiguration, telemetry);
   expect(disabled.context).toBe(context);
@@ -143,7 +143,7 @@ it('reports unavailable state telemetry explicitly without inventing weapon or a
   const configuration = { ...defaultDecisionConfiguration, includeReadyWeapon: true, includeAmmo: true };
   const request = telemetry => buildDefaultDecisionRequest(73, 6, 'data:image/png;base64,local', undefined, configuration, telemetry);
   expect(request(undefined).context).toBe(
-    'Current rendered Doom E1M1 frame at verified tic 73.\nReady weapon: unavailable\nAmmo: unavailable',
+    'Current rendered Doom frame at verified tic 73.\nReady weapon: unavailable\nAmmo: unavailable',
   );
   expect(request({
     health: 100, readyWeapon: { id: -1, name: 'unknown', ammoType: 'unknown' }, ammo: null,
@@ -174,7 +174,7 @@ it.each([
   const input = buildDefaultDecisionRequest(73, 6, 'data:image/png;base64,local', undefined, {
     ...defaultDecisionConfiguration, includeAmmo: true,
   }, telemetry);
-  const context = `Current rendered Doom E1M1 frame at verified tic 73.\n${expected}`;
+  const context = `Current rendered Doom frame at verified tic 73.\n${expected}`;
   expect(input.context).toBe(context);
   const wire = encodeOpenAIDecisionRequest(input);
   expect(wire.input).toEqual([{ role: 'user', content: [
@@ -200,7 +200,7 @@ it('forwards optional state and exact resolved instructions through the real Ope
         const configuration = { instructionTemplate: '  Use {{tics}} tics. Again {{tics}}.  ', includeReadyWeapon, includeAmmo, includeHealth: includeAmmo };
         const fetch = vi.fn(async (_url, init) => {
           const wire = JSON.parse(init.body);
-          const expected = ['Current rendered Doom E1M1 frame at verified tic 73.'];
+          const expected = ['Current rendered Doom frame at verified tic 73.'];
           if (includeReadyWeapon) expected.push('Ready weapon: shotgun (id: 2; ammo type: shells)');
           if (includeAmmo) expected.push('Ammo: bullets 13/201; shells 7/51; cells 123/301; rockets 9/52');
           if (configuration.includeHealth) expected.push('Health: 87');
