@@ -195,7 +195,7 @@ Ordinary dev, preview and production use an inert bootstrap and do not read the 
 through this credential loader or auto-select a game. Standard OAuth/manual BYOK
 behavior and production CSP stay unchanged.
 
-#### Slice B: one agent decision and Stop
+#### Agent control: single decision, bounded play and Stop
 
 Agent mode uses strict port **5174** and the existing same-origin, in-memory
 bridge. An occupied port fails. Close extra agent tabs. No extra server, browser
@@ -215,7 +215,8 @@ renders, verifies native/Canvas RGBA hashes, hashes PNG bytes, and proves unchan
 native state around capture. It consumes zero gameplay tics and never constructs a
 provider. Its `observationId` binds the controller's latest observation, game
 session/tic, lease epoch, effective model, saved instructions/options and tics.
-No prompt text or credentials cross the bridge. Another observation supersedes the
+Observation payloads contain no prompt text or credentials; dedicated prompt commands
+return only saved instruction text and nonsecret control state. Another observation supersedes the
 previous identity. A manual decision or saved configuration change invalidates it.
 `phase: ready` describes the capture boundary, not guaranteed future readiness.
 
@@ -282,29 +283,94 @@ boundaries. Tics and saved configuration are frozen before asynchronous work;
 unsaved prompt drafts do not change the request. Controls return only after safe
 settlement, with the ordinary credential gates still applied.
 
-`$doom-decisions play` follows exactly one cycle: attach → observe → actually view
-PNG → wait for human confirmation of the browser grant → decide once → actually
-view and compare the resulting PNG/receipts → stop the cycle. It never creates
-consent, selects a Doom action, rewrites a prompt, or enters a loop. Start a fresh
-Codex conversation here if the picker has not discovered the updated skill.
+##### Slice C: bounded foreground play
+
+Two terminals, one existing dev server: the human runs `npm --prefix app run dev:agent`
+and manually opens `http://127.0.0.1:5174/`. In Codex, from this worktree, invoke
+`$doom-decisions play`. Codex attaches, observes and actually opens every exported
+PNG with its image-viewing tool. It retains a short navigation hypothesis and
+updates high-level saved instructions when useful. The Decisions API still chooses
+every low-level action. No browser driving, second server, daemon or persistent map
+is involved. `play` is skill routing, not a CLI subcommand.
+
+After the first verified image is viewed, the human clicks **Allow up to 3 Agent
+Decisions** and confirms in chat. This is a distinct, fixed-cap authorization for
+one page/lease epoch and game session, with a fresh run ID. The controller displays
+remaining attempts, nonrefundable reservations and SDK invocations. One lease can
+authorize this run only once; repeated clicks, prompt changes, lost responses and
+reattach never replenish it. The separate **Allow 1 Agent Decision** path retains
+its exact single-observation/configuration grant and cannot extend a bounded run.
+
+The CLI adds only effective-prompt read/write commands and scoped decision arguments:
+
+```sh
+node scripts/doom-agent.mjs get-prompt --lease /absolute/lease.json --session SESSION_ID
+node scripts/doom-agent.mjs set-prompt --lease /absolute/lease.json --session SESSION_ID --run RUN_ID --revision REVISION --instructions-file /absolute/instructions.txt
+node scripts/doom-agent.mjs observe --lease /absolute/lease.json
+# Codex must actually view the new pngPath before deciding.
+node scripts/doom-agent.mjs decide --lease /absolute/lease.json --observation OBSERVATION_ID --session SESSION_ID --run RUN_ID --revision REVISION
+```
+
+`get-prompt` returns `{sessionId, revision, instructions, run}` with controller-owned
+`runId`, `active`, fixed `limit: 3`, `reserved`, `sdkInvoked`, and `remaining`, or a
+fixed error. Reading never grants permission. Instruction text is the saved template,
+with `{{tics}}` resolved only when the normal request is built. Prompt commands carry
+no key, client, provider configuration or human draft.
+
+`set-prompt` requires the current session/run and expected monotonic configuration
+revision. It updates only instructions through the same configuration boundary and
+saved value used by the human editor, preserving model, tics and all telemetry options.
+Text must be nonblank and at most 16000 characters. **Any open human prompt editor**
+rejects the remote write, even if pristine; this avoids overwriting drafts without a
+second edit-state model. Revision/editor/identity conflicts end the run. A successful
+agent write preserves remaining budget but invalidates the old observation and every
+single grant, even if old text is later restored. Codex must observe and **view a fresh
+PNG** afterward. Human saves and other model/tics/options changes end the run instead.
+
+Each valid scoped decision admission synchronously reserves one slot before any await.
+A reservation is never refunded, including missing credentials or pre-create failure.
+Actual SDK invocation is counted separately at the existing `beforeCreate` boundary;
+it is not proof of remote billing. Retries and fallback remain disabled. Each next
+cycle requires an independently verified observation matching current saved configuration.
+Only healthy action AND resulting-frame verification permit continuation. Manual
+gameplay ends the run; it does not silently borrow its authorization. Failures,
+terminal/uncertain results, lease loss and Stop end remaining admission. After three
+reservations the run ends; there is no fourth permitted create or automatic restart.
+
+The skill reasons in the foreground between individual calls, reads actual allowance
+with get-prompt and stops at exhaustion, goal completion, conflicts or ambiguity. It
+does not choose action identifiers or treat unchanged XY, screenshots or previousAction
+as proof of collision/door availability. Rich collision/facing evidence remains in
+the browser. Prompt changes provide a feedback channel for persistent context; this
+small experiment does not establish that context improves navigation statistically.
+Start a fresh Codex conversation here if the skill picker is stale.
 
 Human acceptance (Codex must not operate Chrome or make provider calls during
 implementation):
 
 1. Start `npm --prefix app run dev:agent`, manually open
    `http://127.0.0.1:5174/`, and wait for verified neutral-first tic **1/1/1**.
-2. Attach and view a fresh observation in Codex. Confirm no provider call before
-   clicking **Allow 1 Agent Decision**. A deliberately rejected no-grant decision
-   reserves its command ID; observe afresh before the authorized decision.
-3. Click the browser grant, confirm it in chat, and execute the one command above.
-   Verify one provider call, a legal model-selected action, selected N and matching
-   receipt/frame tics (or verified terminal prefix), equal native/Canvas hashes,
-   and Codex's visual comparison of both actual PNGs.
-4. Reissue the same command: expect `duplicate-command`. A new observation/command
-   without a fresh grant returns `not-admitted` / `no-grant`, with no provider or
-   native action. No automated retry.
-5. Click **Stop Agent**; the old lease must reject observe/decide. Manual controls
-   return only when safe. Reload and explicitly attach for another experiment.
+2. After code review and explicit approval for **up to three possibly billable
+   attempts**, invoke `$doom-decisions play`. Attach/observe and actually view the
+   first PNG. Click **Allow up to 3 Agent Decisions** and confirm in chat. Record
+   page/epoch/session/run ID, effective instructions/revision, N and initial tic.
+3. Have Codex issue its own instructions-only update. Confirm the saved value by
+   opening the existing editor, then close it without saving. Observe/view anew,
+   decide once, and inspect both structured evidence and actual resulting PNG.
+4. Retain/update the navigation hypothesis and saved instructions as useful; repeat
+   observe/view/decide for at most three total reservations. Record actual remaining,
+   reserved and SDK-invoked counts, legal model-selected action, requested/reported/
+   verified/end tics, session continuity, matching native/Canvas hashes and visual
+   progress. After exhaustion confirm inactive/zero allowance; do not send a fourth
+   live decision merely to test rejection. Offline tests cover that fence and duplicates.
+5. Click **Stop Agent**. One explicitly requested, non-billable old-lease get-prompt
+   or observe must reject. Confirm manual controls return only after safe settlement;
+   testing a paid manual action needs a separate approval. Bring sanitized receipts,
+   prompt revisions, viewed PNG comparisons and human Console/Network observations
+   back for `/review`. Stop on any failed/ambiguous result without replaying it.
+   Do not deliberately race live Stop against inference/dispatch in this protocol;
+   those races remain offline coverage unless separately approved. Stop cannot undo
+   an already invoked request or guarantee it was uncharged.
 
 Offline tests use synthetic native boundaries and fake SDK transport, including
 held readers, pre-create/pre-dispatch Stop, dispatched settlement, terminal prefixes,

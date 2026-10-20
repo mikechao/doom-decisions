@@ -4,9 +4,22 @@ import {
   type AgentObservation,
   type AgentDecisionResult,
 } from './agent-observation.ts';
+import {
+  validAgentCommand,
+  type AgentScope,
+  type AgentPromptResult,
+} from './agent-control.ts';
 
 type Lease = { pageId: string; ownerId: string; epoch: string };
 type Stream = Pick<EventSource, 'onmessage' | 'onerror' | 'close'>;
+export type AgentBridgeState =
+  | 'available'
+  | 'attached'
+  | 'authorized'
+  | 'deciding'
+  | 'settled'
+  | 'stopped'
+  | 'unavailable';
 type Ports = {
   pageId: string;
   post(path: string, data: unknown, signal?: AbortSignal): Promise<unknown>;
@@ -14,22 +27,21 @@ type Ports = {
   observe(assertFresh: () => void): Promise<AgentObservation>;
   attach?(epoch: string): void;
   allow?(epoch: string): boolean;
+  allowRun?(epoch: string): boolean;
+  prompt?(
+    epoch: string,
+    sessionId: string,
+    fresh: () => void,
+    update?: AgentScope & { instructions: string },
+  ): AgentPromptResult;
   stopAgent?(): void;
   decide?(
     epoch: string,
     observationId: string,
     fresh: () => void,
+    scope?: AgentScope,
   ): Promise<AgentDecisionResult>;
-  state(
-    value:
-      | 'available'
-      | 'attached'
-      | 'authorized'
-      | 'deciding'
-      | 'settled'
-      | 'stopped'
-      | 'unavailable',
-  ): void;
+  state(value: AgentBridgeState): void;
 };
 
 // Constructed once after verified preparation, only in dev:agent. EventSource's
@@ -89,7 +101,12 @@ export function startAgentObservationBridge(ports: Ports) {
         return;
       }
       if (
-        !['observe', 'decide'].includes(data.type) ||
+        !validAgentCommand(
+          data.type,
+          Object.fromEntries(
+            Object.entries(data).filter(([key]) => key !== 'type'),
+          ),
+        ) ||
         !lease ||
         data.epoch !== lease.epoch ||
         data.ownerId !== lease.ownerId ||
@@ -106,6 +123,14 @@ export function startAgentObservationBridge(ports: Ports) {
       processing = true;
       let observation: AgentObservation | null = null;
       let decision: AgentDecisionResult | null = null;
+      let prompt: AgentPromptResult = { error: 'not-ready' };
+      const scope = data.runId
+        ? {
+            runId: data.runId,
+            sessionId: data.sessionId,
+            revision: data.revision,
+          }
+        : undefined;
       try {
         fresh();
         if (data.type === 'decide') {
@@ -115,9 +140,20 @@ export function startAgentObservationBridge(ports: Ports) {
             admitted.epoch,
             data.observationId,
             fresh,
+            scope,
           );
           if (!ended) ports.state('settled');
-        } else observation = await ports.observe(fresh);
+        } else if (data.type === 'observe')
+          observation = await ports.observe(fresh);
+        else if (ports.prompt)
+          prompt = ports.prompt(
+            admitted.epoch,
+            data.sessionId,
+            fresh,
+            data.type === 'set-prompt' && scope
+              ? { ...scope, instructions: data.instructions }
+              : undefined,
+          );
         fresh();
       } catch {
         observation = null; // Fixed category only; never forward exception text.
@@ -135,7 +171,11 @@ export function startAgentObservationBridge(ports: Ports) {
             pageToken,
             epoch: admitted.epoch,
             commandId: data.commandId,
-            ...(data.type === 'decide' ? { decision } : { observation }),
+            ...(data.type === 'decide'
+              ? { decision }
+              : data.type === 'observe'
+                ? { observation }
+                : { prompt }),
           },
           upload.signal,
         );
@@ -185,6 +225,12 @@ export function startAgentObservationBridge(ports: Ports) {
       if (ended || !lease || processing || !ports.allow?.(lease.epoch))
         return false;
       ports.state('authorized');
+      return true;
+    },
+    allowRun() {
+      if (ended || !lease || processing || !ports.allowRun?.(lease.epoch))
+        return false;
+      ports.state('attached');
       return true;
     },
   };

@@ -1159,3 +1159,43 @@ it('clears the authorization indication when controller invalidation reaches the
   assert.doesNotMatch(h.element('#agent-status').textContent, /attempt authorized/);
   assert.equal(session.controller.next.mock.calls.length, 0);
 });
+
+it('shows controller-owned bounded allowance and reflects remote saved instructions without changing settings', async () => {
+  agent.enabled = true;
+  agent.key = 'offline-agent-browser-dummy';
+  vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'agent'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture();
+  await import('../src/main.ts?agent-bounded-controls');
+  session.ports.present({ iwadEnabled: true });
+  ready();
+  const ports = bridge.start.mock.calls[0][0];
+  const handle = bridge.start.mock.results[0].value;
+  handle.allowRun = vi.fn();
+  ports.state('attached');
+  assert.equal(h.element('#allow-agent-run').hidden, false);
+  h.element('#allow-agent-run').dispatchEvent(new Event('click'));
+  assert.equal(handle.allowRun.mock.calls.length, 1);
+  const authorization = { runId: '00000000-0000-0000-0000-000000000001', active: true, limit: 3, reserved: 1, sdkInvoked: 0, remaining: 2 };
+  const present = state => session.ports.present({ session: {
+    phase: 'ready', prepared: true, hasClient: true, verifiedTics: 1,
+    evidence: { decisions: [] }, controls: { ready: true, stop: false, tics: true, iwad: false },
+    agentAuthorization: state,
+  } });
+  present(authorization);
+  assert.match(h.element('#agent-run-status').textContent, /2 of 3 attempts remaining · 1 reserved · 0 SDK calls started/);
+  assert.equal(h.element('#allow-agent-run').disabled, true);
+  assert.equal(h.element('#allow-agent').disabled, true);
+  h.element('#prompt-dialog').open = false;
+  assert.equal(session.ports.promptEditorOpen(), false);
+  const saved = session.ports.readDecisionConfiguration();
+  const n = session.ports.readTics();
+  session.ports.saveDecisionInstructions('Navigate toward the visible opening.');
+  assert.deepEqual(session.ports.readDecisionConfiguration(), { ...saved, instructionTemplate: 'Navigate toward the visible opening.' });
+  assert.equal(h.element('#prompt-instructions').value, 'Navigate toward the visible opening.');
+  assert.equal(session.ports.readTics(), n);
+  h.element('#prompt-dialog').open = true;
+  assert.equal(session.ports.promptEditorOpen(), true);
+  present({ ...authorization, active: false, remaining: 0 });
+  assert.match(h.element('#agent-run-status').textContent, /run ended · 0 of 3/);
+  assert.equal(h.element('#allow-agent-run').disabled, true, 'Ended run cannot be replenished');
+});

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
@@ -15,6 +15,7 @@ import { agentOrigin, agentPath, agentPngBytes, parseAgentObservation, parseAgen
 import { runAgentCli } from '../../scripts/doom-agent.mjs';
 import { agentObservation, pngFor } from './fixtures/agent.ts';
 import { deferred, checkpoint, fixture } from './fixtures/session.ts';
+import { validAgentCommand, parseAgentPromptResult } from '../src/agent-control.ts';
 
 const cleanups = [];
 afterEach(async () => { while (cleanups.length) await cleanups.pop()(); vi.restoreAllMocks(); });
@@ -59,8 +60,10 @@ function harness() {
       pageId: randomUUID(), observe,
       attach: epoch => network.controller?.attachAgent(epoch),
       allow: epoch => network.controller?.allowAgent(epoch) ?? false,
+      allowRun: epoch => network.controller?.allowAgentRun(epoch) ?? false,
+      prompt: (epoch, sessionId, fresh, update) => network.controller.agentPrompt(epoch, sessionId, fresh, update),
       stopAgent: () => network.controller?.stopAgent(),
-      decide: (epoch, id, fresh) => network.controller.agentNext(epoch, id, fresh),
+      decide: (epoch, id, fresh, scope) => network.controller.agentNext(epoch, id, fresh, scope),
       state: (state) => states.push(state),
       post: (path, data, signal) => {
         const send = () => post(path.slice(agentPath.length + 1), data, 'page');
@@ -359,7 +362,7 @@ it('delivers one controller-selected decision through CLI and never replays or m
   await assert.rejects(decide(randomUUID()), /lease-revoked/);
   assert.equal(game.sdkCalls, 1);
 });
-it.each(['stop', 'disconnect', 'second-page'])('%s revokes controller admission and never delivers a late paid result', async interruption => {
+it.each(['stop', 'disconnect', 'second-page'].flatMap(interruption => [false, true].map(bounded => ({ interruption, bounded }))))('$interruption revokes controller admission (bounded=$bounded) and never delivers a late paid result', async ({ interruption, bounded }) => {
   const game = fixture({ pngFor, delayedBody: true });
   cleanups.push(() => game.dispose());
   await game.prepare();
@@ -380,8 +383,10 @@ it.each(['stop', 'disconnect', 'second-page'])('%s revokes controller admission 
   await page.ready;
   const lease = await h.post('attach', { ownerId: randomUUID() });
   const observed = await h.post('observe', { ...lease, commandId: randomUUID() });
-  assert.equal(page.allow(), true);
-  const cli = h.send('decide', { ...lease, commandId: randomUUID(), observationId: observed.observation.observationId });
+  assert.equal(bounded ? page.allowRun() : page.allow(), true);
+  const prompt = bounded ? game.controller.agentPrompt(lease.epoch, observed.observation.sessionId, () => {}) : null;
+  const scope = prompt ? { sessionId: prompt.sessionId, runId: prompt.run.runId, revision: prompt.revision } : {};
+  const cli = h.send('decide', { ...lease, commandId: randomUUID(), observationId: observed.observation.observationId, ...scope });
   await game.waiting;
   if (interruption === 'stop') page.stop();
   if (interruption === 'disconnect') h.broker.close();
@@ -399,6 +404,89 @@ it.each(['stop', 'disconnect', 'second-page'])('%s revokes controller admission 
   await checkpoint(() => !game.view.session.agentBusy);
   assert.equal(game.gameCalls, 0);
   assert.equal(game.view.session.controls.ready, true);
+  if (bounded) assert.equal(game.controller.allowAgentRun(lease.epoch), false);
+});
+
+it('CLI reads and CAS-writes only effective instructions, then uses three individually verified bounded decisions', async () => {
+  const game = fixture({ pngFor });
+  cleanups.push(() => game.dispose());
+  await game.prepare();
+  const h = harness();
+  const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
+  await page.ready;
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-agent-run-'));
+  cleanups.push(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const cli = args => runAgentCli(args, { transport: h.transport, temporaryRoot });
+  const attached = await cli(['attach']);
+  const base = ['--lease', attached.leaseFile];
+  const observe = () => cli(['observe', ...base]);
+  let observation = await observe();
+  const get = () => cli(['get-prompt', ...base, '--session', observation.sessionId]);
+  assert.equal((await get()).run, null, 'Read never mints authorization');
+  assert.equal(page.allowRun(), true);
+  let prompt = await get();
+  const file = join(temporaryRoot, 'instructions.txt');
+  const instructions = 'Reach the visible opening; previous route may have stalled. Choose the action yourself. {{tics}} tics.';
+  await writeFile(file, instructions);
+  prompt = await cli(['set-prompt', ...base, '--session', prompt.sessionId, '--run', prompt.run.runId,
+    '--revision', String(prompt.revision), '--instructions-file', file]);
+  assert.equal(prompt.instructions, instructions);
+  assert.equal(prompt.revision, 1);
+  assert.equal(prompt.run.remaining, 3);
+  const decide = current => cli(['decide', ...base, '--observation', current.observationId,
+    '--session', prompt.sessionId, '--run', prompt.run.runId, '--revision', String(prompt.revision)]);
+  assert.equal((await decide(observation)).reason, 'stale-observation');
+  assert.equal(game.sdkCalls, 0);
+  for (let i = 1; i <= 3; i++) {
+    observation = await observe();
+    const result = await decide(observation);
+    assert.equal(result.outcome, 'completed');
+    assert.equal(result.observation.sessionId, prompt.sessionId);
+    assert.deepEqual(result.observation.previousAction, { action: 'neutral', tics: 6, endTic: i * 6 + 1 });
+    assert.ok((await readFile(result.pngPath)).length > 33);
+    await assert.rejects(decide(observation), /duplicate-command/);
+    prompt = await get();
+    assert.equal(prompt.run.remaining, 3 - i);
+    assert.equal(prompt.run.sdkInvoked, i);
+    assert.equal(JSON.stringify(prompt).includes('offline-not-a-credential'), false);
+  }
+  observation = await observe();
+  assert.equal((await decide(observation)).reason, 'no-grant');
+  assert.equal(page.allowRun(), false);
+  assert.equal(game.sdkCalls, 3);
+  assert.equal(game.inputs[0].questions[0].instructions, instructions.replace('{{tics}}', '6'));
+  page.stop();
+  await assert.rejects(get(), /lease-revoked/);
+});
+
+it('strict prompt and bounded command shapes reject extra fields and fence foreign owner/epoch/session/run identities', async () => {
+  const game = fixture({ pngFor });
+  cleanups.push(() => game.dispose());
+  await game.prepare();
+  const h = harness();
+  const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
+  await page.ready;
+  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const observed = await h.post('observe', { ...lease, commandId: randomUUID() });
+  page.allowRun();
+  const sessionId = observed.observation.sessionId;
+  const read = () => h.post('get-prompt', { ...lease, commandId: randomUUID(), sessionId });
+  const state = (await read()).prompt;
+  const command = { ...lease, commandId: randomUUID(), sessionId, runId: state.run.runId, revision: state.revision, instructions: 'Explore the opening.' };
+  for (const invalid of [{ ...command, key: 'offline-dummy' }, { ...command, revision: -1 }, { ...command, instructions: ' ' }, { ...command, instructions: 'x'.repeat(16001) }]) {
+    assert.equal(validAgentCommand('set-prompt', invalid), false);
+    await assert.rejects(h.post('set-prompt', invalid), /invalid-request/);
+  }
+  for (const key of ['ownerId', 'epoch'])
+    await assert.rejects(h.post('set-prompt', { ...command, [key]: randomUUID() }), /lease-revoked/);
+  assert.throws(() => parseAgentPromptResult({ ...state, credential: 'offline-dummy' }));
+  assert.throws(() => parseAgentPromptResult({ ...state, run: { ...state.run, sdkInvoked: 4 } }));
+  assert.equal((await h.post('set-prompt', { ...command, runId: randomUUID() })).prompt.error, 'run-unavailable');
+  await assert.rejects(h.post('set-prompt', { ...command, runId: randomUUID() }), /duplicate-command/);
+  assert.equal((await read()).prompt.run.active, false);
+  assert.equal((await h.post('get-prompt', { ...lease, commandId: randomUUID(), sessionId: randomUUID() })).prompt.error, 'session-mismatch');
+  assert.equal(game.sdkCalls, 0);
+  assert.equal(game.ports.readDecisionConfiguration().instructionTemplate, state.instructions);
 });
 it('rejects credentials and speculative success in the decision response allowlist', () => {
   const base = {

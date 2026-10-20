@@ -7,6 +7,10 @@ import {
   parseAgentObservation,
   parseAgentDecisionResult,
 } from './src/agent-observation.ts';
+import {
+  validAgentCommand,
+  parseAgentPromptResult,
+} from './src/agent-control.ts';
 
 // One page, one lease, one outstanding observation. No queue, retry or durable state.
 export function createAgentBridge() {
@@ -173,17 +177,11 @@ export function createAgentBridge() {
       event({ type: 'attached', ...page.lease });
       return json(res, 200, page.lease);
     }
-    if ((op === 'observe' || op === 'decide') && cli(req)) {
-      if (
-        !shape(data, [
-          'pageId',
-          'ownerId',
-          'epoch',
-          'commandId',
-          ...(op === 'decide' ? ['observationId'] : []),
-        ]) ||
-        !Object.values(data).every(isAgentId)
-      )
+    if (
+      ['observe', 'decide', 'get-prompt', 'set-prompt'].includes(op) &&
+      cli(req)
+    ) {
+      if (!validAgentCommand(op, data))
         return fail(res, 'invalid-request', 400);
       if (!ownsLease(data)) return fail(res, 'lease-revoked');
       if (page.conflict) return fail(res, 'multiple-pages');
@@ -195,6 +193,8 @@ export function createAgentBridge() {
         commandId: data.commandId,
         op,
         observationId: data.observationId,
+        sessionId: data.sessionId,
+        runId: data.runId,
         res,
       };
       active.pending = pending;
@@ -218,12 +218,19 @@ export function createAgentBridge() {
       return;
     }
     if (op === 'result' && browser(req)) {
+      if (!page?.pending) return fail(res, 'lease-revoked');
       const fields = [
         'pageId',
         'pageToken',
         'epoch',
         'commandId',
-        ...(page?.pending?.op === 'decide' ? ['decision'] : ['observation']),
+        ...[
+          page?.pending?.op === 'decide'
+            ? 'decision'
+            : page?.pending?.op === 'observe'
+              ? 'observation'
+              : 'prompt',
+        ],
       ];
       if (!shape(data, fields)) return fail(res, 'invalid-request', 400);
       const active = page;
@@ -242,7 +249,7 @@ export function createAgentBridge() {
         !pending.res.destroyed &&
         !pending.res.writableEnded;
       if (!acceptsResult()) return fail(res, 'lease-revoked');
-      let observation, decision;
+      let observation, decision, prompt;
       try {
         if (pending.op === 'decide') {
           decision = parseAgentDecisionResult(data.decision);
@@ -250,7 +257,18 @@ export function createAgentBridge() {
             throw Error('correlation');
           observation = decision.observation;
         }
-        if (pending.op !== 'decide' && data.observation !== null)
+        if (pending.op === 'get-prompt' || pending.op === 'set-prompt') {
+          prompt = parseAgentPromptResult(data.prompt);
+          if (
+            !('error' in prompt) &&
+            (prompt.sessionId !== pending.sessionId ||
+              (active.sessionId && active.sessionId !== prompt.sessionId) ||
+              (pending.op === 'set-prompt' &&
+                prompt.run?.runId !== pending.runId))
+          )
+            throw Error('correlation');
+        }
+        if (pending.op === 'observe' && data.observation !== null)
           observation = parseAgentObservation(data.observation);
         if (observation) {
           if (
@@ -273,12 +291,12 @@ export function createAgentBridge() {
       if (observation) active.sessionId = observation.sessionId;
       clearTimeout(pending.timer);
       active.pending = undefined;
-      if (observation || decision)
+      if (observation || decision || prompt)
         json(pending.res, 200, {
           pageId: active.id,
           epoch: active.lease.epoch,
           commandId: data.commandId,
-          ...(decision ? { decision } : { observation }),
+          ...(decision ? { decision } : prompt ? { prompt } : { observation }),
         });
       else fail(pending.res, 'observation-unavailable');
       return json(res, 200, { received: true });

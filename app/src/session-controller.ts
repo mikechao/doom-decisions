@@ -1,5 +1,12 @@
 import type { ActionName, Attempt, Execution, Phase } from './decision';
 import {
+  agentRunLimit,
+  validAgentInstructions,
+  type AgentRunState,
+  type AgentScope,
+  type AgentPromptResult,
+} from './agent-control.ts';
+import {
   agentPngBytes,
   type AgentDecisionResult,
   type AgentObservation,
@@ -152,6 +159,12 @@ type AgentRun = {
   dispatched: boolean;
   used: boolean;
   observation?: AgentObservation;
+  bounded?: BoundedAgentRun;
+};
+type BoundedAgentRun = {
+  state: AgentRunState;
+  run: Run;
+  configuration: string;
 };
 type DecisionOutcome =
   | 'completed'
@@ -189,6 +202,7 @@ export type SessionPresentation = Readonly<{
     inspectorRequests: Readonly<Record<number, DecisionRequest>>;
     continuous?: ContinuousRun;
     agentBusy: boolean;
+    agentAuthorization?: AgentRunState;
     waitingForSdk: boolean;
     hasClient: boolean;
     prepared: boolean;
@@ -203,6 +217,8 @@ export interface SessionBrowserPorts {
   readDecisionConfiguration(): DecisionConfiguration;
   readAgentIdentity?(): string;
   agentGrantRevoked?(): void;
+  promptEditorOpen?(): boolean;
+  saveDecisionInstructions?(instructions: string): void;
   takeKey(): string;
   clearKey(): void;
   focusBudget(): void;
@@ -223,6 +239,7 @@ export function createSessionController(
     sdk: SdkProbe | undefined,
     current: Run | undefined;
   let pageExited = false;
+  let configurationRevision = 0;
   let observed:
     | {
         id: string;
@@ -233,13 +250,18 @@ export function createSessionController(
       }
     | undefined;
   let agentLease:
-    | { epoch: string; grant?: NonNullable<typeof observed> }
+    | {
+        epoch: string;
+        grant?: NonNullable<typeof observed>;
+        bounded?: BoundedAgentRun;
+      }
     | undefined;
   const configurationIdentity = () =>
     JSON.stringify([
       ports.readDecisionConfiguration(),
       ports.readTics(),
       ports.readAgentIdentity?.(),
+      configurationRevision,
     ]);
   function invalidateAgentObservation() {
     observed = undefined;
@@ -248,12 +270,32 @@ export function createSessionController(
       ports.agentGrantRevoked?.();
     }
   }
-  function configure(change: () => void) {
-    if (current?.agent) return false;
+  function endBounded() {
+    const bounded = agentLease?.bounded;
+    if (!bounded) return;
+    bounded.state.active = false;
+    bounded.state.remaining = 0;
+    const agent = current?.agent;
+    if (agent?.bounded === bounded) {
+      agent.stopRequested = true;
+      if (!agent.dispatched) current?.apiController?.abort();
+    }
+  }
+  function changeConfiguration(change: () => void, agentWrite = false) {
+    if (!agentWrite) endBounded();
+    if (current?.agent) {
+      display(current);
+      return false;
+    }
     invalidateAgentObservation();
     change();
+    configurationRevision++;
+    if (agentWrite && agentLease?.bounded)
+      agentLease.bounded.configuration = configurationIdentity();
+    if (current) display(current);
     return true;
   }
+  const configure = (change: () => void) => changeConfiguration(change);
   function attachAgent(epoch: string) {
     check(!agentLease && !pageExited, 'Agent already attached or page exited.');
     agentLease = { epoch };
@@ -265,6 +307,7 @@ export function createSessionController(
       !agentLease ||
       agentLease.epoch !== epoch ||
       agentLease.grant ||
+      agentLease.bounded ||
       !run?.valid ||
       run.phase !== 'ready' ||
       run.agent ||
@@ -282,11 +325,106 @@ export function createSessionController(
     agentLease.grant = observed; // Authorize this exact verified checkpoint only.
     return true;
   }
+  function allowAgentRun(epoch: string) {
+    // Reuse the exact ready-checkpoint admission, then replace only the newly
+    // created single grant. A lease can never replenish a bounded authorization.
+    if (!allowAgent(epoch)) return false;
+    const run = current;
+    check(run && agentLease, 'Agent unavailable.');
+    agentLease.grant = undefined;
+    agentLease.bounded = {
+      run,
+      configuration: configurationIdentity(),
+      state: {
+        runId: crypto.randomUUID(),
+        active: true,
+        limit: agentRunLimit,
+        reserved: 0,
+        sdkInvoked: 0,
+        remaining: agentRunLimit,
+      },
+    };
+    display(run);
+    return true;
+  }
+  function agentPrompt(
+    epoch: string,
+    sessionId: string,
+    assertLease: () => void,
+    update?: AgentScope & { instructions: string },
+  ): AgentPromptResult {
+    try {
+      assertLease();
+    } catch {
+      return { error: 'lease-revoked' };
+    }
+    if (!agentLease || agentLease.epoch !== epoch)
+      return { error: 'lease-revoked' };
+    const run = current;
+    const conflict = (
+      error: Extract<AgentPromptResult, { error: string }>['error'],
+    ): AgentPromptResult => {
+      endBounded();
+      if (run) display(run);
+      return { error };
+    };
+    if (!run?.sessionId || run.sessionId !== sessionId)
+      return conflict('session-mismatch');
+    if (
+      !run.valid ||
+      pageExited ||
+      run.phase !== 'ready' ||
+      run.agent ||
+      run.attempt ||
+      run.sdkRead ||
+      run.cancel ||
+      run.terminal ||
+      run.continuous?.active
+    )
+      return { error: 'not-ready' };
+    const bounded = agentLease.bounded;
+    if (
+      bounded?.state.active &&
+      (bounded.run !== run || bounded.configuration !== configurationIdentity())
+    ) {
+      endBounded();
+      display(run);
+    }
+    if (update) {
+      if (
+        !bounded?.state.active ||
+        bounded.run !== run ||
+        update.sessionId !== sessionId ||
+        update.runId !== bounded.state.runId
+      )
+        return conflict('run-unavailable');
+      if (update.revision !== configurationRevision)
+        return conflict('revision-conflict');
+      if (ports.promptEditorOpen?.()) return conflict('editor-open');
+      if (!validAgentInstructions(update.instructions))
+        return conflict('invalid-instructions');
+      if (!ports.saveDecisionInstructions) return { error: 'not-ready' };
+      changeConfiguration(
+        () => ports.saveDecisionInstructions?.(update.instructions),
+        true,
+      );
+    }
+    return {
+      sessionId,
+      revision: configurationRevision,
+      instructions: ports.readDecisionConfiguration().instructionTemplate,
+      run: bounded ? { ...bounded.state } : null,
+    };
+  }
   function stopAgent() {
+    endBounded();
     agentLease = undefined;
     observed = undefined;
     const run = current;
-    if (!run?.agent) return;
+    if (!run?.agent) {
+      if (run) display(run);
+      return;
+    }
     run.agent.stopRequested = true;
     if (!run.agent.dispatched) run.apiController?.abort();
     display(
@@ -325,6 +463,9 @@ export function createSessionController(
         inspectorRequests: run.inspectorRequests,
         continuous: continuous ? { ...continuous } : undefined,
         agentBusy: !!run.agent,
+        agentAuthorization: agentLease?.bounded
+          ? { ...agentLease.bounded.state }
+          : undefined,
         waitingForSdk: !!run.sdkRead,
         hasClient: !!run.client,
         prepared:
@@ -344,6 +485,7 @@ export function createSessionController(
     });
   }
   function retire(run: Run, phase: 'error' | 'terminal' = 'error') {
+    endBounded();
     run.previousAction = undefined;
     if (phase !== 'terminal')
       run.collisionEvidence =
@@ -635,6 +777,17 @@ export function createSessionController(
     assertCurrent(run);
     assertDecision(run, attempt);
   }
+  function agentFence(agent: AgentRun) {
+    if (
+      agent.stopRequested ||
+      agentLease?.epoch !== agent.epoch ||
+      (agent.bounded &&
+        (!agent.bounded.state.active ||
+          agentLease.bounded !== agent.bounded ||
+          agent.bounded.configuration !== configurationIdentity()))
+    )
+      throw new DecisionStopped();
+  }
   async function decide(
     run: Run,
     attempt: Attempt,
@@ -676,13 +829,13 @@ export function createSessionController(
         beforeCreate: () => {
           fence(run, attempt);
           if (agent) {
-            if (agent.stopRequested || agentLease?.epoch !== agent.epoch)
-              throw new DecisionStopped();
+            agentFence(agent);
             check(
               run.agent === agent && !agent.used,
               'Agent attempt exhausted.',
             );
             agent.used = true; // Synchronous, immediately before SDK create; never refunded.
+            if (agent.bounded) agent.bounded.state.sdkInvoked++;
           }
           if (continuous) {
             if (continuous.stopRequested) throw new DecisionStopped();
@@ -717,6 +870,7 @@ export function createSessionController(
       (run.continuous?.active && run.continuous !== continuous)
     )
       return 'not-admitted';
+    if (!agent) endBounded(); // Manual gameplay ends any authorization between cycles.
     if (
       continuous &&
       (run.continuous !== continuous ||
@@ -771,6 +925,7 @@ export function createSessionController(
     if (continuous) continuous.dispatched = false;
     const dispatchFence = () => {
       fence(run, attempt);
+      if (agent) agentFence(agent);
       if (
         continuous?.stopRequested ||
         agent?.stopRequested ||
@@ -1014,6 +1169,7 @@ export function createSessionController(
     epoch: string,
     observationId: string,
     assertLease: () => void,
+    scope?: AgentScope,
   ): Promise<AgentDecisionResult> {
     const run = current;
     const rejected = (
@@ -1040,7 +1196,20 @@ export function createSessionController(
     }
     if (!agentLease || agentLease.epoch !== epoch)
       return rejected('lease-revoked');
-    if (!agentLease.grant) return rejected('no-grant');
+    const bounded = agentLease.bounded;
+    if (bounded) {
+      if (
+        !bounded.state.active ||
+        bounded.state.remaining === 0 ||
+        !scope ||
+        scope.runId !== bounded.state.runId ||
+        scope.sessionId !== run?.sessionId ||
+        scope.revision !== configurationRevision ||
+        bounded.run !== run ||
+        bounded.configuration !== configurationIdentity()
+      )
+        return rejected('no-grant');
+    } else if (scope || !agentLease.grant) return rejected('no-grant');
     const grant = agentLease.grant;
     agentLease.grant = undefined; // One command reserves it, including rejected preflight.
     if (
@@ -1056,7 +1225,7 @@ export function createSessionController(
       return rejected('not-ready');
     if (
       !observed ||
-      grant !== observed ||
+      (!bounded && grant !== observed) ||
       observed.run !== run ||
       observed.epoch !== epoch ||
       observed.id !== observationId ||
@@ -1064,17 +1233,25 @@ export function createSessionController(
       observed.configuration !== configurationIdentity()
     )
       return rejected('stale-observation');
+    if (bounded) {
+      bounded.state.reserved++; // Synchronous valid admission; never refunded.
+      bounded.state.remaining = agentRunLimit - bounded.state.reserved;
+      observed = undefined; // Exact observation is consumed even on pre-create failure.
+    }
     const agent: AgentRun = {
       epoch,
       stopRequested: false,
       dispatched: false,
       used: false,
+      bounded,
     };
     run.agent = agent; // Own admission through SDK cleanup AND output verification.
     const number = run.evidence.decisions.length;
     display(run);
     try {
       const outcome = await runOneDecision(run, undefined, agent);
+      if (bounded && (outcome !== 'completed' || bounded.state.remaining === 0))
+        endBounded();
       const entry = run.evidence.decisions[number];
       return structuredClone({
         outcome,
@@ -1361,6 +1538,8 @@ export function createSessionController(
     observe,
     attachAgent,
     allowAgent,
+    allowAgentRun,
+    agentPrompt,
     stopAgent,
     agentNext,
     configure,

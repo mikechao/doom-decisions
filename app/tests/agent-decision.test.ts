@@ -349,3 +349,134 @@ it('returns the just-verified forward action immediately, consistent with the ne
     assert.equal(h.gameCalls, 6);
   });
 });
+
+function bounded(h, epoch, observation) {
+  assert.equal(h.controller.allowAgentRun(epoch), true);
+  const read = () => {
+    const value = h.controller.agentPrompt(epoch, observation.sessionId, () => {});
+    assert.equal('error' in value, false);
+    return value;
+  };
+  const scope = () => { const p = read(); return { sessionId: p.sessionId, runId: p.run.runId, revision: p.revision }; };
+  return { read, scope, decide: id => h.controller.agentNext(epoch, id, () => {}, scope()),
+    write: instructions => h.controller.agentPrompt(epoch, observation.sessionId, () => {}, { ...scope(), instructions }) };
+}
+
+it('reserves three independent verified actions in one session without allowing replenishment or a fourth create', async () => {
+  await session({ choice: { answers: [{ type: 'choice', name: 'next_action', choice: 'forward' }] } }, async ({ h, epoch, observation }) => {
+    const b = bounded(h, epoch, observation);
+    let current = observation;
+    for (let i = 1; i <= 3; i++) {
+      const result = parseAgentDecisionResult(await b.decide(current.observationId));
+      assert.equal(result.outcome, 'completed');
+      assert.equal(result.observation.sessionId, observation.sessionId);
+      assert.deepEqual(result.observation.previousAction, { action: 'forward', tics: 6, endTic: 1 + 6 * i });
+      assert.deepEqual(b.read().run, { runId: b.scope().runId, active: i < 3, limit: 3, reserved: i, sdkInvoked: i, remaining: 3 - i });
+      current = await h.controller.observe(() => {});
+      assert.deepEqual(current.previousAction, result.observation.previousAction);
+      assert.equal(current.frame.nativeSha256, result.observation.frame.nativeSha256);
+    }
+    assert.equal((await b.decide(current.observationId)).reason, 'no-grant');
+    assert.equal(h.controller.allowAgentRun(epoch), false);
+    assert.equal(h.controller.allowAgent(epoch), false);
+    assert.equal(h.sdkCalls, 3);
+    assert.equal(h.creations, 1);
+    assert.equal(h.gameCalls, 18);
+    assert.equal(h.view.session.controls.ready, true);
+  });
+});
+
+it('CAS instructions preserve the run but consume the former observation and use the exact saved replacement', async () => {
+  await session({ decisionConfiguration: { ...defaultDecisionConfiguration, includeHealth: true, includeAmmo: true, includePreviousAction: true, includeFacingProbe: true } }, async ({ h, epoch, observation }) => {
+    const b = bounded(h, epoch, observation);
+    const before = b.read();
+    const settings = h.ports.readDecisionConfiguration();
+    const instructions = 'Goal: reach the visible opening.\nHypothesis: the earlier route stalled; confidence low. Keep action selection yours.';
+    const saved = b.write(instructions);
+    assert.equal(saved.revision, before.revision + 1);
+    assert.deepEqual(saved.run, before.run);
+    assert.deepEqual(h.ports.readDecisionConfiguration(), { ...settings, instructionTemplate: instructions });
+    assert.equal(h.browserInputs.tics, 6);
+    assert.equal((await b.decide(observation.observationId)).reason, 'stale-observation');
+    assert.equal(h.sdkCalls, 0);
+    const fresh = await h.controller.observe(() => {});
+    assert.equal((await b.decide(fresh.observationId)).outcome, 'completed');
+    assert.equal(h.inputs[0].questions[0].instructions, instructions);
+    assert.equal(b.read().run.reserved, 1);
+    const firstRevision = saved.revision;
+    b.write(before.instructions);
+    assert.ok(b.read().revision > firstRevision, 'Reverting text never restores a prior revision');
+    assert.equal((await b.decide(fresh.observationId)).reason, 'stale-observation');
+    assert.equal(h.sdkCalls, 1);
+  });
+});
+
+it('prompt conflicts, human edits, manual gameplay and wrong scope end or fence bounded authorization', async () => {
+  for (const edit of ['revision', 'editor', 'session', 'run', 'human-save', 'tics', 'options', 'model', 'manual']) {
+    await session({}, async ({ h, epoch, observation }) => {
+      const b = bounded(h, epoch, observation);
+      const before = b.read();
+      if (['revision', 'editor', 'session', 'run'].includes(edit)) {
+        const scope = b.scope();
+        if (edit === 'revision') scope.revision++;
+        if (edit === 'session') scope.sessionId = randomUUID();
+        if (edit === 'run') scope.runId = randomUUID();
+        if (edit === 'editor') h.browserInputs.promptEditorOpen = true;
+        const result = h.controller.agentPrompt(epoch, scope.sessionId, () => {}, { ...scope, instructions: 'Replacement objective' });
+        assert.ok('error' in result);
+        assert.equal(h.ports.readDecisionConfiguration().instructionTemplate, before.instructions);
+      } else if (edit === 'manual') assert.equal(await h.next(), 'completed');
+      else h.controller.configure(() => {
+        if (edit === 'human-save') h.ports.saveDecisionInstructions('Human objective');
+        if (edit === 'tics') h.browserInputs.tics = 12;
+        if (edit === 'options') h.ports.readDecisionConfiguration = () => ({ ...defaultDecisionConfiguration, includeHealth: true });
+        if (edit === 'model') h.ports.readAgentIdentity = () => 'other-model';
+      });
+      assert.equal(b.read().run.active, false, edit);
+      assert.equal(b.read().run.remaining, 0);
+      assert.equal(h.controller.allowAgentRun(epoch), false);
+      assert.equal((await b.decide(observation.observationId)).sdkInvoked, false);
+      assert.equal(h.sdkCalls, edit === 'manual' ? 1 : 0);
+    });
+  }
+});
+
+it('failed reservations never refund, restart or allow another bounded SDK attempt', async () => {
+  for (const options of [{ key: '' }, { throwOnCreate: true }, { choice: { answers: [] } }, { trapAt: 2 }, { at: 2, signals: death }]) {
+    await session(options, async ({ h, epoch, observation }) => {
+      const b = bounded(h, epoch, observation);
+      const scope = b.scope();
+      const first = await b.decide(observation.observationId);
+      assert.notEqual(first.outcome, 'completed');
+      assert.equal(h.view.session.agentAuthorization.reserved, 1);
+      assert.equal(h.view.session.agentAuthorization.sdkInvoked, options.key === '' ? 0 : 1);
+      assert.equal(h.view.session.agentAuthorization.active, false);
+      assert.equal(h.view.session.agentAuthorization.remaining, 0);
+      assert.equal((await h.controller.agentNext(epoch, observation.observationId, () => {}, scope)).sdkInvoked, false);
+      assert.equal(h.controller.allowAgentRun(epoch), false);
+    });
+  }
+});
+
+it('bounded Stop preserves reader ownership and dispatched verification without authorizing another cycle', async () => {
+  for (const phase of ['capture', 'reader', 'render']) {
+    const dispatched = phase === 'render';
+    await session(phase === 'reader' ? { delayedBody: true } : {}, async ({ h, epoch, observation }) => {
+      const b = bounded(h, epoch, observation);
+      const scope = b.scope();
+      const hold = phase === 'reader' ? undefined : h.hold(dispatched ? 'render' : 'snapshot');
+      const work = b.decide(observation.observationId);
+      if (hold) await hold.waiting; else await h.waiting;
+      h.controller.stopAgent();
+      assert.equal(h.view.session.controls.ready, false);
+      assert.equal(await h.next(), 'not-admitted');
+      if (hold) hold.release(); else h.releaseBody();
+      assert.equal((await work).outcome, dispatched ? 'completed' : 'stopped');
+      assert.equal(h.sdkCalls, phase === 'capture' ? 0 : 1);
+      assert.equal(h.gameCalls, dispatched ? 6 : 0);
+      assert.equal(h.view.session.controls.ready, true);
+      assert.equal(h.controller.agentPrompt(epoch, observation.sessionId, () => {}).error, 'lease-revoked');
+      assert.equal((await h.controller.agentNext(epoch, observation.observationId, () => {}, scope)).reason, 'lease-revoked');
+    });
+  }
+});
