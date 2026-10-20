@@ -12,6 +12,7 @@ import {
   buildDefaultDecisionRequest,
   type DecisionConfiguration,
 } from './decision-request.ts';
+import { type FacingProbe, facingProbeAt } from './facing-probe.ts';
 import { formatCollisionEvidence } from './collision-evidence';
 import type {
   DecisionDiagnostics,
@@ -162,6 +163,7 @@ export type SessionPresentation = Readonly<{
     readyWeapon: NativeObservation['readyWeapon'];
     ammo: NativeObservation['ammo'];
     health: NativeObservation['health'];
+    facingProbe?: FacingProbe;
   }>;
   iwadEnabled?: boolean;
   session?: ReadonlyData<{
@@ -372,6 +374,7 @@ export function createSessionController(
         readyWeapon: result.native.readyWeapon,
         ammo: result.native.ammo,
         health: result.native.health,
+        facingProbe: facingProbeAt(result),
       }),
     });
   }
@@ -435,6 +438,7 @@ export function createSessionController(
       configuration,
       observation.native,
       previousActionAt(run.previousAction, observation),
+      facingProbeAt(observation),
     );
     run.inspectorRequests = Object.freeze({
       ...run.inspectorRequests,

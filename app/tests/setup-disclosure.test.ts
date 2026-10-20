@@ -673,7 +673,7 @@ describe('Decision instructions editor', () => {
     const saved = field.value;
     emit(element('#save-prompt'), 'click');
     const savedConfiguration = session.ports.readDecisionConfiguration();
-    assert.deepEqual(savedConfiguration, { instructionTemplate: saved, includeReadyWeapon: true, includeAmmo: true, includeHealth: true, includePreviousAction: true });
+    assert.deepEqual(savedConfiguration, { instructionTemplate: saved, includeReadyWeapon: true, includeAmmo: true, includeHealth: true, includePreviousAction: true, includeFacingProbe: false });
     assert.equal(Object.isFrozen(savedConfiguration), true);
     assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, saved);
     for (const dismiss of [
@@ -737,7 +737,7 @@ describe('Decision instructions editor', () => {
     assert.equal(field.value, 'Choose with {{readyWeapon}} and {{ammo}}. Keep this text.');
     emit(element('#save-prompt'), 'click');
     assert.deepEqual(session.ports.readDecisionConfiguration(), {
-      instructionTemplate: field.value, includeReadyWeapon: true, includeAmmo: true, includeHealth: true, includePreviousAction: true,
+      instructionTemplate: field.value, includeReadyWeapon: true, includeAmmo: true, includeHealth: true, includePreviousAction: true, includeFacingProbe: false,
     });
   });
 });
@@ -1077,4 +1077,86 @@ describe('Local IWAD picker presentation and delegation', () => {
     assert.equal(element('#included-freedoom').hidden, true);
     assert.equal(element('#included-freedoom').textContent, 'Doom loaded');
   });
+});
+
+it('puts one labeled facing section first inside the closed Advanced evidence disclosure', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const disclosure = html.match(/<details class="advanced">([\s\S]*?)<\/details>/)?.[1];
+  assert.ok(disclosure, 'The native disclosure remains closed by default');
+  assert.match(disclosure, /^\s*<summary>Advanced evidence: preparation, decisions and frame hashes<\/summary>\s*<section aria-labelledby="facing-evidence-label">/);
+  const section = disclosure.match(/<section aria-labelledby="facing-evidence-label">([\s\S]*?)<\/section>/)?.[0];
+  assert.ok(section);
+  assert.match(section, /<h3 id="facing-evidence-label">Facing wall \/ door \(Experiment 2\)<\/h3>/);
+  assert.match(section, /<pre id="facing-evidence" aria-labelledby="facing-evidence-label">No verified facing sample yet\.<\/pre>/);
+  assert.match(section, /Native facing classifications await gameplay validation/);
+  for (const id of ['facing-evidence', 'facing-evidence-label'])
+    assert.equal((html.match(new RegExp(`id="${id}"`, 'g')) ?? []).length, 1);
+  const remaining = disclosure.slice(disclosure.indexOf(section) + section.length);
+  assert.match(remaining, /id="sdk" role="status"/);
+  assert.match(remaining, /id="frame">No frame rendered/);
+  assert.match(remaining, /Native collision telemetry \(Experiment 1\)/);
+  assert.match(remaining, /id="collision-evidence"/);
+  assert.match(remaining, /counts overlap; zero does not establish a clear path/);
+  assert.match(remaining, /id="evidence">Not prepared/);
+});
+
+it('shows pending facing evidence until a verified sample, then preserves readable and raw ownership evidence', () => {
+  const configuration = session.ports.readDecisionConfiguration();
+  const calls = Object.values(session.controller).map(method => method.mock.calls.length);
+  show({ phase: 'preparing', prepared: false, collisionEvidence: 'No verified action yet.' });
+  assert.equal(element('#facing-evidence').textContent, 'No verified facing sample yet.');
+  const verified = { tic: 2, health: 100, readyWeapon: null, ammo: null,
+    facingProbe: { tic: 2, kind: 3, door: 2, distance: 24 } };
+  session.ports.present({ verifiedObservation: verified });
+  show({ collisionEvidence: 'Existing collision evidence.' });
+  const text = element('#facing-evidence').textContent;
+  assert.match(text, /^Last verified rendered tic 2: Facing probe .*clearance restriction about 24 units ahead/);
+  assert.match(text, /Front-side manual-door use candidate; use may be possible, keys and door activity unknown/);
+  assert.match(text, /Center ray only; full player clearance unknown/);
+  assert.match(text, /\nRaw indices: 87 \(sample tic\)=2 · 90 \(kind\)=3 · 91 \(door evidence\)=2 · 92 \(distance\)=24$/);
+  assert.equal(element('#collision-evidence').textContent, 'Existing collision evidence.');
+  // A later unverified operation cannot relabel the prior sample as current.
+  show({ phase: 'busy', verifiedTics: 3 });
+  assert.equal(element('#facing-evidence').textContent, text);
+  session.ports.present({ verifiedObservation: { ...verified, tic: 3,
+    facingProbe: { tic: 3, kind: 0, door: 0, distance: -1 } } });
+  show();
+  assert.match(element('#facing-evidence').textContent, /unavailable at this verified frame/);
+  assert.doesNotMatch(element('#facing-evidence').textContent, /24 units ahead/);
+  assert.match(element('#facing-evidence').textContent, /87 \(sample tic\)=3 · 90 \(kind\)=0 · 91 \(door evidence\)=0 · 92 \(distance\)=-1/);
+  assert.equal(session.ports.readDecisionConfiguration(), configuration);
+  assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
+});
+
+it('keeps Nearby wall / door off by default and supports draft preview, Cancel, Save and Reset independently', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /<input id="prompt-facing-probe" type="checkbox"> Nearby wall \/ door/);
+  const verified = { tic: 2, health: 100, readyWeapon: null, ammo: null,
+    facingProbe: { tic: 2, kind: 3, door: 2, distance: 24 } };
+  session.ports.present({ verifiedObservation: verified });
+  emit(element('#view-prompt'), 'click');
+  const checkbox = element('#prompt-facing-probe');
+  const original = session.ports.readDecisionConfiguration();
+  assert.equal(checkbox.checked, false);
+  assert.equal(original.includeFacingProbe, false);
+  const instructions = element('#prompt-instructions').value;
+  checkbox.checked = true; emit(checkbox, 'change');
+  assert.match(element('#prompt-state-preview-text').textContent, /clearance restriction.*Front-side manual-door use candidate/);
+  assert.equal(element('#prompt-instructions').value, instructions);
+  assert.equal(session.ports.readDecisionConfiguration(), original);
+  emit(element('#close-prompt'), 'click');
+  emit(element('#view-prompt'), 'click');
+  assert.equal(checkbox.checked, false);
+  checkbox.checked = true; emit(element('#save-prompt'), 'click');
+  assert.equal(session.ports.readDecisionConfiguration().includeFacingProbe, true);
+  assert.equal(session.ports.readDecisionConfiguration().includePreviousAction, false);
+  emit(element('#view-prompt'), 'click'); emit(element('#reset-prompt'), 'click');
+  assert.equal(checkbox.checked, false);
+  assert.equal(session.ports.readDecisionConfiguration().includeFacingProbe, true);
+  element('#prompt-dialog').escape(); emit(element('#view-prompt'), 'click');
+  assert.equal(checkbox.checked, true);
+  session.ports.present({ verifiedObservation: { ...verified, tic: 3, facingProbe: { tic: 3, kind: 0, door: 0, distance: -1 } } });
+  assert.match(element('#prompt-state-preview-text').textContent, /unavailable at this verified frame/);
+  emit(element('#reset-prompt'), 'click'); emit(element('#save-prompt'), 'click');
+  assert.deepEqual(session.ports.readDecisionConfiguration(), defaultDecisionConfiguration);
 });

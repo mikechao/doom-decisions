@@ -108,6 +108,9 @@ function state(n) {
       collisionSampleTic: n === 0 ? -1 : n,
       movementFlags: n === 0 ? -1 : 0,
       rejectionMask: n === 0 ? -1 : 0,
+      facingKind: n === 0 ? -1 : 0,
+      facingDoor: n === 0 ? -1 : 0,
+      facingDistance: -1,
     },
   };
 }

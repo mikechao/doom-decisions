@@ -1,4 +1,5 @@
 import { createIncludedFreedoom } from './bundled-freedoom';
+import { formatFacingProbe } from './facing-probe.ts';
 import {
   defineDecisionHistory,
   type DecisionHistoryElement,
@@ -98,6 +99,7 @@ type Elements = {
   '#prompt-ammo': HTMLInputElement;
   '#prompt-health': HTMLInputElement;
   '#prompt-previous-action': HTMLInputElement;
+  '#prompt-facing-probe': HTMLInputElement;
   '#prompt-state-preview-note': HTMLParagraphElement;
   '#prompt-state-preview-text': HTMLPreElement;
   '#prompt-error': HTMLParagraphElement;
@@ -113,6 +115,7 @@ type Elements = {
   '#frame': HTMLParagraphElement;
   '#evidence': HTMLPreElement;
   '#collision-evidence': HTMLPreElement;
+  '#facing-evidence': HTMLPreElement;
 };
 // These elements are supplied by the static HTML entry; the Canvas is 640×400.
 const $ = <S extends keyof Elements>(selector: S) => {
@@ -393,6 +396,10 @@ function display(view: SessionPresentation) {
   collapseCompletedSetup();
   if (!run) return;
   $('#status').dataset.phase = run.phase;
+  const facing = latestVerifiedObservation?.facingProbe;
+  $('#facing-evidence').textContent = latestVerifiedObservation
+    ? `Last verified rendered tic ${latestVerifiedObservation.tic}: ${formatFacingProbe(latestVerifiedObservation.tic, facing)}\nRaw indices: ${facing ? `87 (sample tic)=${facing.tic} · 90 (kind)=${facing.kind} · 91 (door evidence)=${facing.door} · 92 (distance)=${facing.distance}` : 'unavailable'}`
+    : 'No verified facing sample yet.';
   $('#collision-evidence').textContent =
     run.collisionEvidence ?? 'No verified action yet.';
   if (!openRouterMode)
@@ -625,8 +632,11 @@ function updateStatePreview() {
           includeAmmo: $('#prompt-ammo').checked,
           includeHealth: $('#prompt-health').checked,
           includePreviousAction: $('#prompt-previous-action').checked,
+          includeFacingProbe: $('#prompt-facing-probe').checked,
         },
         observation,
+        undefined,
+        observation.facingProbe,
       )
     : '';
 }
@@ -639,6 +649,8 @@ function loadDecisionDraft() {
   $('#prompt-health').checked = savedDecisionConfiguration.includeHealth;
   $('#prompt-previous-action').checked =
     savedDecisionConfiguration.includePreviousAction;
+  $('#prompt-facing-probe').checked =
+    savedDecisionConfiguration.includeFacingProbe;
   updateStatePreview();
   clearPromptError();
 }
@@ -663,6 +675,7 @@ $('#save-prompt').addEventListener('click', () => {
     includeAmmo: $('#prompt-ammo').checked,
     includeHealth: $('#prompt-health').checked,
     includePreviousAction: $('#prompt-previous-action').checked,
+    includeFacingProbe: $('#prompt-facing-probe').checked,
   });
   $('#prompt-dialog').close();
 });
@@ -672,6 +685,7 @@ $('#reset-prompt').addEventListener('click', () => {
   $('#prompt-ammo').checked = false;
   $('#prompt-health').checked = false;
   $('#prompt-previous-action').checked = false;
+  $('#prompt-facing-probe').checked = false;
   updateStatePreview();
   clearPromptError();
   $('#prompt-instructions').focus();
@@ -681,6 +695,7 @@ $('#prompt-ready-weapon').addEventListener('change', updateStatePreview);
 $('#prompt-ammo').addEventListener('change', updateStatePreview);
 $('#prompt-health').addEventListener('change', updateStatePreview);
 $('#prompt-previous-action').addEventListener('change', updateStatePreview);
+$('#prompt-facing-probe').addEventListener('change', updateStatePreview);
 $('#close-prompt').addEventListener('click', () => $('#prompt-dialog').close());
 $('#prompt-dialog').addEventListener('close', () => {
   if ($('#prompt-dialog').open) return;

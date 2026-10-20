@@ -1,6 +1,7 @@
 import type { ActionName } from './decision.ts';
 import { masks } from './decision.ts';
 import type { DecisionRequest } from './decision-provider.ts';
+import { type FacingProbe, formatFacingProbe } from './facing-probe.ts';
 import type { PreviousActionOutcome } from './previous-action.ts';
 import type { NativeObservation } from './worker-shared.ts';
 
@@ -13,6 +14,7 @@ export type DecisionConfiguration = Readonly<{
   includeAmmo: boolean;
   includeHealth: boolean;
   includePreviousAction: boolean;
+  includeFacingProbe: boolean;
 }>;
 
 export const defaultDecisionConfiguration: DecisionConfiguration =
@@ -22,6 +24,7 @@ export const defaultDecisionConfiguration: DecisionConfiguration =
     includeAmmo: false,
     includeHealth: false,
     includePreviousAction: false,
+    includeFacingProbe: false,
   });
 
 type StateTelemetry = Pick<
@@ -70,9 +73,11 @@ export function formatDecisionState(
     | 'includeAmmo'
     | 'includeHealth'
     | 'includePreviousAction'
+    | 'includeFacingProbe'
   > = defaultDecisionConfiguration,
   telemetry?: StateTelemetry,
   previousAction?: PreviousActionOutcome,
+  facingProbe?: FacingProbe,
 ): string {
   const context = [
     `Current rendered Doom frame at verified tic ${verifiedTic}.`,
@@ -90,6 +95,8 @@ export function formatDecisionState(
     previousAction?.endTic === verifiedTic
   )
     context.push(previousAction.text);
+  if (configuration.includeFacingProbe)
+    context.push(formatFacingProbe(verifiedTic, facingProbe));
   return context.join('\n');
 }
 
@@ -101,6 +108,7 @@ export function buildDefaultDecisionRequest(
   configuration = defaultDecisionConfiguration,
   telemetry?: StateTelemetry,
   previousAction?: PreviousActionOutcome,
+  facingProbe?: FacingProbe,
 ): DecisionRequest {
   return Object.freeze({
     instructions: resolveDecisionInstructions(
@@ -112,6 +120,7 @@ export function buildDefaultDecisionRequest(
       configuration,
       telemetry,
       previousAction,
+      facingProbe,
     ),
     png,
     permittedActions: Object.freeze([...permittedActions]),

@@ -1,5 +1,9 @@
 # Issue 18, experiment 1: native collision record
 
+Experiment 2 is documented separately in [forward center ray](issue-18-facing-probe.md).
+Its new native source requires a fresh full build; the Experiment 1 indices and
+movement instrumentation remain unchanged.
+
 The source/test implementation adds diagnostic observations only. Native
 classification and gameplay parity are **not yet runtime validated**. It does
 not identify doors, perform facing probes, alter inputs, or send collision data

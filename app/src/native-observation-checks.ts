@@ -4,7 +4,10 @@ import type {
   Observation,
   StatusObservation,
 } from './worker-shared.ts';
-import { collisionObservationValid } from './worker-shared.ts';
+import {
+  collisionObservationValid,
+  facingObservationValid,
+} from './worker-shared.ts';
 
 function check(ok: unknown, message: string): asserts ok {
   if (!ok) throw Error(message);
@@ -59,6 +62,7 @@ export function checkPrepared(
   result: StatusObservation,
 ) {
   healthy(result);
+  check(facingObservationValid(result), 'Invalid preparation facing probe.');
   check(
     collisionObservationValid(result),
     'Invalid preparation collision sample.',

@@ -76,6 +76,7 @@ commands; other indices mix game state, diagnostics, and player fields.
 | 82 / 86 | `ammo[am_misl]` / `maxammo[am_misl]` → `ammo.rockets.current` / `.max` |
 | 87 | Completed collision sample boundary → `collisionSampleTic` |
 | 88 / 89 | Latched XY trial events / rejection reasons → `movementFlags` / `rejectionMask` |
+| 90 / 91 / 92 | Completed-tic forward center ray → `facingKind` / `facingDoor` / `facingDistance`, owned by index 87 |
 
 Actor fields fall back to `0` when `mo` is absent; zero is not proof of a valid
 actor. Coordinates/momentum remain native fixed-point numbers. The angle getter
@@ -139,6 +140,24 @@ damage, teleports and reaction delay remain relevant. No facing query, extra
 collision query, C multi-tic accumulator, prompt or Decisions request change is
 included. See the [pending native validation procedure](issue-18-native-collision.md).
 
+### Facing experiment 2
+
+Indices 90–92 append a cached read-only forward linedef probe. The unchanged
+collision sample stamp at 87 owns both observations. All three are `-1` before
+the first completed tic. Afterward, kind/door/distance are validated together;
+terminal or unsupported gameplay publishes unavailable `0/0/-1` at its own tic.
+Kinds distinguish unknown, no relevant line, solid, clearance, nonrestricting
+manual-door metadata and other specials. Only a narrow front-side candidate may
+suggest that use is possible; no activation or player-radius clearance is proven.
+See [the exact enum contract and pending native validation](issue-18-facing-probe.md).
+
+The separate OFF-by-default **Nearby wall / door** configuration appends this
+current-facing context to request `state`, independent of Previous action outcome
+and editable instructions. Admission freezes configuration; construction requires
+sample/frame tic agreement after existing native/Canvas checkpoint verification.
+Preview and Advanced evidence use detached last-verified-render data. No probe
+runs in a getter, render, snapshot or idle; no additional Worker operation exists.
+
 ## Sampling and correctness boundaries
 
 Preserve the existing synchronous read order and object/property insertion order.
@@ -151,11 +170,12 @@ synthetic tests explicitly assert ordering. In `observations()`:
 4. If loaded, read armor 76 and paired current/max slots in order:
    `79,83,80,84,81,85,82,86`.
 5. Read collision indices `87,88,89` unconditionally, preserving `-1` sentinels.
+6. Append facing indices `90,91,92` unconditionally, preserving raw integers.
 
 The returned native object's order is base, extra, `built`, `entered`,
 `armorpoints`, `readyWeapon`, `ammo`, `collisionSampleTic`, `movementFlags`,
-`rejectionMask`; weapon properties are `id`, `name`,
-`ammoType`, and ammo entries are bullets/shells/cells/rockets with `current`,
+`rejectionMask`, `facingKind`, `facingDoor`, `facingDistance`; weapon properties
+are `id`, `name`, `ammoType`, and ammo entries are bullets/shells/cells/rockets with `current`,
 `max`. Weapon reads happen earlier than their placement in this object.
 
 The Worker samples after module instantiation, after init/prepare return, before

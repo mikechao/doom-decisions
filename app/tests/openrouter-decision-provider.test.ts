@@ -648,3 +648,38 @@ it('sends optional verified movement feedback in state and freezes the exact ins
     assert.equal(payloads.length, 3);
   } finally { await h.dispose(); }
 });
+
+it('transmits current facing geometry only in state through the pinned OpenRouter fake transport', async () => {
+  const payloads = [];
+  const h = fixture({ providerFactory: openRouterDecisionProviderFactory, onStep(next) {
+    const tic = next.counters.gametic;
+    Object.assign(next.native, { facingKind: tic === 1 ? 3 : 4, facingDoor: 2, facingDistance: tic === 1 ? 24 : 12 });
+  } });
+  try {
+    await h.prepare();
+    h.browserInputs.tics = 1;
+    const configuration = { ...defaultDecisionConfiguration, includeFacingProbe: true, instructionTemplate: '  Explore {{tics}}.  ' };
+    h.ports.readDecisionConfiguration = () => configuration;
+    const capture = h.ports.capture;
+    h.ports.capture = () => ({ ...capture(), png });
+    vi.stubGlobal('fetch', async (request: Request) => {
+      payloads.push(await request.json()); return response(answer('turn_right'));
+    });
+    await h.controller.startContinuous(2);
+    const first = h.view.session.inspectorRequests[1];
+    const second = h.view.session.inspectorRequests[2];
+    assert.match(first.context, /verified tic 1.*\nFacing probe.*clearance restriction about 24 units ahead/);
+    assert.match(second.context, /verified tic 2.*\nFacing probe.*manual-door boundary about 12 units ahead/);
+    assert.deepEqual(payloads[0].state, [first.context, { type: 'image_url', image_url: { url: first.png } }]);
+    assert.deepEqual(payloads[1].state, [second.context, { type: 'image_url', image_url: { url: second.png } }]);
+    assert.equal(payloads[1].questions.next_action.instructions, '  Explore 1.  ');
+    assert.deepEqual(Object.keys(payloads[1].questions.next_action.criteria), actions);
+    const frozen = first.context;
+    configuration.includeFacingProbe = false;
+    assert.equal(await h.next(), 'completed');
+    assert.equal(payloads[2].state[0], 'Current rendered Doom frame at verified tic 3.');
+    assert.equal(h.view.session.inspectorRequests[1], first);
+    assert.equal(first.context, frozen);
+    assert.equal(Object.isFrozen(first), true);
+  } finally { await h.dispose(); }
+});
