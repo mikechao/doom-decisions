@@ -383,7 +383,12 @@ it('verifies one synthetic manual action and recovers invalid SDK answers withou
         assert.equal(entry.execution.independentlyVerifiedTics, 2);
         assert.equal(entry.result.tic, 3);
         assert.equal(entry.result.nativeSha256, entry.result.canvasSha256);
-      } else assert.equal(h.gameOps.includes('action'), false);
+        assert.match(h.view.session.collisionEvidence, /Last verified action: neutral, 2 tics \(1 → 3\)/);
+        assert.match(h.view.session.collisionEvidence, /trial 0 · success 0 · rejection 0 · slide 0/);
+      } else {
+        assert.equal(h.gameOps.includes('action'), false);
+        assert.equal(h.view.session.collisionEvidence, 'No verified action yet.');
+      }
     } finally { await h.dispose(); }
   }
 });
@@ -475,7 +480,7 @@ for (const includeReadyWeapon of [false, true]) {
         });
         assert.equal(await h.next(), 'completed');
         assert.equal(payloads.length, 1);
-        const expectedState = ['Current rendered Doom E1M1 frame at verified tic 1.'];
+        const expectedState = ['Current rendered Doom frame at verified tic 1.'];
         if (includeReadyWeapon) expectedState.push('Ready weapon: pistol (id: 1; ammo type: bullets)');
         if (includeAmmo) expectedState.push('Ammo: bullets 50/200');
         if (includeHealth) expectedState.push('Health: 100');
@@ -541,8 +546,8 @@ for (const mode of ['manual', 'continuous'] as const) {
       if (mode === 'manual') assert.equal(await h.next(), 'completed');
       const instructions = ['1 tics. Again 1.', 'Next 2 tics'];
       const states = [
-        'Current rendered Doom E1M1 frame at verified tic 1.' + (!initialAmmo ? '\nReady weapon: pistol (id: 1; ammo type: bullets)' : '') + (initialAmmo ? '\nAmmo: bullets 50/200\nHealth: 100' : ''),
-        'Current rendered Doom E1M1 frame at verified tic 2.' + (initialAmmo ? '\nReady weapon: rocket_launcher (id: 4; ammo type: rockets)' : '') + (!initialAmmo ? '\nAmmo: bullets 11/111; shells 22/222; cells 33/333; rockets 44/444\nHealth: 87' : ''),
+        'Current rendered Doom frame at verified tic 1.' + (!initialAmmo ? '\nReady weapon: pistol (id: 1; ammo type: bullets)' : '') + (initialAmmo ? '\nAmmo: bullets 50/200\nHealth: 100' : ''),
+        'Current rendered Doom frame at verified tic 2.' + (initialAmmo ? '\nReady weapon: rocket_launcher (id: 4; ammo type: rockets)' : '') + (!initialAmmo ? '\nAmmo: bullets 11/111; shells 22/222; cells 33/333; rockets 44/444\nHealth: 87' : ''),
       ];
       assert.equal(payloads.length, 2);
       assert.equal(readConfiguration.mock.calls.length, 2);
@@ -604,4 +609,77 @@ it('fences Stop and close while late SDK body work retains controller admission'
       assert.equal(h.view.session.controls.ready, command === 'stop');
     } finally { gate.resolve(); await pending; await h.dispose(); }
   }
+});
+
+it('sends optional verified movement feedback in state and freezes the exact inspector input', async () => {
+  const h = fixture({ providerFactory: openRouterDecisionProviderFactory, onStep(next, previous, mask) {
+    if (mask === 1) {
+      next.native.x = previous.native.x - 1;
+      next.native.y = previous.native.y + 65536;
+    }
+  } });
+  try {
+    await h.prepare();
+    const configuration = { ...defaultDecisionConfiguration, includePreviousAction: true, instructionTemplate: '  Explore {{tics}}. {{ammo}}  ' };
+    h.ports.readDecisionConfiguration = () => configuration;
+    const capture = h.ports.capture;
+    h.ports.capture = () => ({ ...capture(), png });
+    const payloads = [];
+    vi.stubGlobal('fetch', async (request: Request) => {
+      payloads.push(await request.json());
+      return response(answer('forward'));
+    });
+    h.browserInputs.tics = 2;
+    await h.controller.startContinuous(2);
+    const first = h.view.session.inspectorRequests[1];
+    const second = h.view.session.inspectorRequests[2];
+    assert.equal(first.context, 'Current rendered Doom frame at verified tic 1.');
+    assert.equal(second.context, 'Current rendered Doom frame at verified tic 3.\nPrevious verified action: forward (2 tics).\nPlayer XY displacement: dx=-0.000030517578125, dy=2 Doom units; net translation observed.');
+    assert.deepEqual(payloads[1].state, [second.context, { type: 'image_url', image_url: { url: second.png } }]);
+    assert.equal(payloads[1].questions.next_action.instructions, '  Explore 2. {{ammo}}  ');
+    assert.deepEqual(Object.keys(payloads[1].questions.next_action.criteria), actions);
+    const frozen = second.context;
+    configuration.includePreviousAction = false;
+    assert.equal(await h.next(), 'completed');
+    assert.equal(h.view.session.inspectorRequests[3].context, 'Current rendered Doom frame at verified tic 5.');
+    assert.equal(second.context, frozen);
+    assert.equal(h.view.session.inspectorRequests[2], second);
+    assert.equal(Object.isFrozen(second), true);
+    assert.equal(payloads.length, 3);
+  } finally { await h.dispose(); }
+});
+
+it('transmits current facing geometry only in state through the pinned OpenRouter fake transport', async () => {
+  const payloads = [];
+  const h = fixture({ providerFactory: openRouterDecisionProviderFactory, onStep(next) {
+    const tic = next.counters.gametic;
+    Object.assign(next.native, { facingKind: tic === 1 ? 3 : 4, facingDoor: 2, facingDistance: tic === 1 ? 24 : 12 });
+  } });
+  try {
+    await h.prepare();
+    h.browserInputs.tics = 1;
+    const configuration = { ...defaultDecisionConfiguration, includeFacingProbe: true, instructionTemplate: '  Explore {{tics}}.  ' };
+    h.ports.readDecisionConfiguration = () => configuration;
+    const capture = h.ports.capture;
+    h.ports.capture = () => ({ ...capture(), png });
+    vi.stubGlobal('fetch', async (request: Request) => {
+      payloads.push(await request.json()); return response(answer('turn_right'));
+    });
+    await h.controller.startContinuous(2);
+    const first = h.view.session.inspectorRequests[1];
+    const second = h.view.session.inspectorRequests[2];
+    assert.match(first.context, /verified tic 1.*\nFacing probe.*clearance restriction about 24 units ahead/);
+    assert.match(second.context, /verified tic 2.*\nFacing probe.*manual-door boundary about 12 units ahead/);
+    assert.deepEqual(payloads[0].state, [first.context, { type: 'image_url', image_url: { url: first.png } }]);
+    assert.deepEqual(payloads[1].state, [second.context, { type: 'image_url', image_url: { url: second.png } }]);
+    assert.equal(payloads[1].questions.next_action.instructions, '  Explore 1.  ');
+    assert.deepEqual(Object.keys(payloads[1].questions.next_action.criteria), actions);
+    const frozen = first.context;
+    configuration.includeFacingProbe = false;
+    assert.equal(await h.next(), 'completed');
+    assert.equal(payloads[2].state[0], 'Current rendered Doom frame at verified tic 3.');
+    assert.equal(h.view.session.inspectorRequests[1], first);
+    assert.equal(first.context, frozen);
+    assert.equal(Object.isFrozen(first), true);
+  } finally { await h.dispose(); }
 });

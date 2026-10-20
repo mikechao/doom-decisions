@@ -331,7 +331,7 @@ it('presents player telemetry from preparation snapshots through action and rend
     const before = h.native.observe();
     const previewBefore = h.view.verifiedObservation;
     assert.deepEqual(previewBefore, {
-      tic: 1, readyWeapon: before.native.readyWeapon, ammo: before.native.ammo, health: 100,
+      tic: 1, readyWeapon: before.native.readyWeapon, ammo: before.native.ammo, health: 100, facingProbe: { tic: 1, kind: 0, door: 0, distance: -1 },
     });
     assert.notEqual(previewBefore.ammo, prepared.evidence.operations.at(-1).result.native.ammo);
     for (const { op, result } of prepared.evidence.operations) {
@@ -355,7 +355,7 @@ it('presents player telemetry from preparation snapshots through action and rend
     assert.equal(rendered.op, 'render');
     assert.equal(rendered.result.counters.gametic, 2);
     assert.deepEqual(h.view.verifiedObservation, {
-      tic: 2, readyWeapon: telemetry.readyWeapon, ammo: telemetry.ammo, health: 87,
+      tic: 2, readyWeapon: telemetry.readyWeapon, ammo: telemetry.ammo, health: 87, facingProbe: { tic: 2, kind: 0, door: 0, distance: -1 },
     });
     assert.notEqual(h.view.verifiedObservation.ammo, rendered.result.native.ammo);
     assert.equal(previewBefore.tic, 1);

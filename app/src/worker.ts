@@ -262,6 +262,12 @@ function a21Observation(): NativeObservation {
     ...(readyWeapon
       ? readPlayerTelemetry(read, readyWeapon)
       : { armorpoints: null, readyWeapon: null, ammo: null }),
+    collisionSampleTic: read(87),
+    movementFlags: read(88),
+    rejectionMask: read(89),
+    facingKind: read(90),
+    facingDoor: read(91),
+    facingDistance: read(92),
   };
 }
 function observations(): Observation {

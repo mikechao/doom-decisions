@@ -12,6 +12,8 @@ import {
   buildDefaultDecisionRequest,
   type DecisionConfiguration,
 } from './decision-request.ts';
+import { type FacingProbe, facingProbeAt } from './facing-probe.ts';
+import { formatCollisionEvidence } from './collision-evidence';
 import type {
   DecisionDiagnostics,
   DecisionProvider,
@@ -19,6 +21,11 @@ import type {
   DecisionRequest,
 } from './decision-provider.ts';
 import { checkPrepared, passiveCheck } from './native-observation-checks.ts';
+import {
+  createPreviousActionOutcome,
+  type PreviousActionOutcome,
+  previousActionAt,
+} from './previous-action.ts';
 import type {
   Counters,
   E1M1Assessment,
@@ -120,6 +127,8 @@ type Run = {
   worker?: Worker | null;
   cancel?: ((error: Error) => void) | null;
   last?: Observation;
+  previousAction?: PreviousActionOutcome;
+  collisionEvidence?: string;
   terminal?: E1M1Assessment;
 };
 type ContinuousRun = {
@@ -154,11 +163,13 @@ export type SessionPresentation = Readonly<{
     readyWeapon: NativeObservation['readyWeapon'];
     ammo: NativeObservation['ammo'];
     health: NativeObservation['health'];
+    facingProbe?: FacingProbe;
   }>;
   iwadEnabled?: boolean;
   session?: ReadonlyData<{
     phase: Phase;
     verifiedTics: number;
+    collisionEvidence?: string;
     frame?: Frame;
     evidence: Evidence;
     inspectorRequests: Readonly<Record<number, DecisionRequest>>;
@@ -216,6 +227,7 @@ export function createSessionController(
       session: {
         phase: run.phase,
         verifiedTics: run.verifiedTics,
+        collisionEvidence: run.collisionEvidence ?? 'No verified action yet.',
         frame: run.frame ? { ...run.frame } : undefined,
         // Presentation receives detached data, never the mutable lifecycle owner.
         evidence: structuredClone(run.evidence),
@@ -240,6 +252,10 @@ export function createSessionController(
     });
   }
   function retire(run: Run, phase: 'error' | 'terminal' = 'error') {
+    run.previousAction = undefined;
+    if (phase !== 'terminal')
+      run.collisionEvidence =
+        'Native collision telemetry unavailable: session retired.';
     run.valid = false;
     run.phase = phase;
     run.attempt = undefined;
@@ -358,6 +374,7 @@ export function createSessionController(
         readyWeapon: result.native.readyWeapon,
         ammo: result.native.ammo,
         health: result.native.health,
+        facingProbe: facingProbeAt(result),
       }),
     });
   }
@@ -389,7 +406,7 @@ export function createSessionController(
       check(evidence.assessment, 'Missing terminal assessment.');
       run.terminal = evidence.assessment;
     }
-    return evidence;
+    return { execution: evidence, receipt: result };
   }
 
   function fence(run: Run, attempt: Attempt) {
@@ -420,6 +437,8 @@ export function createSessionController(
       permittedActions,
       configuration,
       observation.native,
+      previousActionAt(run.previousAction, observation),
+      facingProbeAt(observation),
     );
     run.inspectorRequests = Object.freeze({
       ...run.inspectorRequests,
@@ -609,7 +628,10 @@ export function createSessionController(
       // No await between the final identity fence and the one native dispatch.
       dispatchFence();
       if (continuous) continuous.dispatched = true;
-      const execution = await action(
+      run.previousAction = undefined;
+      run.collisionEvidence =
+        'Native collision telemetry unavailable: action/frame verification pending.';
+      const { execution, receipt } = await action(
         run,
         masks[entry.action],
         attempt.tics,
@@ -620,6 +642,12 @@ export function createSessionController(
         },
       );
       fence(run, attempt);
+      const previousAction = createPreviousActionOutcome(
+        entry.action,
+        afterWait,
+        receipt,
+        execution,
+      );
       entry.stage = 'rendering';
       entry.status = execution.terminal
         ? 'Terminal tic verified; rendering'
@@ -632,6 +660,12 @@ export function createSessionController(
       fence(run, attempt);
       check(run.frame, 'Verified frame unavailable.');
       entry.result = { ...run.frame };
+      run.collisionEvidence = formatCollisionEvidence(
+        entry.action,
+        afterWait.counters.gametic,
+        receipt,
+        execution,
+      );
       if (execution.terminal) {
         entry.stage = 'ended';
         entry.status = `${terminalStatus(execution)}; frame retained.`;
@@ -640,6 +674,7 @@ export function createSessionController(
         return 'terminal';
       }
       entry.stage = 'completed';
+      run.previousAction = previousAction;
       entry.status = 'Complete';
       run.attempt = undefined;
       run.phase = 'ready';
@@ -863,9 +898,15 @@ export function createSessionController(
         counters: before.counters,
         native: before.native,
       };
-      const neutral = await action(run, 0, 1, before, (evidence) => {
-        run.evidence.neutralFirst = evidence;
-      });
+      const { execution: neutral } = await action(
+        run,
+        0,
+        1,
+        before,
+        (evidence) => {
+          run.evidence.neutralFirst = evidence;
+        },
+      );
       await render(run);
       if (neutral.terminal) {
         retire(run, 'terminal');

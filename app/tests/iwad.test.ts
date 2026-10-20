@@ -353,16 +353,28 @@ describe('iwad', () => {
               85,
               82,
               86,
+              87,
+              88,
+              89,
+              90,
+              91,
+              92,
             ],
           );
           const native = reply.result.native;
           assert.equal(Object.keys(native)[20], 'health');
-          assert.deepEqual(Object.keys(native).slice(-5), [
+          assert.deepEqual(Object.keys(native).slice(-11), [
             'built',
             'entered',
             'armorpoints',
             'readyWeapon',
             'ammo',
+            'collisionSampleTic',
+            'movementFlags',
+            'rejectionMask',
+            'facingKind',
+            'facingDoor',
+            'facingDistance',
           ]);
           assert.deepEqual(Object.keys(native.readyWeapon), [
             'id',
@@ -387,6 +399,7 @@ describe('iwad', () => {
     await withWorker(
       {
         readObservation(index) {
+          if (index >= 87 && index <= 92) return -1;
           assert.ok(index < 76, 'Unprepared observation must not read inventory');
           return 0;
         },
@@ -400,11 +413,19 @@ describe('iwad', () => {
         assert.equal(reply.result.native.armorpoints, null);
         assert.equal(reply.result.native.readyWeapon, null);
         assert.equal(reply.result.native.ammo, null);
-        assert.deepEqual(Object.keys(reply.result.native).slice(-3), [
+        assert.deepEqual(Object.keys(reply.result.native).slice(-9), [
           'armorpoints',
           'readyWeapon',
           'ammo',
+          'collisionSampleTic',
+          'movementFlags',
+          'rejectionMask',
+          'facingKind',
+          'facingDoor',
+          'facingDistance',
         ]);
+        for (const field of ['collisionSampleTic', 'movementFlags', 'rejectionMask', 'facingKind', 'facingDoor', 'facingDistance'])
+          assert.equal(reply.result.native[field], -1);
       },
     );
   });
@@ -419,6 +440,51 @@ describe('iwad', () => {
       assert.match((await h.load(smallWad)).error, /Synthetic compile failure/);
       assert.equal(h.closed, true);
     });
+  });
+
+  it('copies all collision indices verbatim through repeated Worker snapshots', async () => {
+    // Synthetic getter values only, including unavailable and terminal samples.
+    for (const [tic, flags, reasons] of [[-1, -1, -1], [1, 0, 0], [2, 3, 0], [3, 15, 3], [4, 13, 4], [5, 13, 8]]) {
+      const reads = [];
+      await withWorker({ readObservation(index) {
+        reads.push(index);
+        return ({ 10: 1, 19: 1, 87: tic, 88: flags, 89: reasons })[index] ?? 0;
+      } }, async h => {
+        assert.equal((await h.load(smallWad)).ok, true);
+        let previous;
+        for (let repeat = 0; repeat < 2; repeat++) {
+          reads.length = 0;
+          await h.scope.onmessage({ data: { op: 'snapshot' } });
+          const native = h.replies.at(-1).result.native;
+          assert.deepEqual(reads.slice(-6), [87, 88, 89, 90, 91, 92]);
+          assert.deepEqual([native.collisionSampleTic, native.movementFlags, native.rejectionMask], [tic, flags, reasons]);
+          if (previous) assert.deepEqual(native, previous);
+          previous = native;
+        }
+      });
+    }
+  });
+
+  it('appends facing indices verbatim without recomputing on passive reads', async () => {
+    for (const values of [[-1, -1, -1], [0, 0, -1], [1, 0, -1], [2, 0, 24], [3, 2, 12], [4, 1, 32], [5, 0, 8], [99, 3, 65]]) {
+      const reads = [];
+      await withWorker({ readObservation(index) {
+        reads.push(index);
+        return index >= 90 && index <= 92 ? values[index - 90] : 0;
+      } }, async h => {
+        assert.equal((await h.load(smallWad)).ok, true);
+        let prior;
+        for (let i = 0; i < 2; i++) {
+          reads.length = 0;
+          await h.scope.onmessage({ data: { op: 'snapshot' } });
+          const native = h.replies.at(-1).result.native;
+          assert.deepEqual(reads.slice(-3), [90, 91, 92]);
+          assert.deepEqual([native.facingKind, native.facingDoor, native.facingDistance], values);
+          if (prior) assert.deepEqual(native, prior);
+          prior = native;
+        }
+      });
+    }
   });
 
   it('retires on preparation refusal diagnostics and one-shot counter mismatches', async () => {
@@ -457,6 +523,9 @@ describe('iwad', () => {
 
   it('includes every new telemetry value in passive snapshot and render checks', async () => {
     const mutations = [
+      ...['collisionSampleTic', 'movementFlags', 'rejectionMask'].map(field => native => {
+        native[field]++;
+      }),
       (native) => {
         native.armorpoints++;
       },

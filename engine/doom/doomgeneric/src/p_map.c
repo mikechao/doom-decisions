@@ -35,6 +35,7 @@
 
 // State.
 #include "doomstat.h"
+#include "g_game.h"
 #include "r_state.h"
 // Data.
 #include "sounds.h"
@@ -185,6 +186,33 @@ boolean P_TeleportMove(mobj_t *thing, fixed_t x, fixed_t y) {
 
 static void SpechitOverrun(line_t *ld);
 
+#if defined(DOOM_CONTROLLED_TITLE) && !defined(DOOM_A1_NO_FIXTURES)
+/* Synchronous return-site handoffs, not generic collision scratch. Every false
+ * callback/try return sets its own reason AFTER any nested side effects. Its
+ * caller reads it immediately, before any further engine call. Raw position
+ * checks and other actors' tries never publish movement events. */
+static int a21_position_rejection, a21_try_rejection;
+
+static boolean A21PositionRejected(int reason) {
+  a21_position_rejection = reason;
+  return false;
+}
+
+static boolean A21MoveRejected(int reason) {
+  a21_try_rejection = reason;
+  return false;
+}
+
+boolean P_XYTryMove(mobj_t *thing, fixed_t x, fixed_t y) {
+  boolean accepted = P_TryMove(thing, x, y);
+  G_A21RecordMovement(thing, accepted, accepted ? 0 : a21_try_rejection);
+  return accepted;
+}
+#else
+#define A21PositionRejected(reason) false
+#define A21MoveRejected(reason) false
+#endif
+
 //
 // PIT_CheckLine
 // Adjusts tmfloorz and tmceilingz as lines are contacted
@@ -211,14 +239,14 @@ boolean PIT_CheckLine(line_t *ld) {
   // could be crossed in either order.
 
   if (!ld->backsector)
-    return false; // one sided line
+    return A21PositionRejected(A21_REJECT_SOLID_LINE); // one sided line
 
   if (!(tmthing->flags & MF_MISSILE)) {
     if (ld->flags & ML_BLOCKING)
-      return false; // explicitly blocking everything
+      return A21PositionRejected(A21_REJECT_SOLID_LINE); // explicitly blocking
 
     if (!tmthing->player && ld->flags & ML_BLOCKMONSTERS)
-      return false; // block monsters only
+      return A21PositionRejected(A21_REJECT_UNKNOWN); // block monsters only
   }
 
   // set openrange, opentop, openbottom
@@ -283,7 +311,7 @@ boolean PIT_CheckThing(mobj_t *thing) {
 
     P_SetMobjState(tmthing, tmthing->info->spawnstate);
 
-    return false; // stop moving
+    return A21PositionRejected(A21_REJECT_UNKNOWN); // skull impact
   }
 
   // missiles can hit other things
@@ -309,13 +337,15 @@ boolean PIT_CheckThing(mobj_t *thing) {
       if (thing->type != MT_PLAYER && !deh_species_infighting) {
         // Explode, but do no damage.
         // Let players missile other players.
-        return false;
+        return A21PositionRejected(A21_REJECT_UNKNOWN);
       }
     }
 
     if (!(thing->flags & MF_SHOOTABLE)) {
       // didn't do any damage
-      return !(thing->flags & MF_SOLID);
+      if (thing->flags & MF_SOLID)
+        return A21PositionRejected(A21_REJECT_UNKNOWN); // missile impact
+      return true;
     }
 
     // damage / explode
@@ -323,7 +353,7 @@ boolean PIT_CheckThing(mobj_t *thing) {
     P_DamageMobj(thing, tmthing, tmthing->target, damage);
 
     // don't traverse any more
-    return false;
+    return A21PositionRejected(A21_REJECT_UNKNOWN); // missile damage
   }
 
   // check for special pickup
@@ -333,10 +363,14 @@ boolean PIT_CheckThing(mobj_t *thing) {
       // can remove thing
       P_TouchSpecialThing(thing, tmthing);
     }
-    return !solid;
+    if (solid)
+      return A21PositionRejected(A21_REJECT_SOLID_THING);
+    return true;
   }
 
-  return !(thing->flags & MF_SOLID);
+  if (thing->flags & MF_SOLID)
+    return A21PositionRejected(A21_REJECT_SOLID_THING);
+  return true;
 }
 
 //
@@ -376,6 +410,9 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y) {
   int by;
   subsector_t *newsubsec;
 
+#if defined(DOOM_CONTROLLED_TITLE) && !defined(DOOM_A1_NO_FIXTURES)
+  a21_position_rejection = A21_REJECT_UNKNOWN;
+#endif
   tmthing = thing;
   tmflags = thing->flags;
 
@@ -444,25 +481,28 @@ boolean P_TryMove(mobj_t *thing, fixed_t x, fixed_t y) {
   int oldside;
   line_t *ld;
 
+#if defined(DOOM_CONTROLLED_TITLE) && !defined(DOOM_A1_NO_FIXTURES)
+  a21_try_rejection = A21_REJECT_UNKNOWN;
+#endif
   floatok = false;
   if (!P_CheckPosition(thing, x, y))
-    return false; // solid wall or thing
+    return A21MoveRejected(a21_position_rejection); // actual callback reason
 
   if (!(thing->flags & MF_NOCLIP)) {
     if (tmceilingz - tmfloorz < thing->height)
-      return false; // doesn't fit
+      return A21MoveRejected(A21_REJECT_CLEARANCE); // doesn't fit
 
     floatok = true;
 
     if (!(thing->flags & MF_TELEPORT) && tmceilingz - thing->z < thing->height)
-      return false; // mobj must lower itself to fit
+      return A21MoveRejected(A21_REJECT_CLEARANCE); // must lower itself
 
     if (!(thing->flags & MF_TELEPORT) && tmfloorz - thing->z > 24 * FRACUNIT)
-      return false; // too big a step up
+      return A21MoveRejected(A21_REJECT_CLEARANCE); // too big a step up
 
     if (!(thing->flags & (MF_DROPOFF | MF_FLOAT)) &&
         tmfloorz - tmdropoffz > 24 * FRACUNIT)
-      return false; // don't stand over a dropoff
+      return A21MoveRejected(A21_REJECT_CLEARANCE); // forbidden dropoff
   }
 
   // the move is ok,
@@ -697,8 +737,8 @@ retry:
   if (bestslidefrac == FRACUNIT + 1) {
     // the move most have hit the middle, so stairstep
   stairstep:
-    if (!P_TryMove(mo, mo->x, mo->y + mo->momy))
-      P_TryMove(mo, mo->x + mo->momx, mo->y);
+    if (!P_XYTryMove(mo, mo->x, mo->y + mo->momy))
+      P_XYTryMove(mo, mo->x + mo->momx, mo->y);
     return;
   }
 
@@ -708,7 +748,7 @@ retry:
     newx = FixedMul(mo->momx, bestslidefrac);
     newy = FixedMul(mo->momy, bestslidefrac);
 
-    if (!P_TryMove(mo, mo->x + newx, mo->y + newy))
+    if (!P_XYTryMove(mo, mo->x + newx, mo->y + newy))
       goto stairstep;
   }
 
@@ -730,7 +770,7 @@ retry:
   mo->momx = tmxmove;
   mo->momy = tmymove;
 
-  if (!P_TryMove(mo, mo->x + tmxmove, mo->y + tmymove)) {
+  if (!P_XYTryMove(mo, mo->x + tmxmove, mo->y + tmymove)) {
     goto retry;
   }
 }

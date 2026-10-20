@@ -1,4 +1,5 @@
 import { createIncludedFreedoom } from './bundled-freedoom';
+import { formatFacingProbe } from './facing-probe.ts';
 import {
   defineDecisionHistory,
   type DecisionHistoryElement,
@@ -97,6 +98,8 @@ type Elements = {
   '#prompt-ready-weapon': HTMLInputElement;
   '#prompt-ammo': HTMLInputElement;
   '#prompt-health': HTMLInputElement;
+  '#prompt-previous-action': HTMLInputElement;
+  '#prompt-facing-probe': HTMLInputElement;
   '#prompt-state-preview-note': HTMLParagraphElement;
   '#prompt-state-preview-text': HTMLPreElement;
   '#prompt-error': HTMLParagraphElement;
@@ -111,6 +114,8 @@ type Elements = {
   '#status': HTMLParagraphElement;
   '#frame': HTMLParagraphElement;
   '#evidence': HTMLPreElement;
+  '#collision-evidence': HTMLPreElement;
+  '#facing-evidence': HTMLPreElement;
 };
 // These elements are supplied by the static HTML entry; the Canvas is 640×400.
 const $ = <S extends keyof Elements>(selector: S) => {
@@ -391,6 +396,12 @@ function display(view: SessionPresentation) {
   collapseCompletedSetup();
   if (!run) return;
   $('#status').dataset.phase = run.phase;
+  const facing = latestVerifiedObservation?.facingProbe;
+  $('#facing-evidence').textContent = latestVerifiedObservation
+    ? `Last verified rendered tic ${latestVerifiedObservation.tic}: ${formatFacingProbe(latestVerifiedObservation.tic, facing)}\nRaw indices: ${facing ? `87 (sample tic)=${facing.tic} · 90 (kind)=${facing.kind} · 91 (door evidence)=${facing.door} · 92 (distance)=${facing.distance}` : 'unavailable'}`
+    : 'No verified facing sample yet.';
+  $('#collision-evidence').textContent =
+    run.collisionEvidence ?? 'No verified action yet.';
   if (!openRouterMode)
     $('#evidence').textContent = JSON.stringify(run.evidence, null, 2);
   $('#key-state').textContent = jevMode
@@ -610,6 +621,9 @@ function updateStatePreview() {
   $('#prompt-state-preview-note').textContent = observation
     ? `Preview based on last verified observation at tic ${observation.tic}.`
     : 'Preview available after a verified game observation.';
+  if ($('#prompt-previous-action').checked)
+    $('#prompt-state-preview-note').textContent +=
+      ' Previous action outcome is omitted from this preview; requests include it only after an eligible action and its resulting frame are verified.';
   $('#prompt-state-preview-text').textContent = observation
     ? formatDecisionState(
         observation.tic,
@@ -617,8 +631,12 @@ function updateStatePreview() {
           includeReadyWeapon: $('#prompt-ready-weapon').checked,
           includeAmmo: $('#prompt-ammo').checked,
           includeHealth: $('#prompt-health').checked,
+          includePreviousAction: $('#prompt-previous-action').checked,
+          includeFacingProbe: $('#prompt-facing-probe').checked,
         },
         observation,
+        undefined,
+        observation.facingProbe,
       )
     : '';
 }
@@ -629,6 +647,10 @@ function loadDecisionDraft() {
     savedDecisionConfiguration.includeReadyWeapon;
   $('#prompt-ammo').checked = savedDecisionConfiguration.includeAmmo;
   $('#prompt-health').checked = savedDecisionConfiguration.includeHealth;
+  $('#prompt-previous-action').checked =
+    savedDecisionConfiguration.includePreviousAction;
+  $('#prompt-facing-probe').checked =
+    savedDecisionConfiguration.includeFacingProbe;
   updateStatePreview();
   clearPromptError();
 }
@@ -652,6 +674,8 @@ $('#save-prompt').addEventListener('click', () => {
     includeReadyWeapon: $('#prompt-ready-weapon').checked,
     includeAmmo: $('#prompt-ammo').checked,
     includeHealth: $('#prompt-health').checked,
+    includePreviousAction: $('#prompt-previous-action').checked,
+    includeFacingProbe: $('#prompt-facing-probe').checked,
   });
   $('#prompt-dialog').close();
 });
@@ -660,6 +684,8 @@ $('#reset-prompt').addEventListener('click', () => {
   $('#prompt-ready-weapon').checked = false;
   $('#prompt-ammo').checked = false;
   $('#prompt-health').checked = false;
+  $('#prompt-previous-action').checked = false;
+  $('#prompt-facing-probe').checked = false;
   updateStatePreview();
   clearPromptError();
   $('#prompt-instructions').focus();
@@ -668,6 +694,8 @@ $('#prompt-instructions').addEventListener('input', clearPromptError);
 $('#prompt-ready-weapon').addEventListener('change', updateStatePreview);
 $('#prompt-ammo').addEventListener('change', updateStatePreview);
 $('#prompt-health').addEventListener('change', updateStatePreview);
+$('#prompt-previous-action').addEventListener('change', updateStatePreview);
+$('#prompt-facing-probe').addEventListener('change', updateStatePreview);
 $('#close-prompt').addEventListener('click', () => $('#prompt-dialog').close());
 $('#prompt-dialog').addEventListener('close', () => {
   if ($('#prompt-dialog').open) return;

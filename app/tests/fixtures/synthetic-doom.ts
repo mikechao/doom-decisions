@@ -1,5 +1,4 @@
-// Synthetic neutral-only Doom observations and Worker results; no WASM or assets.
-import assert from 'node:assert/strict';
+// Synthetic Doom observations and Worker results; no physics, WASM or assets.
 import { createHash } from 'node:crypto';
 import type {
   Counters,
@@ -125,6 +124,13 @@ export function observation(n: number): Observation {
       flags: 0,
       built: command,
       entered: { ...command },
+      // Protocol defaults only; these fixtures do not simulate collisions.
+      collisionSampleTic: n === 0 ? -1 : n,
+      movementFlags: n === 0 ? -1 : 0,
+      rejectionMask: n === 0 ? -1 : 0,
+      facingKind: n === 0 ? -1 : 0,
+      facingDoor: n === 0 ? -1 : 0,
+      facingDistance: -1,
     } satisfies NativeObservation,
   };
 }
@@ -167,11 +173,13 @@ export function nativeFixture({
   at = Infinity,
   signals = {},
   trapAt = Infinity,
+  onStep,
 }: {
   base?: number;
   at?: number;
   signals?: Partial<NativeObservation>;
   trapAt?: number;
+  onStep?: (next: Observation, previous: Observation, mask: number) => void;
 } = {}) {
   let current = base === 0 ? preparationResult('prepare') : observation(base),
     calls = 0;
@@ -181,17 +189,25 @@ export function nativeFixture({
     },
     observe: () => structuredClone(current),
     step(mask: number) {
-      assert.equal(
-        mask,
-        0,
-        'This synthetic fixture implements only neutral input',
-      );
       ++calls;
       if (calls === trapAt) throw Error('Synthetic trap; current tic unknown');
       const prior = current;
       current = observation(prior.counters.gametic + 1);
       for (const key of ['render', 'frame', 'netIntercept'] as const)
         current.counters[key] = prior.counters[key];
+      const p = current.native;
+      p.turnheld = mask & 10 ? prior.native.turnheld + 1 : 0;
+      p.built.forwardmove = mask & 1 ? 25 : mask & 4 ? -25 : 0;
+      p.built.angleturn =
+        (mask & 8 ? 1 : mask & 2 ? -1 : 0) * (p.turnheld < 6 ? 320 : 640);
+      p.built.buttons = (mask & 16 ? 1 : 0) | (mask & 32 ? 2 : 0);
+      p.entered = { ...p.built };
+      for (const [i, key] of (
+        ['keyUp', 'keyRight', 'keyDown', 'keyLeft', 'keyFire', 'keyUse'] as const
+      ).entries())
+        p[key] = +Boolean(mask & (1 << i));
+      p.usedown = +Boolean(mask & 32);
+      onStep?.(current, prior, mask);
       if (calls === at) Object.assign(current.native, signals);
       return 0;
     },
@@ -204,8 +220,12 @@ export function nativeFixture({
   };
 }
 type NativeFixture = ReturnType<typeof nativeFixture>;
-export const execute = (native: NativeFixture, n: number): Results['action'] =>
-  i11Action(0, n, (mask) => native.step(mask), native.observe);
+export const execute = (
+  native: NativeFixture,
+  n: number,
+  mask = 0,
+): Results['action'] =>
+  i11Action(mask, n, (input) => native.step(input), native.observe);
 
 export const sha = (bytes: Uint8Array | Uint8ClampedArray): string =>
   createHash('sha256').update(bytes).digest('hex');
@@ -253,7 +273,7 @@ export function workerResult(
     if (corruptSnapshot) result.native.health--;
     return { result, frame: undefined };
   } else if (data.op === 'action') {
-    const result: Results['action'] = execute(native, data.tics);
+    const result: Results['action'] = execute(native, data.tics, data.mask);
     if (badReceipt) result.completedTics++;
     return { result, frame: undefined };
   } else if (data.op === 'render') {

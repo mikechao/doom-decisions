@@ -237,6 +237,8 @@
             <label><input id="prompt-ready-weapon" type="checkbox"> Ready weapon</label>
             <label><input id="prompt-ammo" type="checkbox"> Ammo</label>
             <label><input id="prompt-health" type="checkbox"> Health</label>
+            <label><input id="prompt-facing-probe" type="checkbox"> Nearby wall / door</label>
+            <label><input id="prompt-previous-action" type="checkbox"> Previous action outcome</label>
           </div>
           <p id="prompt-telemetry-note" class="help">Selected details update with each decision and are sent as <code>state</code>.</p>
           <details id="prompt-state-preview">
@@ -262,8 +264,16 @@
     </dialog>
     <details class="advanced">
       <summary>Advanced evidence: preparation, decisions and frame hashes</summary>
+      <section aria-labelledby="facing-evidence-label">
+        <h3 id="facing-evidence-label">Facing wall / door (Experiment 2)</h3>
+        <pre id="facing-evidence" aria-labelledby="facing-evidence-label">No verified facing sample yet.</pre>
+        <p class="help">Native facing classifications await gameplay validation.</p>
+      </section>
       <p id="sdk" role="status">Checking bundled Decisions SDK…</p>
       <p id="frame">No frame rendered.</p>
+      <p id="collision-evidence-label">Native collision telemetry (Experiment 1)</p>
+      <pre id="collision-evidence" aria-labelledby="collision-evidence-label">No verified action yet.</pre>
+      <p class="help">Per-tic counts overlap; zero does not establish a clear path. Events describe movement trials during the admitted action, not input causality or navigation success. Native classifications await gameplay validation.</p>
       <pre id="evidence">Not prepared.</pre>
     </details>
     <footer>

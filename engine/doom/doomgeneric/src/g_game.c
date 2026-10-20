@@ -2004,6 +2004,37 @@ static ticcmd_t a21_built, a21_entered;
 static int a21_events[A21_EVENT_LIMIT];
 static int a21_build_tick;
 static boolean a21_install_equal, a21_entry_equal, a21_actor_equal;
+#ifndef DOOM_A1_NO_FIXTURES
+/* Pending events are never observations. Only successful tic closeout publishes. */
+static int a21_pending_movement, a21_pending_rejections;
+static int a21_collision_sample_tic = -1;
+static int a21_movement_flags = -1, a21_rejection_mask = -1;
+static int a21_facing_kind = -1, a21_facing_door = -1;
+static int a21_facing_distance = -1;
+
+static boolean A21MovementActor(mobj_t *actor) {
+  return a21_active && actor && actor == a21_actor &&
+         actor == players[0].mo && actor->player == &players[0] &&
+         a21_events[A21_ENTRY] == a21_events[A21_OUTER] + 1;
+}
+
+void G_A21RecordMovement(mobj_t *actor, boolean accepted, int reason) {
+  if (!A21MovementActor(actor))
+    return;
+  a21_pending_movement |= A21_MOVE_TRIAL;
+  if (accepted)
+    a21_pending_movement |= A21_MOVE_SUCCESS;
+  else {
+    a21_pending_movement |= A21_MOVE_REJECTED;
+    a21_pending_rejections |= reason;
+  }
+}
+
+void G_A21RecordSlide(mobj_t *actor) {
+  if (A21MovementActor(actor))
+    a21_pending_movement |= A21_MOVE_SLIDE;
+}
+#endif
 extern boolean advancedemo;
 extern int D_A1TitleReady(void);
 
@@ -2205,6 +2236,139 @@ void G_A21PlayerEntry(player_t *player) {
   a21_entered = player->cmd; /* Before any native flag/command mutation. */
 }
 
+#ifndef DOOM_A1_NO_FIXTURES
+/* Experiment 2: local read-only center ray, never a movement/use query.
+ * Kinds: 0 unknown/unavailable, 1 no relevant line, 2 solid line,
+ * 3 clearance restriction, 4 nonrestricting manual-door boundary,
+ * 5 other special (use ordering unknown). Door: 0 none, 1 metadata only,
+ * 2 front-side use candidate, NOT a promise of activation or key ownership.
+ * Ownership is the same completed-tic stamp as collision index 87. */
+static boolean A21ManualDoor(int special) {
+  switch (special) {
+  case 1:
+  case 26:
+  case 27:
+  case 28:
+  case 31:
+  case 32:
+  case 33:
+  case 34:
+  case 117:
+  case 118:
+    return true;
+  default:
+    return false;
+  }
+}
+
+typedef struct {
+  int kind, door, distance;
+} a21_facing_t;
+
+static a21_facing_t A21SampleFacing(void) {
+  const mobj_t *mo = players[0].mo;
+  const line_t *nearest = NULL;
+  double best = 2.0;
+  int kind = 1, door = 0;
+  const a21_facing_t unavailable = {0, 0, -1};
+  if (!a21_load_complete || !A21GameEligible() || mo != a21_actor ||
+      numlines > 65536)
+    return unavailable;
+
+  /* Same fine-angle table direction as P_UseLines, without its scratch/effects.
+   * Doubles avoid signed fixed-point cross-product overflow. Map coordinates
+   * are exactly representable; near-degenerate intersections fail closed.
+   * eps is 1/1024 Doom unit, much larger than double roundoff at map limits. */
+  const double eps = 1.0 / 1024.0;
+  const int angle = mo->angle >> ANGLETOFINESHIFT;
+  const double ox = (double)mo->x / FRACUNIT;
+  const double oy = (double)mo->y / FRACUNIT;
+  const double rx = (double)(USERANGE >> FRACBITS) * finecosine[angle] / FRACUNIT;
+  const double ry = (double)(USERANGE >> FRACBITS) * finesine[angle] / FRACUNIT;
+  const double length = sqrt(rx * rx + ry * ry);
+  /* Do not claim stock use ordering where its fixed-point endpoint overflows. */
+  if (ox + rx < -32768.0 || ox + rx > 32768.0 - 1.0 / FRACUNIT ||
+      oy + ry < -32768.0 || oy + ry > 32768.0 - 1.0 / FRACUNIT)
+    return unavailable;
+  for (int i = 0; i < numlines; ++i) {
+    const line_t *line = &lines[i];
+    if (!line->v1 || !line->v2 || !line->frontsector)
+      return unavailable;
+    const double ax = (double)line->v1->x / FRACUNIT;
+    const double ay = (double)line->v1->y / FRACUNIT;
+    const double bx = (double)line->v2->x / FRACUNIT;
+    const double by = (double)line->v2->y / FRACUNIT;
+    /* Cheap local bounding boxes also bound the collinear ambiguity case. */
+    if (fmax(ax, bx) < fmin(ox, ox + rx) - eps ||
+        fmin(ax, bx) > fmax(ox, ox + rx) + eps ||
+        fmax(ay, by) < fmin(oy, oy + ry) - eps ||
+        fmin(ay, by) > fmax(oy, oy + ry) + eps)
+      continue;
+    const double sx = bx - ax, sy = by - ay;
+    const double qx = ax - ox, qy = ay - oy;
+    const double span = sqrt(sx * sx + sy * sy);
+    const double den = rx * sy - ry * sx;
+    if (span <= eps)
+      return unavailable;
+    if (fabs(den) <= eps * span)
+      return unavailable; /* Near-parallel overlapping boxes: ordering unknown. */
+    const double t = (qx * sy - qy * sx) / den;
+    const double u = (qx * ry - qy * rx) / den;
+    if (t < -eps / length || t > 1.0 + eps / length ||
+        u < -eps / span || u > 1.0 + eps / span)
+      continue;
+    if (t <= eps / length || t >= 1.0 - eps / length ||
+        u <= eps / span || u >= 1.0 - eps / span)
+      return unavailable; /* Origin, range edge or vertex: avoid guessed ordering. */
+
+    const boolean manual = A21ManualDoor(line->special);
+    int candidate = 0;
+    int physical = 1;
+    if (!line->backsector || (line->flags & ML_BLOCKING))
+      physical = 2;
+    else {
+      const sector_t *front = line->frontsector, *back = line->backsector;
+      if (!(line->flags & ML_TWOSIDED) || line->sidenum[1] < 0 ||
+          line->sidenum[1] >= numsides || sides[line->sidenum[1]].sector != back)
+        return unavailable; /* Inconsistent two-sided metadata. */
+      const double bottom = fmax(front->floorheight, back->floorheight);
+      const double top = fmin(front->ceilingheight, back->ceilingheight);
+      /* Current geometry only; no P_LineOpening/P_CheckPosition scratch.
+       * Includes headroom and a >24-unit rise; does not predict a future step. */
+      if (top - bottom < mo->height || top - mo->z < mo->height ||
+          bottom - mo->z > 24.0 * FRACUNIT)
+        physical = 3;
+      else if (manual)
+        physical = 4;
+      else if (line->special)
+        physical = 5;
+      /* Axial front-side checks exactly match P_PointOnLineSide. Diagonal
+       * metadata remains recognizable, but fixed-point side rounding is not
+       * duplicated here. Require valid back sidedef as EV_VerticalDoor does. */
+      if (manual) {
+        if (!line->dx)
+          candidate = (mo->x <= line->v1->x) ? line->dy < 0 : line->dy > 0;
+        else if (!line->dy)
+          candidate = (mo->y <= line->v1->y) ? line->dx > 0 : line->dx < 0;
+      }
+    }
+    if (physical == 1)
+      continue;
+    if (nearest && fabs(t - best) * length <= eps)
+      return unavailable; /* Coincident boundaries: no invented first use target. */
+    if (t < best) {
+      nearest = line;
+      best = t;
+      kind = physical;
+      door = manual ? (candidate ? 2 : 1) : 0;
+    }
+  }
+  const a21_facing_t result = {
+      kind, door, nearest ? (int)(best * length + 0.5) : -1};
+  return result;
+}
+#endif
+
 int G_A21Step(int input) {
   ticcmd_t cmds[MAXPLAYERS] = {{0}};
   ticcmd_t expected = {0};
@@ -2222,6 +2386,9 @@ int G_A21Step(int input) {
   A21Require(n < 0x7fffffff && turnheld < 0x7fffffff &&
              dclicktime < 0x7fffffff && dclicktime2 < 0x7fffffff);
   a21_active = true;
+#ifndef DOOM_A1_NO_FIXTURES
+  a21_pending_movement = a21_pending_rejections = 0;
+#endif
   M_Ticker();
   G_A21Boundary(A21_MENU);
   A21Require(A21GameEligible() && players[0].mo == a21_actor &&
@@ -2260,6 +2427,15 @@ int G_A21Step(int input) {
   A1_COUNT(A1_OUTER_COMPLETE);
   a21_active = false;
   G_A21CheckPassive();
+#ifndef DOOM_A1_NO_FIXTURES
+  const a21_facing_t facing = A21SampleFacing();
+  a21_collision_sample_tic = gametic;
+  a21_movement_flags = a21_pending_movement;
+  a21_rejection_mask = a21_pending_rejections;
+  a21_facing_kind = facing.kind;
+  a21_facing_door = facing.door;
+  a21_facing_distance = facing.distance;
+#endif
   return 0;
 }
 
@@ -2412,6 +2588,20 @@ int G_A21Observe(int index) {
   case 85:
   case 86:
     return A21ObservePlayerInventory(&players[0], index);
+
+  /* Latched at completed-tic closeout; -1 until the first accepted tic. */
+  case 87:
+    return a21_collision_sample_tic;
+  case 88:
+    return a21_movement_flags;
+  case 89:
+    return a21_rejection_mask;
+  case 90:
+    return a21_facing_kind;
+  case 91:
+    return a21_facing_door;
+  case 92:
+    return a21_facing_distance;
 
   default:
     return -1;

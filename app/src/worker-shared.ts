@@ -5,6 +5,20 @@ export const IWAD_MAX_BYTES = 32 * 1024 * 1024;
 export const IWAD_SIZE_ERROR =
   'Local IWAD must be 12–33,554,432 bytes (32 MiB maximum).';
 
+// Match g_game.h. Events during this tic, not input causality or a stuck verdict.
+export const movementFlags = {
+  trial: 1,
+  success: 2,
+  rejected: 4,
+  slide: 8,
+} as const;
+export const rejectionReasons = {
+  solidLine: 1,
+  solidThing: 2,
+  clearance: 4,
+  unknown: 8,
+} as const;
+
 export type Counters = Record<
   | 'wasiInit'
   | 'cInit'
@@ -99,7 +113,15 @@ export type NativeObservation = Record<
   | 'rndindex'
   | 'prndindex'
   | 'reactiontime'
-  | 'flags',
+  | 'flags'
+  // All three are -1 until the first completed tic; terminal samples persist.
+  | 'collisionSampleTic'
+  | 'movementFlags'
+  | 'rejectionMask'
+  // Experiment 2, owned by collisionSampleTic. All -1 before first tic.
+  | 'facingKind'
+  | 'facingDoor'
+  | 'facingDistance',
   number
 > & {
   built: Command;
@@ -252,6 +274,78 @@ export function i11MaskValid(mask: number) {
     (mask & 10) !== 10
   );
 }
+
+export function collisionObservationValid(observation: Observation): boolean {
+  const { native: p, counters } = observation;
+  const tic = counters.gametic;
+  if (!Number.isInteger(tic) || tic < 0 || tic > 0x7fffffff) return false;
+  if (p.loadComplete !== 1 || tic === 0)
+    return (
+      p.collisionSampleTic === -1 &&
+      p.movementFlags === -1 &&
+      p.rejectionMask === -1
+    );
+  const flags = p.movementFlags;
+  const reasons = p.rejectionMask;
+  if (
+    p.actorEqual !== 1 ||
+    p.collisionSampleTic !== tic ||
+    !Number.isInteger(flags) ||
+    flags < 0 ||
+    flags > 15 ||
+    !Number.isInteger(reasons) ||
+    reasons < 0 ||
+    reasons > 15
+  )
+    return false;
+  const attempted = Boolean(flags & movementFlags.trial);
+  const accepted = Boolean(flags & movementFlags.success);
+  const rejected = Boolean(flags & movementFlags.rejected);
+  return (
+    attempted === (accepted || rejected) &&
+    rejected === (reasons !== 0) &&
+    (!(flags & movementFlags.slide) || rejected)
+  );
+}
+
+// Private indexed enums 90–92. No actor query or traversability claim.
+export const facingKinds = {
+  unknown: 0,
+  noLine: 1,
+  solid: 2,
+  clearance: 3,
+  manualBoundary: 4,
+  otherSpecial: 5,
+} as const;
+
+export function facingObservationValid(observation: Observation): boolean {
+  const { native: p, counters } = observation;
+  const tic = counters.gametic;
+  const { facingKind: kind, facingDoor: door, facingDistance: distance } = p;
+  if (!Number.isInteger(tic) || tic < 0 || tic > 0x7fffffff) return false;
+  if (p.loadComplete !== 1 || tic === 0)
+    return kind === -1 && door === -1 && distance === -1;
+  if (p.collisionSampleTic !== tic || p.actorEqual !== 1) return false;
+  if (
+    !Number.isInteger(kind) ||
+    kind < 0 ||
+    kind > 5 ||
+    !Number.isInteger(door) ||
+    door < 0 ||
+    door > 2
+  )
+    return false;
+  if (assessE1M1(observation).kind !== 'alive')
+    return kind === 0 && door === 0 && distance === -1;
+  if (kind === 0 || kind === 1) return door === 0 && distance === -1;
+  if (!Number.isInteger(distance) || distance < 0 || distance > 64)
+    return false;
+  if (kind === 2) return door !== 2;
+  if (kind === 4) return door !== 0;
+  if (kind === 5) return door === 0;
+  return true;
+}
+
 export function i11VerifyStep(
   mask: number,
   before: Observation,
@@ -260,6 +354,14 @@ export function i11VerifyStep(
   const require = (ok: unknown, message: string) => {
     if (!ok) throw Error(message);
   };
+  require(facingObservationValid(before) &&
+    facingObservationValid(
+      after,
+    ), 'Invalid facing probe or completed-tic ownership');
+  require(collisionObservationValid(before) &&
+    collisionObservationValid(
+      after,
+    ), 'Invalid collision sample, flags or tic ownership');
   if (after.status === -1) {
     require(JSON.stringify(before.counters) ===
       JSON.stringify(after.counters) &&

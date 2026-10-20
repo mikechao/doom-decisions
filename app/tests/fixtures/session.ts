@@ -161,6 +161,7 @@ export function fixture(configuration = {}) {
     at: settings.at === undefined ? Infinity : settings.at + 1,
     trapAt: settings.trapAt === undefined ? Infinity : settings.trapAt + 1,
     signals: settings.signals ?? {},
+    onStep: settings.onStep,
   });
   const ops = [];
   const transfers = [];

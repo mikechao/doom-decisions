@@ -181,9 +181,10 @@ it('keeps auth alternatives together and two native model choices in a separate 
   assert.match(html, /<p id="openrouter-auth-status" class="help" role="status" aria-live="polite" aria-atomic="true"><\/p>/);
 });
 
-function ready() {
+function ready(collisionEvidence?: string) {
   session.ports.present({ session: {
     phase: 'ready', prepared: true, hasClient: false, verifiedTics: 1,
+    collisionEvidence,
     evidence: { decisions: [] }, controls: { ready: true, stop: false, tics: true, iwad: false },
   } });
 }
@@ -274,6 +275,15 @@ it('selects the provider at the app edge, labels BYOK truthfully and retains cap
       assert.equal(element('#openrouter-back').hidden, true);
       assert.equal(element('#openrouter-key-settings').hidden, true);
     }
+    // This diagnostic is independent of provider selection and raw JSON updates.
+    ready('Last verified action: neutral, 2 tics (1 → 3)');
+    assert.equal(element('#collision-evidence').textContent, 'Last verified action: neutral, 2 tics (1 → 3)');
+    ready();
+    assert.equal(element('#collision-evidence').textContent, 'No verified action yet.');
+    const calls = session.controller.next.mock.calls.length;
+    element('.advanced').dispatchEvent(new Event('toggle'));
+    element('.advanced').dispatchEvent(new Event('toggle'));
+    assert.equal(session.controller.next.mock.calls.length, calls);
     assert.equal(h.transport.mock.calls.length, 0);
     assert.equal(h.worker.mock.calls.length, 0);
     assert.equal(h.history.replaceState.mock.calls.length, 0);

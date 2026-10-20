@@ -197,6 +197,12 @@ extern int numspechit;
 
 boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y);
 boolean P_TryMove(mobj_t *thing, fixed_t x, fixed_t y);
+#if defined(DOOM_CONTROLLED_TITLE) && !defined(DOOM_A1_NO_FIXTURES)
+/* Only the actual XY/slide call sites use this diagnostic wrapper. */
+boolean P_XYTryMove(mobj_t *thing, fixed_t x, fixed_t y);
+#else
+#define P_XYTryMove(thing, x, y) P_TryMove(thing, x, y)
+#endif
 boolean P_TeleportMove(mobj_t *thing, fixed_t x, fixed_t y);
 void P_SlideMove(mobj_t *mo);
 boolean P_CheckSight(mobj_t *t1, mobj_t *t2);
