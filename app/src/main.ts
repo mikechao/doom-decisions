@@ -1,3 +1,7 @@
+import {
+  enabled as agentEnabled,
+  takeKey as takeAgentKey,
+} from 'virtual:agent-bootstrap';
 import { createIncludedFreedoom } from './bundled-freedoom';
 import { formatFacingProbe } from './facing-probe.ts';
 import {
@@ -45,6 +49,13 @@ if (providerError) {
   throw Error(providerError);
 }
 const openRouterMode = !jevMode && providerSetting === 'openrouter';
+const agentMode =
+  agentEnabled && import.meta.env.DEV && import.meta.env.MODE === 'agent';
+let agentKey = takeAgentKey();
+if (!agentMode || !openRouterMode) agentKey = '';
+window.addEventListener('pagehide', () => {
+  agentKey = '';
+});
 // Claim and scrub an owned callback before Canvas/DOM startup can fail.
 // Other providers never construct the helper or access OAuth storage/callbacks.
 const oauth = openRouterMode ? createOpenRouterOAuth(window) : undefined;
@@ -190,6 +201,7 @@ let setupAutoCollapseDone = false;
 let keyCommitted = false;
 let setupPointerActive = false;
 let startupReady = false;
+let agentPreparationAttempted = false;
 let wadSelected = false;
 let selectedAssetName = '';
 let selectedAssetSource: 'included' | 'local' | undefined;
@@ -207,7 +219,7 @@ function modelSelectionDisabled() {
     oauth.busy ||
     oauth.closed ||
     modelLocked ||
-    (!oauth.hasKey && !manualKeyVisible) ||
+    (!oauth.hasKey && !agentKey && !manualKeyVisible) ||
     latestSession?.phase === 'busy' ||
     latestSession?.phase === 'error' ||
     latestSession?.phase === 'terminal' ||
@@ -239,7 +251,8 @@ function assetSelectionAllowed() {
     startupReady &&
     !oauth?.busy &&
     !oauth?.closed &&
-    (!openRouterMode ||
+    (agentMode ||
+      !openRouterMode ||
       oauth?.hasKey ||
       /^[\x21-\x7e]+$/.test($('#key').value.trim())) &&
     (!latestSession || latestSession.controls.iwad)
@@ -308,7 +321,9 @@ function displayOAuth() {
   $('#openrouter-back').disabled = oauth.busy || oauth.closed;
   $('#openrouter-auth-status').textContent = latestSession?.hasClient
     ? 'OpenRouter client in memory.'
-    : oauth.message;
+    : agentKey
+      ? 'Local agent key in memory. Authentication and model access unverified.'
+      : oauth.message;
   if (oauth.busy || oauth.closed) {
     $('#key').disabled = true;
   }
@@ -324,6 +339,7 @@ function collapseCompletedSetup(
     !latestSession?.prepared ||
     !(
       jevMode ||
+      agentKey ||
       oauth?.hasKey ||
       latestSession.hasClient ||
       (keyCommitted && $('#key').value.trim())
@@ -336,7 +352,10 @@ function collapseCompletedSetup(
 function updateControlAvailability(run: SessionRunPresentation | undefined) {
   const readiness = deriveDecisionControls(
     run,
-    jevMode || !!oauth?.hasKey || $('#key').value.trim().length > 0,
+    jevMode ||
+      !!agentKey ||
+      !!oauth?.hasKey ||
+      $('#key').value.trim().length > 0,
     jevMode ? 'TypeSafe / Jev' : openRouterMode ? 'OpenRouter' : 'OpenAI',
   );
   const prerequisite = $('#control-prerequisite');
@@ -409,7 +428,9 @@ function display(view: SessionPresentation) {
     ? jevKeyStatus
     : run.hasClient
       ? 'Client in memory; blank keeps it. Authentication unverified.'
-      : 'Client in memory • Refresh clears it';
+      : agentMode
+        ? 'No provider client yet. Decisions require a credential.'
+        : 'Client in memory • Refresh clears it';
   history.display(run.evidence.decisions, run.inspectorRequests);
   const modelLabel = recordedModelLabel(run.evidence.decisions);
   $('#game-model').textContent = modelLabel;
@@ -463,11 +484,17 @@ const controller = createSessionController(
       }
       const key = $('#key').value.trim();
       if (key) $('#key').value = '';
-      return oauth ? oauth.takeKey(key) : key;
+      const preferred = oauth ? oauth.takeKey(key) : key;
+      const captured = preferred || agentKey;
+      // A manual/OAuth credential supersedes the unused local startup key.
+      agentKey = '';
+      return captured;
     },
     clearKey: () => {
       $('#key').value = '';
+      agentKey = '';
       oauth?.clear();
+      updateControlAvailability(latestSession);
       displayOAuth();
     },
     focusBudget: () => $('#budget').focus(),
@@ -715,13 +742,16 @@ function selectIwad(
   displayOAuth();
   void controller.prepare(file);
 }
-$('#included-freedoom').addEventListener('click', () => {
-  if (!assetSelectionAllowed() || $('#included-freedoom').disabled) return;
+function selectIncludedFreedoom() {
   selectIwad(
     createIncludedFreedoom(import.meta.env.BASE_URL),
     'Included Freedoom Phase 1 v0.13.0',
     'included',
   );
+}
+$('#included-freedoom').addEventListener('click', () => {
+  if (!assetSelectionAllowed() || $('#included-freedoom').disabled) return;
+  selectIncludedFreedoom();
 });
 $('#iwad-picker').addEventListener('click', () => {
   if (
@@ -740,9 +770,16 @@ window.addEventListener('pagehide', () => controller.close());
 window.addEventListener('pageshow', (event) =>
   controller.restore(event.persisted),
 );
+async function initialize() {
+  await controller.initialize();
+  if (agentMode && startupReady && !agentPreparationAttempted) {
+    agentPreparationAttempted = true;
+    selectIncludedFreedoom();
+  }
+}
 if (oauth) {
   // Exchange errors are fixed helper messages, never controller exception text.
-  // No WAD, Worker, provider client or Decisions request is started by auth.
+  // Auth only exchanges credentials; agent selection follows normal initialization.
   void (async () => {
     try {
       const exchanging = oauth.exchange();
@@ -750,17 +787,21 @@ if (oauth) {
       await exchanging;
       if (oauth.closed) return;
       displayOAuth();
-      await controller.initialize();
+      await initialize();
     } catch {
       // Unexpected bootstrap failures never expose auth exception details.
       startupReady = false;
+      agentKey = '';
       oauth.clear();
       $('#status').textContent = 'Startup failed. Reload to retry.';
     } finally {
-      if (!startupReady && oauth.hasKey) oauth.clear();
+      if (!startupReady) {
+        agentKey = '';
+        if (oauth.hasKey) oauth.clear();
+      }
       displayOAuth();
     }
   })();
 } else {
-  void controller.initialize();
+  void initialize();
 }

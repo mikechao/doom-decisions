@@ -1,5 +1,46 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { parseEnv } from 'node:util';
 import { defineConfig } from 'vite';
 import freedoom from './src/freedoom-identity.json' with { type: 'json' };
+
+// Private input is read only when an agent dev page requests this module.
+// Never put its contents in Vite env/define/config: debug output can print them.
+function agentBootstrap(enabled) {
+  const id = '\0doom-agent-bootstrap';
+  let root;
+  return {
+    name: 'agent-bootstrap',
+    configResolved(config) {
+      root = config.root;
+      if (enabled && config.server.host !== '127.0.0.1')
+        throw new Error('AI Agent development requires host 127.0.0.1.');
+    },
+    resolveId(source) {
+      if (source === 'virtual:agent-bootstrap') return id;
+    },
+    load(source) {
+      if (source !== id) return;
+      let key = '';
+      if (enabled) {
+        try {
+          const candidate = parseEnv(
+            readFileSync(join(root, '.env.agent.local'), 'utf8'),
+          ).AGENT_OPENROUTER_API_KEY?.trim();
+          if (candidate && /^[\x21-\x7e]+$/.test(candidate)) key = candidate;
+        } catch {
+          // An absent/unreadable optional credential must not block the game.
+          // File/parse exceptions can contain private input; never log them.
+        }
+      }
+      // Deliberate local-browser exposure. Transfer once into the app's ephemeral
+      // credential port; no persistent exported key, DOM field or browser storage.
+      return `export const enabled = ${enabled};
+let key = ${JSON.stringify(key)};
+export function takeKey() { const result = key; key = ''; return result; }`;
+    },
+  };
+}
 
 // Vite's static middleware labels *.gz as HTTP Content-Encoding:gzip. This
 // particular asset is a gzip FILE: leave its bytes for DecompressionStream.
@@ -148,35 +189,52 @@ function jevProxy() {
   };
 }
 
-export default defineConfig(({ command, mode, isPreview }) => ({
-  base: './',
-  worker: { format: 'es' },
-  build: {
-    minify: false,
-    sourcemap: true,
-  },
-  ...(command === 'serve' && mode === 'jev' && !isPreview
-    ? { server: { host: '127.0.0.1', cors: false, proxy: jevProxy() } }
-    : {}),
-  // Vite preview otherwise inherits server.proxy. This is never a preview API.
-  preview: { proxy: {} },
-  plugins: [
-    ...(command === 'serve' && !isPreview
-      ? [
-          {
-            name: 'dev-csp',
-            transformIndexHtml: (html) =>
-              transformCsp(
-                html,
-                mode === 'impeccable'
-                  ? impeccableCsp
-                  : mode === 'jev'
-                    ? jevCsp
-                    : devCsp,
-              ),
+export default defineConfig(({ command, mode, isPreview }) => {
+  if (mode === 'agent' && (command !== 'serve' || isPreview))
+    throw new Error(
+      'AI Agent mode is development serving only; builds and preview are disabled.',
+    );
+  const agentServe = command === 'serve' && mode === 'agent' && !isPreview;
+  return {
+    base: './',
+    worker: { format: 'es' },
+    build: {
+      minify: false,
+      sourcemap: true,
+    },
+    ...(command === 'serve' && mode === 'jev' && !isPreview
+      ? { server: { host: '127.0.0.1', cors: false, proxy: jevProxy() } }
+      : {}),
+    ...(agentServe
+      ? {
+          server: {
+            host: '127.0.0.1',
+            cors: false,
+            headers: { 'Cache-Control': 'no-store' },
           },
-        ]
-      : []),
-    freedoomFileHeaders(),
-  ],
-}));
+        }
+      : {}),
+    // Vite preview otherwise inherits server.proxy. This is never a preview API.
+    preview: { proxy: {} },
+    plugins: [
+      ...(command === 'serve' && !isPreview
+        ? [
+            {
+              name: 'dev-csp',
+              transformIndexHtml: (html) =>
+                transformCsp(
+                  html,
+                  mode === 'impeccable'
+                    ? impeccableCsp
+                    : mode === 'jev'
+                      ? jevCsp
+                      : devCsp,
+                ),
+            },
+          ]
+        : []),
+      freedoomFileHeaders(),
+      agentBootstrap(agentServe),
+    ],
+  };
+});

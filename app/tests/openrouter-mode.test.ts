@@ -1,7 +1,11 @@
 // Config transformation and imported main with synthetic DOM/controller only.
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { inspect } from 'node:util';
+import { runInNewContext } from 'node:vm';
 import { Decisions } from '@openrouter/sdk/sdk/decisions.js';
 import { afterEach, it, vi } from 'vitest';
 import config from '../vite.config.js';
@@ -14,6 +18,11 @@ const session = vi.hoisted(() => ({
   controller: { initialize: vi.fn(), next: vi.fn(), startContinuous: vi.fn(), stop: vi.fn(),
     prepare: vi.fn(), close: vi.fn(), restore: vi.fn() },
 }));
+const agent = vi.hoisted(() => ({ enabled: false, key: '' }));
+vi.mock('virtual:agent-bootstrap', () => ({
+  get enabled() { return agent.enabled; },
+  takeKey() { const key = agent.key; agent.key = ''; return key; },
+}));
 vi.mock('../src/session-controller', () => ({
   createSessionController: (ports, factory) => {
     session.ports = ports; session.factory = factory; return session.controller;
@@ -23,6 +32,7 @@ vi.mock('../src/decision-history', () => ({ defineDecisionHistory: () => {} }));
 // Provider/controller fixtures retain fake DOM behavior, not Shadow DOM coverage.
 vi.mock('../src/doom-button', () => ({ defineDoomButton: () => {} }));
 afterEach(() => {
+  agent.enabled = false; agent.key = '';
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetAllMocks(); vi.restoreAllMocks();
 });
 
@@ -153,13 +163,226 @@ function browserFixture(query = '', hasPending = false) {
   // Real controller.close clears credentials through this port, which also
   // refreshes OAuth/model availability after the early OAuth pagehide handler.
   session.controller.close.mockImplementation(() => session.ports.clearKey());
-  return { element, document, window, storage, values, location, history, transport, worker };
+  return { element, elements, document, window, storage, values, location, history, transport, worker };
 }
 
 async function settleStartup() {
   // Flush the caught auth/bootstrap promises, without timers or real transport.
   for (let i = 0; i < 8; i++) await Promise.resolve();
 }
+
+it('serves an optional private agent bootstrap only on loopback dev, with inert production output', () => {
+  const root = mkdtempSync(join(tmpdir(), 'doom-agent-bootstrap-'));
+  const sentinel = 'offline-agent-sentinel-only';
+  const evaluate = (source) => runInNewContext(source.replaceAll('export ', '') + '\n({ enabled, takeKey })');
+  try {
+    writeFileSync(join(root, '.env.agent.local'), `AGENT_OPENROUTER_API_KEY="${sentinel}"\n`);
+    for (const env of [
+      { command: 'serve', mode: 'development' },
+      { command: 'serve', mode: 'impeccable' },
+      { command: 'serve', mode: 'production', isPreview: true },
+      { command: 'build', mode: 'production' },
+      { command: 'build', mode: 'openrouter' },
+      { command: 'build', mode: 'jev' },
+    ]) {
+      const raw = config(env);
+      assert.equal(inspect(raw, { depth: 20 }).includes(sentinel), false);
+      assert.equal(raw.define, undefined);
+      assert.equal(raw.envPrefix, undefined);
+      const plugin = raw.plugins.find(p => p.name === 'agent-bootstrap');
+      plugin.configResolved({ root, server: {} });
+      assert.equal(plugin.resolveId('./unrelated.ts'), undefined);
+      assert.equal(plugin.load('./unrelated.ts'), undefined);
+      const output = plugin.load(plugin.resolveId('virtual:agent-bootstrap'));
+      assert.equal(output.includes(sentinel), false, 'Production bootstrap module cannot emit a credential');
+      const boot = evaluate(output);
+      assert.equal(boot.enabled, false);
+      assert.equal(boot.takeKey(), '');
+    }
+    assert.throws(() => config({ command: 'build', mode: 'agent' }), /development serving only/);
+    assert.throws(() => config({ command: 'serve', mode: 'agent', isPreview: true }), /development serving only/);
+    const raw = config({ command: 'serve', mode: 'agent' });
+    assert.equal(raw.server.host, '127.0.0.1');
+    assert.equal(raw.server.cors, false);
+    assert.equal(raw.server.headers['Cache-Control'], 'no-store');
+    assert.equal(inspect(raw, { depth: 20 }).includes(sentinel), false);
+    const plugin = raw.plugins.find(p => p.name === 'agent-bootstrap');
+    for (const host of [true, '0.0.0.0', 'localhost'])
+      assert.throws(() => plugin.configResolved({ root, server: { host } }), /host 127.0.0.1/);
+    plugin.configResolved({ root, server: raw.server });
+    const id = plugin.resolveId('virtual:agent-bootstrap');
+    const boot = evaluate(plugin.load(id));
+    assert.equal(boot.enabled, true);
+    assert.equal(boot.takeKey(), sentinel);
+    assert.equal(boot.takeKey(), '', 'One-time transfer into ephemeral app memory');
+    for (const input of ['', 'AGENT_OPENROUTER_API_KEY=', 'AGENT_OPENROUTER_API_KEY="bad key"']) {
+      writeFileSync(join(root, '.env.agent.local'), input);
+      assert.equal(evaluate(plugin.load(id)).takeKey(), '');
+    }
+    rmSync(join(root, '.env.agent.local'));
+    assert.equal(evaluate(plugin.load(id)).takeKey(), '', 'Missing key still enables agent startup');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it('auto-selects included Freedoom once after agent readiness without a key, retaining inference gates', async () => {
+  agent.enabled = true;
+  vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'agent'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture();
+  let finish;
+  session.controller.initialize.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  session.controller.prepare.mockImplementation(() => {
+    session.ports.present({ session: {
+      phase: 'preparing', prepared: false, hasClient: false, verifiedTics: 0,
+      controls: { ready: false, stop: false, tics: false, iwad: false }, evidence: { decisions: [] },
+    } });
+  });
+  await import('../src/main.ts?agent-no-key-startup');
+  await settleStartup();
+  const create = vi.spyOn(session.factory, 'create');
+  assert.equal(session.controller.prepare.mock.calls.length, 0, 'Initialization has not completed');
+  session.ports.present({ iwadEnabled: true });
+  assert.equal(session.controller.prepare.mock.calls.length, 0, 'Presentation alone is not a startup command');
+  finish();
+  await settleStartup();
+  assert.equal(session.controller.prepare.mock.calls.length, 1);
+  const [file] = session.controller.prepare.mock.calls[0];
+  assert.equal(file.size, 28795076);
+  assert.equal(typeof file.arrayBuffer, 'function');
+  assert.match(h.element('#setup-asset').textContent, /Included Freedoom/);
+  assert.equal(h.element('#included-freedoom').textContent, 'Loading Doom…');
+  h.element('#included-freedoom').dispatchEvent(new Event('click'));
+  assert.equal(session.controller.prepare.mock.calls.length, 1, 'Existing admission rejects competing selection');
+  // Completion of the preparation command alone must not make the UI ready.
+  assert.equal(h.element('#next').disabled, true);
+  assert.equal(h.element('#start').disabled, true);
+  ready();
+  assert.equal(h.element('#next').disabled, true);
+  assert.equal(h.element('#start').disabled, true);
+  assert.match(h.element('#control-prerequisite').textContent, /Enter a temporary OpenRouter API key/);
+  h.element('#key').dispatchEvent(new Event('input'));
+  session.ports.present({ iwadEnabled: true });
+  await settleStartup();
+  assert.equal(session.controller.prepare.mock.calls.length, 1, 'Readiness updates never restart preparation');
+  assert.equal(create.mock.calls.length, 0);
+  assert.equal(session.controller.next.mock.calls.length, 0);
+  assert.equal(session.controller.startContinuous.mock.calls.length, 0);
+  assert.equal(h.transport.mock.calls.length, 0);
+});
+
+it('retains preparation failure presentation without automatically retrying the asset', async () => {
+  agent.enabled = true;
+  vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'agent'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture();
+  const error = 'Preparation failed: Included Freedoom could not be loaded or verified. Choose an IWAD again to retry preparation.';
+  session.controller.prepare.mockImplementation(() => {
+    session.ports.clearKey();
+    session.ports.present({ status: error, session: {
+      phase: 'unprepared', prepared: false, hasClient: false, verifiedTics: 0,
+      controls: { ready: false, stop: false, tics: false, iwad: true }, evidence: { decisions: [] },
+    } });
+    return Promise.resolve();
+  });
+  await import('../src/main.ts?agent-asset-failure');
+  await settleStartup();
+  h.element('#key').dispatchEvent(new Event('input'));
+  session.ports.present({ iwadEnabled: true });
+  await settleStartup();
+  assert.equal(h.element('#status').textContent, error);
+  assert.equal(h.element('#included-freedoom').textContent, 'Use included Freedoom');
+  assert.equal(h.element('#included-freedoom').disabled, false, 'Existing manual retry stays available');
+  assert.equal(session.controller.prepare.mock.calls.length, 1);
+  assert.equal(session.controller.next.mock.calls.length, 0);
+  assert.equal(session.controller.startContinuous.mock.calls.length, 0);
+});
+
+it('keeps agent credentials ephemeral and lazy until a human decision, preserving model locking', async () => {
+  agent.enabled = true; agent.key = 'offline-agent-browser-dummy';
+  vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'agent'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture();
+  let finish;
+  session.controller.initialize.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const sdk = vi.spyOn(Decisions.prototype, 'create').mockImplementation(() => assert.fail('No inference in this test'));
+  await import('../src/main.ts?agent-key-startup');
+  await settleStartup();
+  const create = vi.spyOn(session.factory, 'create');
+  session.ports.present({ iwadEnabled: true }); finish();
+  await settleStartup();
+  assert.equal(session.controller.prepare.mock.calls.length, 1);
+  assert.equal(create.mock.calls.length, 0);
+  assert.equal(session.controller.next.mock.calls.length, 0);
+  assert.equal(session.controller.startContinuous.mock.calls.length, 0);
+  ready();
+  assert.equal(h.element('#next').disabled, false);
+  assert.equal(h.element('#start').disabled, false);
+  assert.match(h.element('#openrouter-auth-status').textContent, /Local agent key.*unverified/);
+  assert.equal(h.element('#key').value, '');
+  assert.equal(h.values.size, 0);
+  for (const el of h.elements.values()) assert.equal(el.textContent.includes('offline-agent-browser-dummy'), false);
+  assert.equal(h.element('#openrouter-model').disabled, false);
+  h.element('#openrouter-model-jev').checked = true;
+  h.element('#openrouter-model-jev').dispatchEvent(new Event('change'));
+  // The real controller consumes the same port on explicit admission.
+  session.controller.next.mockImplementation(() => session.factory.create(session.ports.takeKey()));
+  h.element('#next').dispatchEvent(new Event('click'));
+  assert.deepEqual(create.mock.calls, [['offline-agent-browser-dummy']]);
+  assert.equal(h.element('#openrouter-model').disabled, true);
+  assert.equal(session.ports.takeKey(), '');
+  assert.equal(sdk.mock.calls.length, 0, 'Client construction makes no inference request');
+  assert.equal(h.transport.mock.calls.length, 0);
+});
+
+it('preserves manual/OAuth precedence and clears unused agent credentials on retirement and page exit', async () => {
+  vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'agent'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  for (const [kind, load] of [
+    ['manual', () => import('../src/main.ts?agent-manual-precedence')],
+    ['oauth', () => import('../src/main.ts?agent-oauth-precedence')],
+    ['retirement', () => import('../src/main.ts?agent-retirement-clear')],
+    ['pagehide', () => import('../src/main.ts?agent-pagehide-clear')],
+  ]) {
+    agent.enabled = true; agent.key = 'offline-agent-discarded';
+    const h = browserFixture(kind === 'oauth' ? `?code=offline-code&state=${nonce}` : '', kind === 'oauth');
+    await load(); await settleStartup();
+    if (kind === 'manual') h.element('#key').value = 'bad replacement';
+    if (kind === 'retirement') session.ports.clearKey();
+    if (kind === 'pagehide') h.window.dispatchEvent(new Event('pagehide'));
+    assert.equal(session.ports.takeKey(), kind === 'manual' ? 'bad replacement' : kind === 'oauth' ? minted : '');
+    assert.equal(session.ports.takeKey(), '', 'Never falls back to a superseded or cleared startup key');
+  }
+});
+
+it('keeps ordinary dev/production manual and refuses auto-preparation after failed initialization or page exit', async () => {
+  for (const [kind, dev, mode, load] of [
+    ['ordinary', true, 'development', () => import('../src/main.ts?agent-ordinary-dev')],
+    ['ordinary', false, 'production', () => import('../src/main.ts?agent-ordinary-production')],
+    ['ordinary', false, 'agent', () => import('../src/main.ts?agent-production-defense')],
+    ['failed', true, 'agent', () => import('../src/main.ts?agent-initialize-failure')],
+    ['pagehide', true, 'agent', () => import('../src/main.ts?agent-initialize-pagehide')],
+  ] as const) {
+    vi.resetAllMocks();
+    agent.enabled = true; agent.key = 'offline-key-must-not-leak';
+    vi.stubEnv('DEV', dev); vi.stubEnv('MODE', mode); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+    const h = browserFixture();
+    if (kind === 'failed') session.controller.initialize.mockImplementation(() => {
+      session.ports.present({ status: 'Startup failed: synthetic metadata failure.' });
+    });
+    if (kind === 'pagehide') session.controller.initialize.mockImplementation(async () => {
+      h.window.dispatchEvent(new Event('pagehide'));
+      session.ports.present({ iwadEnabled: true });
+    });
+    await load(); await settleStartup();
+    assert.equal(session.controller.prepare.mock.calls.length, 0);
+    if (kind === 'ordinary') {
+      assert.equal(h.element('#included-freedoom').disabled, true);
+      h.element('#included-freedoom').dispatchEvent(new Event('click'));
+      assert.equal(session.controller.prepare.mock.calls.length, 0);
+    }
+    assert.equal(session.ports.takeKey(), '');
+    assert.equal(session.controller.next.mock.calls.length, 0);
+    assert.equal(session.controller.startContinuous.mock.calls.length, 0);
+  }
+});
 
 it('keeps auth alternatives together and two native model choices in a separate provider-gated group', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');

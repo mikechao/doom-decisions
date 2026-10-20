@@ -81,7 +81,7 @@ it('sanitizes decompressor errors and rejects decompressed length/hash mismatche
 });
 
 it('uses the existing single-flight preparation, transferring original bytes with neutral 1/1/1 and no provider calls', async () => {
-  const h = fixture();
+  const h = fixture({ key: '' });
   const gate = deferred();
   const fetch = vi.fn(async () => { await gate.promise; return response(); });
   vi.stubGlobal('fetch', fetch);
@@ -101,6 +101,8 @@ it('uses the existing single-flight preparation, transferring original bytes wit
     await preparing;
     assert.equal(h.creations, 1);
     assert.equal(h.view.session.phase, 'ready');
+    assert.equal(h.view.session.prepared, true);
+    assert.equal(h.view.session.hasClient, false);
     assert.equal(h.view.session.evidence.assets.iwad.sha256, identity.wad.sha256);
     assert.equal(h.view.session.evidence.assets.iwad.bytes, identity.wad.bytes);
     const neutral = h.view.session.evidence.neutralFirst;
@@ -108,6 +110,10 @@ it('uses the existing single-flight preparation, transferring original bytes wit
     assert.equal(h.native.calls, 1);
     assert.equal(h.view.session.evidence.idle.unchanged, true);
     for (const frame of h.view.session.evidence.frames) assert.equal(frame.nativeSha256, frame.canvasSha256);
+    assert.equal(await h.controller.next(), 'not-admitted', 'No-key preparation cannot authorize inference');
+    await h.controller.startContinuous(1);
+    assert.equal(h.view.session.continuous.used, 0);
+    assert.equal(h.view.session.evidence.decisions.length, 0);
     assert.equal(h.sdkCalls, 0);
     assert.equal(h.transportCalls, 0);
     assert.equal(fetch.mock.calls.length, 1);

@@ -26,6 +26,30 @@ function fakeProviderFactory(
   };
 }
 
+it('prepares without credentials and retains all proofs while refusing manual and continuous inference', async () => {
+  const request = vi.fn(() => assert.fail('No provider request without credentials'));
+  const providerFactory = fakeProviderFactory(request);
+  const create = vi.spyOn(providerFactory, 'create');
+  const h = fixture({ key: '', providerFactory });
+  try {
+    // The shared helper asserts neutral 1/1/1, readiness locked during idle,
+    // matching frame/Canvas hashes, and unchanged state after the idle proof.
+    const prepared = await h.prepare();
+    assert.equal(prepared.hasClient, false);
+    assert.equal(prepared.frame.tic, 1);
+    assert.equal(h.view.status, 'Ready at tic 1 — neutral 1/1/1; passive checks unchanged.');
+    assert.equal(await h.next(), 'not-admitted');
+    await h.controller.startContinuous(1);
+    assert.equal(h.view.session.continuous.used, 0);
+    assert.deepEqual(h.view.session.evidence.decisions, []);
+    assert.equal(h.native.calls, 1);
+    assert.equal(create.mock.calls.length, 0);
+    assert.equal(request.mock.calls.length, 0);
+  } finally {
+    await h.dispose();
+  }
+});
+
 it('injects domain-only decisions while the controller freezes N and verifies manual and continuous frames', async () => {
   const inputs: DecisionRequest[] = [];
   const providerFactory = fakeProviderFactory((input, _lifecycle, diagnostics, hooks) => {

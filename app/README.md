@@ -5,9 +5,10 @@ TypeScript **7.0.2**, Vite **8.3.4**, plain CSS, and official
 **@openrouter/sdk 1.4.25** by default, with **openai 7.32.0** for the explicit
 experimental direct OpenAI alternative. The HTML entry loads `src/main.ts`;
 TypeScript checks types without emitting JavaScript, and Vite owns bundling.
-The app prepares real E1M1 on explicit included-Freedoom or local IWAD selection and verifies exactly
-one mandatory neutral first tic. Each **Next Decision** click then makes at most
-one official SDK Decisions request using the current rendered image, executes
+In ordinary modes the app prepares real E1M1 on explicit included-Freedoom or local
+IWAD selection and verifies exactly one mandatory neutral first tic. Each
+**Next Decision** click then makes at most one official SDK Decisions request using
+the current rendered image, executes
 one allowlisted action on the same Worker, and returns to idle. **Start Continuous
 Mode** explicitly authorizes sequential decisions through that same pipeline,
 until Stop, budget exhaustion, a terminal boundary, or a failure.
@@ -139,6 +140,49 @@ are retained.
 Snapshots share frozen references across presentation updates. Long sessions can
 therefore consume substantial memory; real-game PNG sizes have not been measured
 for this change. The CSP permits `data:` images only, with other directives unchanged.
+
+### AI Agent development startup
+
+With frontend dependencies and verified staged engine/game assets already available
+in this worktree, run from its repository root:
+
+```sh
+npm --prefix app run dev:agent
+```
+
+Equivalently, run `npm run dev:agent` from `app/`. Open the printed loopback URL
+manually. After normal initialization, this mode selects included Freedoom once,
+using the same path as **Use included Freedoom**. No setup clicks or API key are
+required. Wait for **Ready at tic 1 — neutral 1/1/1; passive checks unchanged.**
+The existing frame/Canvas hash checks and five-second idle proof remain mandatory;
+Advanced evidence stays available. Failures use the existing error/retry controls,
+with no automatic retry loop. Refresh starts one fresh preparation.
+
+Optionally create **this worktree's** gitignored `app/.env.agent.local` yourself:
+
+```dotenv
+AGENT_OPENROUTER_API_KEY=your-local-openrouter-key
+```
+
+Restart Vite after changing the file. Missing, empty, unreadable, or unusable keys
+leave inference unavailable while the game still prepares. A usable key is held
+in page memory for a later **human-initiated** Next Decision or Continuous Mode;
+startup neither constructs a provider client nor requests inference. Manual keys
+and OAuth keys take precedence. Model access/authentication remain unverified.
+The optional key applies only to the OpenRouter provider.
+
+This is browser-direct BYOK: the key is visible in the locally served bootstrap
+JavaScript, browser/devtools and potentially development caches. Agent responses
+use `Cache-Control: no-store`. The key is not secret
+from the local browser. It is not put into DOM fields, browser storage, history or
+receipts. Page retirement clears the pending key; refresh deliberately reloads it
+from local configuration. Never capture/share the bootstrap response or devtools
+with a real key. Do not use `VITE_*` variables for credentials.
+
+Agent mode binds only to `127.0.0.1` and rejects agent-mode builds and preview.
+Ordinary dev, preview and production use an inert bootstrap and do not read the private file
+through this credential loader or auto-select a game. Standard OAuth/manual BYOK
+behavior and production CSP stay unchanged. This adds no agent command bridge.
 
 ### Impeccable Live
 
