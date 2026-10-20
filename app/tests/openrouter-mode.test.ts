@@ -13,6 +13,9 @@ import { jevDecisionProviderFactory } from '../src/jev-decision-provider.ts';
 import { openAiDecisionProviderFactory } from '../src/openai-decision-provider.ts';
 import { openRouterDecisionProviderFactory } from '../src/openrouter-decision-provider.ts';
 
+const bridge = vi.hoisted(() => ({ start: vi.fn(() => ({ stop: vi.fn() })) }));
+vi.mock('../src/agent-browser', () => ({ startAgentObservationBridge: bridge.start }));
+
 const session = vi.hoisted(() => ({
   ports: undefined, factory: undefined,
   controller: { initialize: vi.fn(), next: vi.fn(), startContinuous: vi.fn(), stop: vi.fn(),

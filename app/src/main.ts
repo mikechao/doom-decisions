@@ -4,6 +4,7 @@ import {
   takeKey as takeAgentKey,
 } from 'virtual:agent-bootstrap';
 import { createIncludedFreedoom } from './bundled-freedoom';
+import { startAgentObservationBridge } from './agent-browser';
 import { formatFacingProbe } from './facing-probe.ts';
 import {
   defineDecisionHistory,
@@ -100,6 +101,8 @@ type Elements = {
   '#next': DoomButtonElement;
   '#start': DoomButtonElement;
   '#stop': DoomButtonElement;
+  '#stop-agent': DoomButtonElement;
+  '#agent-status': HTMLParagraphElement;
   '#budget': HTMLInputElement;
   '#view-prompt': DoomButtonElement;
   '#prompt-dialog': HTMLDialogElement;
@@ -203,6 +206,7 @@ let keyCommitted = false;
 let setupPointerActive = false;
 let startupReady = false;
 let agentPreparationAttempted = false;
+let agentBridge: ReturnType<typeof startAgentObservationBridge> | undefined;
 let wadSelected = false;
 let selectedAssetName = '';
 let selectedAssetSource: 'included' | 'local' | undefined;
@@ -371,6 +375,40 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
     openRouterMode && startupReady && (!run || run.controls.iwad);
   $('#key').disabled = jevMode || !(sessionReady || manualSetupReady);
   if (!run) return;
+  if (agentMode && run.controls.ready && !agentBridge) {
+    agentBridge = startAgentObservationBridge({
+      pageId: crypto.randomUUID(),
+      async post(path, data, signal) {
+        const response = await window.fetch(path, {
+          method: 'POST',
+          credentials: 'omit',
+          cache: 'no-store',
+          redirect: 'error',
+          signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Doom-Agent': 'page',
+          },
+          body: JSON.stringify(data),
+        });
+        if (!response.ok) throw Error('Agent bridge unavailable.');
+        return response.json();
+      },
+      events: (path) => new EventSource(path),
+      observe: (fresh) => controller.observe(fresh),
+      state(value) {
+        $('#stop-agent').hidden = value !== 'attached';
+        $('#agent-status').hidden = false;
+        $('#agent-status').textContent = {
+          available: 'Agent observation available. No API requests.',
+          attached: 'Agent attached · observation only. No API requests.',
+          stopped: 'Agent stopped. Reload to allow another attachment.',
+          unavailable:
+            'Agent bridge unavailable. Close extra agent tabs and reload.',
+        }[value];
+      },
+    });
+  }
   $('#budget').disabled = !sessionReady;
   $('#stop').disabled = !run.controls.stop;
   $('#tics').disabled = !run.controls.tics;
@@ -642,6 +680,7 @@ $('#start').addEventListener('click', () =>
   controller.startContinuous($('#budget').valueAsNumber),
 );
 $('#stop').addEventListener('click', () => controller.stop());
+$('#stop-agent').addEventListener('click', () => agentBridge?.stop());
 function clearPromptError() {
   $('#prompt-error').textContent = '';
   $('#prompt-error').hidden = true;
@@ -769,7 +808,10 @@ $('#iwad').addEventListener('change', () => {
   const file = $('#iwad').files?.[0];
   if (file) selectIwad(file, file.name, 'local');
 });
-window.addEventListener('pagehide', () => controller.close());
+window.addEventListener('pagehide', () => {
+  agentBridge?.stop();
+  controller.close();
+});
 window.addEventListener('pageshow', (event) =>
   controller.restore(event.persisted),
 );

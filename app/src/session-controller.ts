@@ -1,4 +1,5 @@
 import type { ActionName, Attempt, Execution, Phase } from './decision';
+import { agentPngBytes, type AgentObservation } from './agent-observation.ts';
 import {
   admitDecision,
   assertDecision,
@@ -111,6 +112,7 @@ type Evidence = {
   };
 };
 type Run = {
+  sessionId?: string;
   valid: boolean;
   phase: Phase;
   verifiedTics: number;
@@ -407,6 +409,116 @@ export function createSessionController(
       run.terminal = evidence.assessment;
     }
     return { execution: evidence, receipt: result };
+  }
+
+  // Observation owns the same ready/busy gate as decisions, but takes no key,
+  // constructs no provider and dispatches only passive snapshot/render operations.
+  async function observe(assertLease: () => void): Promise<AgentObservation> {
+    const run = current;
+    check(
+      run?.valid &&
+        !pageExited &&
+        run.phase === 'ready' &&
+        !run.attempt &&
+        !run.sdkRead &&
+        !run.terminal &&
+        !run.continuous?.active &&
+        !run.cancel &&
+        run.frame?.tic === run.verifiedTics &&
+        run.evidence.neutralFirst?.complete,
+      'Observation unavailable: game not ready.',
+    );
+    class Revoked extends Error {}
+    const fresh = () => {
+      assertCurrent(run);
+      try {
+        assertLease();
+      } catch {
+        throw new Revoked('Agent lease revoked.');
+      }
+    };
+    fresh();
+    run.sessionId ??= crypto.randomUUID();
+    run.phase = 'busy';
+    display(run);
+    try {
+      const before = await snapshot(run);
+      fresh();
+      check(
+        before.counters.gametic === run.verifiedTics,
+        'Observation tic mismatch.',
+      );
+      await render(run); // Reuse native pixels, passive proof and Canvas readback.
+      fresh();
+      const checkpoint = await snapshot(run);
+      fresh();
+      const frame = run.frame;
+      check(
+        frame?.tic === checkpoint.counters.gametic,
+        'Observation frame mismatch.',
+      );
+      const { png, rgba } = ports.capture();
+      const canvasHash = await digest(rgba);
+      fresh();
+      check(
+        canvasHash === frame.nativeSha256 && canvasHash === frame.canvasSha256,
+        'Observation Canvas/native hash mismatch.',
+      );
+      const pngSha256 = await digest(agentPngBytes(png));
+      fresh();
+      const after = await snapshot(run);
+      fresh();
+      check(
+        equal(checkpoint.counters, after.counters) &&
+          equal(checkpoint.native, after.native),
+        'Observation changed while capturing.',
+      );
+      const p = after.native;
+      const previous = previousActionAt(run.previousAction, after);
+      return structuredClone({
+        sessionId: run.sessionId,
+        tic: run.verifiedTics,
+        phase: 'ready',
+        frame: { ...frame },
+        counters: {
+          gametic: after.counters.gametic,
+          leveltime: after.counters.leveltime,
+          render: after.counters.render,
+          frame: after.counters.frame,
+        },
+        telemetry: {
+          health: p.health,
+          weaponId: p.readyWeapon?.id ?? null,
+          bullets: p.ammo?.bullets.current ?? null,
+          shells: p.ammo?.shells.current ?? null,
+          cells: p.ammo?.cells.current ?? null,
+          rockets: p.ammo?.rockets.current ?? null,
+          x: p.x,
+          y: p.y,
+          angle: p.angle,
+        },
+        previousAction: previous
+          ? {
+              action: previous.action,
+              tics: previous.tics,
+              endTic: previous.endTic,
+            }
+          : null,
+        png,
+        pngSha256,
+      });
+    } catch (error) {
+      if (!(error instanceof Revoked)) retire(run);
+      throw Error(
+        error instanceof Revoked
+          ? 'Agent lease revoked.'
+          : 'Observation verification failed; reload to restart.',
+      );
+    } finally {
+      if (current === run && run.valid && run.phase === 'busy')
+        run.phase = 'ready';
+      display(run);
+    }
   }
 
   function fence(run: Run, attempt: Attempt) {
@@ -1015,6 +1127,7 @@ export function createSessionController(
   return {
     initialize,
     prepare,
+    observe,
     next: () =>
       current
         ? runOneDecision(current)

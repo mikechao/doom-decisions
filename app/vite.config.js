@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { defineConfig } from 'vite';
+import { agentBridgePlugin } from './agent-bridge.mjs';
 import freedoom from './src/freedoom-identity.json' with { type: 'json' };
 
 // Private input is read only when an agent dev page requests this module.
@@ -222,6 +223,8 @@ export default defineConfig(({ command, mode, isPreview }) => {
       ? {
           server: {
             host: '127.0.0.1',
+            port: 5174,
+            strictPort: true,
             cors: false,
             headers: { 'Cache-Control': 'no-store' },
           },
@@ -248,6 +251,7 @@ export default defineConfig(({ command, mode, isPreview }) => {
         : []),
       freedoomFileHeaders(),
       agentBootstrap(agentServe),
+      ...(agentServe ? [agentBridgePlugin()] : []),
     ],
   };
 });

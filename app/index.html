@@ -113,6 +113,8 @@
             <p id="continuous-note" class="help control-guidance-text">Budget includes failed and canceled API attempts.</p>
             <p id="stop-note" class="control-guidance-text">Stop closes admission and waits for API cleanup or current-action and resulting-frame verification. It does not cancel an in-flight operation instantly.</p>
           </details>
+          <p id="agent-status" class="help" role="status" hidden></p>
+          <doom-button id="stop-agent" appearance="outline" hidden>Stop Agent</doom-button>
           <div class="prompt-group">
             <hr>
             <doom-button id="view-prompt" appearance="outline" aria-haspopup="dialog" aria-controls="prompt-dialog">Configure AI Decision</doom-button>

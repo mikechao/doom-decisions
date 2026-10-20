@@ -10,6 +10,7 @@
       "tsconfig.json",
       "tsconfig.worker.json",
       "vite.config.js",
+      "agent-bridge.mjs",
       "!!dist",
       "!!public",
       "!!node_modules",

@@ -150,7 +150,7 @@ in this worktree, run from its repository root:
 npm --prefix app run dev:agent
 ```
 
-Equivalently, run `npm run dev:agent` from `app/`. Open the printed loopback URL
+Equivalently, run `npm run dev:agent` from `app/`. Open `http://127.0.0.1:5174/`
 manually. After normal initialization, this mode selects included Freedoom once,
 using the same path as **Use included Freedoom**. No setup clicks or API key are
 required. Wait for **Ready at tic 1 — neutral 1/1/1; passive checks unchanged.**
@@ -192,7 +192,61 @@ with a real key. Do not use `VITE_*` variables for credentials.
 Agent mode binds only to `127.0.0.1` and rejects agent-mode builds and preview.
 Ordinary dev, preview and production use an inert bootstrap and do not read the private file
 through this credential loader or auto-select a game. Standard OAuth/manual BYOK
-behavior and production CSP stay unchanged. This adds no agent command bridge.
+behavior and production CSP stay unchanged.
+
+#### Slice A: agent observation and Stop
+
+Agent mode uses strict port **5174**; an occupied port fails instead of selecting
+another page/server. Close extra agent tabs. After verified preparation, exactly
+one page registers with the same-origin, in-memory observation bridge. No separate
+server, browser automation, provider proxy, or additional dependency is involved.
+
+From the repository root in a second terminal:
+
+```sh
+node scripts/doom-agent.mjs attach
+# Copy the absolute leaseFile from that JSON, then:
+node scripts/doom-agent.mjs observe --lease /absolute/path/to/lease.json
+```
+
+The second command prints `pngPath` (an absolute temporary PNG file), `pageId`,
+`epoch`, `commandId`, game `sessionId`, verified `tic`, native/Canvas RGBA hashes,
+PNG-file hash, passive counters and allowlisted telemetry. PNG bytes stay out of
+stdout. The controller owns admission while taking fresh passive snapshots,
+rendering and verifying Canvas/native pixels; it advances **zero gameplay tics**.
+Busy, terminal, retired, revoked or mismatched observations are rejected. The
+reported `phase: ready` describes the verified capture boundary, not a promise
+that human controls cannot change the game after capture. Temp lease/PNG files
+contain no provider credential; delete their printed temp directory when finished.
+
+In Codex, `$doom-decisions play` invokes the project skill for **one observation**.
+It must open `pngPath` with its image-viewing tool and describe visible content;
+printing a path alone does not prove visual delivery. Start a fresh Codex
+conversation in this worktree if the picker has not discovered the new skill.
+The attachment remains active for the human Stop check.
+
+**Stop Agent** appears only while attached. Clicking it revokes the browser-local
+lease synchronously, closes the event stream, and independently notifies the
+bridge. Repeat the exact `observe --lease ...` command: it must fail with
+`lease-revoked`, including after a delayed observation. Stop/disconnect never
+automatically reconnects or rearms; reload and explicitly attach again. A second
+page revokes the attachment rather than taking it over. Manual controls are only
+locked during the controller's observation operation and its passive verification;
+after safe settlement they return to their ordinary credential/readiness gates.
+
+Offline tests cover controlled delayed snapshots/hashing and Stop before server
+acknowledgement. The human acceptance is: reach verified tic 1, attach, obtain and
+actually view the PNG in Codex, click Stop Agent, verify the same lease rejects,
+and verify ordinary readiness returns. No Decisions call or key is required.
+There is no artificial runtime delay hook; deterministic Stop races use offline
+fakes. Real browser/PNG/Stop acceptance still requires this human-run check.
+
+This slice does not submit decisions, edit prompts, reserve a paid budget or
+cancel admitted inference. **Stop Agent is separate from Continuous Stop** and
+leaves manual/Continuous ownership unchanged. Slice B must add controller-enforced
+agent decision ownership, pre-create/pre-dispatch Stop fences, an explicit paid
+attempt budget and existing SDK/result/frame settlement before it can send one
+authorized Decisions API request.
 
 ### Impeccable Live
 

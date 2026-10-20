@@ -365,20 +365,21 @@ it('reserves the two-line variant height and typography independently of caption
   assert.match(css, /\.secondary-label\s*\{[^}]*color: var\(--muted\);[^}]*font-size: 0\.75rem;[^}]*overflow-wrap: anywhere;/);
 });
 
-it('uses thirteen static controls and retains native history-row creation and typed selectors', () => {
+it('uses fourteen static controls including hidden Agent Stop and retains native history-row creation and typed selectors', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
   const history = readFileSync(new URL('../src/decision-history.ts', import.meta.url), 'utf8');
   const expected = {
     'openrouter-signin-button': 'primary', 'openrouter-manual': 'text',
     'included-freedoom': 'neutral', 'iwad-picker': 'neutral', 'openrouter-back': 'text', next: 'primary',
-    start: 'secondary', stop: 'outline', 'view-prompt': 'outline',
+    start: 'secondary', stop: 'outline', 'stop-agent': 'outline', 'view-prompt': 'outline',
     'back-to-history': 'outline', 'close-prompt': 'outline',
     'reset-prompt': 'outline', 'save-prompt': 'primary',
   };
   const markup = [...html.matchAll(/<doom-button id="([^"]+)" appearance="([^"]+)"/g)];
   assert.deepEqual(Object.fromEntries(markup.map(match => [match[1], match[2]])), expected);
-  assert.equal(markup.length, 13);
+  assert.equal(markup.length, 14);
+  assert.match(html, /<doom-button id="stop-agent"[^>]* hidden>/);
   assert.doesNotMatch(html, /<button\b/);
   for (const id of Object.keys(expected).filter(id => id !== 'back-to-history'))
     assert.ok(main.includes(`'#${id}': DoomButtonElement;`));
