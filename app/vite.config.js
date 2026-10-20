@@ -22,20 +22,33 @@ function agentBootstrap(enabled) {
     load(source) {
       if (source !== id) return;
       let key = '';
+      let model = 'openai/gpt-6-luna-decisions';
       if (enabled) {
+        let privateEnv;
         try {
-          const candidate = parseEnv(
+          privateEnv = parseEnv(
             readFileSync(join(root, '.env.agent.local'), 'utf8'),
-          ).AGENT_OPENROUTER_API_KEY?.trim();
-          if (candidate && /^[\x21-\x7e]+$/.test(candidate)) key = candidate;
+          );
         } catch {
           // An absent/unreadable optional credential must not block the game.
           // File/parse exceptions can contain private input; never log them.
         }
+        // Only this private file selects the agent model; process env is ignored.
+        // Treat an explicitly blank setting like an absent one.
+        const alias = privateEnv?.AGENT_MODEL?.trim() || 'jev';
+        if (alias !== 'jev' && alias !== 'gpt6')
+          throw new Error(
+            'AI Agent AGENT_MODEL in .env.agent.local must be jev or gpt6.',
+          );
+        model =
+          alias === 'jev' ? 'typesafe/jev-1.14' : 'openai/gpt-6-luna-decisions';
+        const candidate = privateEnv?.AGENT_OPENROUTER_API_KEY?.trim();
+        if (candidate && /^[\x21-\x7e]+$/.test(candidate)) key = candidate;
       }
       // Deliberate local-browser exposure. Transfer once into the app's ephemeral
       // credential port; no persistent exported key, DOM field or browser storage.
       return `export const enabled = ${enabled};
+export const model = ${JSON.stringify(model)};
 let key = ${JSON.stringify(key)};
 export function takeKey() { const result = key; key = ''; return result; }`;
     },

@@ -1,5 +1,6 @@
 import {
   enabled as agentEnabled,
+  model as agentModel,
   takeKey as takeAgentKey,
 } from 'virtual:agent-bootstrap';
 import { createIncludedFreedoom } from './bundled-freedoom';
@@ -208,7 +209,9 @@ let selectedAssetSource: 'included' | 'local' | undefined;
 let doomLoaded = false;
 let manualKeyVisible = false;
 let savedDecisionConfiguration = defaultDecisionConfiguration;
-let selectedModel: OpenRouterModel = defaultOpenRouterModel;
+let selectedModel: OpenRouterModel = agentMode
+  ? agentModel
+  : defaultOpenRouterModel;
 let modelLocked = false;
 let modelFactory = createOpenRouterDecisionProviderFactory(selectedModel);
 let modelProbe: ReturnType<DecisionProviderFactory['probe']> | undefined;

@@ -162,11 +162,21 @@ Optionally create **this worktree's** gitignored `app/.env.agent.local` yourself
 
 ```dotenv
 AGENT_OPENROUTER_API_KEY=your-local-openrouter-key
+AGENT_MODEL=jev
 ```
 
-Restart Vite after changing the file. Missing, empty, unreadable, or unusable keys
-leave inference unavailable while the game still prepares. A usable key is held
-in page memory for a later **human-initiated** Next Decision or Continuous Mode;
+Agent mode defaults to `jev` (`typesafe/jev-1.14` via OpenRouter) when the file or
+`AGENT_MODEL` is missing, or the value is blank. Set `AGENT_MODEL=gpt6` for
+`openai/gpt-6-luna-decisions`. Other nonempty values block agent startup with a
+configuration error. This is separate from the direct `--mode jev` proxy.
+The setting is read only from this file in agent mode; there is no command-line
+override. Ordinary dev and production keep the GPT-6 Luna Decisions default.
+The model can still be changed with the existing UI radios before the first
+provider client is created for inference; creation locks it for the session.
+
+Restart the dev server after changing the file. Missing, empty, unreadable, or
+unusable keys leave inference unavailable while the game still prepares. A usable
+key is held in page memory for a later **human-initiated** Next Decision or Continuous Mode;
 startup neither constructs a provider client nor requests inference. Manual keys
 and OAuth keys take precedence. Model access/authentication remain unverified.
 The optional key applies only to the OpenRouter provider.

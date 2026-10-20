@@ -1,7 +1,7 @@
 // Config transformation and imported main with synthetic DOM/controller only.
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspect } from 'node:util';
@@ -18,9 +18,10 @@ const session = vi.hoisted(() => ({
   controller: { initialize: vi.fn(), next: vi.fn(), startContinuous: vi.fn(), stop: vi.fn(),
     prepare: vi.fn(), close: vi.fn(), restore: vi.fn() },
 }));
-const agent = vi.hoisted(() => ({ enabled: false, key: '' }));
+const agent = vi.hoisted(() => ({ enabled: false, key: '', model: 'typesafe/jev-1.14' }));
 vi.mock('virtual:agent-bootstrap', () => ({
   get enabled() { return agent.enabled; },
+  get model() { return agent.model; },
   takeKey() { const key = agent.key; agent.key = ''; return key; },
 }));
 vi.mock('../src/session-controller', () => ({
@@ -32,7 +33,7 @@ vi.mock('../src/decision-history', () => ({ defineDecisionHistory: () => {} }));
 // Provider/controller fixtures retain fake DOM behavior, not Shadow DOM coverage.
 vi.mock('../src/doom-button', () => ({ defineDoomButton: () => {} }));
 afterEach(() => {
-  agent.enabled = false; agent.key = '';
+  agent.enabled = false; agent.key = ''; agent.model = 'typesafe/jev-1.14';
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetAllMocks(); vi.restoreAllMocks();
 });
 
@@ -174,9 +175,10 @@ async function settleStartup() {
 it('serves an optional private agent bootstrap only on loopback dev, with inert production output', () => {
   const root = mkdtempSync(join(tmpdir(), 'doom-agent-bootstrap-'));
   const sentinel = 'offline-agent-sentinel-only';
-  const evaluate = (source) => runInNewContext(source.replaceAll('export ', '') + '\n({ enabled, takeKey })');
+  const evaluate = (source) => runInNewContext(source.replaceAll('export ', '') + '\n({ enabled, model, takeKey })');
   try {
-    writeFileSync(join(root, '.env.agent.local'), `AGENT_OPENROUTER_API_KEY="${sentinel}"\n`);
+    writeFileSync(join(root, '.env.agent.local'), `AGENT_OPENROUTER_API_KEY="${sentinel}"\nAGENT_MODEL=${sentinel}\n`);
+    const reads = vi.spyOn(fs, 'readFileSync');
     for (const env of [
       { command: 'serve', mode: 'development' },
       { command: 'serve', mode: 'impeccable' },
@@ -193,10 +195,13 @@ it('serves an optional private agent bootstrap only on loopback dev, with inert 
       plugin.configResolved({ root, server: {} });
       assert.equal(plugin.resolveId('./unrelated.ts'), undefined);
       assert.equal(plugin.load('./unrelated.ts'), undefined);
+      reads.mockClear();
       const output = plugin.load(plugin.resolveId('virtual:agent-bootstrap'));
+      assert.equal(reads.mock.calls.length, 0, 'Inert bootstrap never reads the private file');
       assert.equal(output.includes(sentinel), false, 'Production bootstrap module cannot emit a credential');
       const boot = evaluate(output);
       assert.equal(boot.enabled, false);
+      assert.equal(boot.model, 'openai/gpt-6-luna-decisions');
       assert.equal(boot.takeKey(), '');
     }
     assert.throws(() => config({ command: 'build', mode: 'agent' }), /development serving only/);
@@ -211,16 +216,46 @@ it('serves an optional private agent bootstrap only on loopback dev, with inert 
       assert.throws(() => plugin.configResolved({ root, server: { host } }), /host 127.0.0.1/);
     plugin.configResolved({ root, server: raw.server });
     const id = plugin.resolveId('virtual:agent-bootstrap');
+    writeFileSync(join(root, '.env.agent.local'), `AGENT_OPENROUTER_API_KEY="${sentinel}"\n`);
     const boot = evaluate(plugin.load(id));
     assert.equal(boot.enabled, true);
+    assert.equal(boot.model, 'typesafe/jev-1.14', 'Missing AGENT_MODEL defaults to Jev');
     assert.equal(boot.takeKey(), sentinel);
     assert.equal(boot.takeKey(), '', 'One-time transfer into ephemeral app memory');
     for (const input of ['', 'AGENT_OPENROUTER_API_KEY=', 'AGENT_OPENROUTER_API_KEY="bad key"']) {
       writeFileSync(join(root, '.env.agent.local'), input);
-      assert.equal(evaluate(plugin.load(id)).takeKey(), '');
+      const optional = evaluate(plugin.load(id));
+      assert.equal(optional.takeKey(), '');
+      assert.equal(optional.model, 'typesafe/jev-1.14');
     }
+    // A process setting must never override this file or the agent default.
+    vi.stubEnv('AGENT_MODEL', 'invalid-process-setting');
+    for (const [setting, expected] of [
+      ['jev', 'typesafe/jev-1.14'],
+      ['gpt6', 'openai/gpt-6-luna-decisions'],
+      ['', 'typesafe/jev-1.14'],
+      ['"   "', 'typesafe/jev-1.14'],
+    ]) {
+      writeFileSync(join(root, '.env.agent.local'), `AGENT_MODEL=${setting}\nAGENT_OPENROUTER_API_KEY=${sentinel}\n`);
+      const selected = evaluate(plugin.load(id));
+      assert.equal(selected.model, expected);
+      assert.equal(selected.takeKey(), sentinel);
+      assert.equal(selected.takeKey(), '');
+    }
+    const sdk = vi.spyOn(Decisions.prototype, 'create').mockImplementation(() => assert.fail('No inference during bootstrap'));
+    for (const invalid of [sentinel, 'JEV', 'typesafe/jev-1.14']) {
+      writeFileSync(join(root, '.env.agent.local'), `AGENT_MODEL=${invalid}\nAGENT_OPENROUTER_API_KEY=${sentinel}\n`);
+      assert.throws(() => plugin.load(id), error => {
+        assert.equal(error.message, 'AI Agent AGENT_MODEL in .env.agent.local must be jev or gpt6.');
+        assert.equal(inspect(error).includes(sentinel), false);
+        return true;
+      });
+    }
+    assert.equal(sdk.mock.calls.length, 0);
     rmSync(join(root, '.env.agent.local'));
-    assert.equal(evaluate(plugin.load(id)).takeKey(), '', 'Missing key still enables agent startup');
+    const missing = evaluate(plugin.load(id));
+    assert.equal(missing.takeKey(), '', 'Missing key still enables agent startup');
+    assert.equal(missing.model, 'typesafe/jev-1.14', 'Missing file defaults to Jev');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -258,6 +293,9 @@ it('auto-selects included Freedoom once after agent readiness without a key, ret
   assert.equal(h.element('#next').disabled, true);
   assert.equal(h.element('#start').disabled, true);
   ready();
+  assert.equal(h.element('#openrouter-model-jev').checked, true);
+  assert.equal(h.element('#openrouter-model-gpt').checked, false);
+  assert.match(session.factory.probe().status, /configured model: typesafe\/jev-1\.14/);
   assert.equal(h.element('#next').disabled, true);
   assert.equal(h.element('#start').disabled, true);
   assert.match(h.element('#control-prerequisite').textContent, /Enter a temporary OpenRouter API key/);
@@ -297,15 +335,22 @@ it('retains preparation failure presentation without automatically retrying the 
   assert.equal(session.controller.startContinuous.mock.calls.length, 0);
 });
 
-it('keeps agent credentials ephemeral and lazy until a human decision, preserving model locking', async () => {
+it.each([
+  ['typesafe/jev-1.14', '#openrouter-model-jev', '#openrouter-model-gpt', 'openai/gpt-6-luna-decisions', () => import('../src/main.ts?agent-key-startup-jev')],
+  ['openai/gpt-6-luna-decisions', '#openrouter-model-gpt', '#openrouter-model-jev', 'typesafe/jev-1.14', () => import('../src/main.ts?agent-key-startup-gpt6')],
+])('keeps agent %s credentials lazy and radios editable until client creation', async (model, selected, other, changedModel, load) => {
   agent.enabled = true; agent.key = 'offline-agent-browser-dummy';
+  agent.model = model;
   vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'agent'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
   const h = browserFixture();
   let finish;
   session.controller.initialize.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   const sdk = vi.spyOn(Decisions.prototype, 'create').mockImplementation(() => assert.fail('No inference in this test'));
-  await import('../src/main.ts?agent-key-startup');
+  await load();
   await settleStartup();
+  assert.equal(h.element(selected).checked, true);
+  assert.equal(h.element(other).checked, false, 'Startup overrides the HTML radio default');
+  assert.equal(session.factory.probe().status.includes(`configured model: ${model}`), true);
   const create = vi.spyOn(session.factory, 'create');
   session.ports.present({ iwadEnabled: true }); finish();
   await settleStartup();
@@ -321,13 +366,21 @@ it('keeps agent credentials ephemeral and lazy until a human decision, preservin
   assert.equal(h.values.size, 0);
   for (const el of h.elements.values()) assert.equal(el.textContent.includes('offline-agent-browser-dummy'), false);
   assert.equal(h.element('#openrouter-model').disabled, false);
-  h.element('#openrouter-model-jev').checked = true;
-  h.element('#openrouter-model-jev').dispatchEvent(new Event('change'));
+  h.element(other).checked = true;
+  h.element(other).dispatchEvent(new Event('change'));
+  assert.equal(h.element(other).checked, true);
+  assert.equal(h.element(selected).checked, false);
+  assert.equal(session.factory.probe().status.includes(`configured model: ${changedModel}`), true);
   // The real controller consumes the same port on explicit admission.
   session.controller.next.mockImplementation(() => session.factory.create(session.ports.takeKey()));
   h.element('#next').dispatchEvent(new Event('click'));
   assert.deepEqual(create.mock.calls, [['offline-agent-browser-dummy']]);
   assert.equal(h.element('#openrouter-model').disabled, true);
+  h.element(selected).checked = true;
+  h.element(selected).dispatchEvent(new Event('change'));
+  assert.equal(h.element(other).checked, true, 'Client creation locks the changed selection');
+  assert.equal(h.element(selected).checked, false);
+  assert.equal(session.factory.probe().status.includes(`configured model: ${changedModel}`), true);
   assert.equal(session.ports.takeKey(), '');
   assert.equal(sdk.mock.calls.length, 0, 'Client construction makes no inference request');
   assert.equal(h.transport.mock.calls.length, 0);
@@ -374,6 +427,9 @@ it('keeps ordinary dev/production manual and refuses auto-preparation after fail
     await load(); await settleStartup();
     assert.equal(session.controller.prepare.mock.calls.length, 0);
     if (kind === 'ordinary') {
+      assert.equal(h.element('#openrouter-model-gpt').checked, true);
+      assert.equal(h.element('#openrouter-model-jev').checked, false);
+      assert.match(session.factory.probe().status, /configured model: openai\/gpt-6-luna-decisions/);
       assert.equal(h.element('#included-freedoom').disabled, true);
       h.element('#included-freedoom').dispatchEvent(new Event('click'));
       assert.equal(session.controller.prepare.mock.calls.length, 0);
