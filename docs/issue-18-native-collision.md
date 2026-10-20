@@ -53,6 +53,37 @@ needed for an initial falsification trial.
 
 ## Proposed owner-authorized runtime procedure
 
+### Advanced evidence summary
+
+The existing Advanced evidence disclosure includes a compact **Native collision
+telemetry (Experiment 1)** block for all providers, including OpenRouter. After a
+decision's action receipt is independently verified and its resulting native/
+Canvas frame passes verification, it shows the action, actual completed tic
+interval, overlapping per-tic trial/success/rejection/slide counts, rejection-reason
+union, and final numeric values at indices 87–89. A verified rendered terminal
+prefix is explicitly labeled. Preparation's neutral tic is not a model action.
+
+No new Worker operations, native reads, polling or provider-request fields are
+added. The prior summary can remain after an API failure or Stop before dispatch
+when the game/frame is unchanged. Native dispatch marks the summary pending;
+verification failure/error retirement makes it unavailable. A fresh preparation
+starts with no verified action. The block remains diagnostic evidence of what
+native code reported, not proof that its physical classifications are correct.
+
+For the smallest owner-operated application trial, after separately authorized
+frontend build/serving and any necessary API budget, open Advanced evidence and
+inspect one bounded action in an open corridor, at a straight wall, and against
+an angled wall. Record the starting/ending tics and resulting-frame identity with
+the summary. Expect corridor translation with accepted trials, a genuine
+solid-line rejection at the wall, and possible overlapping rejection/success/
+slide counts at the angle. Do not call the player stuck from these counts. Open
+and close the disclosure while idle; the sample and verified tic must not change.
+The existing verified native artifact can be reused by a separately authorized
+`./build.sh --frontend-only` if its source/artifact identity still passes checks;
+these presentation changes alone do not require native recompilation. The
+isolated Worker procedure below remains available for chosen actions without
+Decisions calls.
+
 Do not execute this procedure without separate build, server and game-asset/
 native-runtime authorization. Codex must never launch Chrome. No credential,
 OAuth exchange, provider request or Decisions call is needed.

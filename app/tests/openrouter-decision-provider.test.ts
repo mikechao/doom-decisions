@@ -383,7 +383,12 @@ it('verifies one synthetic manual action and recovers invalid SDK answers withou
         assert.equal(entry.execution.independentlyVerifiedTics, 2);
         assert.equal(entry.result.tic, 3);
         assert.equal(entry.result.nativeSha256, entry.result.canvasSha256);
-      } else assert.equal(h.gameOps.includes('action'), false);
+        assert.match(h.view.session.collisionEvidence, /Last verified action: neutral, 2 tics \(1 → 3\)/);
+        assert.match(h.view.session.collisionEvidence, /trial 0 · success 0 · rejection 0 · slide 0/);
+      } else {
+        assert.equal(h.gameOps.includes('action'), false);
+        assert.equal(h.view.session.collisionEvidence, 'No verified action yet.');
+      }
     } finally { await h.dispose(); }
   }
 });

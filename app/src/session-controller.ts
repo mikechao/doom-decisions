@@ -12,6 +12,7 @@ import {
   buildDefaultDecisionRequest,
   type DecisionConfiguration,
 } from './decision-request.ts';
+import { formatCollisionEvidence } from './collision-evidence';
 import type {
   DecisionDiagnostics,
   DecisionProvider,
@@ -126,6 +127,7 @@ type Run = {
   cancel?: ((error: Error) => void) | null;
   last?: Observation;
   previousAction?: PreviousActionOutcome;
+  collisionEvidence?: string;
   terminal?: E1M1Assessment;
 };
 type ContinuousRun = {
@@ -165,6 +167,7 @@ export type SessionPresentation = Readonly<{
   session?: ReadonlyData<{
     phase: Phase;
     verifiedTics: number;
+    collisionEvidence?: string;
     frame?: Frame;
     evidence: Evidence;
     inspectorRequests: Readonly<Record<number, DecisionRequest>>;
@@ -222,6 +225,7 @@ export function createSessionController(
       session: {
         phase: run.phase,
         verifiedTics: run.verifiedTics,
+        collisionEvidence: run.collisionEvidence ?? 'No verified action yet.',
         frame: run.frame ? { ...run.frame } : undefined,
         // Presentation receives detached data, never the mutable lifecycle owner.
         evidence: structuredClone(run.evidence),
@@ -247,6 +251,9 @@ export function createSessionController(
   }
   function retire(run: Run, phase: 'error' | 'terminal' = 'error') {
     run.previousAction = undefined;
+    if (phase !== 'terminal')
+      run.collisionEvidence =
+        'Native collision telemetry unavailable: session retired.';
     run.valid = false;
     run.phase = phase;
     run.attempt = undefined;
@@ -618,6 +625,8 @@ export function createSessionController(
       dispatchFence();
       if (continuous) continuous.dispatched = true;
       run.previousAction = undefined;
+      run.collisionEvidence =
+        'Native collision telemetry unavailable: action/frame verification pending.';
       const { execution, receipt } = await action(
         run,
         masks[entry.action],
@@ -647,6 +656,12 @@ export function createSessionController(
       fence(run, attempt);
       check(run.frame, 'Verified frame unavailable.');
       entry.result = { ...run.frame };
+      run.collisionEvidence = formatCollisionEvidence(
+        entry.action,
+        afterWait.counters.gametic,
+        receipt,
+        execution,
+      );
       if (execution.terminal) {
         entry.stage = 'ended';
         entry.status = `${terminalStatus(execution)}; frame retained.`;

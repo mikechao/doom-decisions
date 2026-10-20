@@ -112,6 +112,7 @@ type Elements = {
   '#status': HTMLParagraphElement;
   '#frame': HTMLParagraphElement;
   '#evidence': HTMLPreElement;
+  '#collision-evidence': HTMLPreElement;
 };
 // These elements are supplied by the static HTML entry; the Canvas is 640×400.
 const $ = <S extends keyof Elements>(selector: S) => {
@@ -392,6 +393,8 @@ function display(view: SessionPresentation) {
   collapseCompletedSetup();
   if (!run) return;
   $('#status').dataset.phase = run.phase;
+  $('#collision-evidence').textContent =
+    run.collisionEvidence ?? 'No verified action yet.';
   if (!openRouterMode)
     $('#evidence').textContent = JSON.stringify(run.evidence, null, 2);
   $('#key-state').textContent = jevMode
