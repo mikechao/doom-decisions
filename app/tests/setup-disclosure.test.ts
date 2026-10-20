@@ -529,7 +529,7 @@ describe('Decision instructions editor', () => {
       assert.equal(document.activeElement, field);
       assert.equal(field.value, defaultDecisionInstructionTemplate);
       assert.ok(field.value.includes('{{tics}}'));
-      assert.ok(field.value.endsWith('Do not assume unseen game state.'));
+      assert.ok(field.value.endsWith('Do not assume unseen or unverified game state.'));
       field.value = 'Unsaved draft';
       emit(field, 'input');
       assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, defaultDecisionInstructionTemplate);
