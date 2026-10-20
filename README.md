@@ -57,6 +57,27 @@ These instructions target macOS arm64 and require Node 22.20.0 and npm; see the 
 For linked worktrees, install the repository-local [automatic local-tool setup](docs/local-worktrees.md)
 once to copy the existing Doom toolchain and Impeccable inputs on `git worktree add`.
 
+## Can Decision Models "play" Doom
+
+The short answer, no not really. 
+
+The longer answer is that the models still need a lot of guidance and feedback from the Doom Engine. The most basic issue with the default prompt is that once it moves the player into a wall it will continue choosing the forward action, repeatly. 
+
+That's why I added two additional signals from the Doom engine: **Nearby wall/door** detection and **Previous action outcome**. These can be included in the game state sent to the Decisions API.
+
+With those signals, along with a prompt explaining how to use them, the model can do a better job of getting unstuck from walls, opening doors, and moving through them. It's still far from perfect, but it's an improvement.
+
+What is missing in the loop of 
+1. Take a screenshot of the current game.
+2. Send the screenshot and a list of game commands to the Decisions API
+3. Use the game command chosen by the API and advance the game based on the number of tics entered (default 6)
+is that the model is missing the navigation context and some sort of overall plan.
+4. Repeat
+
+What's missing from this loop is navigation context and some sort of overall plan. The model can react to what it sees in the current screenshot, especially with the additional feedback from the Doom engine, but it doesn't really understand where it's been, where it needs to go, or how to get there.
+
+It can make individual decisions, but that doesn't necessarily add up to knowing how to complete a level.
+
 ## Tech Stack
 
 - TypeScript - App logic, decision controls, and communication with the game.
