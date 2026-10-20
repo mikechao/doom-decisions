@@ -102,6 +102,7 @@ type Elements = {
   '#start': DoomButtonElement;
   '#stop': DoomButtonElement;
   '#stop-agent': DoomButtonElement;
+  '#allow-agent': DoomButtonElement;
   '#agent-status': HTMLParagraphElement;
   '#budget': HTMLInputElement;
   '#view-prompt': DoomButtonElement;
@@ -396,12 +397,30 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
       },
       events: (path) => new EventSource(path),
       observe: (fresh) => controller.observe(fresh),
+      attach: (epoch) => controller.attachAgent(epoch),
+      allow: (epoch) => controller.allowAgent(epoch),
+      stopAgent: () => controller.stopAgent(),
+      decide: (epoch, id, fresh) => controller.agentNext(epoch, id, fresh),
       state(value) {
-        $('#stop-agent').hidden = value !== 'attached';
+        const attached = [
+          'attached',
+          'authorized',
+          'deciding',
+          'settled',
+        ].includes(value);
+        $('#stop-agent').hidden = !attached;
+        $('#allow-agent').hidden = !attached;
+        $('#allow-agent').disabled =
+          value === 'authorized' || value === 'deciding';
         $('#agent-status').hidden = false;
         $('#agent-status').textContent = {
-          available: 'Agent observation available. No API requests.',
-          attached: 'Agent attached · observation only. No API requests.',
+          available: 'Agent available. No agent API attempt authorized.',
+          attached:
+            'Agent attached. Observe a verified frame, then allow one billable attempt.',
+          authorized: 'One agent API attempt authorized. It may incur charges.',
+          deciding:
+            'Agent deciding. Stop Agent fences dispatch and awaits safe settlement.',
+          settled: 'Agent command settled. No remaining attempt authorization.',
           stopped: 'Agent stopped. Reload to allow another attachment.',
           unavailable:
             'Agent bridge unavailable. Close extra agent tabs and reload.',
@@ -518,6 +537,9 @@ const controller = createSessionController(
       }),
     readTics: () => $('#tics').valueAsNumber,
     readDecisionConfiguration: () => savedDecisionConfiguration,
+    readAgentIdentity: () =>
+      `${openRouterMode ? 'OpenRouter' : 'OpenAI'}:${selectedModel}`,
+    agentGrantRevoked: () => agentBridge?.authorizationRevoked(),
     takeKey: () => {
       if (jevMode) {
         $('#key').value = '';
@@ -574,9 +596,11 @@ if (oauth) {
       ) {
         const factory = createOpenRouterDecisionProviderFactory(value);
         const probe = factory.probe();
-        selectedModel = value;
-        modelFactory = factory;
-        modelProbe = probe;
+        controller.configure(() => {
+          selectedModel = value;
+          modelFactory = factory;
+          modelProbe = probe;
+        });
       }
       displayModel();
     });
@@ -597,9 +621,11 @@ if (oauth) {
     manualKeyVisible = false;
     if (!oauth.hasKey && !modelLocked) {
       // Sign-in starts a fresh page; the unavailable pre-auth choice is default.
-      selectedModel = defaultOpenRouterModel;
-      modelFactory = createOpenRouterDecisionProviderFactory(selectedModel);
-      modelProbe = modelFactory.probe();
+      controller.configure(() => {
+        selectedModel = defaultOpenRouterModel;
+        modelFactory = createOpenRouterDecisionProviderFactory(selectedModel);
+        modelProbe = modelFactory.probe();
+      });
     }
     $('#key').value = ''; // Discard an unsubmitted edit rather than hide it.
     $('#manual-key').hidden = true;
@@ -681,6 +707,12 @@ $('#start').addEventListener('click', () =>
 );
 $('#stop').addEventListener('click', () => controller.stop());
 $('#stop-agent').addEventListener('click', () => agentBridge?.stop());
+$('#allow-agent').addEventListener('click', () => agentBridge?.allow());
+for (const event of ['input', 'change']) {
+  // Native number edits precede their event. Invalidate even if a later edit
+  // restores the old N; value equality must never revive a browser grant.
+  $('#tics').addEventListener(event, () => controller.configure(() => {}));
+}
 function clearPromptError() {
   $('#prompt-error').textContent = '';
   $('#prompt-error').hidden = true;
@@ -739,14 +771,23 @@ $('#save-prompt').addEventListener('click', () => {
     $('#prompt-instructions').focus();
     return;
   }
-  savedDecisionConfiguration = Object.freeze({
-    instructionTemplate: draft,
-    includeReadyWeapon: $('#prompt-ready-weapon').checked,
-    includeAmmo: $('#prompt-ammo').checked,
-    includeHealth: $('#prompt-health').checked,
-    includePreviousAction: $('#prompt-previous-action').checked,
-    includeFacingProbe: $('#prompt-facing-probe').checked,
-  });
+  if (
+    !controller.configure(() => {
+      savedDecisionConfiguration = Object.freeze({
+        instructionTemplate: draft,
+        includeReadyWeapon: $('#prompt-ready-weapon').checked,
+        includeAmmo: $('#prompt-ammo').checked,
+        includeHealth: $('#prompt-health').checked,
+        includePreviousAction: $('#prompt-previous-action').checked,
+        includeFacingProbe: $('#prompt-facing-probe').checked,
+      });
+    })
+  ) {
+    $('#prompt-error').hidden = false;
+    $('#prompt-error').textContent =
+      'Wait for the agent decision to settle before saving.';
+    return;
+  }
   $('#prompt-dialog').close();
 });
 $('#reset-prompt').addEventListener('click', () => {

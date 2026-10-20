@@ -36,7 +36,7 @@ it('exports a fresh detached verified PNG/state with no key, provider or gamepla
     assert.equal(h.gameCalls, 0);
     assert.equal(h.sdkCalls, 0);
     assert.equal(providerFactory.create.mock.calls.length, 0);
-    assert.deepEqual(Object.keys(result).sort(), ['counters', 'frame', 'phase', 'png', 'pngSha256', 'previousAction', 'sessionId', 'telemetry', 'tic']);
+    assert.deepEqual(Object.keys(result).sort(), ['counters', 'frame', 'observationId', 'phase', 'png', 'pngSha256', 'previousAction', 'sessionId', 'telemetry', 'tic']);
     const sessionId = result.sessionId;
     result.frame.tic = 99; result.telemetry.health = 0;
     const again = await h.controller.observe(() => {});

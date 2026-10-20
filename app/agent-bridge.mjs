@@ -5,6 +5,7 @@ import {
   agentPngBytes,
   isAgentId,
   parseAgentObservation,
+  parseAgentDecisionResult,
 } from './src/agent-observation.ts';
 
 // One page, one lease, one outstanding observation. No queue, retry or durable state.
@@ -172,9 +173,15 @@ export function createAgentBridge() {
       event({ type: 'attached', ...page.lease });
       return json(res, 200, page.lease);
     }
-    if (op === 'observe' && cli(req)) {
+    if ((op === 'observe' || op === 'decide') && cli(req)) {
       if (
-        !shape(data, ['pageId', 'ownerId', 'epoch', 'commandId']) ||
+        !shape(data, [
+          'pageId',
+          'ownerId',
+          'epoch',
+          'commandId',
+          ...(op === 'decide' ? ['observationId'] : []),
+        ]) ||
         !Object.values(data).every(isAgentId)
       )
         return fail(res, 'invalid-request', 400);
@@ -184,14 +191,22 @@ export function createAgentBridge() {
       if (page.pending) return fail(res, 'observation-busy');
       page.seen.add(data.commandId);
       const active = page;
-      const pending = { commandId: data.commandId, res };
+      const pending = {
+        commandId: data.commandId,
+        op,
+        observationId: data.observationId,
+        res,
+      };
       active.pending = pending;
-      pending.timer = setTimeout(() => {
-        if (page === active && active.pending === pending) {
-          event({ type: 'revoked' });
-          close();
-        }
-      }, 10000);
+      pending.timer = setTimeout(
+        () => {
+          if (page === active && active.pending === pending) {
+            event({ type: 'revoked' });
+            close();
+          }
+        },
+        op === 'decide' ? 30000 : 10000,
+      );
       pending.timer.unref();
       res.once('close', () => {
         if (page === active && active.pending === pending) {
@@ -199,7 +214,7 @@ export function createAgentBridge() {
           close();
         }
       });
-      event({ type: 'observe', ...data });
+      event({ type: op, ...data });
       return;
     }
     if (op === 'result' && browser(req)) {
@@ -208,7 +223,7 @@ export function createAgentBridge() {
         'pageToken',
         'epoch',
         'commandId',
-        'observation',
+        ...(page?.pending?.op === 'decide' ? ['decision'] : ['observation']),
       ];
       if (!shape(data, fields)) return fail(res, 'invalid-request', 400);
       const active = page;
@@ -227,10 +242,17 @@ export function createAgentBridge() {
         !pending.res.destroyed &&
         !pending.res.writableEnded;
       if (!acceptsResult()) return fail(res, 'lease-revoked');
-      let observation;
+      let observation, decision;
       try {
-        if (data.observation !== null) {
+        if (pending.op === 'decide') {
+          decision = parseAgentDecisionResult(data.decision);
+          if (decision.beforeObservationId !== pending.observationId)
+            throw Error('correlation');
+          observation = decision.observation;
+        }
+        if (pending.op !== 'decide' && data.observation !== null)
           observation = parseAgentObservation(data.observation);
+        if (observation) {
           if (
             createHash('sha256')
               .update(agentPngBytes(observation.png))
@@ -251,12 +273,12 @@ export function createAgentBridge() {
       if (observation) active.sessionId = observation.sessionId;
       clearTimeout(pending.timer);
       active.pending = undefined;
-      if (observation)
+      if (observation || decision)
         json(pending.res, 200, {
           pageId: active.id,
           epoch: active.lease.epoch,
           commandId: data.commandId,
-          observation,
+          ...(decision ? { decision } : { observation }),
         });
       else fail(pending.res, 'observation-unavailable');
       return json(res, 200, { received: true });

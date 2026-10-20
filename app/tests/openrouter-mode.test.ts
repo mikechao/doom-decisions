@@ -18,7 +18,7 @@ vi.mock('../src/agent-browser', () => ({ startAgentObservationBridge: bridge.sta
 
 const session = vi.hoisted(() => ({
   ports: undefined, factory: undefined,
-  controller: { initialize: vi.fn(), next: vi.fn(), startContinuous: vi.fn(), stop: vi.fn(),
+  controller: { configure: vi.fn(change => { change(); return true; }), initialize: vi.fn(), next: vi.fn(), startContinuous: vi.fn(), stop: vi.fn(),
     prepare: vi.fn(), close: vi.fn(), restore: vi.fn() },
 }));
 const agent = vi.hoisted(() => ({ enabled: false, key: '', model: 'typesafe/jev-1.14' }));
@@ -1135,4 +1135,27 @@ it('pagehide during exchange aborts and prevents late key/initialization restora
   assert.equal(h.element('#openrouter-signin-button').disabled, true);
   assert.doesNotMatch(h.element('#openrouter-auth-status').textContent, /received/);
   assert.equal(h.values.size, 0);
+});
+
+it('clears the authorization indication when controller invalidation reaches the agent UI', async () => {
+  agent.enabled = true;
+  agent.key = 'offline-agent-browser-dummy';
+  vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'agent'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture();
+  await import('../src/main.ts?agent-grant-invalidation');
+  session.ports.present({ iwadEnabled: true });
+  ready();
+  const ports = bridge.start.mock.calls[0][0];
+  const handle = bridge.start.mock.results[0].value;
+  handle.authorizationRevoked = vi.fn(() => ports.state('attached'));
+  ports.state('authorized');
+  assert.equal(h.element('#allow-agent').disabled, true);
+  assert.match(h.element('#agent-status').textContent, /One agent API attempt authorized/);
+  session.ports.agentGrantRevoked();
+  assert.equal(handle.authorizationRevoked.mock.calls.length, 1);
+  assert.equal(h.element('#allow-agent').disabled, false);
+  assert.equal(h.element('#stop-agent').hidden, false);
+  assert.match(h.element('#agent-status').textContent, /Observe a verified frame/);
+  assert.doesNotMatch(h.element('#agent-status').textContent, /attempt authorized/);
+  assert.equal(session.controller.next.mock.calls.length, 0);
 });

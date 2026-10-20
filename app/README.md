@@ -176,7 +176,8 @@ provider client is created for inference; creation locks it for the session.
 
 Restart the dev server after changing the file. Missing, empty, unreadable, or
 unusable keys leave inference unavailable while the game still prepares. A usable
-key is held in page memory for a later **human-initiated** Next Decision or Continuous Mode;
+key is held in page memory for a later **human-initiated** Next Decision, Continuous Mode,
+or explicitly authorized single agent decision;
 startup neither constructs a provider client nor requests inference. Manual keys
 and OAuth keys take precedence. Model access/authentication remain unverified.
 The optional key applies only to the OpenRouter provider.
@@ -194,59 +195,122 @@ Ordinary dev, preview and production use an inert bootstrap and do not read the 
 through this credential loader or auto-select a game. Standard OAuth/manual BYOK
 behavior and production CSP stay unchanged.
 
-#### Slice A: agent observation and Stop
+#### Slice B: one agent decision and Stop
 
-Agent mode uses strict port **5174**; an occupied port fails instead of selecting
-another page/server. Close extra agent tabs. After verified preparation, exactly
-one page registers with the same-origin, in-memory observation bridge. No separate
-server, browser automation, provider proxy, or additional dependency is involved.
+Agent mode uses strict port **5174** and the existing same-origin, in-memory
+bridge. An occupied port fails. Close extra agent tabs. No extra server, browser
+automation, provider proxy, or dependency is involved. Only `dev:agent` registers
+a verified ready page; ordinary dev/production have no agent command routes.
 
-From the repository root in a second terminal:
+In a second terminal, from the repository root:
 
 ```sh
 node scripts/doom-agent.mjs attach
-# Copy the absolute leaseFile from that JSON, then:
+# Copy the absolute leaseFile from that JSON:
 node scripts/doom-agent.mjs observe --lease /absolute/path/to/lease.json
 ```
 
-The second command prints `pngPath` (an absolute temporary PNG file), `pageId`,
-`epoch`, `commandId`, game `sessionId`, verified `tic`, native/Canvas RGBA hashes,
-PNG-file hash, passive counters and allowlisted telemetry. PNG bytes stay out of
-stdout. The controller owns admission while taking fresh passive snapshots,
-rendering and verifying Canvas/native pixels; it advances **zero gameplay tics**.
-Busy, terminal, retired, revoked or mismatched observations are rejected. The
-reported `phase: ready` describes the verified capture boundary, not a promise
-that human controls cannot change the game after capture. Temp lease/PNG files
-contain no provider credential; delete their printed temp directory when finished.
+Actually open the returned `pngPath`. Observation takes fresh passive snapshots,
+renders, verifies native/Canvas RGBA hashes, hashes PNG bytes, and proves unchanged
+native state around capture. It consumes zero gameplay tics and never constructs a
+provider. Its `observationId` binds the controller's latest observation, game
+session/tic, lease epoch, effective model, saved instructions/options and tics.
+No prompt text or credentials cross the bridge. Another observation supersedes the
+previous identity. A manual decision or saved configuration change invalidates it.
+`phase: ready` describes the capture boundary, not guaranteed future readiness.
 
-In Codex, `$doom-decisions play` invokes the project skill for **one observation**.
-It must open `pngPath` with its image-viewing tool and describe visible content;
-printing a path alone does not prove visual delivery. Start a fresh Codex
-conversation in this worktree if the picker has not discovered the new skill.
-The attachment remains active for the human Stop check.
+**Attach and observe never authorize charges.** After viewing that PNG, the human
+must click **Allow 1 Agent Decision** in the attached browser page. This grants
+one attempt for this page/lease epoch and the current verified observation with
+its effective model, saved instructions/options and tics. Replacing the observation
+or editing that configuration revokes the grant; restoring old values never
+rearms it. Observe the current state and click Allow again. Then request one Decisions-selected
+legal action (no CLI action or duration argument):
 
-**Stop Agent** appears only while attached. Clicking it revokes the browser-local
-lease synchronously, closes the event stream, and independently notifies the
-bridge. Repeat the exact `observe --lease ...` command: it must fail with
-`lease-revoked`, including after a delayed observation. Stop/disconnect never
-automatically reconnects or rearms; reload and explicitly attach again. A second
-page revokes the attachment rather than taking it over. Manual controls are only
-locked during the controller's observation operation and its passive verification;
-after safe settlement they return to their ordinary credential/readiness gates.
+```sh
+node scripts/doom-agent.mjs decide --lease /absolute/path/to/lease.json --observation OBSERVATION_ID
+```
 
-Offline tests cover controlled delayed snapshots/hashing and Stop before server
-acknowledgement. The human acceptance is: reach verified tic 1, attach, obtain and
-actually view the PNG in Codex, click Stop Agent, verify the same lease rejects,
-and verify ordinary readiness returns. No Decisions call or key is required.
-There is no artificial runtime delay hook; deterministic Stop races use offline
-fakes. Real browser/PNG/Stop acceptance still requires this human-run check.
+A decision command reserves the grant once, including stale/not-ready/preflight
+rejections. The controller charges it synchronously at the existing provider
+`beforeCreate` boundary, immediately before the sole SDK invocation. Errors,
+cancellation, missing credentials and pre-request failures never rearm it.
+SDK retries remain disabled. A second command needs a new human grant and fresh
+observation. Nothing automatically repeats. Ordinary manual controls still use
+their existing credential and readiness gates.
 
-This slice does not submit decisions, edit prompts, reserve a paid budget or
-cancel admitted inference. **Stop Agent is separate from Continuous Stop** and
-leaves manual/Continuous ownership unchanged. Slice B must add controller-enforced
-agent decision ownership, pre-create/pre-dispatch Stop fences, an explicit paid
-attempt budget and existing SDK/result/frame settlement before it can send one
-authorized Decisions API request.
+The CLI returns a structured `outcome`: `completed`, `stopped` (before native
+dispatch), `terminal`, `retired`, `api-failure`, or `not-admitted` with a fixed
+reason. It includes the preceding observation ID, whether SDK create started,
+selected action, requested/reported/independently verified tics, cumulative tic,
+uncertainty flag, and sanitized provider/model/usage when available. Completed
+and terminal results include a newly verified observation plus an absolute
+`pngPath`; open it and compare with the preceding scene. A completed result
+already includes the just-verified action in `observation.previousAction`
+(action, tics and ending tic), consistent with a later passive observation. Terminal output reports
+the verified prefix and retained terminal frame before retirement; exit pending
+does not prove intermission. Other outcomes carry no speculative/stale PNG.
+Temp lease/PNG files contain no provider key; delete their printed temp directory
+when finished. PNG bytes stay out of stdout.
+
+The observation ID is also the CLI decision command ID. The broker reserves it
+before delivery and rejects duplicates, even after errors. **Never retry a paid
+command after timeout/lost output.** Transport failures can mean unknown execution;
+a consumed action cannot safely be replayed. There is no result-recovery/job API
+in this slice. The bridge revokes disconnected/timed-out leases (30-second result
+window for decisions; 10 seconds for observations), and the browser immediately
+fences further agent work when notified. A completed result accepted before
+revocation stays completed; cross-process notifications have no absolute ordering
+guarantee.
+
+**Stop Agent** stays separate from Continuous Stop. It synchronously revokes the
+browser lease and calls controller Agent Stop before closing streams, aborting
+uploads or notifying the broker. The controller checks the agent owner/Stop fence
+at `beforeCreate` and immediately before native dispatch. Pending SDK readers,
+including readers that outlive SDK helper cancellation, must settle and pass the
+existing unchanged-state proof before manual readiness returns. Work already
+dispatched finishes action receipts, rendering and PNG proof. Uncertain native
+outcomes or unverifiable frames retire the session. Stop never claims to undo an
+action or remote billing. It affects agent ownership only; it does not stop an
+independent manual/Continuous attempt. No automatic reconnect or grant occurs.
+Reload and explicitly attach again after Stop/disconnect. A second page revokes
+the existing attachment rather than taking it over.
+
+While an agent decision owns the controller, manual Next, Continuous, observation,
+second agent decisions and saved prompt/model changes are rejected at controller
+boundaries. Tics and saved configuration are frozen before asynchronous work;
+unsaved prompt drafts do not change the request. Controls return only after safe
+settlement, with the ordinary credential gates still applied.
+
+`$doom-decisions play` follows exactly one cycle: attach → observe → actually view
+PNG → wait for human confirmation of the browser grant → decide once → actually
+view and compare the resulting PNG/receipts → stop the cycle. It never creates
+consent, selects a Doom action, rewrites a prompt, or enters a loop. Start a fresh
+Codex conversation here if the picker has not discovered the updated skill.
+
+Human acceptance (Codex must not operate Chrome or make provider calls during
+implementation):
+
+1. Start `npm --prefix app run dev:agent`, manually open
+   `http://127.0.0.1:5174/`, and wait for verified neutral-first tic **1/1/1**.
+2. Attach and view a fresh observation in Codex. Confirm no provider call before
+   clicking **Allow 1 Agent Decision**. A deliberately rejected no-grant decision
+   reserves its command ID; observe afresh before the authorized decision.
+3. Click the browser grant, confirm it in chat, and execute the one command above.
+   Verify one provider call, a legal model-selected action, selected N and matching
+   receipt/frame tics (or verified terminal prefix), equal native/Canvas hashes,
+   and Codex's visual comparison of both actual PNGs.
+4. Reissue the same command: expect `duplicate-command`. A new observation/command
+   without a fresh grant returns `not-admitted` / `no-grant`, with no provider or
+   native action. No automated retry.
+5. Click **Stop Agent**; the old lease must reject observe/decide. Manual controls
+   return only when safe. Reload and explicitly attach for another experiment.
+
+Offline tests use synthetic native boundaries and fake SDK transport, including
+held readers, pre-create/pre-dispatch Stop, dispatched settlement, terminal prefixes,
+lease invalidation, aborted uploads, and CLI PNG delivery. No runtime sleep hook
+is added. These are not Chrome, real WASM gameplay, or authenticated provider
+acceptance evidence; real browser/visual/provider acceptance remains human-run.
 
 ### Impeccable Live
 

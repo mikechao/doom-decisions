@@ -9,6 +9,7 @@ const session = vi.hoisted(() => ({
   ports: undefined,
   controller: {
     initialize: vi.fn(),
+    configure: vi.fn(change => { change(); return true; }),
     next: vi.fn(),
     startContinuous: vi.fn(),
     stop: vi.fn(),
@@ -408,7 +409,7 @@ describe('Decision instructions editor', () => {
     assert.doesNotMatch(disclosure, /textarea|input|contenteditable/);
     assert.ok(html.indexOf('id="prompt-telemetry-note" class=') < html.indexOf(disclosure));
     assert.ok(html.indexOf(disclosure) < html.indexOf('for="prompt-instructions"'));
-    const calls = Object.values(session.controller).map(method => method.mock.calls.length);
+    const calls = Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length);
     const transport = vi.fn(() => assert.fail('Preview must not use transport'));
     vi.stubGlobal('fetch', transport);
     const saved = session.ports.readDecisionConfiguration();
@@ -423,7 +424,7 @@ describe('Decision instructions editor', () => {
     assert.equal(element('#prompt-state-preview-note').textContent, 'Preview available after a verified game observation.');
     assert.equal(element('#prompt-state-preview-text').textContent, '');
     assert.equal(session.ports.readDecisionConfiguration(), saved);
-    assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
+    assert.deepEqual(Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length), calls);
     assert.equal(transport.mock.calls.length, 0);
   });
 
@@ -434,7 +435,7 @@ describe('Decision instructions editor', () => {
     const requests = Object.freeze({ 1: historical });
     show({ inspectorRequests: requests });
     session.ports.present({ verifiedObservation: verified });
-    const calls = Object.values(session.controller).map(method => method.mock.calls.length);
+    const calls = Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length);
     const saved = session.ports.readDecisionConfiguration();
     const originalRequest = JSON.stringify(historical);
     emit(element('#view-prompt'), 'click');
@@ -483,7 +484,7 @@ describe('Decision instructions editor', () => {
     assert.equal(element('#prompt-state-preview').open, true);
     assert.equal(JSON.stringify(historical), originalRequest);
     assert.equal(element('#decision-history').display.mock.calls.at(-1)[1], requests);
-    assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
+    assert.deepEqual(Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length), calls);
   });
 
   it('labels the native dialog, textarea, validation and explicit actions without a form', () => {
@@ -517,7 +518,7 @@ describe('Decision instructions editor', () => {
     const button = element('#view-prompt');
     const dialog = element('#prompt-dialog');
     const field = element('#prompt-instructions');
-    const calls = Object.values(session.controller).map(method => method.mock.calls.length);
+    const calls = Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length);
     assert.equal(button.disabled, false, 'Available before preparation');
     for (const dismiss of [
       () => emit(element('#close-prompt'), 'click'),
@@ -539,11 +540,11 @@ describe('Decision instructions editor', () => {
       assert.equal(field.value, defaultDecisionInstructionTemplate);
       assert.equal(element('#prompt-error').hidden, true);
     }
-    assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
+    assert.deepEqual(Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length), calls);
   });
 
   it('saves exact multiline text before preparation without controller or transport work', () => {
-    const calls = Object.values(session.controller).map(method => method.mock.calls.length);
+    const calls = Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length);
     const transport = vi.fn(() => { throw Error('Unexpected transport'); });
     vi.stubGlobal('fetch', transport);
     const template = '  Fire for {{tics}} tics.\nUse fire. {{tics}}  ';
@@ -559,7 +560,7 @@ describe('Decision instructions editor', () => {
     element('#prompt-dialog').escape();
     emit(element('#view-prompt'), 'click');
     assert.equal(element('#prompt-instructions').value, template);
-    assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
+    assert.deepEqual(Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length), calls);
     assert.equal(transport.mock.calls.length, 0);
   });
 
@@ -616,7 +617,7 @@ describe('Decision instructions editor', () => {
 
   it('allows saving during continuous play without changing tics or invoking controls', () => {
     show({ phase: 'busy', continuous: { active: true }, controls: { ready: false, stop: true, tics: true, iwad: false } });
-    const calls = Object.values(session.controller).map(method => method.mock.calls.length);
+    const calls = Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length);
     emit(element('#view-prompt'), 'click');
     element('#prompt-instructions').value = 'Explore carefully';
     element('#tics').valueAsNumber = 35;
@@ -626,11 +627,11 @@ describe('Decision instructions editor', () => {
     emit(element('#save-prompt'), 'click');
     assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, 'Explore carefully');
     assert.equal(session.ports.readTics(), 35);
-    assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
+    assert.deepEqual(Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length), calls);
   });
 
   it('toggles optional state independently without editing instructions or invoking controller/transport work', () => {
-    const calls = Object.values(session.controller).map(method => method.mock.calls.length);
+    const calls = Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length);
     const transport = vi.fn(() => { throw Error('Unexpected transport'); });
     vi.stubGlobal('fetch', transport);
     emit(element('#view-prompt'), 'click');
@@ -654,7 +655,7 @@ describe('Decision instructions editor', () => {
     assert.equal(field.value, 'Use fire\n', 'Unrelated text and trailing newline survive toggling');
     emit(element('#save-prompt'), 'click');
     assert.equal(session.ports.readDecisionConfiguration().instructionTemplate, 'Use fire\n');
-    assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
+    assert.deepEqual(Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length), calls);
     assert.equal(transport.mock.calls.length, 0);
   });
 
@@ -1102,7 +1103,7 @@ it('puts one labeled facing section first inside the closed Advanced evidence di
 
 it('shows pending facing evidence until a verified sample, then preserves readable and raw ownership evidence', () => {
   const configuration = session.ports.readDecisionConfiguration();
-  const calls = Object.values(session.controller).map(method => method.mock.calls.length);
+  const calls = Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length);
   show({ phase: 'preparing', prepared: false, collisionEvidence: 'No verified action yet.' });
   assert.equal(element('#facing-evidence').textContent, 'No verified facing sample yet.');
   const verified = { tic: 2, health: 100, readyWeapon: null, ammo: null,
@@ -1125,7 +1126,7 @@ it('shows pending facing evidence until a verified sample, then preserves readab
   assert.doesNotMatch(element('#facing-evidence').textContent, /24 units ahead/);
   assert.match(element('#facing-evidence').textContent, /87 \(sample tic\)=3 · 90 \(kind\)=0 · 91 \(door evidence\)=0 · 92 \(distance\)=-1/);
   assert.equal(session.ports.readDecisionConfiguration(), configuration);
-  assert.deepEqual(Object.values(session.controller).map(method => method.mock.calls.length), calls);
+  assert.deepEqual(Object.values(session.controller).filter(method => method !== session.controller.configure).map(method => method.mock.calls.length), calls);
 });
 
 it('keeps Nearby wall / door off by default and supports draft preview, Cancel, Save and Reset independently', () => {
@@ -1159,4 +1160,19 @@ it('keeps Nearby wall / door off by default and supports draft preview, Cancel, 
   assert.match(element('#prompt-state-preview-text').textContent, /unavailable at this verified frame/);
   emit(element('#reset-prompt'), 'click'); emit(element('#save-prompt'), 'click');
   assert.deepEqual(session.ports.readDecisionConfiguration(), defaultDecisionConfiguration);
+});
+
+it('routes tics edits and restoration through the controller configuration boundary', () => {
+  const configure = session.controller.configure;
+  const before = configure.mock.calls.length;
+  element('#tics').valueAsNumber = 12;
+  emit(element('#tics'), 'input');
+  assert.equal(configure.mock.calls.length, before + 1);
+  assert.equal(session.ports.readTics(), 12);
+  element('#tics').valueAsNumber = 6;
+  emit(element('#tics'), 'change');
+  assert.equal(configure.mock.calls.length, before + 2);
+  assert.equal(session.ports.readTics(), 6);
+  assert.equal(session.controller.next.mock.calls.length, 0);
+  assert.equal(session.controller.startContinuous.mock.calls.length, 0);
 });

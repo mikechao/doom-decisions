@@ -1,5 +1,9 @@
 import type { ActionName, Attempt, Execution, Phase } from './decision';
-import { agentPngBytes, type AgentObservation } from './agent-observation.ts';
+import {
+  agentPngBytes,
+  type AgentDecisionResult,
+  type AgentObservation,
+} from './agent-observation.ts';
 import {
   admitDecision,
   assertDecision,
@@ -122,6 +126,7 @@ type Run = {
   apiController?: AbortController;
   sdkRead?: Promise<void>;
   continuous?: ContinuousRun;
+  agent?: AgentRun;
   evidence: Evidence;
   // Immutable request objects are shared with presentation, never cloned/serialized
   // with evidence. No historical RGBA buffers or provider credentials live here.
@@ -140,6 +145,13 @@ type ContinuousRun = {
   readonly limit: number;
   used: number;
   reason: string;
+};
+type AgentRun = {
+  epoch: string;
+  stopRequested: boolean;
+  dispatched: boolean;
+  used: boolean;
+  observation?: AgentObservation;
 };
 type DecisionOutcome =
   | 'completed'
@@ -176,6 +188,7 @@ export type SessionPresentation = Readonly<{
     evidence: Evidence;
     inspectorRequests: Readonly<Record<number, DecisionRequest>>;
     continuous?: ContinuousRun;
+    agentBusy: boolean;
     waitingForSdk: boolean;
     hasClient: boolean;
     prepared: boolean;
@@ -188,6 +201,8 @@ export interface SessionBrowserPorts {
   createWorker(): Worker;
   readTics(): number;
   readDecisionConfiguration(): DecisionConfiguration;
+  readAgentIdentity?(): string;
+  agentGrantRevoked?(): void;
   takeKey(): string;
   clearKey(): void;
   focusBudget(): void;
@@ -208,6 +223,79 @@ export function createSessionController(
     sdk: SdkProbe | undefined,
     current: Run | undefined;
   let pageExited = false;
+  let observed:
+    | {
+        id: string;
+        epoch?: string;
+        run: Run;
+        tic: number;
+        configuration: string;
+      }
+    | undefined;
+  let agentLease:
+    | { epoch: string; grant?: NonNullable<typeof observed> }
+    | undefined;
+  const configurationIdentity = () =>
+    JSON.stringify([
+      ports.readDecisionConfiguration(),
+      ports.readTics(),
+      ports.readAgentIdentity?.(),
+    ]);
+  function invalidateAgentObservation() {
+    observed = undefined;
+    if (agentLease?.grant) {
+      agentLease.grant = undefined;
+      ports.agentGrantRevoked?.();
+    }
+  }
+  function configure(change: () => void) {
+    if (current?.agent) return false;
+    invalidateAgentObservation();
+    change();
+    return true;
+  }
+  function attachAgent(epoch: string) {
+    check(!agentLease && !pageExited, 'Agent already attached or page exited.');
+    agentLease = { epoch };
+    observed = undefined;
+  }
+  function allowAgent(epoch: string) {
+    const run = current;
+    if (
+      !agentLease ||
+      agentLease.epoch !== epoch ||
+      agentLease.grant ||
+      !run?.valid ||
+      run.phase !== 'ready' ||
+      run.agent ||
+      run.sdkRead ||
+      run.continuous?.active ||
+      run.terminal ||
+      pageExited ||
+      !observed ||
+      observed.run !== run ||
+      observed.epoch !== epoch ||
+      observed.tic !== run.verifiedTics ||
+      observed.configuration !== configurationIdentity()
+    )
+      return false;
+    agentLease.grant = observed; // Authorize this exact verified checkpoint only.
+    return true;
+  }
+  function stopAgent() {
+    agentLease = undefined;
+    observed = undefined;
+    const run = current;
+    if (!run?.agent) return;
+    run.agent.stopRequested = true;
+    if (!run.agent.dispatched) run.apiController?.abort();
+    display(
+      run,
+      run.agent.dispatched
+        ? 'Agent stopping after current decision verification.'
+        : 'Agent stopping before native dispatch; awaiting safe cleanup.',
+    );
+  }
 
   function assertCurrent(run: Run): asserts run is Run & { worker: Worker } {
     check(
@@ -223,7 +311,8 @@ export function createSessionController(
       run.phase === 'ready' &&
       !run.terminal &&
       !run.sdkRead &&
-      !continuous?.active;
+      !continuous?.active &&
+      !run.agent;
     ports.present({
       status,
       session: {
@@ -235,6 +324,7 @@ export function createSessionController(
         evidence: structuredClone(run.evidence),
         inspectorRequests: run.inspectorRequests,
         continuous: continuous ? { ...continuous } : undefined,
+        agentBusy: !!run.agent,
         waitingForSdk: !!run.sdkRead,
         hasClient: !!run.client,
         prepared:
@@ -423,6 +513,7 @@ export function createSessionController(
         !run.sdkRead &&
         !run.terminal &&
         !run.continuous?.active &&
+        !run.agent &&
         !run.cancel &&
         run.frame?.tic === run.verifiedTics &&
         run.evidence.neutralFirst?.complete,
@@ -438,6 +529,7 @@ export function createSessionController(
       }
     };
     fresh();
+    invalidateAgentObservation();
     run.sessionId ??= crypto.randomUUID();
     run.phase = 'busy';
     display(run);
@@ -450,63 +542,7 @@ export function createSessionController(
       );
       await render(run); // Reuse native pixels, passive proof and Canvas readback.
       fresh();
-      const checkpoint = await snapshot(run);
-      fresh();
-      const frame = run.frame;
-      check(
-        frame?.tic === checkpoint.counters.gametic,
-        'Observation frame mismatch.',
-      );
-      const { png, rgba } = ports.capture();
-      const canvasHash = await digest(rgba);
-      fresh();
-      check(
-        canvasHash === frame.nativeSha256 && canvasHash === frame.canvasSha256,
-        'Observation Canvas/native hash mismatch.',
-      );
-      const pngSha256 = await digest(agentPngBytes(png));
-      fresh();
-      const after = await snapshot(run);
-      fresh();
-      check(
-        equal(checkpoint.counters, after.counters) &&
-          equal(checkpoint.native, after.native),
-        'Observation changed while capturing.',
-      );
-      const p = after.native;
-      const previous = previousActionAt(run.previousAction, after);
-      return structuredClone({
-        sessionId: run.sessionId,
-        tic: run.verifiedTics,
-        phase: 'ready',
-        frame: { ...frame },
-        counters: {
-          gametic: after.counters.gametic,
-          leveltime: after.counters.leveltime,
-          render: after.counters.render,
-          frame: after.counters.frame,
-        },
-        telemetry: {
-          health: p.health,
-          weaponId: p.readyWeapon?.id ?? null,
-          bullets: p.ammo?.bullets.current ?? null,
-          shells: p.ammo?.shells.current ?? null,
-          cells: p.ammo?.cells.current ?? null,
-          rockets: p.ammo?.rockets.current ?? null,
-          x: p.x,
-          y: p.y,
-          angle: p.angle,
-        },
-        previousAction: previous
-          ? {
-              action: previous.action,
-              tics: previous.tics,
-              endTic: previous.endTic,
-            }
-          : null,
-        png,
-        pngSha256,
-      });
+      return await captureAgentObservation(run, fresh);
     } catch (error) {
       if (!(error instanceof Revoked)) retire(run);
       throw Error(
@@ -519,6 +555,80 @@ export function createSessionController(
         run.phase = 'ready';
       display(run);
     }
+  }
+
+  async function captureAgentObservation(
+    run: Run,
+    fresh = () => assertCurrent(run),
+    previousAction = run.previousAction,
+  ) {
+    const checkpoint = await snapshot(run);
+    fresh();
+    const frame = run.frame;
+    check(
+      frame?.tic === checkpoint.counters.gametic,
+      'Observation frame mismatch.',
+    );
+    const { png, rgba } = ports.capture();
+    const canvasHash = await digest(rgba);
+    fresh();
+    check(
+      canvasHash === frame.nativeSha256 && canvasHash === frame.canvasSha256,
+      'Observation Canvas/native hash mismatch.',
+    );
+    const pngSha256 = await digest(agentPngBytes(png));
+    fresh();
+    const after = await snapshot(run);
+    fresh();
+    check(
+      equal(checkpoint.counters, after.counters) &&
+        equal(checkpoint.native, after.native),
+      'Observation changed while capturing.',
+    );
+    const p = after.native;
+    const previous = previousActionAt(previousAction, after);
+    run.sessionId ??= crypto.randomUUID();
+    const result: AgentObservation = structuredClone({
+      observationId: crypto.randomUUID(),
+      sessionId: run.sessionId,
+      tic: run.verifiedTics,
+      phase: run.terminal ? 'terminal' : 'ready',
+      frame: { ...frame },
+      counters: {
+        gametic: after.counters.gametic,
+        leveltime: after.counters.leveltime,
+        render: after.counters.render,
+        frame: after.counters.frame,
+      },
+      telemetry: {
+        health: p.health,
+        weaponId: p.readyWeapon?.id ?? null,
+        bullets: p.ammo?.bullets.current ?? null,
+        shells: p.ammo?.shells.current ?? null,
+        cells: p.ammo?.cells.current ?? null,
+        rockets: p.ammo?.rockets.current ?? null,
+        x: p.x,
+        y: p.y,
+        angle: p.angle,
+      },
+      previousAction: previous
+        ? {
+            action: previous.action,
+            tics: previous.tics,
+            endTic: previous.endTic,
+          }
+        : null,
+      png,
+      pngSha256,
+    });
+    observed = {
+      id: result.observationId,
+      epoch: agentLease?.epoch,
+      run,
+      tic: run.verifiedTics,
+      configuration: configurationIdentity(),
+    };
+    return result;
   }
 
   function fence(run: Run, attempt: Attempt) {
@@ -534,6 +644,7 @@ export function createSessionController(
     configuration: DecisionConfiguration,
     observation: Observation,
     continuous?: ContinuousRun,
+    agent?: AgentRun,
   ) {
     fence(run, attempt);
     check(!run.terminal, 'Terminal game; no further Decisions requests.');
@@ -563,6 +674,16 @@ export function createSessionController(
       {
         assertFresh: () => fence(run, attempt),
         beforeCreate: () => {
+          fence(run, attempt);
+          if (agent) {
+            if (agent.stopRequested || agentLease?.epoch !== agent.epoch)
+              throw new DecisionStopped();
+            check(
+              run.agent === agent && !agent.used,
+              'Agent attempt exhausted.',
+            );
+            agent.used = true; // Synchronous, immediately before SDK create; never refunded.
+          }
           if (continuous) {
             if (continuous.stopRequested) throw new DecisionStopped();
             check(
@@ -582,6 +703,7 @@ export function createSessionController(
   async function runOneDecision(
     run: Run,
     continuous?: ContinuousRun,
+    agent?: AgentRun,
   ): Promise<DecisionOutcome> {
     if (
       current !== run ||
@@ -591,6 +713,7 @@ export function createSessionController(
       run.attempt ||
       run.terminal ||
       run.sdkRead ||
+      (run.agent && run.agent !== agent) ||
       (run.continuous?.active && run.continuous !== continuous)
     )
       return 'not-admitted';
@@ -639,6 +762,7 @@ export function createSessionController(
     // guard, rather than disabled styling alone, prevents overlapping admission.
     const attempt = admitDecision(run, tics);
     if (!attempt) return 'not-admitted';
+    invalidateAgentObservation();
     // Snapshot instructions and state options together before presentation or any await.
     const configuration = Object.freeze({
       ...ports.readDecisionConfiguration(),
@@ -647,7 +771,12 @@ export function createSessionController(
     if (continuous) continuous.dispatched = false;
     const dispatchFence = () => {
       fence(run, attempt);
-      if (continuous?.stopRequested) throw new DecisionStopped();
+      if (
+        continuous?.stopRequested ||
+        agent?.stopRequested ||
+        (agent && agentLease?.epoch !== agent.epoch)
+      )
+        throw new DecisionStopped();
     };
     const entry: DecisionEntry = {
       number: run.evidence.decisions.length + 1,
@@ -711,6 +840,7 @@ export function createSessionController(
         configuration,
         observation,
         continuous,
+        agent,
       );
       dispatchFence();
       try {
@@ -740,6 +870,7 @@ export function createSessionController(
       // No await between the final identity fence and the one native dispatch.
       dispatchFence();
       if (continuous) continuous.dispatched = true;
+      if (agent) agent.dispatched = true;
       run.previousAction = undefined;
       run.collisionEvidence =
         'Native collision telemetry unavailable: action/frame verification pending.';
@@ -772,6 +903,15 @@ export function createSessionController(
       fence(run, attempt);
       check(run.frame, 'Verified frame unavailable.');
       entry.result = { ...run.frame };
+      if (agent) {
+        // Dispatch has settled. Even Stop must drain the resulting-frame proof.
+        agent.observation = await captureAgentObservation(
+          run,
+          () => assertCurrent(run),
+          previousAction,
+        );
+        fence(run, attempt);
+      }
       run.collisionEvidence = formatCollisionEvidence(
         entry.action,
         afterWait.counters.gametic,
@@ -828,7 +968,9 @@ export function createSessionController(
           );
           entry.waitUnchanged = true;
           const stopped =
-            error instanceof DecisionStopped || continuous?.stopRequested;
+            error instanceof DecisionStopped ||
+            continuous?.stopRequested ||
+            agent?.stopRequested;
           entry.stage = 'ended';
           entry.status = `${stopped ? 'Stopped by user' : error.message}; no native action dispatched`;
           run.attempt = undefined;
@@ -868,6 +1010,93 @@ export function createSessionController(
     }
   }
 
+  async function agentNext(
+    epoch: string,
+    observationId: string,
+    assertLease: () => void,
+  ): Promise<AgentDecisionResult> {
+    const run = current;
+    const rejected = (
+      reason: AgentDecisionResult['reason'],
+    ): AgentDecisionResult => ({
+      outcome: 'not-admitted',
+      reason,
+      beforeObservationId: observationId,
+      sdkInvoked: false,
+      action: null,
+      requestedTics: null,
+      reportedTics: null,
+      verifiedTics: null,
+      cumulativeTics: null,
+      completionUncertain: false,
+      requestIdentity: null,
+      responseMetadata: null,
+      observation: null,
+    });
+    try {
+      assertLease();
+    } catch {
+      return rejected('lease-revoked');
+    }
+    if (!agentLease || agentLease.epoch !== epoch)
+      return rejected('lease-revoked');
+    if (!agentLease.grant) return rejected('no-grant');
+    const grant = agentLease.grant;
+    agentLease.grant = undefined; // One command reserves it, including rejected preflight.
+    if (
+      !run?.valid ||
+      run.phase !== 'ready' ||
+      run.agent ||
+      run.attempt ||
+      run.sdkRead ||
+      run.continuous?.active ||
+      run.terminal ||
+      pageExited
+    )
+      return rejected('not-ready');
+    if (
+      !observed ||
+      grant !== observed ||
+      observed.run !== run ||
+      observed.epoch !== epoch ||
+      observed.id !== observationId ||
+      observed.tic !== run.verifiedTics ||
+      observed.configuration !== configurationIdentity()
+    )
+      return rejected('stale-observation');
+    const agent: AgentRun = {
+      epoch,
+      stopRequested: false,
+      dispatched: false,
+      used: false,
+    };
+    run.agent = agent; // Own admission through SDK cleanup AND output verification.
+    const number = run.evidence.decisions.length;
+    display(run);
+    try {
+      const outcome = await runOneDecision(run, undefined, agent);
+      const entry = run.evidence.decisions[number];
+      return structuredClone({
+        outcome,
+        reason: null,
+        beforeObservationId: observationId,
+        sdkInvoked: agent.used,
+        action: entry?.action ?? null,
+        requestedTics: entry?.selectedTics ?? null,
+        reportedTics: entry?.execution?.reportedCompletedTics ?? null,
+        verifiedTics: entry?.execution?.independentlyVerifiedTics ?? null,
+        cumulativeTics: entry?.execution?.cumulativeVerifiedTics ?? null,
+        completionUncertain: entry?.execution?.completionUncertain ?? false,
+        requestIdentity: entry?.requestIdentity ?? null,
+        responseMetadata: entry?.responseMetadata ?? null,
+        observation: agent.observation ?? null,
+      });
+    } finally {
+      run.agent = undefined;
+      display(run);
+    }
+  }
+
   async function startContinuous(limit: number) {
     const run = current;
     if (
@@ -877,7 +1106,8 @@ export function createSessionController(
       run.attempt ||
       run.terminal ||
       run.sdkRead ||
-      run.continuous?.active
+      run.continuous?.active ||
+      run.agent
     )
       return;
     if (!Number.isSafeInteger(limit) || limit <= 0) {
@@ -1113,6 +1343,7 @@ export function createSessionController(
   }
   function close() {
     pageExited = true;
+    stopAgent();
     if (current) retire(current);
     ports.clearKey();
   }
@@ -1128,6 +1359,11 @@ export function createSessionController(
     initialize,
     prepare,
     observe,
+    attachAgent,
+    allowAgent,
+    stopAgent,
+    agentNext,
+    configure,
     next: () =>
       current
         ? runOneDecision(current)

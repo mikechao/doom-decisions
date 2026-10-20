@@ -11,10 +11,10 @@ import { afterEach, it, vi } from 'vitest';
 import config from '../vite.config.js';
 import { createAgentBridge } from '../agent-bridge.mjs';
 import { startAgentObservationBridge } from '../src/agent-browser.ts';
-import { agentOrigin, agentPath, agentPngBytes, parseAgentObservation } from '../src/agent-observation.ts';
+import { agentOrigin, agentPath, agentPngBytes, parseAgentObservation, parseAgentDecisionResult } from '../src/agent-observation.ts';
 import { runAgentCli } from '../../scripts/doom-agent.mjs';
-import { agentObservation } from './fixtures/agent.ts';
-import { deferred, checkpoint } from './fixtures/session.ts';
+import { agentObservation, pngFor } from './fixtures/agent.ts';
+import { deferred, checkpoint, fixture } from './fixtures/session.ts';
 
 const cleanups = [];
 afterEach(async () => { while (cleanups.length) await cleanups.pop()(); vi.restoreAllMocks(); });
@@ -56,7 +56,12 @@ function harness() {
   const browser = (observe = async () => agentObservation(), network = {}) => {
     const states = [];
     const handle = startAgentObservationBridge({
-      pageId: randomUUID(), observe, state: (state) => states.push(state),
+      pageId: randomUUID(), observe,
+      attach: epoch => network.controller?.attachAgent(epoch),
+      allow: epoch => network.controller?.allowAgent(epoch) ?? false,
+      stopAgent: () => network.controller?.stopAgent(),
+      decide: (epoch, id, fresh) => network.controller.agentNext(epoch, id, fresh),
+      state: (state) => states.push(state),
       post: (path, data, signal) => {
         const send = () => post(path.slice(agentPath.length + 1), data, 'page');
         return network.post ? network.post(path, data, signal, send) : send();
@@ -309,4 +314,134 @@ it('rejects non-allowlisted observation fields and PNG/frame corruption', () => 
     const data = structuredClone(original); mutate(data);
     assert.throws(() => parseAgentObservation(data));
   }
+});
+
+it('delivers one controller-selected decision through CLI and never replays or mints consent', async () => {
+  const game = fixture({ pngFor });
+  cleanups.push(() => game.dispose());
+  await game.prepare();
+  const h = harness();
+  const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
+  await page.ready;
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-agent-decision-'));
+  cleanups.push(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const attached = await runAgentCli(['attach'], { transport: h.transport, temporaryRoot });
+  const observe = () => runAgentCli(['observe', '--lease', attached.leaseFile], { transport: h.transport });
+  const decide = id => runAgentCli(['decide', '--lease', attached.leaseFile, '--observation', id], { transport: h.transport });
+  const before = await observe();
+  const denied = await decide(before.observationId);
+  assert.equal(denied.outcome, 'not-admitted');
+  assert.equal(denied.reason, 'no-grant');
+  assert.equal(denied.pngPath, null);
+  assert.equal(game.sdkCalls, 0);
+  assert.equal(page.allow(), true); // Simulates the browser-only human click.
+  await assert.rejects(decide(before.observationId), /duplicate-command/);
+  const fresh = await observe();
+  assert.equal(page.allow(), true); // Replacement observations require their own deliberate grant.
+  const result = await decide(fresh.observationId);
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.action, 'neutral');
+  assert.equal(result.beforeObservationId, fresh.observationId);
+  assert.equal(result.observation.sessionId, fresh.sessionId);
+  assert.equal(result.observation.tic, 7);
+  assert.deepEqual([result.requestedTics, result.reportedTics, result.verifiedTics], [6, 6, 6]);
+  assert.ok(isAbsolute(result.pngPath));
+  assert.ok((await readFile(result.pngPath)).length > 33);
+  assert.equal(JSON.stringify(result).includes('base64'), false);
+  assert.equal(JSON.stringify(result).includes('offline-not-a-credential'), false);
+  assert.equal(game.sdkCalls, 1);
+  assert.equal(game.gameCalls, 6);
+  await assert.rejects(decide(fresh.observationId), /duplicate-command/);
+  assert.equal((await decide(result.observation.observationId)).reason, 'no-grant');
+  assert.equal(game.sdkCalls, 1);
+  page.stop();
+  assert.equal(game.view.session.controls.ready, true);
+  await assert.rejects(decide(randomUUID()), /lease-revoked/);
+  assert.equal(game.sdkCalls, 1);
+});
+it.each(['stop', 'disconnect', 'second-page'])('%s revokes controller admission and never delivers a late paid result', async interruption => {
+  const game = fixture({ pngFor, delayedBody: true });
+  cleanups.push(() => game.dispose());
+  await game.prepare();
+  const h = harness();
+  let controllerStopped = false;
+  const controller = {
+    ...game.controller,
+    stopAgent() { controllerStopped = true; game.controller.stopAgent(); },
+  };
+  const page = h.browser(fresh => game.controller.observe(fresh), {
+    controller,
+    post(path, _data, _signal, send) {
+      if (path.endsWith('/revoke')) assert.equal(controllerStopped, true);
+      return send();
+    },
+    close(send) { assert.equal(controllerStopped, true); send(); },
+  });
+  await page.ready;
+  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const observed = await h.post('observe', { ...lease, commandId: randomUUID() });
+  assert.equal(page.allow(), true);
+  const cli = h.send('decide', { ...lease, commandId: randomUUID(), observationId: observed.observation.observationId });
+  await game.waiting;
+  if (interruption === 'stop') page.stop();
+  if (interruption === 'disconnect') h.broker.close();
+  if (interruption === 'second-page') {
+    const rejected = await h.send('register', { pageId: randomUUID() }, 'page').result.promise;
+    assert.equal(rejected.status, 409);
+    await checkpoint(() => controllerStopped);
+  }
+  assert.equal(controllerStopped, true);
+  assert.equal(game.view.session.agentBusy, true);
+  assert.equal(game.view.session.controls.ready, false);
+  assert.equal((await cli.result.promise).status, 409);
+  assert.equal(game.sdkCalls, 1);
+  game.releaseBody();
+  await checkpoint(() => !game.view.session.agentBusy);
+  assert.equal(game.gameCalls, 0);
+  assert.equal(game.view.session.controls.ready, true);
+});
+it('rejects credentials and speculative success in the decision response allowlist', () => {
+  const base = {
+    outcome: 'stopped', reason: null, beforeObservationId: randomUUID(), sdkInvoked: true,
+    action: null, requestedTics: 6, reportedTics: null, verifiedTics: null, cumulativeTics: null,
+    completionUncertain: false, requestIdentity: null, responseMetadata: null, observation: null,
+  };
+  parseAgentDecisionResult(base);
+  for (const mutate of [
+    d => { d.credential = 'offline-dummy'; },
+    d => { d.outcome = 'completed'; },
+    d => { d.requestIdentity = { provider: 'OpenRouter', requestedModel: 'model', credential: 'offline-dummy' }; },
+    d => { d.responseMetadata = { reportedModel: 'model', usage: { input: 1, output: 1, total: 2, credential: 'offline-dummy' } }; },
+  ]) {
+    const result = structuredClone(base); mutate(result);
+    assert.throws(() => parseAgentDecisionResult(result));
+  }
+});
+
+it('shows authorization revoked when the actual controller replaces its observation or configuration', async () => {
+  const game = fixture({ pngFor });
+  cleanups.push(() => game.dispose());
+  await game.prepare();
+  const h = harness();
+  const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
+  game.ports.agentGrantRevoked = () => page.authorizationRevoked();
+  await page.ready;
+  const lease = await h.post('attach', { ownerId: randomUUID() });
+  assert.equal(page.allow(), false, 'Attach alone is insufficient');
+  await h.post('observe', { ...lease, commandId: randomUUID() });
+  assert.equal(page.allow(), true);
+  assert.equal(page.states.at(-1), 'authorized');
+  const replacement = await h.post('observe', { ...lease, commandId: randomUUID() });
+  assert.equal(page.states.at(-1), 'attached');
+  const denied = await h.post('decide', { ...lease, commandId: randomUUID(), observationId: replacement.observation.observationId });
+  assert.equal(denied.decision.reason, 'no-grant');
+  assert.equal(denied.decision.sdkInvoked, false);
+  assert.equal(page.allow(), true);
+  game.controller.configure(() => { game.browserInputs.tics = 12; });
+  assert.equal(page.states.at(-1), 'attached');
+  game.controller.configure(() => { game.browserInputs.tics = 6; });
+  assert.equal(page.states.at(-1), 'attached');
+  assert.equal(page.allow(), false, 'Restoring configuration cannot revive the old observation');
+  assert.equal(game.sdkCalls, 0);
+  assert.equal(game.gameCalls, 0);
 });

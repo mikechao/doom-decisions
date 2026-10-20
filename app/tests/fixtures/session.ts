@@ -247,7 +247,7 @@ export function fixture(configuration = {}) {
     inputs.push(request);
     sdkViews.push(view.session);
     assert.ok(
-      JSON.stringify(request).includes('data:image/png;base64,synthetic'),
+      JSON.stringify(request).includes('data:image/png;base64,'),
     );
     headersWaiting.resolve();
     try {
@@ -324,7 +324,7 @@ export function fixture(configuration = {}) {
     },
     capture() {
       return {
-        png: faults.badPng ? 'bad' : 'data:image/png;base64,synthetic',
+        png: faults.badPng ? 'bad' : settings.pngFor?.(painted) ?? 'data:image/png;base64,synthetic',
         rgba: new Uint8ClampedArray(painted),
       };
     },

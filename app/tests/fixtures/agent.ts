@@ -33,7 +33,7 @@ export function agentObservation(): AgentObservation {
   const hash = createHash('sha256').update(pixels(1)).digest('hex');
   const png = pngFor();
   return {
-    sessionId: randomUUID(), tic: 1, phase: 'ready',
+    observationId: randomUUID(), sessionId: randomUUID(), tic: 1, phase: 'ready',
     frame: { tic: 1, nativeSha256: hash, canvasSha256: hash },
     counters: { gametic: 1, leveltime: 1, render: 3, frame: 3 },
     telemetry: { health: 100, weaponId: 1, bullets: 50, shells: 0, cells: 0, rockets: 0, x: 0, y: 0, angle: 0 },

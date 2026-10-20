@@ -2,6 +2,7 @@ import {
   agentPath,
   isAgentId,
   type AgentObservation,
+  type AgentDecisionResult,
 } from './agent-observation.ts';
 
 type Lease = { pageId: string; ownerId: string; epoch: string };
@@ -11,7 +12,24 @@ type Ports = {
   post(path: string, data: unknown, signal?: AbortSignal): Promise<unknown>;
   events(path: string): Stream;
   observe(assertFresh: () => void): Promise<AgentObservation>;
-  state(value: 'available' | 'attached' | 'stopped' | 'unavailable'): void;
+  attach?(epoch: string): void;
+  allow?(epoch: string): boolean;
+  stopAgent?(): void;
+  decide?(
+    epoch: string,
+    observationId: string,
+    fresh: () => void,
+  ): Promise<AgentDecisionResult>;
+  state(
+    value:
+      | 'available'
+      | 'attached'
+      | 'authorized'
+      | 'deciding'
+      | 'settled'
+      | 'stopped'
+      | 'unavailable',
+  ): void;
 };
 
 // Constructed once after verified preparation, only in dev:agent. EventSource's
@@ -40,6 +58,7 @@ export function startAgentObservationBridge(ports: Ports) {
     // The local admission fence changes synchronously, before network/cleanup.
     ended = true;
     lease = undefined;
+    ports.stopAgent?.(); // Controller Stop is synchronous, before cancellation/network.
     for (const upload of uploads) upload.abort();
     stream?.close();
     ports.state('stopped');
@@ -65,15 +84,17 @@ export function startAgentObservationBridge(ports: Ports) {
           ownerId: data.ownerId,
           epoch: data.epoch,
         };
+        ports.attach?.(lease.epoch);
         ports.state('attached');
         return;
       }
       if (
-        data.type !== 'observe' ||
+        !['observe', 'decide'].includes(data.type) ||
         !lease ||
         data.epoch !== lease.epoch ||
         data.ownerId !== lease.ownerId ||
-        !isAgentId(data.commandId)
+        !isAgentId(data.commandId) ||
+        (data.type === 'decide' && !isAgentId(data.observationId))
       )
         throw Error('invalid');
       if (processing || seen.has(data.commandId)) throw Error('duplicate');
@@ -84,9 +105,19 @@ export function startAgentObservationBridge(ports: Ports) {
       };
       processing = true;
       let observation: AgentObservation | null = null;
+      let decision: AgentDecisionResult | null = null;
       try {
         fresh();
-        observation = await ports.observe(fresh);
+        if (data.type === 'decide') {
+          if (!ports.decide) throw Error('unavailable');
+          ports.state('deciding');
+          decision = await ports.decide(
+            admitted.epoch,
+            data.observationId,
+            fresh,
+          );
+          if (!ended) ports.state('settled');
+        } else observation = await ports.observe(fresh);
         fresh();
       } catch {
         observation = null; // Fixed category only; never forward exception text.
@@ -104,7 +135,7 @@ export function startAgentObservationBridge(ports: Ports) {
             pageToken,
             epoch: admitted.epoch,
             commandId: data.commandId,
-            observation,
+            ...(data.type === 'decide' ? { decision } : { observation }),
           },
           upload.signal,
         );
@@ -144,5 +175,17 @@ export function startAgentObservationBridge(ports: Ports) {
       ports.state('unavailable');
     }
   })();
-  return { stop, ready };
+  return {
+    stop,
+    ready,
+    authorizationRevoked() {
+      if (!ended && lease) ports.state('attached');
+    },
+    allow() {
+      if (ended || !lease || processing || !ports.allow?.(lease.epoch))
+        return false;
+      ports.state('authorized');
+      return true;
+    },
+  };
 }
