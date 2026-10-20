@@ -720,6 +720,57 @@ it('gates both IWAD choices on usable manual credentials, then shares admission 
   assert.equal(session.controller.startContinuous.mock.calls.length, 0);
 });
 
+it('preserves the Freedoom host label during credential focusout and admits one delivered click', async () => {
+  vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'production'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture();
+  const fetch = vi.fn(() => assert.fail('No asset or provider fetch in the focusout fixture'));
+  vi.stubGlobal('fetch', fetch);
+  await import('../src/main.ts?included-freedoom-focusout-test');
+  await settleStartup();
+  h.element('#openrouter-manual').dispatchEvent(new Event('click'));
+  const key = h.element('#key'), button = h.element('#included-freedoom');
+  key.value = 'offline-focusout-key';
+  key.dispatchEvent(new Event('input'));
+  key.focus();
+  assert.equal(button.textContent, 'Use included Freedoom');
+  assert.equal(button.disabled, false);
+  assert.equal(button.attributes.get('aria-busy'), 'false');
+  const labelWrites = vi.spyOn(button, 'textContent', 'set');
+
+  // Explicit event delivery models the refresh sequence, not native pointer targeting.
+  h.document.dispatchEvent(new Event('pointerdown'));
+  key.dispatchEvent(new Event('change'));
+  button.focus();
+  h.element('#setup').dispatchEvent(Object.assign(new Event('focusout'), {
+    relatedTarget: button,
+  }));
+  assert.equal(labelWrites.mock.calls.length, 0, 'Unchanged slotted text must not be replaced');
+  assert.equal(button.disabled, false);
+  assert.equal(button.attributes.get('aria-busy'), 'false');
+  assert.equal(session.controller.prepare.mock.calls.length, 0);
+
+  session.controller.prepare.mockImplementation(() => {
+    session.ports.present({ session: {
+      phase: 'preparing', prepared: false, hasClient: false, verifiedTics: 0,
+      evidence: { decisions: [] }, controls: { ready: false, stop: false, tics: false, iwad: false },
+    } });
+    return Promise.resolve();
+  });
+  button.dispatchEvent(new Event('click'));
+  h.document.dispatchEvent(new Event('click'));
+  assert.equal(session.controller.prepare.mock.calls.length, 1);
+  assert.deepEqual(labelWrites.mock.calls, [['Loading Doom…']]);
+  assert.equal(button.textContent, 'Loading Doom…');
+  assert.equal(button.attributes.get('aria-busy'), 'true');
+  assert.equal(button.disabled, true);
+  assert.equal(button.hidden, false);
+  button.dispatchEvent(new Event('click'));
+  assert.equal(session.controller.prepare.mock.calls.length, 1, 'Duplicate click stays fenced');
+  assert.equal(fetch.mock.calls.length, 0);
+  assert.equal(h.transport.mock.calls.length, 0);
+  assert.equal(h.worker.mock.calls.length, 0);
+});
+
 it('clears the loading presentation after preparation fails and requires reload', async () => {
   vi.stubEnv('DEV', false); vi.stubEnv('MODE', 'production'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
   const h = browserFixture();

@@ -278,13 +278,14 @@ function displayAssetControls() {
   const button = $('#included-freedoom');
   button.disabled = disabled;
   button.setAttribute('aria-busy', String(loading));
-  button.textContent = loading
+  const label = loading
     ? 'Loading Doom…'
     : doomLoaded
       ? 'Doom loaded'
       : needsReload
         ? 'Reload to retry'
         : 'Use included Freedoom';
+  if (button.textContent !== label) button.textContent = label;
 }
 function displayOAuth() {
   displayAssetControls();
