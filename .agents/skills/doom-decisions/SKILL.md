@@ -98,13 +98,32 @@ From the repository root:
 5. When useful, write ONLY high-level instructions to a temporary absolute UTF-8
    text file (maximum 16000 characters), retaining useful effective instructions and
    `{{tics}}`. Include uncertainty explicitly, e.g. a possible opening rather
-   than invented unseen geometry. Do not include credentials or command/action
-   overrides. Update through:
+   than invented unseen geometry. Do not include credentials, unrelated secrets or
+   command/action overrides. Revise only when verified evidence warrants it.
+   Before EVERY `set-prompt` request, send a user-visible Codex commentary message:
+
+   - **Why change:** cite specific verified observations and explain how they
+     motivate the new navigation guidance. Distinguish observations from hypotheses.
+   - **New Decisions API prompt:** show the full replacement text verbatim in a
+     fenced text block, never a summary, diff or placeholder. Tool arguments alone
+     do not count as disclosure.
+
+   Optionally add one sentence explaining the substantive change from the current
+   prompt. Write exactly the displayed replacement text to the instructions file
+   and submit it unchanged through:
    `node scripts/doom-agent.mjs set-prompt --lease ABSOLUTE_LEASE_FILE --session SESSION_ID --run RUN_ID --revision REVISION --instructions-file ABSOLUTE_TEXT_FILE`.
-   Use the returned revision. A stale revision, any open human editor or other
-   conflict ends this workflow; never retry or overwrite a draft. There is no
+   After inspecting the command's exit status and structured result, honor the
+   termination rules above first; otherwise briefly report whether the replacement
+   was applied. Call it active and use the returned revision only after a confirmed
+   successful response. Explicitly report failure, conflict or uncertainty without
+   claiming success, and follow the existing conservative termination rules.
+   Do not repeat the full prompt on decisions when it has not changed.
+   A stale revision, any open human editor or other conflict ends this workflow;
+   never retry or overwrite a draft. There is no
    manual copy/paste relay. For inclusion edits use the full get/set-config
-   read/edit/CAS contract below. Model and N remain browser-owned.
+   read/edit/CAS contract below. Inclusion-only edits are not prompt revisions;
+   changing `instructionTemplate` through `set-config` requires the same disclosure
+   and result confirmation. Model and N remain browser-owned.
 6. Before EACH decision, obtain a fresh observation and actually view its PNG.
    After set-prompt or set-config this is mandatory: NEVER use the pre-write observation.
    Check unchanged page/epoch/session, ready phase, current tic and image hashes.
