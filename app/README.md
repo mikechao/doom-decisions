@@ -143,6 +143,14 @@ for this change. The CSP permits `data:` images only, with other directives unch
 
 ### AI Agent development startup
 
+For agent play, first create **this worktree's** gitignored `app/.env.agent.local` yourself:
+
+```dotenv
+AGENT_OPENROUTER_API_KEY=your-local-openrouter-key
+AGENT_MODEL=jev
+AGENT_DECISION_BUDGET=3
+```
+
 With frontend dependencies and verified staged engine/game assets already available
 in this worktree, run from its repository root:
 
@@ -158,13 +166,6 @@ The existing frame/Canvas hash checks and five-second idle proof remain mandator
 Advanced evidence stays available. Failures use the existing error/retry controls,
 with no automatic retry loop. Refresh starts one fresh preparation.
 
-Optionally create **this worktree's** gitignored `app/.env.agent.local` yourself:
-
-```dotenv
-AGENT_OPENROUTER_API_KEY=your-local-openrouter-key
-AGENT_MODEL=jev
-```
-
 Agent mode defaults to `jev` (`typesafe/jev-1.14` via OpenRouter) when the file or
 `AGENT_MODEL` is missing, or the value is blank. Set `AGENT_MODEL=gpt6` for
 `openai/gpt-6-luna-decisions`. Other nonempty values block agent startup with a
@@ -174,13 +175,25 @@ override. Ordinary dev and production keep the GPT-6 Luna Decisions default.
 The model can still be changed with the existing UI radios before the first
 provider client is created for inference; creation locks it for the session.
 
-Restart the dev server after changing the file. Missing, empty, unreadable, or
+Fully stop and launch a new dev-server process after changing the file. Missing, empty, unreadable, or
 unusable keys leave inference unavailable while the game still prepares. A usable
 key is held in page memory for a later **human-initiated** Next Decision, Continuous Mode,
-or explicitly authorized single agent decision;
+or a configured agent run claimed through `start-run`;
 startup neither constructs a provider client nor requests inference. Manual keys
 and OAuth keys take precedence. Model access/authentication remain unverified.
 The optional key applies only to the OpenRouter provider.
+
+`AGENT_DECISION_BUDGET` is a positive JavaScript safe integer: start with **3**
+for a small trial; larger finite limits are supported. It caps agent Decisions API
+attempts, **not dollars or gameplay tics**. Missing/blank disables agent starting;
+malformed or unsafe values fail startup with a nonsecret configuration error.
+No paid budget is inferred. The broker snapshots this value once per actual Node
+process and issues it at most once, bound to the current lease/session/checkpoint.
+Failed or ambiguously delivered claims are not refunded. Exhaustion, Stop,
+disconnect, refresh, extra tabs and Vite internal restart cannot replenish it.
+A separate run requires the human to fully stop and launch a new `dev:agent`
+process. This local prototype does not defend against deliberate code changes or
+process restarts and does not cap separate Manual/Continuous spending.
 
 This is browser-direct BYOK: the key is visible in the locally served bootstrap
 JavaScript, browser/devtools and potentially development caches. Agent responses
@@ -195,7 +208,7 @@ Ordinary dev, preview and production use an inert bootstrap and do not read the 
 through this credential loader or auto-select a game. Standard OAuth/manual BYOK
 behavior and production CSP stay unchanged.
 
-#### Agent control: single decision, bounded play and Stop
+#### Agent control: one-command bounded play and Stop
 
 Agent mode uses strict port **5174** and the existing same-origin, in-memory
 bridge. An occupied port fails. Close extra agent tabs. No extra server, browser
@@ -256,25 +269,31 @@ operations or gameplay tics. Payloads are deeply detached; the shared broker/CLI
 parser requires exact keys at every object boundary. The CLI carries all evidence
 unchanged, replacing PNG data only with a verified local file path.
 
-**Attach and observe never authorize charges.** After viewing that PNG, the human
-must click **Allow 1 Agent Decision** in the attached browser page. This grants
-one attempt for this page/lease epoch and the current verified observation with
-its effective model, agent instructions/options and tics. Replacing the observation
-or editing that configuration revokes the grant; restoring old values never
-rearms it. Observe the current state and click Allow again. Then request one Decisions-selected
-legal action (no CLI action or duration argument):
+**Attach, observe and get-config never authorize charges.** After viewing the
+verified PNG, read configuration and claim the process allowance exactly once:
 
 ```sh
-node scripts/doom-agent.mjs decide --lease /absolute/path/to/lease.json --observation OBSERVATION_ID
+node scripts/doom-agent.mjs get-config --lease /absolute/path/to/lease.json --session SESSION_ID
+node scripts/doom-agent.mjs start-run --lease /absolute/path/to/lease.json --observation OBSERVATION_ID --session SESSION_ID --revision REVISION
 ```
 
-A decision command reserves the grant once, including stale/not-ready/preflight
-rejections. The controller charges it synchronously at the existing provider
-`beforeCreate` boundary, immediately before the sole SDK invocation. Errors,
-cancellation, missing credentials and pre-request failures never rearm it.
-SDK retries remain disabled. A second command needs a new human grant and fresh
-observation. Nothing automatically repeats. Ordinary manual controls still use
-their existing credential and readiness gates.
+Use the actual IDs/revision from the fresh observation and configuration. The CLI
+cannot choose the numeric limit. A successful start returns the effective
+configuration, revision and active run with its frozen limit and counters. There
+are no browser Allow controls or follow-up chat acknowledgment. The skill then
+observes/views afresh, optionally updates its navigation instructions, and requests
+one Decisions-selected legal action at a time:
+
+```sh
+node scripts/doom-agent.mjs decide --lease /absolute/path/to/lease.json --observation OBSERVATION_ID --session SESSION_ID --run RUN_ID --revision REVISION
+```
+
+Never retry `start-run`, including after a rejected or ambiguous claim.
+`budget-unavailable` requires explicit configuration and a full process restart;
+`budget-closed` means no new claim is available; `claim-failed` ends play
+conservatively. Other preflight errors also burn an already-issued claim. Browser
+reload and Vite internal restart cannot rearm it. Normal gameplay operations cannot
+change the cap. Ordinary manual controls retain their credential/readiness gates.
 
 The CLI returns a structured `outcome`: `completed`, `stopped` (before native
 dispatch), `terminal`, `retired`, `api-failure`, or `not-admitted` with a fixed
@@ -310,8 +329,9 @@ dispatched finishes action receipts, rendering and PNG proof. Uncertain native
 outcomes or unverifiable frames retire the session. Stop never claims to undo an
 action or remote billing. It affects agent ownership only; it does not stop an
 independent manual/Continuous attempt. No automatic reconnect or grant occurs.
-Reload and explicitly attach again after Stop/disconnect. A second page revokes
-the existing attachment rather than taking it over.
+Another playable run after Stop/disconnect requires a fresh dev-server process;
+reload alone does not restore its allowance. A second page revokes the existing
+attachment rather than taking it over.
 
 After local Stop, the browser attempts a `user-requested` revoke before explicitly
 closing its stream, bounded to one second. A validated revoke returns HTTP 409
@@ -337,7 +357,7 @@ boundaries. Tics and the selected policy's configuration are frozen before async
 unsaved prompt drafts do not change the request. Controls return only after safe
 settlement, with the ordinary credential gates still applied.
 
-##### Slice C: bounded foreground play
+##### Codex foreground play
 
 Two terminals, one existing dev server: the human runs `npm --prefix app run dev:agent`
 and manually opens `http://127.0.0.1:5174/`. In Codex, from this worktree, invoke
@@ -347,13 +367,14 @@ updates ephemeral high-level instructions and Game State inclusion when useful. 
 every low-level action. No browser driving, second server, daemon or persistent map
 is involved. `play` is skill routing, not a CLI subcommand.
 
-After the first verified image is viewed, the human clicks **Allow up to 3 Agent
-Decisions** and confirms in chat. This is a distinct, fixed-cap authorization for
-one page/lease epoch and game session, with a fresh run ID. The controller displays
-remaining attempts, nonrefundable reservations and SDK invocations. One lease can
-authorize this run only once; repeated clicks, prompt changes, lost responses and
-reattach never replenish it. The separate **Allow 1 Agent Decision** path retains
-its exact single-observation/configuration grant and cannot extend a bounded run.
+Invoke the skill once after preparation. Codex views the initial verified PNG,
+reads get-config, invokes start-run once and uses the returned run ID, revision and
+frozen limit. It proceeds without a browser authorization click or another human
+message. The browser is for watching and **Stop Agent**, with actual remaining,
+reserved and SDK-invoked counts. Claiming permission never itself calls a provider.
+No invocation, prompt change, lost response or reattachment can replenish the
+process allowance. The skill never restarts the server or falls back to legacy
+single-decision grants.
 
 The CLI provides effective configuration/prompt commands and scoped decision arguments:
 
@@ -368,7 +389,7 @@ node scripts/doom-agent.mjs decide --lease /absolute/lease.json --observation OB
 ```
 
 `get-prompt` returns `{sessionId, revision, instructions, run}` with controller-owned
-`runId`, `active`, fixed `limit: 3`, `reserved`, `sdkInvoked`, and `remaining`, or a
+`runId`, `active`, the frozen configured `limit`, `reserved`, `sdkInvoked`, and `remaining`, or a
 fixed error. Reading never grants permission. Instruction text is the effective agent template,
 with `{{tics}}` resolved only when the normal request is built. Prompt commands carry
 no key, client, provider configuration or human draft.
@@ -409,10 +430,10 @@ Both setters require a ready idle controller, current active bounded run and
 expected monotonic revision. **Any open human prompt editor** rejects writes.
 `set-prompt` updates only instructions in that same ephemeral configuration;
 set-config fully replaces it. Successful edits increment the shared revision,
-invalidate old observations/single grants and update the authorized run's expected
+invalidate old observations and update the authorized run's expected
 identity while preserving run ID, remaining budget and reserved/SDK-invoked counts.
 Codex must observe and **view a fresh PNG** before the next decision. Rejected
-stale/malformed/busy writes leave settings, revision, grants and counters unchanged.
+stale/malformed/busy writes leave settings, revision and counters unchanged.
 Human saves/model/tics/options changes and detected external identity mismatches
 still end the bounded run. Already admitted requests retain their frozen settings.
 
@@ -420,7 +441,7 @@ Budget exhaustion retains configuration for read-only inspection under the same
 lease, with zero allowance and no rearming. Stop/disconnect/page exit removes it;
 terminal or uncertain retirement discards configuration while retaining the ended
 authorization record for attempt evidence. No browser reconnect/rearming is added:
-reload is required for another attachment. Refresh starts a new page-memory session.
+refresh starts a new page-memory session but cannot restore the process allowance.
 
 Each valid scoped decision admission synchronously reserves one slot before any await.
 A reservation is never refunded, including missing credentials or pre-create failure.
@@ -429,11 +450,11 @@ it is not proof of remote billing. Retries and fallback remain disabled. Each ne
 cycle requires an independently verified observation matching current effective configuration.
 Only healthy action AND resulting-frame verification permit continuation. Manual
 gameplay ends the run; it does not silently borrow its authorization. Failures,
-terminal/uncertain results, lease loss and Stop end remaining admission. After three
-reservations the run ends; there is no fourth permitted create or automatic restart.
+terminal/uncertain results, lease loss and Stop end remaining admission. At the frozen
+reservation limit the run ends; no further create or automatic restart is permitted.
 
 The skill reasons in the foreground between individual calls, reads actual allowance
-with get-prompt and stops at exhaustion, goal completion, conflicts or ambiguity. It
+with get-config and stops at exhaustion, goal completion, conflicts or ambiguity. It
 does not choose action identifiers or treat unchanged XY, screenshots or previousAction
 as proof of collision/door availability. Qualified facing evidence and existing
 previous-action text are exported as documented above; movement-event collision
@@ -444,31 +465,30 @@ Start a fresh Codex conversation here if the skill picker is stale.
 Human acceptance (Codex must not operate Chrome or make provider calls during
 implementation):
 
-1. Start `npm --prefix app run dev:agent`, manually open
-   `http://127.0.0.1:5174/`, and wait for verified neutral-first tic **1/1/1**.
-2. After code review and explicit approval for **up to three possibly billable
-   attempts**, invoke `$doom-decisions play`. Attach/observe and actually view the
-   first PNG. Click **Allow up to 3 Agent Decisions** and confirm in chat. Record
-   page/epoch/session/run ID, effective instructions/revision, N and initial tic.
-3. Have Codex read get-config and issue an ephemeral instructions or inclusion
-   update with CAS. Confirm effective settings through get-config and confirm the
-   human editor retains its original instructions/toggles; close without saving.
-   Observe/view anew, decide once, and inspect structured evidence, request text
-   and the actual resulting PNG.
-4. Retain/update the navigation hypothesis and agent settings as useful; repeat
-   observe/view/decide for at most three total reservations. Record actual remaining,
-   reserved and SDK-invoked counts, legal model-selected action, requested/reported/
-   verified/end tics, session continuity, matching native/Canvas hashes and visual
-   progress. After exhaustion confirm inactive/zero allowance; do not send a fourth
-   live decision merely to test rejection. Offline tests cover that fence and duplicates.
-5. Click **Stop Agent**. One explicitly requested, non-billable old-lease get-prompt
-   or observe must reject. Confirm manual controls return only after safe settlement;
-   testing a paid manual action needs a separate approval. Bring sanitized receipts,
-   prompt revisions, viewed PNG comparisons and human Console/Network observations
-   back for `/review`. Stop on any failed/ambiguous result without replaying it.
-   Do not deliberately race live Stop against inference/dispatch in this protocol;
-   those races remain offline coverage unless separately approved. Stop cannot undo
-   an already invoked request or guarantee it was uncharged.
+1. After review and separate authorization for up to three possibly billable
+   attempts, set `AGENT_DECISION_BUDGET=3`, start a fresh `dev:agent` process,
+   manually open `http://127.0.0.1:5174/`, and wait for verified neutral-first
+   tic **1/1/1**.
+2. Invoke `$doom-decisions play` once. Confirm there are no Allow controls and no
+   second chat message is needed. Codex attaches, views the PNG, reads config,
+   claims once, then autonomously performs at most three decisions with individual
+   reasoning and verified image inspection. Record actual page/epoch/session/run
+   identity, revision, N, counters, action/tic/frame receipts and visual progress.
+3. Confirm exhaustion shows zero remaining and three reservations, without another
+   paid decision. Offline tests cover fourth-attempt rejection and rearming fences.
+   If agent-effective settings change, confirm human saved settings/drafts remain
+   separate; no deliberate settings edit is required for this smoke test.
+4. Fully stop the server and launch a fresh `dev:agent` process for a separate
+   authorized Stop trial. Prepare, invoke the skill once, then click **Stop Agent**.
+   Confirm further admission ends, safe cleanup completes and, when Stop attribution
+   succeeds, Codex replies `Agent stopped by user. Ending play.` without more calls.
+   Do not add a recovery/discovery call after that acknowledgment. Browser reload
+   must not replenish the allowance. Stop cannot undo an invoked request or ensure
+   it was uncharged; deliberate in-flight races remain offline coverage unless
+   separately approved.
+5. Bring sanitized receipts and human browser observations back for review. Live
+   death/exit and terminal-image failure acceptance remain separate from this
+   small smoke test; their provider-free synthetic coverage is retained.
 
 Offline tests use synthetic native boundaries and fake SDK transport, including
 held readers, pre-create/pre-dispatch Stop, dispatched settlement, terminal prefixes,

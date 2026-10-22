@@ -1,19 +1,20 @@
 ---
 name: doom-decisions
-description: Supervise a browser-authorized run of up to three Decisions API attempts in the foreground, viewing every verified Doom PNG and adapting ephemeral instructions and Game State inclusion. No browser driving or unattended loop.
+description: Start and supervise one process-budgeted Decisions API run in the foreground, viewing every verified Doom PNG and adapting ephemeral instructions and Game State inclusion. No browser driving or unattended loop.
 ---
 
 # Doom Decisions — bounded foreground play
 
-Interpret `play` as a foreground conversation workflow, capped by ONE browser
-authorization for up to THREE possibly billable decision attempts. Never start
+Interpret `play` as a foreground conversation workflow using ONE single-use
+process allowance from the human-configured `AGENT_DECISION_BUDGET`. Never start
 a server/browser, prepare a game, click/drive/inspect Chrome or DevTools, read
 `.env*`, the credential bootstrap module or browser credential storage. Never
 create a daemon, autonomous CLI loop, persistent map or external memory service.
-Attaching, observing, reading/writing agent settings and invoking this skill never
-authorize charges. Only the human's browser click does. The existing Decisions
-provider selects EVERY low-level action; never inject an action or duration or
-ask the provider to choose a particular action identifier.
+Attaching, observing and reading/writing agent settings never authorize charges.
+Invoke `start-run` once to claim the configured count of possibly billable
+Decisions API attempts; there is no browser authorization or chat confirmation.
+The existing Decisions provider selects EVERY low-level action; never inject an
+action or duration or ask the provider to choose a particular action identifier.
 
 **Termination takes priority throughout `play`:** immediately after EVERY CLI
 call, inspect its exit status and structured result before further reasoning,
@@ -33,7 +34,7 @@ viewing of that PNG, within this verified terminal contract,
 `Level exit triggered (exit pending). Ending play.` Do not claim another map
 loaded or the game was won. Raw health or a screenshot alone never proves death.
 Terminal takes priority over exhaustion, including an early tic prefix or death
-on the third/final reservation. Make no further agent CLI calls: no observe,
+on the final reservation. Make no further agent CLI calls: no observe,
 decide, get/set-config, prompt edits, attach, retry or discovery, regardless of
 previous allowance. View only the already-returned local terminal PNG once as the
 sole permitted final evidence tool call. If viewing succeeds, give the matching
@@ -58,7 +59,8 @@ skill cannot preempt an active Codex reasoning turn. Stop between calls may need
 one next old-lease call to discover revocation; it must fail without another
 gameplay action. Never make an extra discovery call after a terminal result.
 
-The human starts `npm --prefix app run dev:agent` and manually opens
+The human configures a positive safe-integer `AGENT_DECISION_BUDGET` in
+`app/.env.agent.local`, starts `npm --prefix app run dev:agent` and manually opens
 `http://127.0.0.1:5174/`. Wait for their page to reach verified ready. Reuse that
 server; a busy port is not permission to start another one.
 
@@ -73,11 +75,19 @@ From the repository root:
    tic, matching native/Canvas hashes and verified telemetry.
 3. Read the effective agent configuration (instructions and five inclusion flags):
    `node scripts/doom-agent.mjs get-config --lease ABSOLUTE_LEASE_FILE --session SESSION_ID`.
-   Ask the human to click **Allow up to 3 Agent Decisions** in the attached page
-   and confirm in chat. Wait for that confirmation. Do not poll for consent or
-   use `decide` to discover it. Then get-config once to read the controller's
-   actual run ID, revision, active/remaining/reserved/SDK-invoked counts. Require
-   an active run with positive remaining allowance; no grant means observe-only.
+   Require the same page/epoch/session as the fresh observation just viewed and
+   `run: null`; an existing run is not permission to resume or replenish it.
+   Use that observation ID, session ID and returned revision to invoke ONCE:
+   `node scripts/doom-agent.mjs start-run --lease ABSOLUTE_LEASE_FILE --observation OBSERVATION_ID --session SESSION_ID --revision REVISION`.
+   Inspect the result immediately. Retain its actual run ID, revision and frozen
+   limit; require an active run, zero reserved/SDK-invoked counts and remaining
+   equal to that positive limit. Continue without another human message.
+   On `budget-unavailable`, explain that the human must set a positive safe-integer
+   `AGENT_DECISION_BUDGET` and fully stop/relaunch `dev:agent`. Invalid configuration
+   can prevent startup; report that possibility without reading the private file.
+   `budget-closed`, `claim-failed`, rejected or ambiguous claims end play: never
+   retry `start-run`, fall back to another grant, reattach or restart the server.
+   Browser reload and Vite internal restart cannot replenish the allowance.
 4. Keep a concise in-conversation record: goal; page/epoch/session/tic; last
    verified action/tics/outcome; visual interpretation and confidence; navigation
    hypothesis; progress/stall evidence; one next high-level objective; actual run
@@ -98,7 +108,8 @@ From the repository root:
 6. Before EACH decision, obtain a fresh observation and actually view its PNG.
    After set-prompt or set-config this is mandatory: NEVER use the pre-write observation.
    Check unchanged page/epoch/session, ready phase, current tic and image hashes.
-   Get-config once to verify the same run ID/revision is active with allowance.
+   Get-config once to verify the same run ID/revision/frozen limit is active
+   with allowance.
    If configuration/run identity changed unexpectedly, stop.
 7. Invoke exactly once for the observation just viewed:
    `node scripts/doom-agent.mjs decide --lease ABSOLUTE_LEASE_FILE --observation OBSERVATION_ID --session SESSION_ID --run RUN_ID --revision REVISION`.
@@ -116,9 +127,10 @@ From the repository root:
 9. Stop on exhausted/inactive authorization, Stop/lease revocation, terminal or
    retired state, session/observation mismatch, prompt conflict, failed/ambiguous
    result, uncertain consumption, unavailable image viewing or achieved goal.
-   Tell the human to click **Stop Agent** when ending early or after exhaustion.
-   Do not seek another run or switch to single-grant/manual mode to extend the
-   cap. Manual controls resume only after safe settlement.
+   Tell the human to click **Stop Agent** when ending early. Exhaustion requires
+   no further human input. Do not seek another run, invoke `start-run` again or
+   switch to manual mode to extend the cap. Manual controls resume only after
+   safe settlement.
 
 Never automatically retry ANY command or replace a stopped/stale lease. Decision
 command IDs are tied to observation IDs and remain spent even on rejection. Run
@@ -127,11 +139,9 @@ or timeout can mean unknown action outcome or charge; stop and ask the human to
 inspect the page. Abort never proves remote processing/billing stopped. Stop
 revokes local admission synchronously; pending readers retain ownership through
 safe cleanup, and dispatched work finishes verification. Result delivery may be
-revoked even when an action was consumed. Reload and explicit attachment/consent
-are required after Stop/disconnect; no reconnect, replay or rearming.
-
-The separate **Allow 1 Agent Decision** control retains Slice B semantics. It is
-not a reusable run grant and is not a fallback to extend `play`.
+revoked even when an action was consumed. A fresh allowance requires the human to
+fully stop and launch a new `dev:agent` process for a separate skill invocation;
+never do this yourself. No reconnect, replay or rearming follows Stop/disconnect.
 
 ## Agent settings: read, edit, CAS
 
@@ -164,12 +174,11 @@ must be nonblank and at most 16000 characters. Then call:
 `node scripts/doom-agent.mjs set-config --lease ABSOLUTE_LEASE_FILE --session SESSION_ID --run RUN_ID --revision REVISION --config-file ABSOLUTE_JSON_FILE`
 
 Writes require a ready, idle controller and the current active bounded run and
-revision; single-grant authorization permits no settings writes. `set-config`
-fully replaces the six fields. `set-prompt` remains an instructions-only adapter
-to the same ephemeral configuration and revision. Successful edits preserve the
-run ID and every attempt counter, increment revision and invalidate old
-observations/grants. Obtain and view a fresh PNG before requesting another
-decision. Changes never affect an admitted request. Rejected stale/malformed,
+revision. `set-config` fully replaces the six fields. `set-prompt` remains an
+instructions-only adapter to the same ephemeral configuration and revision.
+Successful edits preserve the run ID and every attempt counter, increment revision
+and invalidate old observations. Obtain and view a fresh PNG before requesting
+another decision. Changes never affect an admitted request. Rejected stale/malformed,
 busy or editor-open writes leave settings, revision and allowance unchanged;
 stop this skill workflow on conflicts rather than retrying. Human configuration
 changes still end the bounded run.

@@ -106,8 +106,6 @@ type Elements = {
   '#start': DoomButtonElement;
   '#stop': DoomButtonElement;
   '#stop-agent': DoomButtonElement;
-  '#allow-agent': DoomButtonElement;
-  '#allow-agent-run': DoomButtonElement;
   '#agent-run-status': HTMLParagraphElement;
   '#agent-status': HTMLParagraphElement;
   '#budget': HTMLInputElement;
@@ -228,34 +226,28 @@ function saveDecisionConfiguration(
 }
 function renderAgentControls() {
   if (!agentMode) return;
-  const attached = ['attached', 'authorized', 'deciding', 'settled'].includes(
-    agentControlsState,
-  );
   const authorization = latestSession?.agentAuthorization;
-  const busy = agentControlsState === 'deciding' || !!latestSession?.agentBusy;
-  $('#stop-agent').hidden = !attached;
-  $('#allow-agent').hidden = !attached;
-  $('#allow-agent-run').hidden = !attached;
-  $('#allow-agent').disabled =
-    busy || agentControlsState === 'authorized' || !!authorization;
-  $('#allow-agent-run').disabled =
-    busy || agentControlsState === 'authorized' || !!authorization;
-  $('#agent-run-status').hidden = !attached || !authorization;
+  const restart =
+    'Fully stop and relaunch dev:agent for another allowance; browser reload and Vite internal restart do not replenish it.';
+  $('#stop-agent').hidden =
+    !agentBridge || ['stopped', 'unavailable'].includes(agentControlsState);
+  $('#agent-run-status').hidden = !authorization;
   $('#agent-run-status').textContent = authorization
-    ? `Agent run ${authorization.active ? 'authorized' : 'ended'} · ${authorization.remaining} of ${authorization.limit} attempts remaining · ${authorization.reserved} reserved · ${authorization.sdkInvoked} SDK calls started. Stop cannot undo charges.`
+    ? `Agent run ${authorization.active ? 'active' : authorization.reserved === authorization.limit ? 'exhausted' : 'ended'} · ${authorization.remaining} of ${authorization.limit} attempts remaining · ${authorization.reserved} reserved · ${authorization.sdkInvoked} SDK calls started. Stop cannot undo charges.${authorization.active ? '' : ` ${restart}`}`
     : '';
   $('#agent-status').hidden = false;
   $('#agent-status').textContent = {
-    available: 'Agent available. No agent API attempt authorized.',
+    available:
+      'Ready for $doom-decisions play in Codex. Codex starts the configured run once; watch here or use Stop Agent. Provider attempts may incur charges.',
     attached:
-      'Agent attached. Observe a verified frame, then authorize one decision or up to 3 attempts. Agent instructions and Game State inclusion are temporary; Edit Prompt retains human settings. Provider attempts may incur charges.',
-    authorized: 'One agent API attempt authorized. It may incur charges.',
+      'Agent attached. Codex observes the game and claims the configured budget once. Agent instructions and Game State inclusion are temporary; Configure AI Decision retains human settings.',
     deciding:
       'Agent deciding. Stop Agent fences dispatch and awaits safe settlement.',
     settled:
       'Agent command settled. Check the run allowance before continuing.',
-    stopped: 'Agent stopped. Reload to allow another attachment.',
-    unavailable: 'Agent bridge unavailable. Close extra agent tabs and reload.',
+    'run-unavailable': `Agent run unavailable. Set a positive safe-integer AGENT_DECISION_BUDGET in app/.env.agent.local. ${restart}`,
+    stopped: `Agent stopped; safe cleanup may still be pending. ${restart}`,
+    unavailable: `Agent bridge unavailable. Close extra agent tabs. ${restart}`,
   }[agentControlsState];
 }
 let selectedModel: OpenRouterModel = agentMode
@@ -444,8 +436,6 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
       attach: (epoch, budgetMode) => controller.attachAgent(epoch, budgetMode),
       startRun: (epoch, id, scope, fresh) =>
         controller.startAgentRun(epoch, id, scope, fresh),
-      allow: (epoch) => controller.allowAgent(epoch),
-      allowRun: (epoch) => controller.allowAgentRun(epoch),
       prompt: (epoch, sessionId, fresh, update) =>
         controller.agentPrompt(epoch, sessionId, fresh, update),
       config: (epoch, sessionId, fresh, update) =>
@@ -572,7 +562,6 @@ const controller = createSessionController(
     promptEditorOpen: () => $('#prompt-dialog').open,
     readAgentIdentity: () =>
       `${openRouterMode ? 'OpenRouter' : 'OpenAI'}:${selectedModel}`,
-    agentGrantRevoked: () => agentBridge?.authorizationRevoked(),
     takeKey: () => {
       if (jevMode) {
         $('#key').value = '';
@@ -740,8 +729,6 @@ $('#start').addEventListener('click', () =>
 );
 $('#stop').addEventListener('click', () => controller.stop());
 $('#stop-agent').addEventListener('click', () => agentBridge?.stop());
-$('#allow-agent').addEventListener('click', () => agentBridge?.allow());
-$('#allow-agent-run').addEventListener('click', () => agentBridge?.allowRun());
 for (const event of ['input', 'change']) {
   // Native number edits precede their event. Invalidate even if a later edit
   // restores the old N; value equality must never revive a browser grant.

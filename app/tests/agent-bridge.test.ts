@@ -59,12 +59,11 @@ function harness(allowance) {
   };
   const browser = (observe = async () => agentObservation(), network = {}) => {
     const states = [];
+    let epoch;
     const handle = startAgentObservationBridge({
       pageId: randomUUID(), observe,
-      attach: (epoch, budgetMode) => network.controller?.attachAgent(epoch, budgetMode),
+      attach: (id, budgetMode) => { epoch = id; network.controller?.attachAgent(id, budgetMode); },
       startRun: (epoch, id, scope, fresh) => network.controller.startAgentRun(epoch, id, scope, fresh),
-      allow: epoch => network.controller?.allowAgent(epoch) ?? false,
-      allowRun: epoch => network.controller?.allowAgentRun(epoch) ?? false,
       prompt: (epoch, sessionId, fresh, update) => network.controller.agentPrompt(epoch, sessionId, fresh, update),
       config: (epoch, sessionId, fresh, update) => network.controller.agentConfig(epoch, sessionId, fresh, update),
       stopAgent: () => network.controller?.stopAgent(),
@@ -90,7 +89,11 @@ function harness(allowance) {
       },
     });
     cleanups.push(() => handle.stop());
-    return { ...handle, states };
+    return { ...handle, states,
+      // Legacy controller coverage only: these are NOT browser bridge entry points.
+      legacyGrant: () => network.controller?.allowAgent(epoch) ?? false,
+      legacyRun: () => network.controller?.allowAgentRun(epoch) ?? false,
+    };
   };
   return { broker, request, transport, send, post, browser };
 }
@@ -165,8 +168,10 @@ console.log(JSON.stringify({limit: state.limit, status: state.status}));`;
 
 it('CLI start-run claims three controller reservations without Allow and cannot replenish or choose a limit', async () => {
   const s = await budgetSession();
+  assert.equal(s.page.allow, undefined); assert.equal(s.page.allowRun, undefined);
+  assert.equal(s.page.states.at(-1), 'attached');
   assert.equal((await s.get()).run, null); assert.equal(s.allowance.status, 'unclaimed');
-  assert.equal(s.page.allow(), false); assert.equal(s.page.allowRun(), false);
+  assert.equal(s.page.legacyGrant(), false); assert.equal(s.page.legacyRun(), false);
   assert.equal(s.game.controller.allowAgent(s.lease.epoch), false);
   assert.equal(s.game.controller.allowAgentRun(s.lease.epoch), false);
   await assert.rejects(s.cli(['decide', ...s.base, '--observation', s.observation.observationId]), /budget-closed/);
@@ -191,8 +196,25 @@ it('CLI start-run claims three controller reservations without Allow and cannot 
   }
   assert.equal((await s.decide(await s.observe(), config)).reason, 'no-grant');
   assert.equal(s.game.sdkCalls, 3);
-  assert.equal(s.page.allowRun(), false);
+  assert.equal(s.page.legacyRun(), false);
   await assert.rejects(s.start(), /budget-closed/);
+});
+
+it('executes the skill start template once against fresh CLI observation/configuration without browser grants', async () => {
+  const s = await budgetSession();
+  const initial = await s.get();
+  const skill = await readFile(new URL('../../.agents/skills/doom-decisions/SKILL.md', import.meta.url), 'utf8');
+  const starts = [...skill.matchAll(/`(node scripts\/doom-agent\.mjs start-run [^`]+)`/g)].map(match => match[1]);
+  assert.equal(starts.length, 1, 'One executable start template; no alternate claim path');
+  const values = { ABSOLUTE_LEASE_FILE: s.base[1], OBSERVATION_ID: s.observation.observationId,
+    SESSION_ID: initial.sessionId, REVISION: String(initial.revision) };
+  const args = starts[0].split(/\s+/).slice(2).map(token => values[token] ?? token);
+  assert.equal(s.page.allow, undefined); assert.equal(s.page.allowRun, undefined);
+  const started = await s.cli(args);
+  assert.equal(started.run.active, true); assert.equal(started.run.reserved, 0);
+  assert.equal(s.game.sdkCalls, 0);
+  assert.equal((await s.decide(await s.observe(), started)).outcome, 'completed');
+  await assert.rejects(s.cli(args), /budget-closed/);
 });
 
 it('freezes a configured cap above three across four SDK invocations', async () => {
@@ -212,16 +234,19 @@ it.each(['revision', 'observation', 'session', 'editor'])('burns a claim rejecte
   if (reason === 'editor') s.game.browserInputs.promptEditorOpen = true;
   const result = await s.h.post('start-run', command);
   assert.ok(result.config.error); assert.equal(s.allowance.status, 'closed');
+  assert.equal(s.page.states.at(-1), 'run-unavailable');
   assert.equal(s.game.sdkCalls, 0); assert.equal((await s.get()).run, null);
   await assert.rejects(s.start(), /budget-closed/);
-  assert.equal(s.page.allow(), false);
+  assert.equal(s.page.legacyGrant(), false);
 });
 
-it('fails closed without a configured automatic budget while retaining only explicit legacy grants', async () => {
+it('shows an unavailable run without a budget and exposes no browser grant fallback', async () => {
   const s = await budgetSession({}, createAgentAllowance());
+  assert.equal(s.page.states.at(-1), 'run-unavailable');
+  assert.equal(s.page.allow, undefined); assert.equal(s.page.allowRun, undefined);
   await assert.rejects(s.start(), /budget-unavailable/);
   assert.equal((await s.get()).run, null); assert.equal(s.game.sdkCalls, 0);
-  assert.equal(s.page.allowRun(), true);
+  assert.equal(s.page.legacyRun(), true, 'Lower-level legacy helper remains test-only');
 });
 
 it('issues once for concurrent start commands and closes an ambiguously delivered claim on disconnect', async () => {
@@ -236,9 +261,10 @@ it('issues once for concurrent start commands and closes an ambiguously delivere
   const replacement = harness(s.allowance);
   const page = replacement.browser(fresh => s.game.controller.observe(fresh), { controller: s.game.controller });
   await page.ready;
+  assert.equal(page.states.at(-1), 'run-unavailable');
   const lease = await replacement.post('attach', { ownerId: randomUUID() });
   const observed = (await replacement.post('observe', { ...lease, commandId: randomUUID() })).observation;
-  assert.equal(page.allow(), false); assert.equal(page.allowRun(), false);
+  assert.equal(page.legacyGrant(), false); assert.equal(page.legacyRun(), false);
   await assert.rejects(replacement.post('start-run', { ...lease, commandId: randomUUID(), observationId: observed.observationId, sessionId: observed.sessionId, revision: 0 }), /budget-closed/);
   assert.equal(s.game.sdkCalls, 0);
 });
@@ -267,7 +293,7 @@ it.each(['disconnect', 'deadline'])('burns issuance when the start result is los
   const page = next.browser(); await page.ready;
   const lease = await next.post('attach', { ownerId: randomUUID() });
   await assert.rejects(next.post('start-run', { ...s.command, ...lease, commandId: randomUUID() }), /budget-closed/);
-  assert.equal(page.allowRun(), false);
+  assert.equal(page.legacyRun(), false);
 });
 
 it.each([{ key: '' }, { throwOnCreate: true }])('does not refund or restart a failed configured reservation (%j)', async options => {
@@ -339,7 +365,6 @@ it('delivers a correlated verified PNG through browser, broker and CLI without p
   cleanups.push(() => rm(temporaryRoot, { recursive: true, force: true }));
   const attached = await runAgentCli(['attach'], { transport: h.transport, temporaryRoot });
   assert.ok(isAbsolute(attached.leaseFile));
-  assert.equal(page.states.at(-1), 'attached');
   const result = await runAgentCli(['observe', '--lease', attached.leaseFile], { transport: h.transport });
   assert.ok(isAbsolute(result.pngPath));
   assert.equal(result.pageId, attached.pageId); assert.equal(result.epoch, attached.epoch);
@@ -385,7 +410,7 @@ it('revokes browser-local admission synchronously before server acknowledgement 
     stopAgent() { controllerStops++; },
     async post(path, data) {
       posts.push(path);
-      if (path.endsWith('/register')) return { pageId, pageToken };
+      if (path.endsWith('/register')) return { pageId, pageToken, budgetAvailable: true };
       if (path.endsWith('/revoke')) {
         assert.equal(controllerStops, 1);
         assert.deepEqual(data, { pageId, pageToken, reason: 'user-requested' });
@@ -535,18 +560,18 @@ it('remembers Stop between commands without restoring settings, allowance or acc
   await page.ready;
   const old = await h.post('attach', { ownerId: randomUUID() });
   const observation = (await h.post('observe', { ...old, commandId: randomUUID() })).observation;
-  assert.equal(page.allowRun(), true);
+  assert.equal(page.legacyRun(), true);
   const config = game.controller.agentConfig(old.epoch, observation.sessionId, () => {});
   const scope = { sessionId: config.sessionId, runId: config.run.runId, revision: config.revision };
   page.stop();
-  assert.equal(page.allowRun(), false);
-  assert.equal(page.allow(), false);
+  assert.equal(page.legacyRun(), false);
+  assert.equal(page.legacyGrant(), false);
   assert.equal(game.controller.agentConfig(old.epoch, scope.sessionId, () => {}).error, 'lease-revoked');
   const command = { ...old, commandId: randomUUID() };
   await assert.rejects(h.post('observe', command), /agent-stopped/);
   await assert.rejects(h.post('attach', { ownerId: randomUUID() }), /no-ready-page/);
   const replacement = h.browser(); await replacement.ready;
-  assert.equal(replacement.states.at(-1), 'available');
+  assert.equal(replacement.states.at(-1), 'run-unavailable');
   const next = await h.post('attach', { ownerId: randomUUID() });
   assert.notEqual(next.epoch, old.epoch);
   for (const [op, fields] of [
@@ -680,10 +705,10 @@ it('delivers one controller-selected decision through CLI and never replays or m
   assert.equal(denied.reason, 'no-grant');
   assert.equal(denied.pngPath, null);
   assert.equal(game.sdkCalls, 0);
-  assert.equal(page.allow(), true); // Simulates the browser-only human click.
+  assert.equal(page.legacyGrant(), true); // Legacy controller-only compatibility coverage.
   await assert.rejects(decide(before.observationId), /duplicate-command/);
   const fresh = await observe();
-  assert.equal(page.allow(), true); // Replacement observations require their own deliberate grant.
+  assert.equal(page.legacyGrant(), true); // A legacy grant is tied to its exact observation.
   const result = await decide(fresh.observationId);
   assert.equal(result.outcome, 'completed');
   assert.equal(result.action, 'neutral');
@@ -726,7 +751,7 @@ it.each([
   const base = ['--lease', leaseFile];
   let before = await cli(['observe', ...base]);
   if (budget) await cli(['start-run', ...base, '--observation', before.observationId, '--session', before.sessionId, '--revision', '0']);
-  else assert.equal(page.allowRun(), true); // Legacy prototype grant only when unconfigured.
+  else assert.equal(page.legacyRun(), true); // Legacy prototype grant only when unconfigured.
   const config = await cli(['get-config', ...base, '--session', before.sessionId]);
   const scope = { sessionId: before.sessionId, runId: config.run.runId, revision: config.revision };
   const args = () => ['decide', ...base, '--observation', before.observationId,
@@ -807,7 +832,7 @@ it.each(['stop', 'disconnect', 'second-page'].flatMap(interruption => ['single',
   const lease = await h.post('attach', { ownerId: randomUUID() });
   const observed = await h.post('observe', { ...lease, commandId: randomUUID() });
   if (budget) await h.post('start-run', { ...lease, commandId: randomUUID(), observationId: observed.observation.observationId, sessionId: observed.observation.sessionId, revision: 0 });
-  else assert.equal(bounded ? page.allowRun() : page.allow(), true);
+  else assert.equal(bounded ? page.legacyRun() : page.legacyGrant(), true);
   const prompt = bounded ? game.controller.agentPrompt(lease.epoch, observed.observation.sessionId, () => {}) : null;
   const scope = prompt ? { sessionId: prompt.sessionId, runId: prompt.run.runId, revision: prompt.revision } : {};
   const cli = h.send('decide', { ...lease, commandId: randomUUID(), observationId: observed.observation.observationId, ...scope });
@@ -854,7 +879,7 @@ it('CLI reads and CAS-writes only effective instructions, then uses three indivi
   let observation = await observe();
   const get = () => cli(['get-prompt', ...base, '--session', observation.sessionId]);
   assert.equal((await get()).run, null, 'Read never mints authorization');
-  assert.equal(page.allowRun(), true);
+  assert.equal(page.legacyRun(), true);
   let prompt = await get();
   const file = join(temporaryRoot, 'instructions.txt');
   const instructions = 'Reach the visible opening; previous route may have stalled. Choose the action yourself. {{tics}} tics.';
@@ -884,7 +909,7 @@ it('CLI reads and CAS-writes only effective instructions, then uses three indivi
   }
   observation = await observe();
   assert.equal((await decide(observation)).reason, 'no-grant');
-  assert.equal(page.allowRun(), false);
+  assert.equal(page.legacyRun(), false);
   assert.equal(game.sdkCalls, 3);
   assert.equal(game.inputs[0].questions[0].instructions, instructions.replace('{{tics}}', '6'));
   page.stop();
@@ -900,7 +925,7 @@ it('strict prompt and bounded command shapes reject extra fields and fence forei
   await page.ready;
   const lease = await h.post('attach', { ownerId: randomUUID() });
   const observed = await h.post('observe', { ...lease, commandId: randomUUID() });
-  page.allowRun();
+  page.legacyRun();
   const sessionId = observed.observation.sessionId;
   const read = () => h.post('get-prompt', { ...lease, commandId: randomUUID(), sessionId });
   const state = (await read()).prompt;
@@ -938,30 +963,28 @@ it('rejects credentials and speculative success in the decision response allowli
   }
 });
 
-it('shows authorization revoked when the actual controller replaces its observation or configuration', async () => {
+it('keeps legacy controller grants fenced without browser grant entry points', async () => {
   const game = fixture({ pngFor });
   cleanups.push(() => game.dispose());
   await game.prepare();
   const h = harness();
   const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
-  game.ports.agentGrantRevoked = () => page.authorizationRevoked();
   await page.ready;
   const lease = await h.post('attach', { ownerId: randomUUID() });
-  assert.equal(page.allow(), false, 'Attach alone is insufficient');
+  assert.equal(page.legacyGrant(), false, 'Attach alone is insufficient');
   await h.post('observe', { ...lease, commandId: randomUUID() });
-  assert.equal(page.allow(), true);
-  assert.equal(page.states.at(-1), 'authorized');
+  assert.equal(page.legacyGrant(), true);
+  assert.equal(page.allow, undefined);
+  assert.equal(page.allowRun, undefined);
+  assert.equal(page.authorizationRevoked, undefined);
   const replacement = await h.post('observe', { ...lease, commandId: randomUUID() });
-  assert.equal(page.states.at(-1), 'attached');
   const denied = await h.post('decide', { ...lease, commandId: randomUUID(), observationId: replacement.observation.observationId });
   assert.equal(denied.decision.reason, 'no-grant');
   assert.equal(denied.decision.sdkInvoked, false);
-  assert.equal(page.allow(), true);
+  assert.equal(page.legacyGrant(), true);
   game.controller.configure(() => { game.browserInputs.tics = 12; });
-  assert.equal(page.states.at(-1), 'attached');
   game.controller.configure(() => { game.browserInputs.tics = 6; });
-  assert.equal(page.states.at(-1), 'attached');
-  assert.equal(page.allow(), false, 'Restoring configuration cannot revive the old observation');
+  assert.equal(page.legacyGrant(), false, 'Restoring configuration cannot revive the old observation');
   assert.equal(game.sdkCalls, 0);
   assert.equal(game.gameCalls, 0);
 });
@@ -981,7 +1004,7 @@ it('round-trips config CAS through CLI/broker/browser and shares ephemeral instr
   for (const flag of ['includeReadyWeapon', 'includeAmmo', 'includeHealth', 'includeFacingProbe', 'includePreviousAction'])
     assert.equal(before.configuration[flag], true);
   assert.equal(before.run, null); assert.equal(game.sdkCalls, 0);
-  assert.equal(page.allowRun(), true);
+  assert.equal(page.legacyRun(), true);
   const first = await get();
   const configFile = join(temporaryRoot, 'configuration.json');
   const configuration = { ...first.configuration, includeHealth: false, includeAmmo: false, instructionTemplate: 'Ephemeral route for {{tics}} tics.' };
@@ -1019,7 +1042,7 @@ it('strict config command/result schemas reject missing, extra and nonboolean fi
   const h = harness(); const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
   await page.ready;
   const lease = await h.post('attach', { ownerId: randomUUID() });
-  const observed = await h.post('observe', { ...lease, commandId: randomUUID() }); page.allowRun();
+  const observed = await h.post('observe', { ...lease, commandId: randomUUID() }); page.legacyRun();
   const sessionId = observed.observation.sessionId;
   const get = async () => (await h.post('get-config', { ...lease, commandId: randomUUID(), sessionId })).config;
   const before = await get(); parseAgentConfigResult(before);

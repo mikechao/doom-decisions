@@ -17,7 +17,7 @@ type Stream = Pick<EventSource, 'onmessage' | 'onerror' | 'close'>;
 export type AgentBridgeState =
   | 'available'
   | 'attached'
-  | 'authorized'
+  | 'run-unavailable'
   | 'deciding'
   | 'settled'
   | 'stopped'
@@ -34,8 +34,6 @@ type Ports = {
     scope: AgentScope & { limit: number },
     fresh: () => void,
   ): AgentConfigResult;
-  allow?(epoch: string): boolean;
-  allowRun?(epoch: string): boolean;
   prompt?(
     epoch: string,
     sessionId: string,
@@ -68,6 +66,7 @@ export function startAgentObservationBridge(ports: Ports) {
   let lease: Lease | undefined;
   let processing = false;
   let budgetMode = false;
+  let budgetAvailable = false;
   const seen = new Set<string>();
   // An accepted result can still be awaiting its HTTP acknowledgement when the
   // next command arrives. Stop cancels every transfer still owned by this page.
@@ -137,7 +136,7 @@ export function startAgentObservationBridge(ports: Ports) {
           epoch: data.epoch,
         };
         ports.attach?.(lease.epoch, budgetMode);
-        ports.state('attached');
+        ports.state(budgetAvailable ? 'attached' : 'run-unavailable');
         return;
       }
       if (
@@ -194,6 +193,7 @@ export function startAgentObservationBridge(ports: Ports) {
             { ...scope, limit: data.limit },
             fresh,
           );
+          if ('error' in config) ports.state('run-unavailable');
         } else if (data.type === 'observe')
           observation = await ports.observe(fresh);
         else if (data.type === 'get-config' || data.type === 'set-config') {
@@ -259,10 +259,16 @@ export function startAgentObservationBridge(ports: Ports) {
       })) as {
         pageId: string;
         pageToken: string;
+        budgetAvailable: boolean;
       };
-      if (data.pageId !== ports.pageId || !isAgentId(data.pageToken))
+      if (
+        data.pageId !== ports.pageId ||
+        !isAgentId(data.pageToken) ||
+        typeof data.budgetAvailable !== 'boolean'
+      )
         throw Error('invalid');
       pageToken = data.pageToken;
+      budgetAvailable = data.budgetAvailable;
       if (ended) {
         revoke();
         return;
@@ -274,7 +280,7 @@ export function startAgentObservationBridge(ports: Ports) {
         void message(event.data);
       };
       stream.onerror = () => stop();
-      ports.state('available');
+      ports.state(budgetAvailable ? 'available' : 'run-unavailable');
     } catch {
       stop();
       ports.state('unavailable');
@@ -284,32 +290,5 @@ export function startAgentObservationBridge(ports: Ports) {
     stop: () => stop(true),
     disconnect: () => stop(),
     ready,
-    authorizationRevoked() {
-      if (!ended && lease) ports.state('attached');
-    },
-    allow() {
-      if (
-        budgetMode ||
-        ended ||
-        !lease ||
-        processing ||
-        !ports.allow?.(lease.epoch)
-      )
-        return false;
-      ports.state('authorized');
-      return true;
-    },
-    allowRun() {
-      if (
-        budgetMode ||
-        ended ||
-        !lease ||
-        processing ||
-        !ports.allowRun?.(lease.epoch)
-      )
-        return false;
-      ports.state('attached');
-      return true;
-    },
   };
 }

@@ -19,7 +19,7 @@ vi.mock('../src/agent-browser', () => ({ startAgentObservationBridge: bridge.sta
 const session = vi.hoisted(() => ({
   ports: undefined, factory: undefined,
   controller: { configure: vi.fn(change => { change(); return true; }), initialize: vi.fn(), next: vi.fn(), startContinuous: vi.fn(), stop: vi.fn(),
-    prepare: vi.fn(), close: vi.fn(), restore: vi.fn(), agentPrompt: vi.fn(), agentConfig: vi.fn() },
+    prepare: vi.fn(), close: vi.fn(), restore: vi.fn(), agentPrompt: vi.fn(), agentConfig: vi.fn(), attachAgent: vi.fn(), startAgentRun: vi.fn(), stopAgent: vi.fn() },
 }));
 const agent = vi.hoisted(() => ({ enabled: false, key: '', model: 'typesafe/jev-1.14' }));
 vi.mock('virtual:agent-bootstrap', () => ({
@@ -1137,26 +1137,37 @@ it('pagehide during exchange aborts and prevents late key/initialization restora
   assert.equal(h.values.size, 0);
 });
 
-it('clears the authorization indication when controller invalidation reaches the agent UI', async () => {
+it('exposes watch/Stop and one-time start wiring without browser grant controls', async () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(html, /id="allow-agent(?:-run)?"/);
   agent.enabled = true;
   agent.key = 'offline-agent-browser-dummy';
   vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'agent'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
   const h = browserFixture();
-  await import('../src/main.ts?agent-grant-invalidation');
+  await import('../src/main.ts?agent-watch-and-stop');
   session.ports.present({ iwadEnabled: true });
   ready();
   const ports = bridge.start.mock.calls[0][0];
   const handle = bridge.start.mock.results[0].value;
-  handle.authorizationRevoked = vi.fn(() => ports.state('attached'));
-  ports.state('authorized');
-  assert.equal(h.element('#allow-agent').disabled, true);
-  assert.match(h.element('#agent-status').textContent, /One agent API attempt authorized/);
-  session.ports.agentGrantRevoked();
-  assert.equal(handle.authorizationRevoked.mock.calls.length, 1);
-  assert.equal(h.element('#allow-agent').disabled, false);
+  assert.equal(ports.allow, undefined); assert.equal(ports.allowRun, undefined);
+  assert.equal(session.ports.agentGrantRevoked, undefined);
+  ports.state('available');
+  assert.match(h.element('#agent-status').textContent, /\$doom-decisions play/);
   assert.equal(h.element('#stop-agent').hidden, false);
-  assert.match(h.element('#agent-status').textContent, /Observe a verified frame/);
-  assert.doesNotMatch(h.element('#agent-status').textContent, /attempt authorized/);
+  const scope = { sessionId: 'session', runId: 'broker-run', revision: 0, limit: 30 };
+  const fresh = () => {};
+  ports.startRun('epoch', 'observation', scope, fresh);
+  assert.deepEqual(session.controller.startAgentRun.mock.calls, [['epoch', 'observation', scope, fresh]]);
+  ports.state('run-unavailable');
+  assert.match(h.element('#agent-status').textContent, /AGENT_DECISION_BUDGET/);
+  assert.match(h.element('#agent-status').textContent, /Fully stop and relaunch dev:agent/);
+  assert.match(h.element('#agent-status').textContent, /browser reload and Vite internal restart do not replenish/);
+  h.element('#stop-agent').dispatchEvent(new Event('click'));
+  assert.equal(handle.stop.mock.calls.length, 1);
+  ports.state('stopped');
+  assert.match(h.element('#agent-status').textContent, /Agent stopped.*safe cleanup/);
+  assert.match(h.element('#agent-status').textContent, /Fully stop and relaunch dev:agent/);
+  assert.equal(h.element('#stop-agent').hidden, true);
   assert.equal(session.controller.next.mock.calls.length, 0);
 });
 
@@ -1169,22 +1180,16 @@ it('shows bounded allowance and routes ephemeral agent settings without writing 
   session.ports.present({ iwadEnabled: true });
   ready();
   const ports = bridge.start.mock.calls[0][0];
-  const handle = bridge.start.mock.results[0].value;
-  handle.allowRun = vi.fn();
   ports.state('attached');
-  assert.equal(h.element('#allow-agent-run').hidden, false);
-  h.element('#allow-agent-run').dispatchEvent(new Event('click'));
-  assert.equal(handle.allowRun.mock.calls.length, 1);
-  const authorization = { runId: '00000000-0000-0000-0000-000000000001', active: true, limit: 3, reserved: 1, sdkInvoked: 0, remaining: 2 };
+  const authorization = { runId: '00000000-0000-0000-0000-000000000001', active: true, limit: 30, reserved: 1, sdkInvoked: 0, remaining: 29 };
   const present = state => session.ports.present({ session: {
     phase: 'ready', prepared: true, hasClient: true, verifiedTics: 1,
     evidence: { decisions: [] }, controls: { ready: true, stop: false, tics: true, iwad: false },
     agentAuthorization: state,
   } });
   present(authorization);
-  assert.match(h.element('#agent-run-status').textContent, /2 of 3 attempts remaining · 1 reserved · 0 SDK calls started/);
-  assert.equal(h.element('#allow-agent-run').disabled, true);
-  assert.equal(h.element('#allow-agent').disabled, true);
+  assert.match(h.element('#agent-run-status').textContent, /29 of 30 attempts remaining · 1 reserved · 0 SDK calls started/);
+  assert.equal(ports.allow, undefined); assert.equal(ports.allowRun, undefined);
   h.element('#prompt-dialog').open = false;
   assert.equal(session.ports.promptEditorOpen(), false);
   const saved = session.ports.readDecisionConfiguration();
@@ -1204,11 +1209,14 @@ it('shows bounded allowance and routes ephemeral agent settings without writing 
   assert.equal(session.ports.readDecisionConfiguration(), saved);
   assert.equal(h.element('#prompt-instructions').value, 'Unsaved human instructions');
   assert.equal(h.element('#prompt-ammo').checked, !saved.includeAmmo);
-  assert.match(h.element('#agent-status').textContent, /temporary; Edit Prompt retains human settings/);
+  assert.match(h.element('#agent-status').textContent, /temporary; Configure AI Decision retains human settings/);
   assert.equal(session.ports.readTics(), n);
   h.element('#prompt-dialog').open = true;
   assert.equal(session.ports.promptEditorOpen(), true);
   present({ ...authorization, active: false, remaining: 0 });
-  assert.match(h.element('#agent-run-status').textContent, /run ended · 0 of 3/);
-  assert.equal(h.element('#allow-agent-run').disabled, true, 'Ended run cannot be replenished');
+  assert.match(h.element('#agent-run-status').textContent, /run ended · 0 of 30/);
+  assert.match(h.element('#agent-run-status').textContent, /Fully stop and relaunch dev:agent/);
+  present({ ...authorization, active: false, remaining: 0, reserved: 30, sdkInvoked: 29 });
+  assert.match(h.element('#agent-run-status').textContent, /run exhausted · 0 of 30.*30 reserved · 29 SDK calls/);
+  assert.match(h.element('#agent-run-status').textContent, /browser reload and Vite internal restart do not replenish/);
 });

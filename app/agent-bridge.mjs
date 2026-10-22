@@ -218,7 +218,13 @@ export function createAgentBridge(allowance = createAgentAllowance()) {
         if (page === active) close();
       }, 5000);
       active.connectionTimer.unref();
-      return json(res, 200, { pageId: active.id, pageToken: active.token });
+      return json(res, 200, {
+        pageId: active.id,
+        pageToken: active.token,
+        // Presentation hint only; start-run still performs authoritative issuance.
+        budgetAvailable:
+          allowance.limit !== null && allowance.status === 'unclaimed',
+      });
     }
     if (op === 'revoke' && browser(req)) {
       const intentional =
