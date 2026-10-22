@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { PassThrough, Readable } from 'node:stream';
 import { afterEach, it, vi } from 'vitest';
 import config from '../vite.config.js';
-import { createAgentBridge } from '../agent-bridge.mjs';
+import { createAgentBridge, createAgentAllowance, processAgentAllowance, agentBridgePlugin } from '../agent-bridge.mjs';
 import { startAgentObservationBridge } from '../src/agent-browser.ts';
 import { agentOrigin, agentPath, agentPngBytes, parseAgentObservation, parseAgentDecisionResult } from '../src/agent-observation.ts';
 import { runAgentCli } from '../../scripts/doom-agent.mjs';
@@ -34,8 +34,8 @@ class Reply extends EventEmitter {
     this.onEnd?.(); this.emit('close');
   }
 }
-function harness() {
-  const broker = createAgentBridge();
+function harness(allowance) {
+  const broker = createAgentBridge(allowance);
   cleanups.push(() => broker.close());
   function request(path, { method = 'POST', headers = {}, body = '{}' } = {}) {
     const req = typeof body === 'string' ? Readable.from([body]) : body;
@@ -61,7 +61,8 @@ function harness() {
     const states = [];
     const handle = startAgentObservationBridge({
       pageId: randomUUID(), observe,
-      attach: epoch => network.controller?.attachAgent(epoch),
+      attach: (epoch, budgetMode) => network.controller?.attachAgent(epoch, budgetMode),
+      startRun: (epoch, id, scope, fresh) => network.controller.startAgentRun(epoch, id, scope, fresh),
       allow: epoch => network.controller?.allowAgent(epoch) ?? false,
       allowRun: epoch => network.controller?.allowAgentRun(epoch) ?? false,
       prompt: (epoch, sessionId, fresh, update) => network.controller.agentPrompt(epoch, sessionId, fresh, update),
@@ -94,6 +95,205 @@ function harness() {
   return { broker, request, transport, send, post, browser };
 }
 
+// Existing in-memory protocol and fake SDK, with a configured process allowance.
+async function budgetSession(options = {}, allowance = createAgentAllowance('3'), network = {}) {
+  const game = fixture({ pngFor, ...options });
+  cleanups.push(() => game.dispose());
+  await game.prepare();
+  const h = harness(allowance);
+  const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller, ...network });
+  await page.ready;
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-agent-budget-'));
+  cleanups.push(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const cli = args => runAgentCli(args, { transport: h.transport, temporaryRoot });
+  const { leaseFile, ...lease } = await cli(['attach']);
+  const base = ['--lease', leaseFile];
+  const observe = () => cli(['observe', ...base]);
+  const observation = await observe();
+  const get = () => cli(['get-config', ...base, '--session', observation.sessionId]);
+  const command = { ...lease, commandId: randomUUID(), observationId: observation.observationId, sessionId: observation.sessionId, revision: 0 };
+  const start = () => cli(['start-run', ...base, '--observation', observation.observationId, '--session', observation.sessionId, '--revision', '0']);
+  const decide = (current, config) => cli(['decide', ...base, '--observation', current.observationId,
+    '--session', config.sessionId, '--run', config.run.runId, '--revision', String(config.revision)]);
+  return { game, h, page, allowance, cli, base, lease, observe, observation, get, command, start, decide };
+}
+
+it('snapshots only the configured positive safe-integer cap, including absence and errors, once per process/root', async () => {
+  for (const value of [undefined, '', '  ']) assert.equal(createAgentAllowance(value).limit, null);
+  for (const value of ['1', '3', '30', '9007199254740991']) assert.equal(createAgentAllowance(value).limit, Number(value));
+  for (const value of ['0', '-1', '1.5', '9007199254740992', 'no-budget', '1e2', '+3', 'Infinity']) {
+    assert.throws(() => createAgentAllowance(value), error => !error.message.includes(value) && /AGENT_DECISION_BUDGET/.test(error.message));
+  }
+  for (const value of [undefined, '3', 'invalid']) {
+    const root = join(tmpdir(), randomUUID()); let reads = 0;
+    const load = () => { reads++; return value; };
+    if (value === 'invalid') {
+      assert.throws(() => processAgentAllowance(root, load));
+      assert.throws(() => processAgentAllowance(root, () => { assert.fail('No reread after invalid snapshot'); }));
+    } else {
+      const state = processAgentAllowance(root, load);
+      assert.equal(processAgentAllowance(root, () => { assert.fail('No reread after snapshot'); }), state);
+    }
+    assert.equal(reads, 1);
+  }
+});
+
+it('keeps the process allowance closed across plugin recreation and internal server lifecycle reinitialization', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'doom-agent-config-'));
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, '.env.agent.local'), 'AGENT_DECISION_BUDGET=3\nAGENT_MODEL=jev\n');
+  const resolved = { root, server: { host: '127.0.0.1', port: 5174, strictPort: true } };
+  const first = agentBridgePlugin(); first.configResolved(resolved);
+  const state = processAgentAllowance(root); assert.equal(state.limit, 3);
+  const httpServer = new EventEmitter();
+  first.configureServer({ middlewares: { use() {} }, httpServer });
+  httpServer.emit('close'); assert.equal(state.status, 'closed');
+  await writeFile(join(root, '.env.agent.local'), 'AGENT_DECISION_BUDGET=30\n');
+  vi.resetModules(); // Vite can re-evaluate the plugin module, not just its factory.
+  const { agentBridgePlugin: reloadedPlugin } = await import('../agent-bridge.mjs');
+  const next = reloadedPlugin(); next.configResolved(resolved);
+  next.configureServer({ middlewares: { use() {} }, httpServer: new EventEmitter() });
+  assert.equal(processAgentAllowance(root), state);
+  assert.equal(state.limit, 3); assert.equal(state.status, 'closed');
+  const script = `import {processAgentAllowance} from ${JSON.stringify(new URL('../agent-bridge.mjs', import.meta.url).href)};
+const state = processAgentAllowance(${JSON.stringify(root)});
+console.log(JSON.stringify({limit: state.limit, status: state.status}));`;
+  const restarted = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], { encoding: 'utf8' });
+  assert.equal(restarted.status, 0, restarted.stderr);
+  assert.deepEqual(JSON.parse(restarted.stdout), { limit: 30, status: 'unclaimed' });
+});
+
+it('CLI start-run claims three controller reservations without Allow and cannot replenish or choose a limit', async () => {
+  const s = await budgetSession();
+  assert.equal((await s.get()).run, null); assert.equal(s.allowance.status, 'unclaimed');
+  assert.equal(s.page.allow(), false); assert.equal(s.page.allowRun(), false);
+  assert.equal(s.game.controller.allowAgent(s.lease.epoch), false);
+  assert.equal(s.game.controller.allowAgentRun(s.lease.epoch), false);
+  await assert.rejects(s.cli(['decide', ...s.base, '--observation', s.observation.observationId]), /budget-closed/);
+  for (const extra of [{ limit: 30 }, { runId: randomUUID() }])
+    await assert.rejects(s.h.post('start-run', { ...s.command, ...extra }), /invalid-request/);
+  await assert.rejects(s.cli(['start-run', ...s.base, '--observation', s.observation.observationId, '--session', s.observation.sessionId, '--revision', '0', '--limit', '30']), /Usage:/);
+  assert.equal(s.allowance.status, 'unclaimed');
+  let config = await s.start();
+  assert.equal(config.run.limit, 3); assert.equal(config.run.reserved, 0); assert.equal(s.game.sdkCalls, 0);
+  await assert.rejects(s.start(), /budget-closed/);
+  const revision = await s.h.post('set-config', { ...s.lease, commandId: randomUUID(), sessionId: config.sessionId,
+    runId: config.run.runId, revision: config.revision, configuration: { ...config.configuration, includeAmmo: false } });
+  assert.deepEqual(revision.config.run, config.run);
+  config = revision.config;
+  await assert.rejects(s.h.post('set-config', { ...s.lease, commandId: randomUUID(), sessionId: config.sessionId,
+    runId: config.run.runId, revision: config.revision, configuration: { ...config.configuration, limit: 30 } }), /invalid-request/);
+  for (let i = 1; i <= 3; i++) {
+    const result = await s.decide(await s.observe(), config);
+    assert.equal(result.outcome, 'completed');
+    config = await s.get();
+    assert.equal(config.run.reserved, i); assert.equal(config.run.sdkInvoked, i); assert.equal(config.run.remaining, 3 - i);
+  }
+  assert.equal((await s.decide(await s.observe(), config)).reason, 'no-grant');
+  assert.equal(s.game.sdkCalls, 3);
+  assert.equal(s.page.allowRun(), false);
+  await assert.rejects(s.start(), /budget-closed/);
+});
+
+it('freezes a configured cap above three across four SDK invocations', async () => {
+  const s = await budgetSession({}, createAgentAllowance('30'));
+  const config = await s.start();
+  assert.equal(config.run.limit, 30); assert.equal(config.run.remaining, 30);
+  for (let i = 1; i <= 4; i++) assert.equal((await s.decide(await s.observe(), config)).outcome, 'completed');
+  assert.equal((await s.get()).run.remaining, 26); assert.equal(s.game.sdkCalls, 4);
+});
+
+it.each(['revision', 'observation', 'session', 'editor'])('burns a claim rejected by controller preflight (%s)', async reason => {
+  const s = await budgetSession();
+  const command = { ...s.command };
+  if (reason === 'revision') command.revision++;
+  if (reason === 'observation') command.observationId = randomUUID();
+  if (reason === 'session') command.sessionId = randomUUID();
+  if (reason === 'editor') s.game.browserInputs.promptEditorOpen = true;
+  const result = await s.h.post('start-run', command);
+  assert.ok(result.config.error); assert.equal(s.allowance.status, 'closed');
+  assert.equal(s.game.sdkCalls, 0); assert.equal((await s.get()).run, null);
+  await assert.rejects(s.start(), /budget-closed/);
+  assert.equal(s.page.allow(), false);
+});
+
+it('fails closed without a configured automatic budget while retaining only explicit legacy grants', async () => {
+  const s = await budgetSession({}, createAgentAllowance());
+  await assert.rejects(s.start(), /budget-unavailable/);
+  assert.equal((await s.get()).run, null); assert.equal(s.game.sdkCalls, 0);
+  assert.equal(s.page.allowRun(), true);
+});
+
+it('issues once for concurrent start commands and closes an ambiguously delivered claim on disconnect', async () => {
+  const s = await budgetSession();
+  const pending = s.h.send('start-run', s.command);
+  const concurrent = s.h.send('start-run', { ...s.command, commandId: randomUUID() });
+  assert.equal((await (await concurrent.result.promise).json()).error, 'budget-closed');
+  assert.equal((await (await pending.result.promise).json()).config.run.limit, 3);
+  s.page.disconnect();
+  assert.equal(s.allowance.status, 'closed');
+  await assert.rejects(s.get(), /lease-revoked/);
+  const replacement = harness(s.allowance);
+  const page = replacement.browser(fresh => s.game.controller.observe(fresh), { controller: s.game.controller });
+  await page.ready;
+  const lease = await replacement.post('attach', { ownerId: randomUUID() });
+  const observed = (await replacement.post('observe', { ...lease, commandId: randomUUID() })).observation;
+  assert.equal(page.allow(), false); assert.equal(page.allowRun(), false);
+  await assert.rejects(replacement.post('start-run', { ...lease, commandId: randomUUID(), observationId: observed.observationId, sessionId: observed.sessionId, revision: 0 }), /budget-closed/);
+  assert.equal(s.game.sdkCalls, 0);
+});
+
+it.each(['disconnect', 'deadline'])('burns issuance when the start result is lost (%s)', async reason => {
+  const sent = deferred(), release = deferred();
+  const s = await budgetSession({}, createAgentAllowance('3'), {
+    async post(path, data, _signal, send) {
+      if (path.endsWith('/result') && data.config?.run) { sent.resolve(); await release.promise; }
+      return send();
+    },
+  });
+  if (reason === 'deadline') vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const pending = s.h.send('start-run', s.command);
+  await sent.promise;
+  if (reason === 'deadline') {
+    await vi.advanceTimersByTimeAsync(10000);
+    assert.equal((await (await pending.result.promise).json()).error, 'claim-failed');
+    vi.useRealTimers();
+  } else { pending.destroyed = true; pending.emit('close'); }
+  assert.equal(s.allowance.status, 'closed');
+  release.resolve();
+  await checkpoint(() => s.page.states.at(-1) === 'stopped');
+  assert.equal(s.game.sdkCalls, 0);
+  const next = harness(s.allowance);
+  const page = next.browser(); await page.ready;
+  const lease = await next.post('attach', { ownerId: randomUUID() });
+  await assert.rejects(next.post('start-run', { ...s.command, ...lease, commandId: randomUUID() }), /budget-closed/);
+  assert.equal(page.allowRun(), false);
+});
+
+it.each([{ key: '' }, { throwOnCreate: true }])('does not refund or restart a failed configured reservation (%j)', async options => {
+  const s = await budgetSession(options);
+  const config = await s.start();
+  assert.notEqual((await s.decide(s.observation, config)).outcome, 'completed');
+  const ended = await s.get();
+  assert.equal(ended.run.reserved, 1); assert.equal(ended.run.remaining, 0); assert.equal(ended.run.active, false);
+  assert.equal(ended.run.sdkInvoked, options.key === '' ? 0 : 1);
+  await assert.rejects(s.start(), /budget-closed/);
+});
+
+it('configured Stop during SDK read preserves reader ownership and old-lease Stop attribution', async () => {
+  const s = await budgetSession({ delayedHeaders: true });
+  const config = await s.start();
+  const pending = s.decide(s.observation, config).catch(error => error.message);
+  await checkpoint(() => s.game.sdkCalls === 1);
+  s.page.stop();
+  assert.equal(s.game.view.session.controls.ready, false);
+  await assert.rejects(s.get(), /agent-stopped/);
+  s.game.releaseHeaders(); s.game.releaseBody();
+  await pending;
+  await checkpoint(() => s.game.view.session.controls.ready);
+  assert.equal(s.game.sdkCalls, 1); assert.equal(s.allowance.status, 'closed');
+});
+
 it('gates routes to agent serve, uses a deterministic strict loopback port and preserves production CSP', () => {
   for (const mode of ['development', 'impeccable', 'production']) {
     for (const command of ['serve', 'build']) {
@@ -105,7 +305,7 @@ it('gates routes to agent serve, uses a deterministic strict loopback port and p
   const raw = config({ command: 'serve', mode: 'agent' });
   assert.equal(raw.server.host, '127.0.0.1'); assert.equal(raw.server.port, 5174); assert.equal(raw.server.strictPort, true);
   const plugin = raw.plugins.find(p => p.name === 'agent-observation-bridge');
-  plugin.configResolved({ server: raw.server });
+  plugin.configResolved({ root: join(tmpdir(), randomUUID()), server: raw.server });
   assert.throws(() => plugin.configResolved({ server: { ...raw.server, port: 5175 } }));
   assert.throws(() => plugin.configResolved({ server: { ...raw.server, strictPort: false } }));
   assert.throws(() => config({ command: 'build', mode: 'agent' }));
@@ -197,7 +397,7 @@ it('revokes browser-local admission synchronously before server acknowledgement 
   });
   await handle.ready;
   const send = data => events.onmessage({ data: JSON.stringify(data) });
-  send({ type: 'attached', pageId, epoch, ownerId });
+  send({ type: 'attached', pageId, epoch, ownerId, budgetMode: false });
   send({ type: 'observe', pageId, epoch, ownerId, commandId: randomUUID() });
   handle.stop();
   handle.stop(); // No second revoke or local Stop.
@@ -509,12 +709,14 @@ it.each([
   { terminal: 'death', signals: death, reservation: 1 },
   { terminal: 'exit pending', signals: exit, reservation: 1 },
   { terminal: 'death', signals: death, reservation: 3 },
-])('preserves verified $terminal through CLI stdout/PNG on reservation $reservation', async ({ signals, reservation }) => {
+  { terminal: 'death', signals: death, reservation: 3, budget: '3' },
+  { terminal: 'exit pending', signals: exit, reservation: 3, budget: '3' },
+])('preserves verified $terminal through CLI stdout/PNG on reservation $reservation (budget $budget)', async ({ signals, reservation, budget }) => {
   const consumed = (reservation - 1) * 6 + 2;
   const game = fixture({ pngFor, at: consumed, signals });
   cleanups.push(() => game.dispose());
   await game.prepare();
-  const h = harness();
+  const h = harness(createAgentAllowance(budget));
   const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
   await page.ready;
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-agent-terminal-'));
@@ -523,7 +725,8 @@ it.each([
   const { leaseFile, ...lease } = await cli(['attach']);
   const base = ['--lease', leaseFile];
   let before = await cli(['observe', ...base]);
-  assert.equal(page.allowRun(), true); // One synthetic browser grant for all reservations.
+  if (budget) await cli(['start-run', ...base, '--observation', before.observationId, '--session', before.sessionId, '--revision', '0']);
+  else assert.equal(page.allowRun(), true); // Legacy prototype grant only when unconfigured.
   const config = await cli(['get-config', ...base, '--session', before.sessionId]);
   const scope = { sessionId: before.sessionId, runId: config.run.runId, revision: config.revision };
   const args = () => ['decide', ...base, '--observation', before.observationId,
@@ -581,11 +784,12 @@ globalThis.fetch = async (url, options) => {
   assert.equal(game.sdkCalls, reservation);
   assert.equal(game.gameCalls, consumed);
 });
-it.each(['stop', 'disconnect', 'second-page'].flatMap(interruption => [false, true].map(bounded => ({ interruption, bounded }))))('$interruption revokes controller admission (bounded=$bounded) and never delivers a late paid result', async ({ interruption, bounded }) => {
+it.each(['stop', 'disconnect', 'second-page'].flatMap(interruption => ['single', 'legacy', 'configured'].map(mode => ({ interruption, bounded: mode !== 'single', budget: mode === 'configured' ? '3' : undefined }))))('$interruption revokes controller admission (bounded=$bounded, budget=$budget) and never delivers a late paid result', async ({ interruption, bounded, budget }) => {
   const game = fixture({ pngFor, delayedBody: true });
   cleanups.push(() => game.dispose());
   await game.prepare();
-  const h = harness();
+  const allowance = createAgentAllowance(budget);
+  const h = harness(allowance);
   let controllerStopped = false;
   const controller = {
     ...game.controller,
@@ -602,7 +806,8 @@ it.each(['stop', 'disconnect', 'second-page'].flatMap(interruption => [false, tr
   await page.ready;
   const lease = await h.post('attach', { ownerId: randomUUID() });
   const observed = await h.post('observe', { ...lease, commandId: randomUUID() });
-  assert.equal(bounded ? page.allowRun() : page.allow(), true);
+  if (budget) await h.post('start-run', { ...lease, commandId: randomUUID(), observationId: observed.observation.observationId, sessionId: observed.observation.sessionId, revision: 0 });
+  else assert.equal(bounded ? page.allowRun() : page.allow(), true);
   const prompt = bounded ? game.controller.agentPrompt(lease.epoch, observed.observation.sessionId, () => {}) : null;
   const scope = prompt ? { sessionId: prompt.sessionId, runId: prompt.run.runId, revision: prompt.revision } : {};
   const cli = h.send('decide', { ...lease, commandId: randomUUID(), observationId: observed.observation.observationId, ...scope });
@@ -630,6 +835,7 @@ it.each(['stop', 'disconnect', 'second-page'].flatMap(interruption => [false, tr
   assert.equal(game.gameCalls, 0);
   assert.equal(game.view.session.controls.ready, true);
   if (bounded) assert.equal(game.controller.allowAgentRun(lease.epoch), false);
+  if (budget) assert.equal(allowance.status, 'closed');
 });
 
 it('CLI reads and CAS-writes only effective instructions, then uses three individually verified bounded decisions', async () => {

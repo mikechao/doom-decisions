@@ -242,7 +242,7 @@ function renderAgentControls() {
     busy || agentControlsState === 'authorized' || !!authorization;
   $('#agent-run-status').hidden = !attached || !authorization;
   $('#agent-run-status').textContent = authorization
-    ? `Agent run ${authorization.active ? 'authorized' : 'ended'} · ${authorization.remaining} of 3 attempts remaining · ${authorization.reserved} reserved · ${authorization.sdkInvoked} SDK calls started. Stop cannot undo charges.`
+    ? `Agent run ${authorization.active ? 'authorized' : 'ended'} · ${authorization.remaining} of ${authorization.limit} attempts remaining · ${authorization.reserved} reserved · ${authorization.sdkInvoked} SDK calls started. Stop cannot undo charges.`
     : '';
   $('#agent-status').hidden = false;
   $('#agent-status').textContent = {
@@ -441,7 +441,9 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
       },
       events: (path) => new EventSource(path),
       observe: (fresh) => controller.observe(fresh),
-      attach: (epoch) => controller.attachAgent(epoch),
+      attach: (epoch, budgetMode) => controller.attachAgent(epoch, budgetMode),
+      startRun: (epoch, id, scope, fresh) =>
+        controller.startAgentRun(epoch, id, scope, fresh),
       allow: (epoch) => controller.allowAgent(epoch),
       allowRun: (epoch) => controller.allowAgentRun(epoch),
       prompt: (epoch, sessionId, fresh, update) =>

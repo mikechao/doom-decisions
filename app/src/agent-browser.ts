@@ -27,7 +27,13 @@ type Ports = {
   post(path: string, data: unknown, signal?: AbortSignal): Promise<unknown>;
   events(path: string): Stream;
   observe(assertFresh: () => void): Promise<AgentObservation>;
-  attach?(epoch: string): void;
+  attach?(epoch: string, budgetMode: boolean): void;
+  startRun?(
+    epoch: string,
+    observationId: string,
+    scope: AgentScope & { limit: number },
+    fresh: () => void,
+  ): AgentConfigResult;
   allow?(epoch: string): boolean;
   allowRun?(epoch: string): boolean;
   prompt?(
@@ -61,6 +67,7 @@ export function startAgentObservationBridge(ports: Ports) {
   let stream: Stream | undefined;
   let lease: Lease | undefined;
   let processing = false;
+  let budgetMode = false;
   const seen = new Set<string>();
   // An accepted result can still be awaiting its HTTP acknowledgement when the
   // next command arrives. Stop cancels every transfer still owned by this page.
@@ -122,12 +129,14 @@ export function startAgentObservationBridge(ports: Ports) {
       )
         throw Error('invalid');
       if (data.type === 'attached' && !lease) {
+        if (typeof data.budgetMode !== 'boolean') throw Error('invalid');
+        budgetMode = data.budgetMode;
         lease = {
           pageId: data.pageId,
           ownerId: data.ownerId,
           epoch: data.epoch,
         };
-        ports.attach?.(lease.epoch);
+        ports.attach?.(lease.epoch, budgetMode);
         ports.state('attached');
         return;
       }
@@ -137,6 +146,7 @@ export function startAgentObservationBridge(ports: Ports) {
           Object.fromEntries(
             Object.entries(data).filter(([key]) => key !== 'type'),
           ),
+          true,
         ) ||
         !lease ||
         data.epoch !== lease.epoch ||
@@ -175,6 +185,15 @@ export function startAgentObservationBridge(ports: Ports) {
             scope,
           );
           if (!ended) ports.state('settled');
+        } else if (data.type === 'start-run') {
+          if (!budgetMode || !ports.startRun || !scope)
+            throw Error('unavailable');
+          config = ports.startRun(
+            admitted.epoch,
+            data.observationId,
+            { ...scope, limit: data.limit },
+            fresh,
+          );
         } else if (data.type === 'observe')
           observation = await ports.observe(fresh);
         else if (data.type === 'get-config' || data.type === 'set-config') {
@@ -217,7 +236,9 @@ export function startAgentObservationBridge(ports: Ports) {
               ? { decision }
               : data.type === 'observe'
                 ? { observation }
-                : data.type === 'get-config' || data.type === 'set-config'
+                : data.type === 'get-config' ||
+                    data.type === 'set-config' ||
+                    data.type === 'start-run'
                   ? { config }
                   : { prompt }),
           },
@@ -267,13 +288,25 @@ export function startAgentObservationBridge(ports: Ports) {
       if (!ended && lease) ports.state('attached');
     },
     allow() {
-      if (ended || !lease || processing || !ports.allow?.(lease.epoch))
+      if (
+        budgetMode ||
+        ended ||
+        !lease ||
+        processing ||
+        !ports.allow?.(lease.epoch)
+      )
         return false;
       ports.state('authorized');
       return true;
     },
     allowRun() {
-      if (ended || !lease || processing || !ports.allowRun?.(lease.epoch))
+      if (
+        budgetMode ||
+        ended ||
+        !lease ||
+        processing ||
+        !ports.allowRun?.(lease.epoch)
+      )
         return false;
       ports.state('attached');
       return true;

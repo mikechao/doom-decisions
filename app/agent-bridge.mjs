@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { parseEnv } from 'node:util';
 import {
   agentOrigin,
   agentPath,
@@ -13,8 +16,56 @@ import {
   parseAgentConfigResult,
 } from './src/agent-control.ts';
 
+const budgetError =
+  'Set AGENT_DECISION_BUDGET in app/.env.agent.local to a positive safe integer, then stop and relaunch dev:agent.';
+export function createAgentAllowance(value) {
+  const text = value?.trim() ?? '';
+  const limit = text === '' ? null : Number(text);
+  if (
+    text !== '' &&
+    (!/^[1-9][0-9]*$/.test(text) || !Number.isSafeInteger(limit))
+  )
+    throw Error(budgetError);
+  return {
+    get limit() {
+      return limit;
+    },
+    status: 'unclaimed',
+    claim: null,
+  };
+}
+// Vite can reload/bundle this module on internal restart. Only nonsecret issuance
+// state lives on the actual process; no SDK/reservation counters or credentials.
+export function processAgentAllowance(
+  root,
+  load = () => {
+    try {
+      return parseEnv(readFileSync(join(root, '.env.agent.local'), 'utf8'))
+        .AGENT_DECISION_BUDGET;
+    } catch (error) {
+      if (error.code === 'ENOENT') return undefined;
+      throw Error(budgetError);
+    }
+  },
+) {
+  const key = Symbol.for('doom-decisions.agent-allowances');
+  process[key] ??= new Map();
+  const registry = process[key];
+  const name = resolve(root);
+  if (!registry.has(name)) {
+    try {
+      registry.set(name, createAgentAllowance(load()));
+    } catch {
+      registry.set(name, new Error(budgetError));
+    }
+  }
+  const state = registry.get(name);
+  if (state instanceof Error) throw state;
+  return state;
+}
+
 // One page, one lease, one outstanding observation. No queue, retry or durable state.
-export function createAgentBridge() {
+export function createAgentBridge(allowance = createAgentAllowance()) {
   let page;
   // Only the most recently closed lease, with no grants/config/results. This
   // survives registration of a replacement page but can never authorize it.
@@ -31,6 +82,7 @@ export function createAgentBridge() {
   const event = (data) =>
     page?.stream?.write(`data: ${JSON.stringify(data)}\n\n`);
   function close(error = 'lease-revoked') {
+    if (allowance.limit !== null) allowance.status = 'closed';
     const old = page;
     page = undefined;
     if (!old) return;
@@ -39,7 +91,12 @@ export function createAgentBridge() {
     clearInterval(old.heartbeat);
     if (old.pending) {
       clearTimeout(old.pending.timer);
-      fail(old.pending.res, error);
+      fail(
+        old.pending.res,
+        old.pending.op === 'start-run' && error === 'lease-revoked'
+          ? 'claim-failed'
+          : error,
+      );
     }
     old.stream?.end();
   }
@@ -141,6 +198,7 @@ export function createAgentBridge() {
       if (!shape(data, ['pageId']) || !isAgentId(data.pageId))
         return fail(res, 'invalid-request', 400);
       if (page) {
+        if (allowance.limit !== null) allowance.status = 'closed';
         // A second page never takes over. Revoke the existing lease and fence the
         // original page too; both pages must reload after the ambiguity is removed.
         event({ type: 'revoked' });
@@ -185,7 +243,11 @@ export function createAgentBridge() {
         ownerId: data.ownerId,
         epoch: randomUUID(),
       };
-      event({ type: 'attached', ...page.lease });
+      event({
+        type: 'attached',
+        ...page.lease,
+        budgetMode: allowance.limit !== null,
+      });
       return json(res, 200, page.lease);
     }
     if (
@@ -196,6 +258,7 @@ export function createAgentBridge() {
         'set-prompt',
         'get-config',
         'set-config',
+        'start-run',
       ].includes(op) &&
       cli(req)
     ) {
@@ -213,8 +276,31 @@ export function createAgentBridge() {
         );
       if (page.conflict) return fail(res, 'multiple-pages');
       if (page.seen.has(data.commandId)) return fail(res, 'duplicate-command');
+      if (op === 'start-run') {
+        if (allowance.limit === null) return fail(res, 'budget-unavailable');
+        if (allowance.status !== 'unclaimed') return fail(res, 'budget-closed');
+      }
+      // A configured broker never forwards legacy/unclaimed decision admission,
+      // even if a stale page still exposes the prototype Allow controls.
+      if (
+        op === 'decide' &&
+        allowance.limit !== null &&
+        (allowance.status !== 'issued' ||
+          !allowance.claim ||
+          ['pageId', 'ownerId', 'epoch', 'sessionId', 'runId'].some(
+            (key) => data[key] !== allowance.claim[key],
+          ))
+      )
+        return fail(res, 'budget-closed');
       if (page.pending) return fail(res, 'observation-busy');
       page.seen.add(data.commandId);
+      if (op === 'start-run') {
+        // Atomic, nonrefundable issuance BEFORE page dispatch/preflight or I/O.
+        allowance.status = 'issued';
+        data.runId = randomUUID();
+        data.limit = allowance.limit;
+        allowance.claim = { ...data };
+      }
       const active = page;
       const pending = {
         commandId: data.commandId,
@@ -222,6 +308,7 @@ export function createAgentBridge() {
         observationId: data.observationId,
         sessionId: data.sessionId,
         runId: data.runId,
+        revision: data.revision,
         res,
       };
       active.pending = pending;
@@ -257,7 +344,8 @@ export function createAgentBridge() {
             : page?.pending?.op === 'observe'
               ? 'observation'
               : page.pending.op === 'get-config' ||
-                  page.pending.op === 'set-config'
+                  page.pending.op === 'set-config' ||
+                  page.pending.op === 'start-run'
                 ? 'config'
                 : 'prompt',
         ],
@@ -298,16 +386,39 @@ export function createAgentBridge() {
           )
             throw Error('correlation');
         }
-        if (pending.op === 'get-config' || pending.op === 'set-config') {
+        if (
+          pending.op === 'get-config' ||
+          pending.op === 'set-config' ||
+          pending.op === 'start-run'
+        ) {
           config = parseAgentConfigResult(data.config);
           if (
             !('error' in config) &&
             (config.sessionId !== pending.sessionId ||
               (active.sessionId && active.sessionId !== config.sessionId) ||
-              (pending.op === 'set-config' &&
+              ((pending.op === 'set-config' || pending.op === 'start-run') &&
                 config.run?.runId !== pending.runId))
           )
             throw Error('correlation');
+          if (
+            !('error' in config) &&
+            allowance.limit !== null &&
+            config.run &&
+            (config.run.limit !== allowance.limit ||
+              config.run.runId !== allowance.claim?.runId)
+          )
+            throw Error('cap');
+          if (pending.op === 'start-run') {
+            if ('error' in config) allowance.status = 'closed';
+            else if (
+              !config.run?.active ||
+              config.run.reserved !== 0 ||
+              config.run.sdkInvoked !== 0 ||
+              config.run.remaining !== allowance.limit ||
+              config.revision !== pending.revision
+            )
+              throw Error('claim');
+          }
         }
         if (pending.op === 'observe' && data.observation !== null)
           observation = parseAgentObservation(data.observation);
@@ -362,6 +473,7 @@ export function createAgentBridge() {
 }
 
 export function agentBridgePlugin() {
+  let allowance;
   return {
     name: 'agent-observation-bridge',
     configResolved(config) {
@@ -374,9 +486,10 @@ export function agentBridgePlugin() {
         throw Error(
           'Agent bridge requires http://127.0.0.1:5174 with strictPort.',
         );
+      allowance = processAgentAllowance(config.root);
     },
     configureServer(server) {
-      const bridge = createAgentBridge();
+      const bridge = createAgentBridge(allowance);
       server.middlewares.use(bridge.middleware);
       server.httpServer?.once('close', bridge.close);
     },

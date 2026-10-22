@@ -3,6 +3,7 @@ import {
   agentRunLimit,
   parseAgentConfiguration,
   validAgentInstructions,
+  validAgentLimit,
   type AgentConfigResult,
   type AgentRunState,
   type AgentScope,
@@ -10,6 +11,7 @@ import {
 } from './agent-control.ts';
 import {
   agentPngBytes,
+  isAgentId,
   type AgentDecisionResult,
   type AgentObservation,
 } from './agent-observation.ts';
@@ -253,6 +255,8 @@ export function createSessionController(
   let agentLease:
     | {
         epoch: string;
+        budgetMode: boolean;
+        startClaimed?: boolean;
         configuration?: DecisionConfiguration;
         grant?: NonNullable<typeof observed>;
         bounded?: BoundedAgentRun;
@@ -299,10 +303,11 @@ export function createSessionController(
     return true;
   }
   const configure = (change: () => void) => changeConfiguration(change);
-  function attachAgent(epoch: string) {
+  function attachAgent(epoch: string, budgetMode = false) {
     check(!agentLease && !pageExited, 'Agent already attached or page exited.');
     agentLease = {
       epoch,
+      budgetMode,
       configuration: Object.freeze({
         instructionTemplate:
           ports.readDecisionConfiguration().instructionTemplate,
@@ -315,7 +320,7 @@ export function createSessionController(
     };
     observed = undefined;
   }
-  function allowAgent(epoch: string) {
+  function grantAgentCheckpoint(epoch: string) {
     const run = current;
     if (
       !agentLease ||
@@ -339,10 +344,17 @@ export function createSessionController(
     agentLease.grant = observed; // Authorize this exact verified checkpoint only.
     return true;
   }
+  function allowAgent(epoch: string) {
+    return !agentLease?.budgetMode && grantAgentCheckpoint(epoch);
+  }
   function allowAgentRun(epoch: string) {
     // Reuse the exact ready-checkpoint admission, then replace only the newly
     // created single grant. A lease can never replenish a bounded authorization.
     if (!allowAgent(epoch)) return false;
+    beginAgentRun(crypto.randomUUID(), agentRunLimit);
+    return true;
+  }
+  function beginAgentRun(runId: string, limit: number) {
     const run = current;
     check(run && agentLease, 'Agent unavailable.');
     agentLease.grant = undefined;
@@ -350,16 +362,44 @@ export function createSessionController(
       run,
       configuration: configurationIdentity(),
       state: {
-        runId: crypto.randomUUID(),
+        runId,
         active: true,
-        limit: agentRunLimit,
+        limit,
         reserved: 0,
         sdkInvoked: 0,
-        remaining: agentRunLimit,
+        remaining: limit,
       },
     };
     display(run);
-    return true;
+  }
+  function startAgentRun(
+    epoch: string,
+    observationId: string,
+    scope: AgentScope & { limit: number },
+    assertLease: () => void,
+  ): AgentConfigResult {
+    try {
+      assertLease();
+    } catch {
+      return { error: 'lease-revoked' };
+    }
+    if (!agentLease || agentLease.epoch !== epoch)
+      return { error: 'lease-revoked' };
+    if (!agentLease.budgetMode) return { error: 'budget-unavailable' };
+    if (agentLease.startClaimed) return { error: 'budget-closed' };
+    agentLease.startClaimed = true; // Broker issuance is never refunded locally either.
+    if (!validAgentLimit(scope.limit) || !isAgentId(scope.runId))
+      return { error: 'claim-failed' };
+    const config = agentConfig(epoch, scope.sessionId, assertLease);
+    if ('error' in config) return config;
+    if (scope.revision !== configurationRevision)
+      return { error: 'revision-conflict' };
+    if (ports.promptEditorOpen?.()) return { error: 'editor-open' };
+    if (!observed || observed.id !== observationId)
+      return { error: 'stale-observation' };
+    if (!grantAgentCheckpoint(epoch)) return { error: 'not-ready' };
+    beginAgentRun(scope.runId, scope.limit);
+    return agentConfig(epoch, scope.sessionId, assertLease);
   }
   function agentConfig(
     epoch: string,
@@ -1289,7 +1329,7 @@ export function createSessionController(
       return rejected('stale-observation');
     if (bounded) {
       bounded.state.reserved++; // Synchronous valid admission; never refunded.
-      bounded.state.remaining = agentRunLimit - bounded.state.reserved;
+      bounded.state.remaining = bounded.state.limit - bounded.state.reserved;
       observed = undefined; // Exact observation is consumed even on pre-create failure.
     }
     const agent: AgentRun = {
@@ -1593,6 +1633,7 @@ export function createSessionController(
     attachAgent,
     allowAgent,
     allowAgentRun,
+    startAgentRun,
     agentPrompt,
     agentConfig,
     stopAgent,

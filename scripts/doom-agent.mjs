@@ -44,17 +44,19 @@ export async function runAgentCli(args, { transport = fetch, temporaryRoot = tmp
     return { ...lease, leaseFile };
   }
   const deciding = [5, 11].includes(args.length) && args[0] === 'decide' && args[3] === '--observation' && isAgentId(args[4]);
-  const configCommand = args[0] === 'get-config' || args[0] === 'set-config';
+  const starting = args.length === 9 && args[0] === 'start-run' && args[3] === '--observation' && args[5] === '--session' && args[7] === '--revision' && /^(0|[1-9][0-9]*)$/.test(args[8]);
+  const configCommand = args[0] === 'get-config' || args[0] === 'set-config' || starting;
   const getting = args.length === 5 && ['get-prompt', 'get-config'].includes(args[0]) && args[3] === '--session';
   const setting = args.length === 11 && ['set-prompt', 'set-config'].includes(args[0]) && args[3] === '--session';
-  if (((args.length === 3 && args[0] === 'observe') || deciding || getting || setting) && args[1] === '--lease' && isAbsolute(args[2])) {
+  if (((args.length === 3 && args[0] === 'observe') || deciding || getting || setting || starting) && args[1] === '--lease' && isAbsolute(args[2])) {
     const lease = leaseValue(JSON.parse(await readFile(args[2], 'utf8')));
     // Same observation always reserves the same decision ID. Retrying can never
     // submit a second decision, even after an HTTP timeout/lost response.
     const commandId = deciding ? args[4] : randomUUID();
     const command = {
-      ...lease, commandId, ...(deciding ? { observationId: args[4] } : {}),
+      ...lease, commandId, ...(deciding || starting ? { observationId: args[4] } : {}),
     };
+    if (starting) Object.assign(command, { sessionId: args[6], revision: Number(args[8]) });
     if (getting || setting) command.sessionId = args[4];
     if (setting || (deciding && args.length === 11)) {
       const offset = setting ? 5 : 7;
@@ -72,14 +74,15 @@ export async function runAgentCli(args, { transport = fetch, temporaryRoot = tmp
     const op = args[0];
     if (!validAgentCommand(op, command)) throw Error('Invalid command.');
     const result = await post(op, command);
-    const field = deciding ? 'decision' : getting || setting ? configCommand ? 'config' : 'prompt' : 'observation';
+    const field = deciding ? 'decision' : getting || setting || starting ? configCommand ? 'config' : 'prompt' : 'observation';
     if (Object.keys(result).sort().join(',') !== ['commandId', 'epoch', field, 'pageId'].sort().join(',') ||
         result.pageId !== lease.pageId || result.epoch !== lease.epoch || result.commandId !== commandId)
       throw Error('Invalid command correlation.');
-    if (getting || setting) {
+    if (getting || setting || starting) {
       const prompt = configCommand ? parseAgentConfigResult(result.config) : parseAgentPromptResult(result.prompt);
       if ('error' in prompt) throw Error(prompt.error);
       if (prompt.sessionId !== command.sessionId || (setting && prompt.run?.runId !== command.runId)) throw Error('Invalid prompt correlation.');
+      if (starting && (!prompt.run?.active || prompt.revision !== command.revision)) throw Error('claim-failed');
       return { pageId: lease.pageId, epoch: lease.epoch, commandId, ...prompt };
     }
     const decision = deciding ? parseAgentDecisionResult(result.decision) : null;
@@ -99,7 +102,7 @@ export async function runAgentCli(args, { transport = fetch, temporaryRoot = tmp
     if (decision) return { ...correlation, ...decision, observation: metadata };
     return { ...correlation, ...metadata };
   }
-  throw Error('Usage: node scripts/doom-agent.mjs attach | observe --lease FILE | get-prompt/get-config --lease FILE --session ID | set-prompt --lease FILE --session ID --run ID --revision N --instructions-file FILE | set-config --lease FILE --session ID --run ID --revision N --config-file FILE | decide --lease FILE --observation ID [--session ID --run ID --revision N] (absolute files required)');
+  throw Error('Usage: node scripts/doom-agent.mjs attach | observe --lease FILE | start-run --lease FILE --observation ID --session ID --revision N | get-prompt/get-config --lease FILE --session ID | set-prompt --lease FILE --session ID --run ID --revision N --instructions-file FILE | set-config --lease FILE --session ID --run ID --revision N --config-file FILE | decide --lease FILE --observation ID [--session ID --run ID --revision N] (absolute files required)');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
