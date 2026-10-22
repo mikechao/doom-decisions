@@ -207,6 +207,24 @@ formatter retains unavailable markers and previous-action eligibility/omissions.
   intermediate movement and unchanged sampled boundaries, but proves neither
   a hit nor door activation or the cause of no movement.
 
+- **Timing and momentum:** 35 tics = 1 simulated Doom second; the usual 6-tic
+  duration is ~0.171 simulated seconds, independent of API or wall-clock latency.
+  `forward` accelerates existing momentum; `forwardmove = 25` is a command
+  magnitude, not 25 map units/tic or a travel-distance multiplier. Consecutive
+  forward actions can cover progressively more ground. Waiting between provider
+  calls runs no simulation tics and does not dissipate momentum; a neutral action
+  may still move the player while friction reduces existing momentum.
+- **Measured references:** An unobstructed native Freedoom Phase 1 E1M1
+  calibration measured ~14 and ~30 map units in the first and next consecutive
+  6-tic forward intervals from rest; the first and next consecutive 35-tic
+  intervals covered ~214 and ~289 units. No neutral tics intervened. These are
+  scene-specific references, not guarantees when blocked, sliding, airborne,
+  damaged, teleported or starting with different momentum.
+- Favor verified x/y/angle/tic observations, `previousAction.text` (read directly
+  as above) and screenshots over reference distances. Low displacement suggests
+  limited progress; by itself it neither proves collision nor establishes wall
+  contact.
+
 Coordinates retain raw native fixed-point values and angle retains unsigned raw
 bits. Observations are detached snapshots, never proof of future admission.
 The strict DTO rejects extra or missing keys, including nested objects. The
