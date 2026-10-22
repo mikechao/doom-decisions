@@ -220,6 +220,42 @@ return only saved instruction text and nonsecret control state. Another observat
 previous identity. A manual decision or saved configuration change invalidates it.
 `phase: ready` describes the capture boundary, not guaranteed future readiness.
 
+Agent observations expose all five eligible Game State signals independently of
+the five Decisions inclusion toggles. The toggles still govern the existing
+Decisions request formatter; this observation extension changes no defaults,
+saved settings, instructions or request payload semantics.
+
+- `telemetry.readyWeapon` is the normalized nullable `{id, name, ammoType}`;
+  `telemetry.ammo` is nullable inventory with `bullets`, `shells`, `cells`, and
+  `rockets`, each `{current, max}`. Zero quantities/capacities are preserved;
+  values are not clamped or converted to percentages. Ammo type is sampled
+  independently of weapon name (`none`/`unknown` remain valid). Legacy weapon ID
+  and current-count scalars remain alongside these structures.
+- `telemetry.health` retains native numeric player health and existing
+  ready/terminal eligibility. XY remains native fixed-point and angle raw bits.
+- `facingProbe` is `{tic, kind, door, distance}` qualified for the verified frame.
+  Unavailable/unknown kind 0, ineligible and terminal evidence exports as `null`.
+  Kind 1 is a valid **no relevant line** sample (`door: 0, distance: -1`),
+  distinct from unavailable. Kinds 2–5 mean solid line, opening/clearance
+  restriction, recognized manual-door boundary, and other special line of unknown
+  physical meaning. Door values 0/1/2 mean no recognized manual-door metadata,
+  recognized metadata with unknown usability, and a front-side manual-door use
+  candidate. Distances for kinds 2–5 are approximate integer Doom units, 0–64.
+  This forward center ray within 64 units cannot prove player-radius clearance,
+  traversability, keys, door activity or successful use. See the
+  [native enum contract](../docs/issue-18-facing-probe.md).
+- `previousAction` adds the existing outcome `text` to `{action, tics, endTic}`.
+  Receipt-derived text retains signed displacement/intermediate/stationary
+  meaning without rederivation. Matching resulting frame/tic/XY eligibility is
+  mandatory; initial, ineligible and terminal outcomes are `null`. Neither the
+  text nor XY endpoints prove collision, hits, door activation or why movement
+  did not occur.
+
+These fields come from the existing verified capture, with no additional Worker
+operations or gameplay tics. Payloads are deeply detached; the shared broker/CLI
+parser requires exact keys at every object boundary. The CLI carries all evidence
+unchanged, replacing PNG data only with a verified local file path.
+
 **Attach and observe never authorize charges.** After viewing that PNG, the human
 must click **Allow 1 Agent Decision** in the attached browser page. This grants
 one attempt for this page/lease epoch and the current verified observation with
@@ -340,8 +376,9 @@ reservations the run ends; there is no fourth permitted create or automatic rest
 The skill reasons in the foreground between individual calls, reads actual allowance
 with get-prompt and stops at exhaustion, goal completion, conflicts or ambiguity. It
 does not choose action identifiers or treat unchanged XY, screenshots or previousAction
-as proof of collision/door availability. Rich collision/facing evidence remains in
-the browser. Prompt changes provide a feedback channel for persistent context; this
+as proof of collision/door availability. Qualified facing evidence and existing
+previous-action text are exported as documented above; movement-event collision
+masks remain browser-only. Prompt changes provide a feedback channel for persistent context; this
 small experiment does not establish that context improves navigation statistically.
 Start a fresh Codex conversation here if the skill picker is stale.
 

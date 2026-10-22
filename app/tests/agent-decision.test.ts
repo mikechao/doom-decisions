@@ -192,6 +192,7 @@ it('returns verified terminal prefixes/PNG and retires uncertain or unverifiable
       assert.equal(result.verifiedTics, options.trapAt ? 1 : options.faults ? 6 : 2);
       assert.equal(result.observation?.tic ?? null, retired ? null : 3);
       assert.equal(result.observation?.previousAction ?? null, null, 'No terminal or unverified candidate is exposed');
+      assert.equal(result.observation?.facingProbe ?? null, null, 'No terminal living geometry is exposed');
       assert.equal(h.view.session.controls.ready, false);
       assert.equal(h.sdkCalls, 1);
       assert.equal(result.completionUncertain, !!options.trapAt);
@@ -330,13 +331,26 @@ it('revokes authorization when the observation is replaced at the same tic/confi
   });
 });
 
-it('returns the just-verified forward action immediately, consistent with the next passive observation', async () => {
-  await session({ choice: { answers: [{ type: 'choice', name: 'next_action', choice: 'forward' }] } }, async ({ h, observation, allow, decide }) => {
+it('returns all eligible evidence with flags off, including the existing displacement text', async () => {
+  await session({ decisionConfiguration: { ...defaultDecisionConfiguration,
+    includeReadyWeapon: false, includeAmmo: false, includeHealth: false,
+    includeFacingProbe: false, includePreviousAction: false },
+    onStep(next, previous, mask) {
+      next.native.x = previous.native.x + (mask === 1 ? 65536 : 0);
+      Object.assign(next.native, { facingKind: 3, facingDoor: 2, facingDistance: 24 });
+    },
+    choice: { answers: [{ type: 'choice', name: 'next_action', choice: 'forward' }] } }, async ({ h, observation, allow, decide }) => {
+    assert.equal(observation.previousAction, null);
     allow();
     const result = parseAgentDecisionResult(await decide());
     assert.equal(result.outcome, 'completed');
-    const expected = { action: 'forward', tics: 6, endTic: 7 };
+    const expected = { action: 'forward', tics: 6, endTic: 7,
+      text: 'Previous verified action: forward (6 tics).\nPlayer XY displacement: dx=6, dy=0 Doom units; net translation observed.' };
     assert.deepEqual(result.observation.previousAction, expected);
+    assert.deepEqual(result.observation.facingProbe, { tic: 7, kind: 3, door: 2, distance: 24 });
+    assert.deepEqual(result.observation.telemetry.ammo, observation.telemetry.ammo);
+    assert.deepEqual(result.observation.telemetry.readyWeapon, observation.telemetry.readyWeapon);
+    assert.equal(h.view.session.inspectorRequests[1].context, 'Current rendered Doom frame at verified tic 1.');
     assert.equal(result.observation.tic, 7);
     assert.equal(result.observation.sessionId, observation.sessionId);
     const passive = await h.controller.observe(() => {});
@@ -345,8 +359,23 @@ it('returns the just-verified forward action immediately, consistent with the ne
     assert.equal(passive.tic, result.observation.tic);
     assert.equal(passive.frame.nativeSha256, result.observation.frame.nativeSha256);
     assert.notEqual(passive.observationId, result.observation.observationId, 'Each capture retains its distinct identity');
+    result.observation.previousAction.text = 'Mutated protocol copy';
+    assert.deepEqual((await h.controller.observe(() => {})).previousAction, expected);
     assert.equal(h.sdkCalls, 1);
     assert.equal(h.gameCalls, 6);
+  });
+});
+
+it('omits receipt-ineligible previous actions despite a verified ready resulting frame', async () => {
+  await session({ onStep(next, _previous, mask) {
+    if (mask === 1) next.native.x = next.counters.gametic === 2 ? 2147483648 : -65536;
+  }, choice: { answers: [{ type: 'choice', name: 'next_action', choice: 'forward' }] } }, async ({ h, allow, decide }) => {
+    allow();
+    const result = parseAgentDecisionResult(await decide());
+    assert.equal(result.outcome, 'completed');
+    assert.equal(result.observation.previousAction, null);
+    assert.equal((await h.controller.observe(() => {})).previousAction, null);
+    assert.equal(h.sdkCalls, 1); assert.equal(h.gameCalls, 6);
   });
 });
 
@@ -370,7 +399,8 @@ it('reserves three independent verified actions in one session without allowing 
       const result = parseAgentDecisionResult(await b.decide(current.observationId));
       assert.equal(result.outcome, 'completed');
       assert.equal(result.observation.sessionId, observation.sessionId);
-      assert.deepEqual(result.observation.previousAction, { action: 'forward', tics: 6, endTic: 1 + 6 * i });
+      assert.deepEqual(result.observation.previousAction, { action: 'forward', tics: 6, endTic: 1 + 6 * i,
+        text: 'Previous verified action: forward (6 tics).\nPlayer XY displacement: dx=0, dy=0 Doom units; unchanged at each recorded tic boundary.\nNo net displacement observed; cause unknown.' });
       assert.deepEqual(b.read().run, { runId: b.scope().runId, active: i < 3, limit: 3, reserved: i, sdkInvoked: i, remaining: 3 - i });
       current = await h.controller.observe(() => {});
       assert.deepEqual(current.previousAction, result.observation.previousAction);

@@ -729,6 +729,7 @@ export function createSessionController(
     );
     const p = after.native;
     const previous = previousActionAt(previousAction, after);
+    const probe = run.terminal ? undefined : facingProbeAt(after);
     run.sessionId ??= crypto.randomUUID();
     const result: AgentObservation = structuredClone({
       observationId: crypto.randomUUID(),
@@ -749,15 +750,19 @@ export function createSessionController(
         shells: p.ammo?.shells.current ?? null,
         cells: p.ammo?.cells.current ?? null,
         rockets: p.ammo?.rockets.current ?? null,
+        readyWeapon: p.readyWeapon,
+        ammo: p.ammo,
         x: p.x,
         y: p.y,
         angle: p.angle,
       },
+      facingProbe: probe && probe.kind !== 0 ? probe : null,
       previousAction: previous
         ? {
             action: previous.action,
             tics: previous.tics,
             endTic: previous.endTic,
+            text: previous.text,
           }
         : null,
       png,

@@ -36,7 +36,11 @@ export function agentObservation(): AgentObservation {
     observationId: randomUUID(), sessionId: randomUUID(), tic: 1, phase: 'ready',
     frame: { tic: 1, nativeSha256: hash, canvasSha256: hash },
     counters: { gametic: 1, leveltime: 1, render: 3, frame: 3 },
-    telemetry: { health: 100, weaponId: 1, bullets: 50, shells: 0, cells: 0, rockets: 0, x: 0, y: 0, angle: 0 },
+    telemetry: { health: 100, weaponId: 1, bullets: 50, shells: 0, cells: 0, rockets: 0,
+      readyWeapon: { id: 1, name: 'pistol', ammoType: 'bullets' },
+      ammo: { bullets: { current: 50, max: 200 }, shells: { current: 0, max: 50 }, cells: { current: 0, max: 300 }, rockets: { current: 0, max: 50 } },
+      x: 0, y: 0, angle: 0 },
+    facingProbe: null,
     previousAction: null, png,
     pngSha256: createHash('sha256').update(Buffer.from(png.slice(22), 'base64')).digest('hex'),
   };

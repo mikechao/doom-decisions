@@ -125,6 +125,10 @@ it('rejects malformed requests and foreign hosts/origins without echoing input',
 it('delivers a correlated verified PNG through browser, broker and CLI without printing base64', async () => {
   const h = harness();
   const observation = agentObservation();
+  observation.tic = observation.frame.tic = observation.counters.gametic = 7;
+  observation.facingProbe = { tic: 7, kind: 4, door: 2, distance: 24 };
+  observation.previousAction = { action: 'forward', tics: 6, endTic: 7,
+    text: 'Previous verified action: forward (6 tics).\nPlayer XY displacement: dx=6, dy=0 Doom units; net translation observed.' };
   const page = h.browser(async fresh => { fresh(); return structuredClone(observation); });
   await page.ready;
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-agent-test-'));
@@ -135,7 +139,9 @@ it('delivers a correlated verified PNG through browser, broker and CLI without p
   const result = await runAgentCli(['observe', '--lease', attached.leaseFile], { transport: h.transport });
   assert.ok(isAbsolute(result.pngPath));
   assert.equal(result.pageId, attached.pageId); assert.equal(result.epoch, attached.epoch);
-  assert.equal(result.sessionId, observation.sessionId); assert.equal(result.tic, 1);
+  assert.equal(result.sessionId, observation.sessionId); assert.equal(result.tic, 7);
+  const { png: _png, ...metadata } = observation;
+  for (const [key, value] of Object.entries(metadata)) assert.deepEqual(result[key], value);
   assert.deepEqual(await readFile(result.pngPath), Buffer.from(agentPngBytes(observation.png)));
   assert.equal(JSON.stringify(result).includes('base64'), false);
   assert.deepEqual((await readdir(join(attached.leaseFile, '..'))).sort(), [`${result.commandId}.png`, 'lease.json'].sort());
@@ -442,7 +448,8 @@ it('CLI reads and CAS-writes only effective instructions, then uses three indivi
     const result = await decide(observation);
     assert.equal(result.outcome, 'completed');
     assert.equal(result.observation.sessionId, prompt.sessionId);
-    assert.deepEqual(result.observation.previousAction, { action: 'neutral', tics: 6, endTic: i * 6 + 1 });
+    assert.deepEqual(result.observation.previousAction, { action: 'neutral', tics: 6, endTic: i * 6 + 1,
+      text: 'Previous verified action: neutral (6 tics).' });
     assert.ok((await readFile(result.pngPath)).length > 33);
     await assert.rejects(decide(observation), /duplicate-command/);
     prompt = await get();

@@ -2,16 +2,18 @@ import assert from 'node:assert/strict';
 import { afterEach, it, vi } from 'vitest';
 import { agentPngBytes, parseAgentObservation } from '../src/agent-observation.ts';
 import { cleanup, fixture } from './fixtures/session.ts';
-import { pngFor } from './fixtures/agent.ts';
-import { death } from './fixtures/synthetic-doom.ts';
+import { agentObservation, pngFor } from './fixtures/agent.ts';
+import { death, observation } from './fixtures/synthetic-doom.ts';
+import { defaultDecisionConfiguration } from '../src/decision-request.ts';
+import { facingObservationValid } from '../src/worker-shared.ts';
 
 afterEach(cleanup);
-function session() {
+function session(settings = {}) {
   const providerFactory = {
     probe: () => ({ status: 'Offline observation', evidence: { provider: 'offline' } }),
     create: vi.fn(() => assert.fail('Observation must never construct a provider')),
   };
-  const h = fixture({ key: '', providerFactory });
+  const h = fixture({ key: '', providerFactory, ...settings });
   const capture = h.ports.capture;
   h.ports.capture = () => {
     const { rgba } = capture();
@@ -35,16 +37,132 @@ it('exports a fresh detached verified PNG/state with no key, provider or gamepla
     assert.equal(result.counters.render, before.counters.render + 1);
     assert.equal(h.gameCalls, 0);
     assert.equal(h.sdkCalls, 0);
+    assert.deepEqual(h.gameOps, ['snapshot', 'render', 'snapshot', 'snapshot']);
     assert.equal(providerFactory.create.mock.calls.length, 0);
-    assert.deepEqual(Object.keys(result).sort(), ['counters', 'frame', 'observationId', 'phase', 'png', 'pngSha256', 'previousAction', 'sessionId', 'telemetry', 'tic']);
+    assert.deepEqual(Object.keys(result).sort(), ['counters', 'facingProbe', 'frame', 'observationId', 'phase', 'png', 'pngSha256', 'previousAction', 'sessionId', 'telemetry', 'tic']);
+    assert.deepEqual(result.telemetry.readyWeapon, before.native.readyWeapon);
+    assert.deepEqual(result.telemetry.ammo, before.native.ammo);
+    assert.equal(result.previousAction, null);
+    assert.equal(result.facingProbe, null);
     const sessionId = result.sessionId;
     result.frame.tic = 99; result.telemetry.health = 0;
+    result.telemetry.readyWeapon.name = 'unknown';
+    result.telemetry.ammo.bullets.current = 999;
+    result.telemetry.ammo.shells.max = 999;
     const again = await h.controller.observe(() => {});
+    assert.deepEqual(again.telemetry.readyWeapon, before.native.readyWeapon);
+    assert.deepEqual(again.telemetry.ammo, before.native.ammo);
+    assert.deepEqual(h.native.observe().native, before.native);
     assert.equal(again.sessionId, sessionId);
     assert.equal(again.frame.tic, 1);
     assert.equal(again.counters.render, result.counters.render + 1);
     assert.equal(h.view.session.controls.ready, true);
   } finally { await h.dispose(); }
+});
+
+it('exports qualified facing and normalized inventory even when all inclusion flags are off', async () => {
+  const { h } = session({ decisionConfiguration: { ...defaultDecisionConfiguration,
+    includeReadyWeapon: false, includeAmmo: false, includeHealth: false,
+    includeFacingProbe: false, includePreviousAction: false },
+    onStep(next) { Object.assign(next.native, { facingKind: 4, facingDoor: 2, facingDistance: 24 }); },
+  });
+  try {
+    await h.prepare();
+    const result = parseAgentObservation(await h.controller.observe(() => {}));
+    assert.equal(result.telemetry.health, 100);
+    assert.deepEqual(result.telemetry.readyWeapon, { id: 1, name: 'pistol', ammoType: 'bullets' });
+    assert.deepEqual(result.telemetry.ammo, agentObservation().telemetry.ammo);
+    assert.deepEqual(result.facingProbe, { tic: 1, kind: 4, door: 2, distance: 24 });
+    assert.equal(Object.isFrozen(result.facingProbe), false, 'Protocol clone is independent of frozen helper output');
+    result.facingProbe.distance = 0;
+    assert.equal((await h.controller.observe(() => {})).facingProbe.distance, 24);
+    assert.equal(h.gameCalls, 0); assert.equal(h.sdkCalls, 0);
+  } finally { await h.dispose(); }
+});
+
+it('preserves nullable inventory and distinguishes unavailable from a valid no-line sample', async () => {
+  for (const kind of [0, 1]) {
+    const { h } = session({ onStep(next) {
+      Object.assign(next.native, { readyWeapon: null, ammo: null, facingKind: kind });
+    } });
+    try {
+      await h.prepare();
+      const result = parseAgentObservation(await h.controller.observe(() => {}));
+      for (const key of ['readyWeapon', 'ammo', 'weaponId', 'bullets', 'shells', 'cells', 'rockets'])
+        assert.equal(result.telemetry[key], null);
+      assert.deepEqual(result.facingProbe, kind === 0 ? null : { tic: 1, kind: 1, door: 0, distance: -1 });
+    } finally { await h.dispose(); }
+  }
+});
+
+it('retires stale or contradictory native probes before exporting an observation', async () => {
+  for (const patch of [{ collisionSampleTic: 0 }, { facingKind: 4, facingDoor: 0, facingDistance: 24 }]) {
+    const { h } = session({ mutateResult(data, result, _frame, ready) {
+      if (ready && data.op === 'snapshot') Object.assign(result.native, patch);
+    } });
+    try {
+      await h.prepare();
+      await assert.rejects(h.controller.observe(() => {}), /verification failed/);
+      assert.equal(h.view.session.phase, 'error');
+      assert.equal(h.gameCalls, 0); assert.equal(h.sdkCalls, 0);
+    } finally { await h.dispose(); }
+  }
+});
+
+it('strictly validates nested inventory, facing and previous-action protocol values', () => {
+  const original = agentObservation();
+  original.tic = original.frame.tic = original.counters.gametic = 7;
+  original.facingProbe = { tic: 7, kind: 4, door: 2, distance: 24 };
+  original.previousAction = { action: 'forward', tics: 6, endTic: 7, text: 'Existing verified outcome text.' };
+  parseAgentObservation(original);
+  for (const mutate of [
+    d => { delete d.telemetry.ammo; },
+    d => { d.telemetry.readyWeapon.extra = 1; },
+    d => { d.telemetry.readyWeapon.name = 'laser'; },
+    d => { d.telemetry.readyWeapon.ammoType = 'laser'; },
+    d => { d.telemetry.readyWeapon.id = 2; },
+    d => { d.telemetry.readyWeapon = null; },
+    d => { d.telemetry.ammo = null; },
+    d => { delete d.telemetry.ammo.rockets; },
+    d => { d.telemetry.ammo.shells.extra = 1; },
+    d => { d.telemetry.ammo.cells.max = 1.5; },
+    d => { d.telemetry.ammo.bullets.current = 51; },
+    d => { d.facingProbe.tic = 6; },
+    d => { d.facingProbe.extra = 1; },
+    d => { d.facingProbe.kind = 0; },
+    d => { d.facingProbe.kind = 6; },
+    d => { d.facingProbe.door = 3; },
+    d => { d.facingProbe.distance = 65; },
+    d => { d.facingProbe.distance = 1.5; },
+    d => { d.previousAction.endTic = 6; },
+    d => { d.previousAction.tics = 7; },
+    d => { delete d.previousAction.text; },
+    d => { d.previousAction.text = ''; },
+    d => { d.previousAction.text = 1; },
+    d => { d.previousAction.extra = 1; },
+    d => { d.phase = 'terminal'; d.facingProbe = null; },
+    d => { d.phase = 'terminal'; d.previousAction = null; },
+  ]) {
+    const data = structuredClone(original); mutate(data);
+    assert.throws(() => parseAgentObservation(data), /Invalid agent observation/);
+  }
+  const terminal = structuredClone(original);
+  terminal.phase = 'terminal'; terminal.telemetry.health = 0;
+  terminal.previousAction = terminal.facingProbe = null;
+  parseAgentObservation(terminal);
+});
+
+it('matches the native facing enum combinations, distance boundaries and no-line representation', () => {
+  for (let kind = 0; kind <= 5; kind++) for (let door = 0; door <= 2; door++) {
+    for (const distance of [-1, 0, 24, 64, 65]) {
+      const native = observation(1);
+      Object.assign(native.native, { facingKind: kind, facingDoor: door, facingDistance: distance });
+      const data = agentObservation();
+      data.facingProbe = { tic: 1, kind, door, distance };
+      if (kind > 0 && facingObservationValid(native)) parseAgentObservation(data);
+      else assert.throws(() => parseAgentObservation(data));
+    }
+  }
 });
 it('owns admission only while observing and safely drains a locally revoked snapshot', async () => {
   const { h } = session();

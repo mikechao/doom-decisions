@@ -1,4 +1,6 @@
 import { masks, type ActionName } from './decision.ts';
+import type { FacingProbe } from './facing-probe.ts';
+import type { NativeObservation } from './worker-shared.ts';
 
 // Deliberately small allowlist: no prompts, provider objects, errors or credentials.
 export type AgentObservation = {
@@ -20,11 +22,19 @@ export type AgentObservation = {
     shells: number | null;
     cells: number | null;
     rockets: number | null;
+    readyWeapon: NativeObservation['readyWeapon'];
+    ammo: NativeObservation['ammo'];
     x: number;
     y: number;
     angle: number;
   };
-  previousAction: { action: ActionName; tics: number; endTic: number } | null;
+  facingProbe: FacingProbe | null;
+  previousAction: {
+    action: ActionName;
+    tics: number;
+    endTic: number;
+    text: string;
+  } | null;
   png: string;
   pngSha256: string;
 };
@@ -81,6 +91,7 @@ export function parseAgentObservation(value: unknown): AgentObservation {
     'frame',
     'counters',
     'telemetry',
+    'facingProbe',
     'previousAction',
     'png',
     'pngSha256',
@@ -117,23 +128,100 @@ export function parseAgentObservation(value: unknown): AgentObservation {
     'shells',
     'cells',
     'rockets',
+    'readyWeapon',
+    'ammo',
     'x',
     'y',
     'angle',
   ]);
-  requireValue(Object.values(telemetry).every((n) => n === null || integer(n)));
+  requireValue(
+    ['weaponId', 'bullets', 'shells', 'cells', 'rockets'].every(
+      (key) => telemetry[key] === null || integer(telemetry[key]),
+    ),
+  );
   requireValue(
     ['health', 'x', 'y', 'angle'].every((key) => integer(telemetry[key])),
   );
   requireValue(data.phase === 'terminal' || Number(telemetry.health) > 0);
-  if (data.previousAction !== null) {
-    const previous = object(data.previousAction, ['action', 'tics', 'endTic']);
+  if (telemetry.readyWeapon === null) requireValue(telemetry.weaponId === null);
+  else {
+    const weapon = object(telemetry.readyWeapon, ['id', 'name', 'ammoType']);
+    requireValue(integer(weapon.id) && weapon.id === telemetry.weaponId);
     requireValue(
-      typeof previous.action === 'string' &&
+      typeof weapon.name === 'string' &&
+        typeof weapon.ammoType === 'string' &&
+        [
+          'fist',
+          'pistol',
+          'shotgun',
+          'chaingun',
+          'rocket_launcher',
+          'plasma_rifle',
+          'bfg9000',
+          'chainsaw',
+          'super_shotgun',
+          'unknown',
+        ].includes(String(weapon.name)) &&
+        ['bullets', 'shells', 'cells', 'rockets', 'none', 'unknown'].includes(
+          String(weapon.ammoType),
+        ),
+    );
+  }
+  const ammoTypes = ['bullets', 'shells', 'cells', 'rockets'];
+  if (telemetry.ammo === null)
+    requireValue(ammoTypes.every((key) => telemetry[key] === null));
+  else {
+    const ammo = object(telemetry.ammo, ammoTypes);
+    for (const key of ammoTypes) {
+      const quantity = object(ammo[key], ['current', 'max']);
+      requireValue(
+        integer(quantity.current) &&
+          integer(quantity.max) &&
+          quantity.current === telemetry[key],
+      );
+    }
+  }
+  if (data.facingProbe !== null) {
+    const probe = object(data.facingProbe, ['tic', 'kind', 'door', 'distance']);
+    requireValue(data.phase === 'ready' && probe.tic === data.tic);
+    requireValue(
+      integer(probe.kind) &&
+        Number(probe.kind) >= 1 &&
+        Number(probe.kind) <= 5 &&
+        integer(probe.door) &&
+        Number(probe.door) >= 0 &&
+        Number(probe.door) <= 2,
+    );
+    if (probe.kind === 1)
+      requireValue(probe.door === 0 && probe.distance === -1);
+    else {
+      requireValue(
+        integer(probe.distance) &&
+          Number(probe.distance) >= 0 &&
+          Number(probe.distance) <= 64,
+      );
+      if (probe.kind === 2) requireValue(probe.door !== 2);
+      if (probe.kind === 4) requireValue(probe.door !== 0);
+      if (probe.kind === 5) requireValue(probe.door === 0);
+    }
+  }
+  if (data.previousAction !== null) {
+    const previous = object(data.previousAction, [
+      'action',
+      'tics',
+      'endTic',
+      'text',
+    ]);
+    requireValue(
+      data.phase === 'ready' &&
+        typeof previous.action === 'string' &&
         Object.hasOwn(masks, previous.action) &&
         integer(previous.tics) &&
         Number(previous.tics) > 0 &&
-        previous.endTic === data.tic,
+        previous.endTic === data.tic &&
+        Number(previous.tics) < Number(data.tic) &&
+        typeof previous.text === 'string' &&
+        previous.text.length > 0,
     );
   }
   requireValue(typeof data.png === 'string');

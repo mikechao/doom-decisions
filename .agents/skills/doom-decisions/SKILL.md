@@ -39,8 +39,9 @@ From the repository root:
    verified action/tics/outcome; visual interpretation and confidence; navigation
    hypothesis; progress/stall evidence; one next high-level objective; actual run
    counters. Separate hypotheses from verified native facts. XY endpoints or a
-   screenshot do not prove a collision or door usability. Rich collision/facing
-   metadata is browser-only and is NOT exported in the observation.
+   screenshot do not prove a collision or door usability. Use the qualified
+   `facingProbe` and existing `previousAction.text` with the limitations below;
+   movement-event collision masks remain browser-only.
 5. When useful, write ONLY high-level instructions to a temporary absolute UTF-8
    text file (maximum 16000 characters), retaining useful saved instructions and
    `{{tics}}`. Include uncertainty explicitly, e.g. a possible opening rather
@@ -87,6 +88,44 @@ are required after Stop/disconnect; no reconnect, replay or rearming.
 
 The separate **Allow 1 Agent Decision** control retains Slice B semantics. It is
 not a reusable run grant and is not a fallback to extend `play`.
+
+## Verified Game State observation contract
+
+Every observation exports all five eligible signals regardless of the human's
+Decisions inclusion toggles. Those toggles still control only Decisions request
+text; this observation contract does not change their defaults or ownership.
+
+- `telemetry.readyWeapon`: normalized `{id, name, ammoType}` or `null`. Ammo type
+  is independently sampled; `none` and `unknown` are valid values. Legacy
+  `weaponId` remains available.
+- `telemetry.ammo`: `bullets`, `shells`, `cells`, `rockets`, each `{current, max}`,
+  or `null`. Zero is a value. These are native quantities/capacities, without
+  clamping, percentages or inferred firing counts. Legacy current-count fields
+  remain available.
+- `telemetry.health`: numeric native player health. Ready captures require
+  living eligibility; terminal captures are not ready gameplay evidence.
+- `facingProbe`: `{tic, kind, door, distance}` for the current verified frame,
+  or `null` when unavailable (including kind 0), ineligible or terminal. Kind 1
+  means no relevant line on the forward center ray within 64 Doom units; it has
+  `door: 0, distance: -1` and is distinct from `null`. Kind 2 is a solid line,
+  3 an opening/clearance restriction, 4 a recognized manual-door boundary,
+  5 another special line with unknown physical meaning. For kinds 2–5, distance
+  is approximate integer Doom units (0–64). Door 0 means no recognized manual-door
+  metadata, 1 recognized metadata with unknown usability, 2 a front-side manual-door
+  use candidate. This center ray does not prove full player clearance,
+  traversability, keys, door activity or successful activation.
+- `previousAction`: `{action, tics, endTic, text}` from the independently verified
+  action receipt and matching resulting frame/tic/XY, or `null` initially,
+  when ineligible or terminal. Read the existing text directly; do not rederive
+  displacement or reverse-parse it. It can distinguish signed displacement,
+  intermediate movement and unchanged sampled boundaries, but proves neither
+  a hit nor door activation or the cause of no movement.
+
+Coordinates retain raw native fixed-point values and angle retains unsigned raw
+bits. Observations are detached snapshots, never proof of future admission.
+The strict DTO rejects extra or missing keys, including nested objects. The
+broker and CLI use the same parser; CLI output retains every evidence field and
+replaces only PNG data with its verified local `pngPath`.
 
 If the picker does not discover this project skill, start a fresh Codex
 conversation from this worktree. Do not alter global Codex configuration.
