@@ -16,6 +16,9 @@ import {
 // One page, one lease, one outstanding observation. No queue, retry or durable state.
 export function createAgentBridge() {
   let page;
+  // Only the most recently closed lease, with no grants/config/results. This
+  // survives registration of a replacement page but can never authorize it.
+  let terminal;
   const json = (res, status, data) => {
     if (res.destroyed || res.writableEnded) return;
     res.writeHead(status, {
@@ -27,15 +30,16 @@ export function createAgentBridge() {
   const fail = (res, error, status = 409) => json(res, status, { error });
   const event = (data) =>
     page?.stream?.write(`data: ${JSON.stringify(data)}\n\n`);
-  function close() {
+  function close(error = 'lease-revoked') {
     const old = page;
     page = undefined;
     if (!old) return;
+    if (old.lease) terminal = { ...old.lease, error };
     clearTimeout(old.connectionTimer);
     clearInterval(old.heartbeat);
     if (old.pending) {
       clearTimeout(old.pending.timer);
-      fail(old.pending.res, 'lease-revoked');
+      fail(old.pending.res, error);
     }
     old.stream?.end();
   }
@@ -159,9 +163,15 @@ export function createAgentBridge() {
       return json(res, 200, { pageId: active.id, pageToken: active.token });
     }
     if (op === 'revoke' && browser(req)) {
-      if (!shape(data, ['pageId', 'pageToken']) || !ownsPage(data))
+      const intentional =
+        shape(data, ['pageId', 'pageToken', 'reason']) &&
+        data.reason === 'user-requested';
+      if (
+        (!intentional && !shape(data, ['pageId', 'pageToken'])) ||
+        !ownsPage(data)
+      )
         return fail(res, 'lease-revoked');
-      close();
+      close(intentional ? 'agent-stopped' : 'lease-revoked');
       return json(res, 200, { stopped: true });
     }
     if (op === 'attach' && cli(req)) {
@@ -191,7 +201,16 @@ export function createAgentBridge() {
     ) {
       if (!validAgentCommand(op, data))
         return fail(res, 'invalid-request', 400);
-      if (!ownsLease(data)) return fail(res, 'lease-revoked');
+      if (!ownsLease(data))
+        return fail(
+          res,
+          terminal &&
+            data.pageId === terminal.pageId &&
+            data.ownerId === terminal.ownerId &&
+            data.epoch === terminal.epoch
+            ? terminal.error
+            : 'lease-revoked',
+        );
       if (page.conflict) return fail(res, 'multiple-pages');
       if (page.seen.has(data.commandId)) return fail(res, 'duplicate-command');
       if (page.pending) return fail(res, 'observation-busy');

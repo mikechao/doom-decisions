@@ -15,6 +15,24 @@ authorize charges. Only the human's browser click does. The existing Decisions
 provider selects EVERY low-level action; never inject an action or duration or
 ask the provider to choose a particular action identifier.
 
+**Termination takes priority throughout `play`:** immediately after EVERY CLI
+call, inspect its exit status and structured result before further reasoning,
+planning, image viewing, settings changes or tool calls. `{"error":"agent-stopped"}`
+means the broker received a validated human **Stop Agent** request: reply
+`Agent stopped by user. Ending play.` and end this invocation immediately.
+Make no further observe/decide/get/set/attach/retry calls and do not recover or
+reattach. `lease-revoked`, disconnect, deadline/transport failure or ambiguous
+output also ends this invocation, without claiming the human clicked Stop.
+Report exhausted allowance as normal completion only when returned run counters
+show `reserved === limit` and zero remaining; inactive authorization alone is
+not proof of exhaustion. All other stop/conflict/uncertainty rules still apply.
+This rule applies on every iteration of observe → plan → decide → verify.
+
+Cancellation is cooperative at the next CLI/tool-result boundary; this Markdown
+skill cannot preempt an active Codex reasoning turn. Stop between calls may need
+one next old-lease call to discover revocation; it must fail without another
+gameplay action. Never make an extra discovery call after a terminal result.
+
 The human starts `npm --prefix app run dev:agent` and manually opens
 `http://127.0.0.1:5174/`. Wait for their page to reach verified ready. Reuse that
 server; a busy port is not permission to start another one.
@@ -74,8 +92,7 @@ From the repository root:
    result, uncertain consumption, unavailable image viewing or achieved goal.
    Tell the human to click **Stop Agent** when ending early or after exhaustion.
    Do not seek another run or switch to single-grant/manual mode to extend the
-   cap. On explicit request, one non-billable get-prompt/observe with the old lease
-   can verify rejection. Manual controls resume only after safe settlement.
+   cap. Manual controls resume only after safe settlement.
 
 Never automatically retry ANY command or replace a stopped/stale lease. Decision
 command IDs are tied to observation IDs and remain spent even on rejection. Run

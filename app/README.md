@@ -313,6 +313,24 @@ independent manual/Continuous attempt. No automatic reconnect or grant occurs.
 Reload and explicitly attach again after Stop/disconnect. A second page revokes
 the existing attachment rather than taking it over.
 
+After local Stop, the browser attempts a `user-requested` revoke before explicitly
+closing its stream, bounded to one second. A validated revoke returns HTTP 409
+`{"error":"agent-stopped"}` to a pending CLI command independently of SDK/native
+cleanup. The broker remembers only the most recently closed lease's identity and
+terminal error, so the next old-lease command also receives it, including while
+a replacement page is attached. This record contains no authorization or settings.
+Disconnects, deadlines and failed reason delivery remain `lease-revoked`; they
+must not be described as a human Stop. An accepted result before revoke remains
+valid; the next command discovers termination. Exhaustion retains its normal run
+counters and is distinct from revocation.
+
+`$doom-decisions play` checks every CLI result before continuing. On `agent-stopped`
+it ends with `Agent stopped by user. Ending play.` and makes no further calls.
+This is cooperative cancellation at the next tool-result boundary, not forced
+preemption while Codex is thinking. One next old-lease call may discover Stop
+between commands; local/controller fences prevent another gameplay admission.
+No recovery, reattachment or replenishment occurs within the stopped invocation.
+
 While an agent decision owns the controller, manual Next, Continuous, observation,
 second agent decisions and saved prompt/model changes are rejected at controller
 boundaries. Tics and the selected policy's configuration are frozen before asynchronous work;

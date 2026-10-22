@@ -883,7 +883,7 @@ $('#iwad').addEventListener('change', () => {
   if (file) selectIwad(file, file.name, 'local');
 });
 window.addEventListener('pagehide', () => {
-  agentBridge?.stop();
+  agentBridge?.disconnect();
   controller.close();
 });
 window.addEventListener('pageshow', (event) =>

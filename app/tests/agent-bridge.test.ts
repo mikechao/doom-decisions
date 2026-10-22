@@ -3,9 +3,11 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PassThrough, Readable } from 'node:stream';
 import { afterEach, it, vi } from 'vitest';
 import config from '../vite.config.js';
@@ -18,7 +20,7 @@ import { deferred, checkpoint, fixture } from './fixtures/session.ts';
 import { validAgentCommand, parseAgentPromptResult, parseAgentConfigResult } from '../src/agent-control.ts';
 
 const cleanups = [];
-afterEach(async () => { while (cleanups.length) await cleanups.pop()(); vi.restoreAllMocks(); });
+afterEach(async () => { while (cleanups.length) await cleanups.pop()(); vi.useRealTimers(); vi.restoreAllMocks(); });
 class Reply extends EventEmitter {
   status = 0; headers = {}; chunks = []; writableEnded = false; destroyed = false;
   result = deferred(); onChunk; onEnd;
@@ -148,7 +150,7 @@ it('delivers a correlated verified PNG through browser, broker and CLI without p
   assert.deepEqual((await readdir(join(attached.leaseFile, '..'))).sort(), [`${result.commandId}.png`, 'lease.json'].sort());
   await assert.rejects(h.post('attach', { ownerId: randomUUID() }), /owner-already-attached/);
   page.stop();
-  await assert.rejects(runAgentCli(['observe', '--lease', attached.leaseFile], { transport: h.transport }), /lease-revoked/);
+  await assert.rejects(runAgentCli(['observe', '--lease', attached.leaseFile], { transport: h.transport }), /agent-stopped/);
   await assert.rejects(h.post('attach', { ownerId: randomUUID() }), /no-ready-page/);
 });
 it('fences delayed observations and duplicates, and never transfers a lease to another owner/page', async () => {
@@ -175,14 +177,19 @@ it('revokes browser-local admission synchronously before server acknowledgement 
   const pageId = randomUUID(), pageToken = randomUUID(), epoch = randomUUID(), ownerId = randomUUID();
   const gate = deferred(), acknowledgement = deferred();
   const events = { onmessage: null, onerror: null, close: vi.fn() };
-  let fresh; let captures = 0;
+  let fresh; let captures = 0; let controllerStops = 0;
   const posts = [];
   const handle = startAgentObservationBridge({
     pageId, events: () => events, state: () => {},
+    stopAgent() { controllerStops++; },
     async post(path, data) {
       posts.push(path);
       if (path.endsWith('/register')) return { pageId, pageToken };
-      if (path.endsWith('/revoke')) return acknowledgement.promise;
+      if (path.endsWith('/revoke')) {
+        assert.equal(controllerStops, 1);
+        assert.deepEqual(data, { pageId, pageToken, reason: 'user-requested' });
+        return acknowledgement.promise;
+      }
       assert.fail('No result after local Stop');
     },
     async observe(check) { captures++; fresh = check; await gate.promise; check(); return agentObservation(); },
@@ -192,11 +199,14 @@ it('revokes browser-local admission synchronously before server acknowledgement 
   send({ type: 'attached', pageId, epoch, ownerId });
   send({ type: 'observe', pageId, epoch, ownerId, commandId: randomUUID() });
   handle.stop();
+  handle.stop(); // No second revoke or local Stop.
+  assert.equal(controllerStops, 1);
   assert.throws(fresh, /revoked/);
   send({ type: 'observe', pageId, epoch, ownerId, commandId: randomUUID() });
-  assert.equal(captures, 1); assert.equal(events.close.mock.calls.length, 1);
+  assert.equal(captures, 1); assert.equal(events.close.mock.calls.length, 0);
   gate.resolve(); acknowledgement.resolve({ stopped: true });
-  await checkpoint(() => posts.some(path => path.endsWith('/revoke')));
+  await checkpoint(() => events.close.mock.calls.length === 1);
+  assert.equal(posts.filter(path => path.endsWith('/revoke')).length, 1);
   assert.equal(posts.some(path => path.endsWith('/result')), false);
 });
 it('Stop aborts an in-flight result before notification; aborted/incomplete bodies cannot succeed even with valid JSON', async () => {
@@ -241,9 +251,13 @@ it('Stop aborts an in-flight result before notification; aborted/incomplete bodi
       assert.equal(rejected.status, 400);
       assert.deepEqual(await rejected.json(), { error: 'invalid-request' });
       assert.equal(cliSettled, false, 'Rejected upload never publishes CLI success');
-      closeStream(); revokeDelivery.resolve();
-      assert.equal((await cli.result.promise).status, 409);
-      await assert.rejects(h.post('observe', { ...lease, commandId: randomUUID() }), /lease-revoked/);
+      revokeDelivery.resolve();
+      const stopped = await cli.result.promise;
+      assert.equal(stopped.status, 409);
+      assert.deepEqual(await stopped.json(), { error: 'agent-stopped' });
+      await checkpoint(() => !!closeStream);
+      closeStream();
+      await assert.rejects(h.post('observe', { ...lease, commandId: randomUUID() }), /agent-stopped/);
     } finally {
       input.destroy(); revokeDelivery.resolve(); closeStream?.(); page.stop();
     }
@@ -285,16 +299,16 @@ it('rechecks a fully delivered late upload after revocation, but does not cancel
         assert.equal((await cli).status, 200, 'Accepted before Stop: success remains valid');
         page.stop();
       } else {
-        page.stop(); // Broker learns stream closure before the body finishes.
-        finishBody();
+        page.stop();
         assert.equal((await cli).status, 409);
+        finishBody(); // Broker learns intentional revoke before the body finishes.
       }
       assert.equal(signal?.aborted, true);
       assert.equal((await upload.result.promise).status, acceptedFirst ? 200 : 409);
       acknowledgement.resolve();
       if (acceptedFirst) { await acknowledged.promise; await Promise.resolve(); }
       assert.equal(page.states.at(-1), 'stopped', 'Late acknowledgement cannot rearm');
-      await assert.rejects(h.post('observe', { ...command, commandId: randomUUID() }), /lease-revoked/);
+      await assert.rejects(h.post('observe', { ...command, commandId: randomUUID() }), /agent-stopped/);
     } finally {
       input.destroy(); acknowledgement.resolve(); page.stop();
     }
@@ -310,6 +324,127 @@ it('invalidates disconnected pages and rejects old commands after a fresh page r
   const lease = await h.post('attach', { ownerId: randomUUID() });
   assert.notEqual(lease.pageId, old.pageId);
   await assert.rejects(h.post('observe', { ...old, commandId: randomUUID() }), /lease-revoked/);
+});
+it('remembers Stop between commands without restoring settings, allowance or access to a replacement page', async () => {
+  const game = fixture({ pngFor });
+  cleanups.push(() => game.dispose());
+  await game.prepare();
+  const h = harness();
+  const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
+  await page.ready;
+  const old = await h.post('attach', { ownerId: randomUUID() });
+  const observation = (await h.post('observe', { ...old, commandId: randomUUID() })).observation;
+  assert.equal(page.allowRun(), true);
+  const config = game.controller.agentConfig(old.epoch, observation.sessionId, () => {});
+  const scope = { sessionId: config.sessionId, runId: config.run.runId, revision: config.revision };
+  page.stop();
+  assert.equal(page.allowRun(), false);
+  assert.equal(page.allow(), false);
+  assert.equal(game.controller.agentConfig(old.epoch, scope.sessionId, () => {}).error, 'lease-revoked');
+  const command = { ...old, commandId: randomUUID() };
+  await assert.rejects(h.post('observe', command), /agent-stopped/);
+  await assert.rejects(h.post('attach', { ownerId: randomUUID() }), /no-ready-page/);
+  const replacement = h.browser(); await replacement.ready;
+  assert.equal(replacement.states.at(-1), 'available');
+  const next = await h.post('attach', { ownerId: randomUUID() });
+  assert.notEqual(next.epoch, old.epoch);
+  for (const [op, fields] of [
+    ['observe', {}], ['decide', { ...scope, observationId: randomUUID() }],
+    ['get-prompt', { sessionId: scope.sessionId }], ['get-config', { sessionId: scope.sessionId }],
+    ['set-prompt', { ...scope, instructions: 'Cannot restore this lease.' }],
+    ['set-config', { ...scope, configuration: config.configuration }],
+  ]) await assert.rejects(h.post(op, { ...command, ...fields }), /agent-stopped/);
+  for (const key of ['ownerId', 'epoch', 'pageId'])
+    await assert.rejects(h.post('observe', { ...command, [key]: randomUUID() }), /lease-revoked/);
+  assert.equal((await h.post('observe', { ...next, commandId: randomUUID() })).epoch, next.epoch);
+  assert.equal(game.sdkCalls, 0); assert.equal(game.gameCalls, 0);
+});
+it.each(['rejected', 'timeout', 'disconnect-first'])('failed Stop reason delivery (%s) stays generic, including late delivery', async failure => {
+  const h = harness();
+  const capture = deferred(), delivery = deferred();
+  let fresh, signal, lateSend;
+  const page = h.browser(async check => { fresh = check; await capture.promise; check(); return agentObservation(); }, {
+    post(path, _data, transferSignal, send) {
+      if (!path.endsWith('/revoke')) return send();
+      signal = transferSignal; lateSend = send;
+      if (failure === 'rejected') return Promise.reject(Error('offline transport failure'));
+      return delivery.promise.then(send); // Deliberately ignore AbortSignal.
+    },
+  });
+  await page.ready;
+  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const command = { ...lease, commandId: randomUUID() };
+  const pending = h.send('observe', command).result.promise;
+  await checkpoint(() => !!fresh);
+  if (failure === 'timeout') vi.useFakeTimers();
+  page.stop();
+  if (failure === 'disconnect-first') { h.broker.close(); delivery.resolve(); }
+  if (failure === 'timeout') { await vi.advanceTimersByTimeAsync(1000); vi.useRealTimers(); }
+  const result = await pending;
+  assert.equal(result.status, 409);
+  assert.deepEqual(await result.json(), { error: 'lease-revoked' });
+  await assert.rejects(h.post('observe', { ...command, commandId: randomUUID() }), /lease-revoked/);
+  await assert.rejects(lateSend(), /lease-revoked/, 'A late revoke cannot upgrade a generic disconnect');
+  assert.equal(signal.aborted, true);
+  assert.throws(fresh, /revoked/);
+  capture.resolve(); delivery.resolve();
+});
+it('requires a validated page token and intentional reason before attributing Stop', async () => {
+  const h = harness(); let registration;
+  const page = h.browser(undefined, { post(path, data, _signal, send) {
+    if (path.endsWith('/register')) return send().then(value => { registration = value; return value; });
+    return send();
+  } });
+  await page.ready;
+  const lease = await h.post('attach', { ownerId: randomUUID() });
+  for (const data of [
+    { ...registration, pageToken: randomUUID(), reason: 'user-requested' },
+    { ...registration, reason: 'disconnect' },
+    { ...registration, reason: 'user-requested', extra: true },
+  ]) await assert.rejects(h.post('revoke', data, 'page'), /lease-revoked/);
+  assert.ok((await h.post('observe', { ...lease, commandId: randomUUID() })).observation);
+  page.disconnect(); // Page exit/internal failure is not a Stop Agent click.
+  await assert.rejects(h.post('observe', { ...lease, commandId: randomUUID() }), /lease-revoked/);
+});
+it('keeps a broker deadline generic for pending and subsequent commands', async () => {
+  const h = harness(); const captured = deferred(), release = deferred();
+  const page = h.browser(async fresh => { captured.resolve(); await release.promise; fresh(); return agentObservation(); });
+  await page.ready;
+  const lease = await h.post('attach', { ownerId: randomUUID() });
+  vi.useFakeTimers();
+  const command = { ...lease, commandId: randomUUID() };
+  const pending = h.send('observe', command).result.promise;
+  await captured.promise;
+  await vi.advanceTimersByTimeAsync(10000);
+  vi.useRealTimers();
+  const response = await pending;
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: 'lease-revoked' });
+  assert.equal(page.states.at(-1), 'stopped');
+  await assert.rejects(h.post('observe', { ...command, commandId: randomUUID() }), /lease-revoked/);
+  release.resolve();
+});
+it.each(['stop', 'disconnect'])('preserves the broker %s error through actual CLI stderr and exit status', async cause => {
+  const h = harness(); const page = h.browser(); await page.ready;
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-agent-error-'));
+  cleanups.push(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const attached = await runAgentCli(['attach'], { transport: h.transport, temporaryRoot });
+  if (cause === 'stop') page.stop(); else page.disconnect();
+  const response = await h.send('observe', { pageId: attached.pageId, epoch: attached.epoch,
+    ownerId: attached.ownerId, commandId: randomUUID() }).result.promise;
+  const body = await response.text();
+  const expected = { error: cause === 'stop' ? 'agent-stopped' : 'lease-revoked' };
+  assert.deepEqual(JSON.parse(body), expected);
+  await assert.rejects(runAgentCli(['observe', '--lease', attached.leaseFile], { transport: h.transport }),
+    new RegExp(expected.error));
+  const preload = join(temporaryRoot, 'transport.mjs');
+  await writeFile(preload, `globalThis.fetch = async () => new Response(${JSON.stringify(body)}, {status: 409});`);
+  const child = spawnSync(process.execPath, ['--import', preload,
+    fileURLToPath(new URL('../../scripts/doom-agent.mjs', import.meta.url)), 'observe', '--lease', attached.leaseFile],
+    { encoding: 'utf8', timeout: 5000 });
+  assert.equal(child.error, undefined);
+  assert.equal(child.status, 1); assert.equal(child.stdout, '');
+  assert.deepEqual(JSON.parse(child.stderr), expected);
 });
 it('rejects non-allowlisted observation fields and PNG/frame corruption', () => {
   const original = agentObservation();
@@ -366,7 +501,7 @@ it('delivers one controller-selected decision through CLI and never replays or m
   assert.equal(game.sdkCalls, 1);
   page.stop();
   assert.equal(game.view.session.controls.ready, true);
-  await assert.rejects(decide(randomUUID()), /lease-revoked/);
+  await assert.rejects(decide(randomUUID()), /agent-stopped/);
   assert.equal(game.sdkCalls, 1);
 });
 it.each(['stop', 'disconnect', 'second-page'].flatMap(interruption => [false, true].map(bounded => ({ interruption, bounded }))))('$interruption revokes controller admission (bounded=$bounded) and never delivers a late paid result', async ({ interruption, bounded }) => {
@@ -406,7 +541,12 @@ it.each(['stop', 'disconnect', 'second-page'].flatMap(interruption => [false, tr
   assert.equal(game.controller.agentConfig(lease.epoch, observed.observation.sessionId, () => {}).error, 'lease-revoked');
   assert.equal(game.view.session.agentBusy, true);
   assert.equal(game.view.session.controls.ready, false);
-  assert.equal((await cli.result.promise).status, 409);
+  const stopped = await cli.result.promise;
+  assert.equal(stopped.status, 409);
+  assert.deepEqual(await stopped.json(), { error: interruption === 'stop' ? 'agent-stopped' : interruption === 'second-page' ? 'multiple-pages' : 'lease-revoked' });
+  await assert.rejects(h.post('decide', { ...lease, commandId: randomUUID(), observationId: randomUUID(), ...scope }),
+    interruption === 'stop' ? /agent-stopped/ : /lease-revoked/);
+  assert.equal(game.sdkCalls, 1, 'Revocation result does not wait for the held SDK reader');
   assert.equal(game.sdkCalls, 1);
   game.releaseBody();
   await checkpoint(() => !game.view.session.agentBusy);
@@ -465,7 +605,7 @@ it('CLI reads and CAS-writes only effective instructions, then uses three indivi
   assert.equal(game.sdkCalls, 3);
   assert.equal(game.inputs[0].questions[0].instructions, instructions.replace('{{tics}}', '6'));
   page.stop();
-  await assert.rejects(get(), /lease-revoked/);
+  await assert.rejects(get(), /agent-stopped/);
 });
 
 it('strict prompt and bounded command shapes reject extra fields and fence foreign owner/epoch/session/run identities', async () => {

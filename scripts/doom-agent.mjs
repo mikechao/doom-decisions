@@ -10,7 +10,7 @@ import { validAgentCommand, parseAgentPromptResult, parseAgentConfigResult, prom
 
 const errors = new Set([
   'forbidden', 'invalid-request', 'no-ready-page', 'multiple-pages',
-  'owner-already-attached', 'lease-revoked', 'duplicate-command',
+  'owner-already-attached', 'lease-revoked', 'agent-stopped', 'duplicate-command',
   'observation-busy', 'observation-unavailable', 'invalid-observation',
   ...promptErrors,
 ]);

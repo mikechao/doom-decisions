@@ -56,6 +56,7 @@ type Ports = {
 // built-in retry is disabled by closing on error. Stop never calls Continuous Stop.
 export function startAgentObservationBridge(ports: Ports) {
   let ended = false;
+  let userRequested = false;
   let pageToken: string | undefined;
   let stream: Stream | undefined;
   let lease: Lease | undefined;
@@ -65,22 +66,44 @@ export function startAgentObservationBridge(ports: Ports) {
   // next command arrives. Stop cancels every transfer still owned by this page.
   const uploads = new Set<AbortController>();
   function revoke() {
-    if (pageToken)
-      void ports
-        .post(`${agentPath}/revoke`, {
-          pageId: ports.pageId,
-          pageToken,
-        })
-        .catch(() => {});
+    if (!pageToken) return;
+    const transfer = new AbortController();
+    const closingStream = stream;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      transfer.abort();
+      if (userRequested) closingStream?.close();
+    };
+    // Local admission is already revoked. Give intentional reason delivery a
+    // bounded chance before explicit stream closure; failure stays generic.
+    const timer = setTimeout(finish, 1000);
+    void Promise.resolve()
+      .then(() =>
+        ports.post(
+          `${agentPath}/revoke`,
+          {
+            pageId: ports.pageId,
+            pageToken,
+            ...(userRequested ? { reason: 'user-requested' } : {}),
+          },
+          transfer.signal,
+        ),
+      )
+      .catch(() => {})
+      .finally(finish);
   }
-  function stop() {
+  function stop(intentional = false) {
     if (ended) return;
     // The local admission fence changes synchronously, before network/cleanup.
     ended = true;
+    userRequested = intentional;
     lease = undefined;
     ports.stopAgent?.(); // Controller Stop is synchronous, before cancellation/network.
     for (const upload of uploads) upload.abort();
-    stream?.close();
+    if (!userRequested) stream?.close();
     ports.state('stopped');
     revoke();
   }
@@ -229,7 +252,7 @@ export function startAgentObservationBridge(ports: Ports) {
       stream.onmessage = (event) => {
         void message(event.data);
       };
-      stream.onerror = stop;
+      stream.onerror = () => stop();
       ports.state('available');
     } catch {
       stop();
@@ -237,7 +260,8 @@ export function startAgentObservationBridge(ports: Ports) {
     }
   })();
   return {
-    stop,
+    stop: () => stop(true),
+    disconnect: () => stop(),
     ready,
     authorizationRevoked() {
       if (!ended && lease) ports.state('attached');
