@@ -15,7 +15,7 @@ import { agentOrigin, agentPath, agentPngBytes, parseAgentObservation, parseAgen
 import { runAgentCli } from '../../scripts/doom-agent.mjs';
 import { agentObservation, pngFor } from './fixtures/agent.ts';
 import { deferred, checkpoint, fixture } from './fixtures/session.ts';
-import { validAgentCommand, parseAgentPromptResult } from '../src/agent-control.ts';
+import { validAgentCommand, parseAgentPromptResult, parseAgentConfigResult } from '../src/agent-control.ts';
 
 const cleanups = [];
 afterEach(async () => { while (cleanups.length) await cleanups.pop()(); vi.restoreAllMocks(); });
@@ -62,6 +62,7 @@ function harness() {
       allow: epoch => network.controller?.allowAgent(epoch) ?? false,
       allowRun: epoch => network.controller?.allowAgentRun(epoch) ?? false,
       prompt: (epoch, sessionId, fresh, update) => network.controller.agentPrompt(epoch, sessionId, fresh, update),
+      config: (epoch, sessionId, fresh, update) => network.controller.agentConfig(epoch, sessionId, fresh, update),
       stopAgent: () => network.controller?.stopAgent(),
       decide: (epoch, id, fresh, scope) => network.controller.agentNext(epoch, id, fresh, scope),
       state: (state) => states.push(state),
@@ -402,6 +403,7 @@ it.each(['stop', 'disconnect', 'second-page'].flatMap(interruption => [false, tr
     await checkpoint(() => controllerStopped);
   }
   assert.equal(controllerStopped, true);
+  assert.equal(game.controller.agentConfig(lease.epoch, observed.observation.sessionId, () => {}).error, 'lease-revoked');
   assert.equal(game.view.session.agentBusy, true);
   assert.equal(game.view.session.controls.ready, false);
   assert.equal((await cli.result.promise).status, 409);
@@ -490,7 +492,7 @@ it('strict prompt and bounded command shapes reject extra fields and fence forei
   assert.throws(() => parseAgentPromptResult({ ...state, run: { ...state.run, sdkInvoked: 4 } }));
   assert.equal((await h.post('set-prompt', { ...command, runId: randomUUID() })).prompt.error, 'run-unavailable');
   await assert.rejects(h.post('set-prompt', { ...command, runId: randomUUID() }), /duplicate-command/);
-  assert.equal((await read()).prompt.run.active, false);
+  assert.deepEqual((await read()).prompt, state, 'Wrong scope does not mutate the live run');
   assert.equal((await h.post('get-prompt', { ...lease, commandId: randomUUID(), sessionId: randomUUID() })).prompt.error, 'session-mismatch');
   assert.equal(game.sdkCalls, 0);
   assert.equal(game.ports.readDecisionConfiguration().instructionTemplate, state.instructions);
@@ -539,4 +541,93 @@ it('shows authorization revoked when the actual controller replaces its observat
   assert.equal(page.allow(), false, 'Restoring configuration cannot revive the old observation');
   assert.equal(game.sdkCalls, 0);
   assert.equal(game.gameCalls, 0);
+});
+
+it('round-trips config CAS through CLI/broker/browser and shares ephemeral instructions/revision with prompt commands', async () => {
+  const game = fixture({ pngFor }); cleanups.push(() => game.dispose()); await game.prepare();
+  const savedHuman = game.ports.readDecisionConfiguration();
+  const h = harness(); const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
+  await page.ready;
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-agent-config-'));
+  cleanups.push(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const cli = args => runAgentCli(args, { transport: h.transport, temporaryRoot });
+  const attached = await cli(['attach']); const base = ['--lease', attached.leaseFile];
+  let observation = await cli(['observe', ...base]);
+  const get = () => cli(['get-config', ...base, '--session', observation.sessionId]);
+  const before = await get();
+  for (const flag of ['includeReadyWeapon', 'includeAmmo', 'includeHealth', 'includeFacingProbe', 'includePreviousAction'])
+    assert.equal(before.configuration[flag], true);
+  assert.equal(before.run, null); assert.equal(game.sdkCalls, 0);
+  assert.equal(page.allowRun(), true);
+  const first = await get();
+  const configFile = join(temporaryRoot, 'configuration.json');
+  const configuration = { ...first.configuration, includeHealth: false, includeAmmo: false, instructionTemplate: 'Ephemeral route for {{tics}} tics.' };
+  await writeFile(configFile, JSON.stringify(configuration));
+  let current = await cli(['set-config', ...base, '--session', first.sessionId, '--run', first.run.runId,
+    '--revision', String(first.revision), '--config-file', configFile]);
+  assert.deepEqual(current.configuration, configuration);
+  assert.deepEqual(current.run, first.run); assert.equal(current.revision, first.revision + 1);
+  assert.equal(game.ports.readDecisionConfiguration(), savedHuman);
+  const prompt = await cli(['get-prompt', ...base, '--session', first.sessionId]);
+  assert.equal(prompt.revision, current.revision); assert.equal(prompt.instructions, configuration.instructionTemplate);
+  const textFile = join(temporaryRoot, 'instructions.txt'); await writeFile(textFile, 'Ephemeral text edit {{tics}}.');
+  const changedPrompt = await cli(['set-prompt', ...base, '--session', first.sessionId, '--run', first.run.runId,
+    '--revision', String(current.revision), '--instructions-file', textFile]);
+  current = await get(); assert.equal(current.revision, changedPrompt.revision);
+  assert.deepEqual(current.configuration, { ...configuration, instructionTemplate: 'Ephemeral text edit {{tics}}.' });
+  const decide = value => cli(['decide', ...base, '--observation', value.observationId, '--session', first.sessionId,
+    '--run', first.run.runId, '--revision', String(current.revision)]);
+  assert.equal((await decide(observation)).reason, 'stale-observation');
+  for (let i = 0; i < 2; i++) {
+    observation = await cli(['observe', ...base]);
+    assert.equal((await decide(observation)).outcome, 'completed');
+  }
+  assert.equal((await get()).run.remaining, 1);
+  assert.equal(game.inputs[0].questions[0].instructions, 'Ephemeral text edit 6.');
+  assert.doesNotMatch(game.inputs[0].input[0].content[0].text, /Health:|Ammo:/);
+  assert.match(game.inputs[0].input[0].content[0].text, /Ready weapon:/);
+  assert.equal(game.ports.readDecisionConfiguration(), savedHuman);
+  page.stop();
+  assert.equal(game.controller.agentConfig(attached.epoch, first.sessionId, () => {}).error, 'lease-revoked');
+});
+
+it('strict config command/result schemas reject missing, extra and nonboolean fields without modifying authorization', async () => {
+  const game = fixture({ pngFor }); cleanups.push(() => game.dispose()); await game.prepare();
+  const h = harness(); const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
+  await page.ready;
+  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const observed = await h.post('observe', { ...lease, commandId: randomUUID() }); page.allowRun();
+  const sessionId = observed.observation.sessionId;
+  const get = async () => (await h.post('get-config', { ...lease, commandId: randomUUID(), sessionId })).config;
+  const before = await get(); parseAgentConfigResult(before);
+  const command = { ...lease, commandId: randomUUID(), sessionId, runId: before.run.runId,
+    revision: before.revision, configuration: before.configuration };
+  for (const mutate of [
+    d => { delete d.configuration.includeHealth; }, d => { d.configuration.includeAmmo = 1; },
+    d => { d.configuration.includeFacingProbe = null; }, d => { d.configuration.includePreviousAction = 'false'; },
+    d => { d.configuration.extra = false; }, d => { d.configuration.instructionTemplate = ''; },
+    d => { d.extra = false; }, d => { delete d.revision; }, d => { d.revision = -1; },
+  ]) {
+    const invalid = structuredClone(command); mutate(invalid);
+    assert.equal(validAgentCommand('set-config', invalid), false);
+    await assert.rejects(h.post('set-config', invalid), /invalid-request/);
+    assert.deepEqual(await get(), before);
+  }
+  for (const [key, value, error] of [
+    ['revision', before.revision + 1, 'revision-conflict'], ['sessionId', randomUUID(), 'session-mismatch'],
+    ['runId', randomUUID(), 'run-unavailable'],
+  ]) {
+    assert.equal((await h.post('set-config', { ...command, commandId: randomUUID(), [key]: value })).config.error, error);
+    assert.deepEqual(await get(), before);
+  }
+  for (const key of ['ownerId', 'epoch'])
+    await assert.rejects(h.post('set-config', { ...command, [key]: randomUUID() }), /lease-revoked/);
+  assert.throws(() => parseAgentConfigResult({ ...before, extra: false }));
+  assert.throws(() => parseAgentConfigResult({ ...before, configuration: { ...before.configuration, extra: false } }));
+  assert.throws(() => parseAgentConfigResult({ ...before, run: { ...before.run, remaining: 4 } }));
+  await h.post('set-config', command);
+  await assert.rejects(h.post('set-config', command), /duplicate-command/);
+  assert.equal((await get()).revision, before.revision + 1);
+  assert.deepEqual((await get()).run, before.run);
+  assert.equal(game.sdkCalls, 0);
 });

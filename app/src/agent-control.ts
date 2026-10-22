@@ -1,4 +1,5 @@
 import { isAgentId } from './agent-observation.ts';
+import type { DecisionConfiguration } from './decision-request.ts';
 
 export const agentRunLimit = 3;
 export const maxAgentInstructions = 16000;
@@ -28,6 +29,7 @@ export const promptErrors = [
   'revision-conflict',
   'editor-open',
   'invalid-instructions',
+  'invalid-configuration',
 ] as const;
 export type AgentPromptResult =
   | { error: (typeof promptErrors)[number] }
@@ -35,6 +37,14 @@ export type AgentPromptResult =
       sessionId: string;
       revision: number;
       instructions: string;
+      run: AgentRunState | null;
+    };
+export type AgentConfigResult =
+  | { error: (typeof promptErrors)[number] }
+  | {
+      sessionId: string;
+      revision: number;
+      configuration: DecisionConfiguration;
       run: AgentRunState | null;
     };
 
@@ -52,6 +62,19 @@ function keys(
     Object.keys(value).length === names.length &&
       names.every((name) => Object.hasOwn(value, name)),
   );
+}
+export function parseAgentConfiguration(value: unknown): DecisionConfiguration {
+  const flags = [
+    'includeReadyWeapon',
+    'includeAmmo',
+    'includeHealth',
+    'includeFacingProbe',
+    'includePreviousAction',
+  ];
+  keys(value, ['instructionTemplate', ...flags]);
+  requireValue(validAgentInstructions(value.instructionTemplate));
+  requireValue(flags.every((key) => typeof value[key] === 'boolean'));
+  return value as DecisionConfiguration;
 }
 export function parseAgentRunState(value: unknown): AgentRunState {
   keys(value, [
@@ -96,26 +119,47 @@ export function parseAgentPromptResult(value: unknown): AgentPromptResult {
   }
   return value as AgentPromptResult;
 }
+export function parseAgentConfigResult(value: unknown): AgentConfigResult {
+  if (value && typeof value === 'object' && Object.hasOwn(value, 'error')) {
+    parseAgentPromptResult(value);
+  } else {
+    keys(value, ['sessionId', 'revision', 'configuration', 'run']);
+    requireValue(isAgentId(value.sessionId) && revision(value.revision));
+    parseAgentConfiguration(value.configuration);
+    if (value.run !== null) parseAgentRunState(value.run);
+  }
+  return value as AgentConfigResult;
+}
 
 // Shared strict command validation at broker AND browser ingress. No arbitrary
 // configuration, action, credential or provider object can cross this boundary.
 export function validAgentCommand(op: string, value: unknown): boolean {
   try {
     requireValue(
-      ['observe', 'decide', 'get-prompt', 'set-prompt'].includes(op),
+      [
+        'observe',
+        'decide',
+        'get-prompt',
+        'set-prompt',
+        'get-config',
+        'set-config',
+      ].includes(op),
     );
     const data = value as Record<string, unknown>;
     const scoped =
-      op === 'set-prompt' || (op === 'decide' && Object.hasOwn(data, 'runId'));
+      op === 'set-prompt' ||
+      op === 'set-config' ||
+      (op === 'decide' && Object.hasOwn(data, 'runId'));
     keys(data, [
       'pageId',
       'ownerId',
       'epoch',
       'commandId',
       ...(op === 'decide' ? ['observationId'] : []),
-      ...(op === 'get-prompt' ? ['sessionId'] : []),
+      ...(op === 'get-prompt' || op === 'get-config' ? ['sessionId'] : []),
       ...(scoped ? ['sessionId', 'runId', 'revision'] : []),
       ...(op === 'set-prompt' ? ['instructions'] : []),
+      ...(op === 'set-config' ? ['configuration'] : []),
     ]);
     requireValue(
       [
@@ -124,13 +168,16 @@ export function validAgentCommand(op: string, value: unknown): boolean {
         'epoch',
         'commandId',
         ...(op === 'decide' ? ['observationId'] : []),
-        ...(op === 'get-prompt' || scoped ? ['sessionId'] : []),
+        ...(op === 'get-prompt' || op === 'get-config' || scoped
+          ? ['sessionId']
+          : []),
         ...(scoped ? ['runId'] : []),
       ].every((name) => isAgentId(data[name])),
     );
     if (scoped) requireValue(revision(data.revision));
     if (op === 'set-prompt')
       requireValue(validAgentInstructions(data.instructions));
+    if (op === 'set-config') parseAgentConfiguration(data.configuration);
     return true;
   } catch {
     return false;

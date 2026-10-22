@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import {
   agentOrigin, agentPath, agentPngBytes, isAgentId, parseAgentObservation, parseAgentDecisionResult,
 } from '../app/src/agent-observation.ts';
-import { validAgentCommand, parseAgentPromptResult, promptErrors, maxAgentInstructions } from '../app/src/agent-control.ts';
+import { validAgentCommand, parseAgentPromptResult, parseAgentConfigResult, promptErrors, maxAgentInstructions } from '../app/src/agent-control.ts';
 
 const errors = new Set([
   'forbidden', 'invalid-request', 'no-ready-page', 'multiple-pages',
@@ -44,8 +44,9 @@ export async function runAgentCli(args, { transport = fetch, temporaryRoot = tmp
     return { ...lease, leaseFile };
   }
   const deciding = [5, 11].includes(args.length) && args[0] === 'decide' && args[3] === '--observation' && isAgentId(args[4]);
-  const getting = args.length === 5 && args[0] === 'get-prompt' && args[3] === '--session';
-  const setting = args.length === 11 && args[0] === 'set-prompt' && args[3] === '--session';
+  const configCommand = args[0] === 'get-config' || args[0] === 'set-config';
+  const getting = args.length === 5 && ['get-prompt', 'get-config'].includes(args[0]) && args[3] === '--session';
+  const setting = args.length === 11 && ['set-prompt', 'set-config'].includes(args[0]) && args[3] === '--session';
   if (((args.length === 3 && args[0] === 'observe') || deciding || getting || setting) && args[1] === '--lease' && isAbsolute(args[2])) {
     const lease = leaseValue(JSON.parse(await readFile(args[2], 'utf8')));
     // Same observation always reserves the same decision ID. Retrying can never
@@ -62,20 +63,21 @@ export async function runAgentCli(args, { transport = fetch, temporaryRoot = tmp
       Object.assign(command, { sessionId: setting ? args[4] : args[6], runId: args[offset + 1], revision: Number(args[offset + 3]) });
     }
     if (setting) {
-      if (args[9] !== '--instructions-file' || !isAbsolute(args[10]) || /(^|\/)\.env[^/]*$/.test(args[10])) throw Error('Invalid instructions file.');
+      if (args[9] !== (configCommand ? '--config-file' : '--instructions-file') || !isAbsolute(args[10]) || /(^|\/)\.env[^/]*$/.test(args[10])) throw Error('Invalid settings file.');
       const bytes = await readFile(args[10]);
-      if (bytes.length > maxAgentInstructions * 4) throw Error('Invalid instructions file.');
-      command.instructions = bytes.toString('utf8');
+      if (bytes.length > maxAgentInstructions * 4 + (configCommand ? 1024 : 0)) throw Error('Invalid settings file.');
+      if (configCommand) command.configuration = JSON.parse(bytes.toString('utf8'));
+      else command.instructions = bytes.toString('utf8');
     }
     const op = args[0];
     if (!validAgentCommand(op, command)) throw Error('Invalid command.');
     const result = await post(op, command);
-    const field = deciding ? 'decision' : getting || setting ? 'prompt' : 'observation';
+    const field = deciding ? 'decision' : getting || setting ? configCommand ? 'config' : 'prompt' : 'observation';
     if (Object.keys(result).sort().join(',') !== ['commandId', 'epoch', field, 'pageId'].sort().join(',') ||
         result.pageId !== lease.pageId || result.epoch !== lease.epoch || result.commandId !== commandId)
       throw Error('Invalid command correlation.');
     if (getting || setting) {
-      const prompt = parseAgentPromptResult(result.prompt);
+      const prompt = configCommand ? parseAgentConfigResult(result.config) : parseAgentPromptResult(result.prompt);
       if ('error' in prompt) throw Error(prompt.error);
       if (prompt.sessionId !== command.sessionId || (setting && prompt.run?.runId !== command.runId)) throw Error('Invalid prompt correlation.');
       return { pageId: lease.pageId, epoch: lease.epoch, commandId, ...prompt };
@@ -97,7 +99,7 @@ export async function runAgentCli(args, { transport = fetch, temporaryRoot = tmp
     if (decision) return { ...correlation, ...decision, observation: metadata };
     return { ...correlation, ...metadata };
   }
-  throw Error('Usage: node scripts/doom-agent.mjs attach | observe --lease FILE | get-prompt --lease FILE --session ID | set-prompt --lease FILE --session ID --run ID --revision N --instructions-file FILE | decide --lease FILE --observation ID [--session ID --run ID --revision N] (absolute files required)');
+  throw Error('Usage: node scripts/doom-agent.mjs attach | observe --lease FILE | get-prompt/get-config --lease FILE --session ID | set-prompt --lease FILE --session ID --run ID --revision N --instructions-file FILE | set-config --lease FILE --session ID --run ID --revision N --config-file FILE | decide --lease FILE --observation ID [--session ID --run ID --revision N] (absolute files required)');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

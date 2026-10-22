@@ -1,6 +1,6 @@
 ---
 name: doom-decisions
-description: Supervise a browser-authorized run of up to three Decisions API attempts in the foreground, viewing every verified Doom PNG and adapting saved high-level instructions. No browser driving or unattended loop.
+description: Supervise a browser-authorized run of up to three Decisions API attempts in the foreground, viewing every verified Doom PNG and adapting ephemeral instructions and Game State inclusion. No browser driving or unattended loop.
 ---
 
 # Doom Decisions — bounded foreground play
@@ -10,7 +10,7 @@ authorization for up to THREE possibly billable decision attempts. Never start
 a server/browser, prepare a game, click/drive/inspect Chrome or DevTools, read
 `.env*`, the credential bootstrap module or browser credential storage. Never
 create a daemon, autonomous CLI loop, persistent map or external memory service.
-Attaching, observing, reading/writing instructions and invoking this skill never
+Attaching, observing, reading/writing agent settings and invoking this skill never
 authorize charges. Only the human's browser click does. The existing Decisions
 provider selects EVERY low-level action; never inject an action or duration or
 ask the provider to choose a particular action identifier.
@@ -28,11 +28,11 @@ From the repository root:
    content to the model. A filename, base64 or hash alone is not visual evidence.
    If viewing fails, stop before a decision. Retain `sessionId`, `observationId`,
    tic, matching native/Canvas hashes and verified telemetry.
-3. Read saved effective instructions (not human editor drafts):
-   `node scripts/doom-agent.mjs get-prompt --lease ABSOLUTE_LEASE_FILE --session SESSION_ID`.
+3. Read the effective agent configuration (instructions and five inclusion flags):
+   `node scripts/doom-agent.mjs get-config --lease ABSOLUTE_LEASE_FILE --session SESSION_ID`.
    Ask the human to click **Allow up to 3 Agent Decisions** in the attached page
    and confirm in chat. Wait for that confirmation. Do not poll for consent or
-   use `decide` to discover it. Then get-prompt once to read the controller's
+   use `decide` to discover it. Then get-config once to read the controller's
    actual run ID, revision, active/remaining/reserved/SDK-invoked counts. Require
    an active run with positive remaining allowance; no grant means observe-only.
 4. Keep a concise in-conversation record: goal; page/epoch/session/tic; last
@@ -43,18 +43,19 @@ From the repository root:
    `facingProbe` and existing `previousAction.text` with the limitations below;
    movement-event collision masks remain browser-only.
 5. When useful, write ONLY high-level instructions to a temporary absolute UTF-8
-   text file (maximum 16000 characters), retaining useful saved instructions and
+   text file (maximum 16000 characters), retaining useful effective instructions and
    `{{tics}}`. Include uncertainty explicitly, e.g. a possible opening rather
    than invented unseen geometry. Do not include credentials or command/action
    overrides. Update through:
    `node scripts/doom-agent.mjs set-prompt --lease ABSOLUTE_LEASE_FILE --session SESSION_ID --run RUN_ID --revision REVISION --instructions-file ABSOLUTE_TEXT_FILE`.
    Use the returned revision. A stale revision, any open human editor or other
    conflict ends this workflow; never retry or overwrite a draft. There is no
-   manual copy/paste relay. Model, N and telemetry settings remain browser-owned.
+   manual copy/paste relay. For inclusion edits use the full get/set-config
+   read/edit/CAS contract below. Model and N remain browser-owned.
 6. Before EACH decision, obtain a fresh observation and actually view its PNG.
-   After set-prompt this is mandatory: NEVER use the pre-write observation.
+   After set-prompt or set-config this is mandatory: NEVER use the pre-write observation.
    Check unchanged page/epoch/session, ready phase, current tic and image hashes.
-   Get-prompt once to verify the same run ID/revision is active with allowance.
+   Get-config once to verify the same run ID/revision is active with allowance.
    If configuration/run identity changed unexpectedly, stop.
 7. Invoke exactly once for the observation just viewed:
    `node scripts/doom-agent.mjs decide --lease ABSOLUTE_LEASE_FILE --observation OBSERVATION_ID --session SESSION_ID --run RUN_ID --revision REVISION`.
@@ -64,7 +65,7 @@ From the repository root:
    Verify session continuity and eligible `previousAction`. Terminal prefixes are
    distinct from completed N tics; other outcomes without PNGs are not new scenes.
 8. Only a healthy `completed` result with matching evidence AND an image actually
-   viewed permits another iteration. Read actual counters with get-prompt. Update
+   viewed permits another iteration. Read actual counters with get-config. Update
    the navigation hypothesis, then repeat steps 4–7 while the SAME run remains
    active and has remaining allowance. This is individual foreground reasoning
    between tool calls, never a script that loops independently of Codex.
@@ -89,11 +90,53 @@ are required after Stop/disconnect; no reconnect, replay or rearming.
 The separate **Allow 1 Agent Decision** control retains Slice B semantics. It is
 not a reusable run grant and is not a fallback to extend `play`.
 
+## Agent settings: read, edit, CAS
+
+Attachment copies human saved instructions once and starts all five effective
+inclusion flags true. These settings belong only to that lease. They never write
+human saved instructions, checkbox selections or drafts. Manual/Continuous
+requests use human settings. Authorization and individual decisions do not reset
+agent choices. Exhaustion retains settings for inspection without replenishing
+permission; Stop/disconnect/page exit or actual retirement clears settings.
+
+`get-config` returns `{sessionId, revision, configuration, run}`. `configuration`
+has exactly these six fields (example, not instructions to replace a useful goal):
+
+```json
+{
+  "instructionTemplate": "Explore toward the visible opening for {{tics}} tics.",
+  "includeReadyWeapon": true,
+  "includeAmmo": false,
+  "includeHealth": true,
+  "includeFacingProbe": true,
+  "includePreviousAction": true
+}
+```
+
+Read current config, edit only the fields you intend to change, and write the
+complete configuration object to a temporary absolute JSON file. No credentials,
+provider settings or extra fields. All five flags must be booleans; instructions
+must be nonblank and at most 16000 characters. Then call:
+
+`node scripts/doom-agent.mjs set-config --lease ABSOLUTE_LEASE_FILE --session SESSION_ID --run RUN_ID --revision REVISION --config-file ABSOLUTE_JSON_FILE`
+
+Writes require a ready, idle controller and the current active bounded run and
+revision; single-grant authorization permits no settings writes. `set-config`
+fully replaces the six fields. `set-prompt` remains an instructions-only adapter
+to the same ephemeral configuration and revision. Successful edits preserve the
+run ID and every attempt counter, increment revision and invalidate old
+observations/grants. Obtain and view a fresh PNG before requesting another
+decision. Changes never affect an admitted request. Rejected stale/malformed,
+busy or editor-open writes leave settings, revision and allowance unchanged;
+stop this skill workflow on conflicts rather than retrying. Human configuration
+changes still end the bounded run.
+
 ## Verified Game State observation contract
 
-Every observation exports all five eligible signals regardless of the human's
-Decisions inclusion toggles. Those toggles still control only Decisions request
-text; this observation contract does not change their defaults or ownership.
+Every observation exports all five eligible signals regardless of agent inclusion
+flags. Codex chooses which eligible facts enter subsequent Decisions request text
+through agent settings. Enabled flags never fabricate evidence; the existing
+formatter retains unavailable markers and previous-action eligibility/omissions.
 
 - `telemetry.readyWeapon`: normalized `{id, name, ammoType}` or `null`. Ammo type
   is independently sampled; `none` and `unknown` are valid values. Legacy

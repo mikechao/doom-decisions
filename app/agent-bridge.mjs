@@ -10,6 +10,7 @@ import {
 import {
   validAgentCommand,
   parseAgentPromptResult,
+  parseAgentConfigResult,
 } from './src/agent-control.ts';
 
 // One page, one lease, one outstanding observation. No queue, retry or durable state.
@@ -178,7 +179,14 @@ export function createAgentBridge() {
       return json(res, 200, page.lease);
     }
     if (
-      ['observe', 'decide', 'get-prompt', 'set-prompt'].includes(op) &&
+      [
+        'observe',
+        'decide',
+        'get-prompt',
+        'set-prompt',
+        'get-config',
+        'set-config',
+      ].includes(op) &&
       cli(req)
     ) {
       if (!validAgentCommand(op, data))
@@ -229,7 +237,10 @@ export function createAgentBridge() {
             ? 'decision'
             : page?.pending?.op === 'observe'
               ? 'observation'
-              : 'prompt',
+              : page.pending.op === 'get-config' ||
+                  page.pending.op === 'set-config'
+                ? 'config'
+                : 'prompt',
         ],
       ];
       if (!shape(data, fields)) return fail(res, 'invalid-request', 400);
@@ -249,7 +260,7 @@ export function createAgentBridge() {
         !pending.res.destroyed &&
         !pending.res.writableEnded;
       if (!acceptsResult()) return fail(res, 'lease-revoked');
-      let observation, decision, prompt;
+      let observation, decision, prompt, config;
       try {
         if (pending.op === 'decide') {
           decision = parseAgentDecisionResult(data.decision);
@@ -265,6 +276,17 @@ export function createAgentBridge() {
               (active.sessionId && active.sessionId !== prompt.sessionId) ||
               (pending.op === 'set-prompt' &&
                 prompt.run?.runId !== pending.runId))
+          )
+            throw Error('correlation');
+        }
+        if (pending.op === 'get-config' || pending.op === 'set-config') {
+          config = parseAgentConfigResult(data.config);
+          if (
+            !('error' in config) &&
+            (config.sessionId !== pending.sessionId ||
+              (active.sessionId && active.sessionId !== config.sessionId) ||
+              (pending.op === 'set-config' &&
+                config.run?.runId !== pending.runId))
           )
             throw Error('correlation');
         }
@@ -291,12 +313,18 @@ export function createAgentBridge() {
       if (observation) active.sessionId = observation.sessionId;
       clearTimeout(pending.timer);
       active.pending = undefined;
-      if (observation || decision || prompt)
+      if (observation || decision || prompt || config)
         json(pending.res, 200, {
           pageId: active.id,
           epoch: active.lease.epoch,
           commandId: data.commandId,
-          ...(decision ? { decision } : prompt ? { prompt } : { observation }),
+          ...(decision
+            ? { decision }
+            : prompt
+              ? { prompt }
+              : config
+                ? { config }
+                : { observation }),
         });
       else fail(pending.res, 'observation-unavailable');
       return json(res, 200, { received: true });

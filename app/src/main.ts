@@ -248,7 +248,7 @@ function renderAgentControls() {
   $('#agent-status').textContent = {
     available: 'Agent available. No agent API attempt authorized.',
     attached:
-      'Agent attached. Observe a verified frame, then authorize one decision or up to 3 attempts. The run permits saved-instructions updates. Provider attempts may incur charges.',
+      'Agent attached. Observe a verified frame, then authorize one decision or up to 3 attempts. Agent instructions and Game State inclusion are temporary; Edit Prompt retains human settings. Provider attempts may incur charges.',
     authorized: 'One agent API attempt authorized. It may incur charges.',
     deciding:
       'Agent deciding. Stop Agent fences dispatch and awaits safe settlement.',
@@ -446,6 +446,8 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
       allowRun: (epoch) => controller.allowAgentRun(epoch),
       prompt: (epoch, sessionId, fresh, update) =>
         controller.agentPrompt(epoch, sessionId, fresh, update),
+      config: (epoch, sessionId, fresh, update) =>
+        controller.agentConfig(epoch, sessionId, fresh, update),
       stopAgent: () => controller.stopAgent(),
       decide: (epoch, id, fresh, scope) =>
         controller.agentNext(epoch, id, fresh, scope),
@@ -566,13 +568,6 @@ const controller = createSessionController(
     readTics: () => $('#tics').valueAsNumber,
     readDecisionConfiguration: () => savedDecisionConfiguration,
     promptEditorOpen: () => $('#prompt-dialog').open,
-    saveDecisionInstructions: (instructions) => {
-      saveDecisionConfiguration({
-        ...savedDecisionConfiguration,
-        instructionTemplate: instructions,
-      });
-      loadDecisionDraft(); // Controller rejects remote writes while the editor is open.
-    },
     readAgentIdentity: () =>
       `${openRouterMode ? 'OpenRouter' : 'OpenAI'}:${selectedModel}`,
     agentGrantRevoked: () => agentBridge?.authorizationRevoked(),

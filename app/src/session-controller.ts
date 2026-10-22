@@ -1,7 +1,9 @@
 import type { ActionName, Attempt, Execution, Phase } from './decision';
 import {
   agentRunLimit,
+  parseAgentConfiguration,
   validAgentInstructions,
+  type AgentConfigResult,
   type AgentRunState,
   type AgentScope,
   type AgentPromptResult,
@@ -218,7 +220,6 @@ export interface SessionBrowserPorts {
   readAgentIdentity?(): string;
   agentGrantRevoked?(): void;
   promptEditorOpen?(): boolean;
-  saveDecisionInstructions?(instructions: string): void;
   takeKey(): string;
   clearKey(): void;
   focusBudget(): void;
@@ -252,6 +253,7 @@ export function createSessionController(
   let agentLease:
     | {
         epoch: string;
+        configuration?: DecisionConfiguration;
         grant?: NonNullable<typeof observed>;
         bounded?: BoundedAgentRun;
       }
@@ -259,6 +261,7 @@ export function createSessionController(
   const configurationIdentity = () =>
     JSON.stringify([
       ports.readDecisionConfiguration(),
+      agentLease?.configuration,
       ports.readTics(),
       ports.readAgentIdentity?.(),
       configurationRevision,
@@ -298,7 +301,18 @@ export function createSessionController(
   const configure = (change: () => void) => changeConfiguration(change);
   function attachAgent(epoch: string) {
     check(!agentLease && !pageExited, 'Agent already attached or page exited.');
-    agentLease = { epoch };
+    agentLease = {
+      epoch,
+      configuration: Object.freeze({
+        instructionTemplate:
+          ports.readDecisionConfiguration().instructionTemplate,
+        includeReadyWeapon: true,
+        includeAmmo: true,
+        includeHealth: true,
+        includeFacingProbe: true,
+        includePreviousAction: true,
+      }),
+    };
     observed = undefined;
   }
   function allowAgent(epoch: string) {
@@ -347,29 +361,23 @@ export function createSessionController(
     display(run);
     return true;
   }
-  function agentPrompt(
+  function agentConfig(
     epoch: string,
     sessionId: string,
     assertLease: () => void,
-    update?: AgentScope & { instructions: string },
-  ): AgentPromptResult {
+    update?: AgentScope & { configuration: DecisionConfiguration },
+  ): AgentConfigResult {
     try {
       assertLease();
     } catch {
       return { error: 'lease-revoked' };
     }
-    if (!agentLease || agentLease.epoch !== epoch)
+    const lease = agentLease;
+    if (!lease || lease.epoch !== epoch || !lease.configuration)
       return { error: 'lease-revoked' };
     const run = current;
-    const conflict = (
-      error: Extract<AgentPromptResult, { error: string }>['error'],
-    ): AgentPromptResult => {
-      endBounded();
-      if (run) display(run);
-      return { error };
-    };
     if (!run?.sessionId || run.sessionId !== sessionId)
-      return conflict('session-mismatch');
+      return { error: 'session-mismatch' };
     if (
       !run.valid ||
       pageExited ||
@@ -382,7 +390,25 @@ export function createSessionController(
       run.continuous?.active
     )
       return { error: 'not-ready' };
-    const bounded = agentLease.bounded;
+    const bounded = lease.bounded;
+    if (update) {
+      // Reject bad CAS writes without touching configuration, grants or counters.
+      if (
+        !bounded?.state.active ||
+        bounded.run !== run ||
+        update.sessionId !== sessionId ||
+        update.runId !== bounded.state.runId
+      )
+        return { error: 'run-unavailable' };
+      if (update.revision !== configurationRevision)
+        return { error: 'revision-conflict' };
+      if (ports.promptEditorOpen?.()) return { error: 'editor-open' };
+      try {
+        parseAgentConfiguration(update.configuration);
+      } catch {
+        return { error: 'invalid-configuration' };
+      }
+    }
     if (
       bounded?.state.active &&
       (bounded.run !== run || bounded.configuration !== configurationIdentity())
@@ -391,29 +417,47 @@ export function createSessionController(
       display(run);
     }
     if (update) {
-      if (
-        !bounded?.state.active ||
-        bounded.run !== run ||
-        update.sessionId !== sessionId ||
-        update.runId !== bounded.state.runId
-      )
-        return conflict('run-unavailable');
-      if (update.revision !== configurationRevision)
-        return conflict('revision-conflict');
-      if (ports.promptEditorOpen?.()) return conflict('editor-open');
-      if (!validAgentInstructions(update.instructions))
-        return conflict('invalid-instructions');
-      if (!ports.saveDecisionInstructions) return { error: 'not-ready' };
-      changeConfiguration(
-        () => ports.saveDecisionInstructions?.(update.instructions),
-        true,
-      );
+      if (!bounded?.state.active) return { error: 'run-unavailable' };
+      changeConfiguration(() => {
+        // All fields are scalar; detach the caller's replacement before owning it.
+        lease.configuration = Object.freeze({ ...update.configuration });
+      }, true);
     }
     return {
       sessionId,
       revision: configurationRevision,
-      instructions: ports.readDecisionConfiguration().instructionTemplate,
+      configuration: { ...lease.configuration },
       run: bounded ? { ...bounded.state } : null,
+    };
+  }
+  function agentPrompt(
+    epoch: string,
+    sessionId: string,
+    assertLease: () => void,
+    update?: AgentScope & { instructions: string },
+  ): AgentPromptResult {
+    if (update && !validAgentInstructions(update.instructions))
+      return { error: 'invalid-instructions' };
+    const result = agentConfig(
+      epoch,
+      sessionId,
+      assertLease,
+      update && agentLease?.configuration
+        ? {
+            ...update,
+            configuration: {
+              ...agentLease.configuration,
+              instructionTemplate: update.instructions,
+            },
+          }
+        : undefined,
+    );
+    if ('error' in result) return result;
+    return {
+      sessionId: result.sessionId,
+      revision: result.revision,
+      instructions: result.configuration.instructionTemplate,
+      run: result.run,
     };
   }
   function stopAgent() {
@@ -486,6 +530,9 @@ export function createSessionController(
   }
   function retire(run: Run, phase: 'error' | 'terminal' = 'error') {
     endBounded();
+    invalidateAgentObservation();
+    // Retain the ended authorization as a tombstone/evidence, without settings.
+    if (agentLease) agentLease.configuration = undefined;
     run.previousAction = undefined;
     if (phase !== 'terminal')
       run.collisionEvidence =
@@ -919,12 +966,14 @@ export function createSessionController(
     }
     // Freeze duration and attempt identity before the first await. The handler
     // guard, rather than disabled styling alone, prevents overlapping admission.
+    const agentConfiguration = agent ? agentLease?.configuration : undefined;
+    if (agent && !agentConfiguration) return 'stopped';
     const attempt = admitDecision(run, tics);
     if (!attempt) return 'not-admitted';
     invalidateAgentObservation();
     // Snapshot instructions and state options together before presentation or any await.
     const configuration = Object.freeze({
-      ...ports.readDecisionConfiguration(),
+      ...(agentConfiguration ?? ports.readDecisionConfiguration()),
     });
     const permittedActions = Object.freeze(Object.keys(masks) as ActionName[]);
     if (continuous) continuous.dispatched = false;
@@ -1545,6 +1594,7 @@ export function createSessionController(
     allowAgent,
     allowAgentRun,
     agentPrompt,
+    agentConfig,
     stopAgent,
     agentNext,
     configure,

@@ -19,7 +19,7 @@ vi.mock('../src/agent-browser', () => ({ startAgentObservationBridge: bridge.sta
 const session = vi.hoisted(() => ({
   ports: undefined, factory: undefined,
   controller: { configure: vi.fn(change => { change(); return true; }), initialize: vi.fn(), next: vi.fn(), startContinuous: vi.fn(), stop: vi.fn(),
-    prepare: vi.fn(), close: vi.fn(), restore: vi.fn() },
+    prepare: vi.fn(), close: vi.fn(), restore: vi.fn(), agentPrompt: vi.fn(), agentConfig: vi.fn() },
 }));
 const agent = vi.hoisted(() => ({ enabled: false, key: '', model: 'typesafe/jev-1.14' }));
 vi.mock('virtual:agent-bootstrap', () => ({
@@ -1160,7 +1160,7 @@ it('clears the authorization indication when controller invalidation reaches the
   assert.equal(session.controller.next.mock.calls.length, 0);
 });
 
-it('shows controller-owned bounded allowance and reflects remote saved instructions without changing settings', async () => {
+it('shows bounded allowance and routes ephemeral agent settings without writing human saved settings or drafts', async () => {
   agent.enabled = true;
   agent.key = 'offline-agent-browser-dummy';
   vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'agent'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
@@ -1189,9 +1189,22 @@ it('shows controller-owned bounded allowance and reflects remote saved instructi
   assert.equal(session.ports.promptEditorOpen(), false);
   const saved = session.ports.readDecisionConfiguration();
   const n = session.ports.readTics();
-  session.ports.saveDecisionInstructions('Navigate toward the visible opening.');
-  assert.deepEqual(session.ports.readDecisionConfiguration(), { ...saved, instructionTemplate: 'Navigate toward the visible opening.' });
-  assert.equal(h.element('#prompt-instructions').value, 'Navigate toward the visible opening.');
+  assert.equal(session.ports.saveDecisionInstructions, undefined, 'No agent-to-human Save callback');
+  h.element('#prompt-instructions').value = 'Unsaved human instructions';
+  h.element('#prompt-ammo').checked = !saved.includeAmmo;
+  const scope = { sessionId: '00000000-0000-0000-0000-000000000002', runId: authorization.runId, revision: 0 };
+  session.controller.agentPrompt.mockReturnValue({ sessionId: scope.sessionId, revision: 1,
+    instructions: 'Temporary agent instructions', run: authorization });
+  ports.prompt('epoch', scope.sessionId, () => {}, { ...scope, instructions: 'Temporary agent instructions' });
+  const configuration = { ...saved, instructionTemplate: 'Temporary full settings', includeAmmo: true };
+  session.controller.agentConfig.mockReturnValue({ sessionId: scope.sessionId, revision: 2, configuration, run: authorization });
+  ports.config('epoch', scope.sessionId, () => {}, { ...scope, revision: 1, configuration });
+  assert.equal(session.controller.agentConfig.mock.calls.length, 1);
+  assert.equal(session.controller.agentPrompt.mock.calls.length, 1);
+  assert.equal(session.ports.readDecisionConfiguration(), saved);
+  assert.equal(h.element('#prompt-instructions').value, 'Unsaved human instructions');
+  assert.equal(h.element('#prompt-ammo').checked, !saved.includeAmmo);
+  assert.match(h.element('#agent-status').textContent, /temporary; Edit Prompt retains human settings/);
   assert.equal(session.ports.readTics(), n);
   h.element('#prompt-dialog').open = true;
   assert.equal(session.ports.promptEditorOpen(), true);

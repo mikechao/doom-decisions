@@ -183,7 +183,7 @@ it('rejects agent admission while manual or continuous owns the controller', asy
 it('returns verified terminal prefixes/PNG and retires uncertain or unverifiable results', async () => {
   for (const options of [{ at: 2, signals: death }, { at: 2, signals: exit }, { trapAt: 2 }, { faults: { badFrame: true } }]) {
     // Frame failure is enabled after the initial verified observation.
-    await session(options.faults ? {} : options, async ({ h, decide, allow }) => {
+    await session(options.faults ? {} : options, async ({ h, epoch, observation, decide, allow }) => {
       if (options.faults) h.faults.badFrame = true;
       allow();
       const result = parseAgentDecisionResult(await decide());
@@ -194,6 +194,7 @@ it('returns verified terminal prefixes/PNG and retires uncertain or unverifiable
       assert.equal(result.observation?.previousAction ?? null, null, 'No terminal or unverified candidate is exposed');
       assert.equal(result.observation?.facingProbe ?? null, null, 'No terminal living geometry is exposed');
       assert.equal(h.view.session.controls.ready, false);
+      assert.equal(h.controller.agentConfig(epoch, observation.sessionId, () => {}).error, 'lease-revoked');
       assert.equal(h.sdkCalls, 1);
       assert.equal(result.completionUncertain, !!options.trapAt);
     });
@@ -339,10 +340,12 @@ it('returns all eligible evidence with flags off, including the existing displac
       next.native.x = previous.native.x + (mask === 1 ? 65536 : 0);
       Object.assign(next.native, { facingKind: 3, facingDoor: 2, facingDistance: 24 });
     },
-    choice: { answers: [{ type: 'choice', name: 'next_action', choice: 'forward' }] } }, async ({ h, observation, allow, decide }) => {
+    choice: { answers: [{ type: 'choice', name: 'next_action', choice: 'forward' }] } }, async ({ h, epoch, observation }) => {
     assert.equal(observation.previousAction, null);
-    allow();
-    const result = parseAgentDecisionResult(await decide());
+    const b = bounded(h, epoch, observation);
+    b.replace({ ...defaultDecisionConfiguration });
+    const fresh = await h.controller.observe(() => {});
+    const result = parseAgentDecisionResult(await b.decide(fresh.observationId));
     assert.equal(result.outcome, 'completed');
     const expected = { action: 'forward', tics: 6, endTic: 7,
       text: 'Previous verified action: forward (6 tics).\nPlayer XY displacement: dx=6, dy=0 Doom units; net translation observed.' };
@@ -388,6 +391,8 @@ function bounded(h, epoch, observation) {
   };
   const scope = () => { const p = read(); return { sessionId: p.sessionId, runId: p.run.runId, revision: p.revision }; };
   return { read, scope, decide: id => h.controller.agentNext(epoch, id, () => {}, scope()),
+    config: () => h.controller.agentConfig(epoch, observation.sessionId, () => {}),
+    replace: configuration => h.controller.agentConfig(epoch, observation.sessionId, () => {}, { ...scope(), configuration }),
     write: instructions => h.controller.agentPrompt(epoch, observation.sessionId, () => {}, { ...scope(), instructions }) };
 }
 
@@ -416,7 +421,7 @@ it('reserves three independent verified actions in one session without allowing 
   });
 });
 
-it('CAS instructions preserve the run but consume the former observation and use the exact saved replacement', async () => {
+it('CAS instructions preserve the run, isolate human settings and consume the former observation', async () => {
   await session({ decisionConfiguration: { ...defaultDecisionConfiguration, includeHealth: true, includeAmmo: true, includePreviousAction: true, includeFacingProbe: true } }, async ({ h, epoch, observation }) => {
     const b = bounded(h, epoch, observation);
     const before = b.read();
@@ -425,7 +430,8 @@ it('CAS instructions preserve the run but consume the former observation and use
     const saved = b.write(instructions);
     assert.equal(saved.revision, before.revision + 1);
     assert.deepEqual(saved.run, before.run);
-    assert.deepEqual(h.ports.readDecisionConfiguration(), { ...settings, instructionTemplate: instructions });
+    assert.deepEqual(h.ports.readDecisionConfiguration(), settings);
+    assert.equal(b.config().configuration.instructionTemplate, instructions);
     assert.equal(h.browserInputs.tics, 6);
     assert.equal((await b.decide(observation.observationId)).reason, 'stale-observation');
     assert.equal(h.sdkCalls, 0);
@@ -455,9 +461,13 @@ it('prompt conflicts, human edits, manual gameplay and wrong scope end or fence 
         const result = h.controller.agentPrompt(epoch, scope.sessionId, () => {}, { ...scope, instructions: 'Replacement objective' });
         assert.ok('error' in result);
         assert.equal(h.ports.readDecisionConfiguration().instructionTemplate, before.instructions);
+        assert.deepEqual(b.read().run, before.run, 'Rejected writes do not cancel authorization');
+        assert.equal(b.read().revision, before.revision);
+        assert.equal(h.sdkCalls, 0);
+        return;
       } else if (edit === 'manual') assert.equal(await h.next(), 'completed');
       else h.controller.configure(() => {
-        if (edit === 'human-save') h.ports.saveDecisionInstructions('Human objective');
+        if (edit === 'human-save') h.ports.readDecisionConfiguration = () => ({ ...defaultDecisionConfiguration, instructionTemplate: 'Human objective' });
         if (edit === 'tics') h.browserInputs.tics = 12;
         if (edit === 'options') h.ports.readDecisionConfiguration = () => ({ ...defaultDecisionConfiguration, includeHealth: true });
         if (edit === 'model') h.ports.readAgentIdentity = () => 'other-model';
@@ -509,4 +519,171 @@ it('bounded Stop preserves reader ownership and dispatched verification without 
       assert.equal((await h.controller.agentNext(epoch, observation.observationId, () => {}, scope)).reason, 'lease-revoked');
     });
   }
+});
+
+const inclusionFlags = ['includeReadyWeapon', 'includeAmmo', 'includeHealth', 'includeFacingProbe', 'includePreviousAction'];
+const allOn = instructionTemplate => Object.fromEntries([
+  ['instructionTemplate', instructionTemplate], ...inclusionFlags.map(key => [key, true]),
+]);
+const stateText = (h, index) => h.inputs[index].input[0].content[0].text;
+const qualifiedFacing = next => Object.assign(next.native, { facingKind: 2, facingDoor: 0, facingDistance: 24 });
+
+it('initializes all-on once per lease and isolates both settings commands from saved human configuration', async () => {
+  const human = Object.freeze({ ...defaultDecisionConfiguration, instructionTemplate: 'Human objective for {{tics}} tics.' });
+  await session({ decisionConfiguration: human }, async ({ h, epoch, observation }) => {
+    const initial = h.controller.agentConfig(epoch, observation.sessionId, () => {});
+    assert.deepEqual(initial.configuration, allOn(human.instructionTemplate));
+    assert.equal(initial.run, null);
+    const b = bounded(h, epoch, observation);
+    assert.deepEqual(b.config().configuration, initial.configuration, 'Authorization does not reset settings');
+    const replacement = { ...initial.configuration, includeAmmo: false, includeHealth: false, instructionTemplate: 'Temporary agent objective.' };
+    const changed = b.replace(replacement);
+    assert.equal(changed.revision, initial.revision + 1);
+    replacement.includeAmmo = true; changed.configuration.includeHealth = true;
+    assert.equal(b.config().configuration.includeAmmo, false);
+    assert.equal(b.config().configuration.includeHealth, false);
+    const prompt = b.write('Temporary instructions from the old command.');
+    assert.equal(prompt.revision, changed.revision + 1);
+    assert.equal(b.config().configuration.instructionTemplate, prompt.instructions);
+    assert.equal(b.config().configuration.includeAmmo, false);
+    assert.equal(h.ports.readDecisionConfiguration(), human);
+    assert.deepEqual(human, { ...defaultDecisionConfiguration, instructionTemplate: 'Human objective for {{tics}} tics.' });
+    h.browserInputs.promptEditorOpen = true; // Existing guard protects an unsaved human draft.
+    const before = b.config();
+    assert.equal(b.write('Must not overwrite a draft.').error, 'editor-open');
+    assert.equal(b.replace(initial.configuration).error, 'editor-open');
+    assert.deepEqual(b.config(), before);
+    assert.equal(h.ports.readDecisionConfiguration(), human);
+  });
+});
+
+it.each(inclusionFlags)('changes only %s between attempts, preserving the same bounded authorization', async flag => {
+  await session({ onStep: qualifiedFacing }, async ({ h, epoch, observation }) => {
+    const b = bounded(h, epoch, observation);
+    const first = await b.decide(observation.observationId);
+    assert.equal(first.outcome, 'completed');
+    const before = b.config();
+    assert.equal(before.run.remaining, 2);
+    const changed = b.replace({ ...before.configuration, [flag]: false });
+    assert.deepEqual(changed.run, before.run);
+    assert.equal(changed.revision, before.revision + 1);
+    assert.equal((await b.decide(first.observation.observationId)).reason, 'stale-observation');
+    assert.deepEqual(b.config().run, before.run, 'Stale observation spends no reservation');
+    const fresh = await h.controller.observe(() => {});
+    const second = await b.decide(fresh.observationId);
+    assert.equal(second.outcome, 'completed');
+    assert.deepEqual(b.config().run, { ...before.run, reserved: 2, sdkInvoked: 2, remaining: 1 });
+    const labels = { includeReadyWeapon: 'Ready weapon:', includeAmmo: 'Ammo:', includeHealth: 'Health:',
+      includeFacingProbe: 'Facing probe', includePreviousAction: 'Previous verified action:' };
+    for (const key of inclusionFlags) assert.equal(stateText(h, 1).includes(labels[key]), key !== flag, key);
+    assert.equal(h.sdkCalls, 2); assert.equal(h.gameCalls, 12);
+    assert.equal(h.creations, 1);
+  });
+});
+
+it('retains settings at exhaustion, exports all evidence with flags off and uses saved human policy for manual/Continuous', async () => {
+  const human = { ...defaultDecisionConfiguration, includeHealth: true, instructionTemplate: 'Human policy {{tics}}.' };
+  await session({ decisionConfiguration: human, onStep: qualifiedFacing }, async ({ h, epoch, observation }) => {
+    const b = bounded(h, epoch, observation);
+    const off = { ...defaultDecisionConfiguration, instructionTemplate: 'Agent policy {{tics}}.' };
+    b.replace(off);
+    let fresh = await h.controller.observe(() => {});
+    for (let i = 0; i < 3; i++) {
+      const result = await b.decide(fresh.observationId);
+      assert.equal(result.outcome, 'completed');
+      fresh = result.observation;
+      assert.ok(fresh.telemetry.readyWeapon); assert.ok(fresh.telemetry.ammo);
+      assert.equal(fresh.telemetry.health, 100); assert.ok(fresh.facingProbe); assert.ok(fresh.previousAction.text);
+      assert.equal(stateText(h, i), `Current rendered Doom frame at verified tic ${1 + i * 6}.`);
+      assert.equal(h.inputs[i].questions[0].instructions, 'Agent policy 6.');
+    }
+    const ended = b.config();
+    assert.equal(ended.run.active, false); assert.equal(ended.run.remaining, 0);
+    assert.deepEqual(ended.configuration, off);
+    assert.equal(b.replace(allOn('Cannot rearm.')).error, 'run-unavailable');
+    assert.deepEqual(b.config(), ended);
+    assert.equal(h.controller.allowAgentRun(epoch), false);
+    assert.equal(h.controller.allowAgent(epoch), false);
+    assert.equal((await b.decide(fresh.observationId)).reason, 'no-grant');
+    assert.equal(await h.next(), 'completed');
+    h.browserInputs.budget = 1; await h.start();
+    for (const index of [3, 4]) {
+      assert.equal(h.inputs[index].questions[0].instructions, 'Human policy 6.');
+      assert.equal(stateText(h, index), `Current rendered Doom frame at verified tic ${1 + index * 6}.\nHealth: 100`);
+    }
+    assert.deepEqual(b.config().configuration, off);
+    assert.equal(h.ports.readDecisionConfiguration(), human);
+    assert.equal(h.sdkCalls, 5);
+  });
+});
+
+it('rejects stale, malformed and foreign configuration updates without invalidating the current observation or run', async () => {
+  await session({}, async ({ h, epoch, observation }) => {
+    const b = bounded(h, epoch, observation);
+    const before = b.config();
+    const scope = b.scope();
+    const call = (lease, sessionId, update) => h.controller.agentConfig(lease, sessionId, () => {}, update);
+    const valid = { ...scope, configuration: before.configuration };
+    const invalids = [
+      [epoch, scope.sessionId, { ...valid, revision: scope.revision + 1 }],
+      [epoch, randomUUID(), valid], [randomUUID(), scope.sessionId, valid],
+      [epoch, scope.sessionId, { ...valid, runId: randomUUID() }],
+      [epoch, scope.sessionId, { ...valid, configuration: { ...before.configuration, includeHealth: 'true' } }],
+      [epoch, scope.sessionId, { ...valid, configuration: { ...before.configuration, extra: false } }],
+      [epoch, scope.sessionId, { ...valid, configuration: { instructionTemplate: 'Missing flags.' } }],
+    ];
+    for (const args of invalids) {
+      assert.ok('error' in call(...args));
+      assert.deepEqual(b.config(), before);
+    }
+    assert.equal((await b.decide(observation.observationId)).outcome, 'completed', 'Rejected changes preserve the valid observation');
+    assert.equal(h.sdkCalls, 1);
+  });
+});
+
+it.each(['snapshot', 'reader', 'render'])('rejects config and prompt updates during %s ownership without changing the admitted request', async phase => {
+  await session({ delayedBody: phase === 'reader' }, async ({ h, epoch, observation }) => {
+    const b = bounded(h, epoch, observation);
+    const before = b.config(); const scope = b.scope();
+    const hold = phase === 'reader' ? undefined : h.hold(phase);
+    const work = b.decide(observation.observationId);
+    await (hold?.waiting ?? h.waiting);
+    const counts = structuredClone(h.view.session.agentAuthorization);
+    assert.equal(h.controller.agentConfig(epoch, observation.sessionId, () => {}, {
+      ...scope, configuration: defaultDecisionConfiguration,
+    }).error, 'not-ready');
+    assert.equal(h.controller.agentPrompt(epoch, observation.sessionId, () => {}, {
+      ...scope, instructions: 'Cannot change the admitted request.',
+    }).error, 'not-ready');
+    assert.deepEqual(h.view.session.agentAuthorization, counts);
+    hold?.release(); h.releaseBody();
+    assert.equal((await work).outcome, 'completed');
+    assert.equal(b.config().revision, before.revision);
+    assert.deepEqual(b.config().configuration, before.configuration);
+    assert.match(stateText(h, 0), /Ready weapon:.*\nAmmo:.*\nHealth:/);
+    assert.equal(h.sdkCalls, 1);
+    h.controller.stopAgent();
+    assert.equal(h.controller.agentConfig(epoch, observation.sessionId, () => {}, {
+      ...scope, configuration: defaultDecisionConfiguration,
+    }).error, 'lease-revoked');
+  });
+});
+
+it('clears settings on Stop and initializes a new epoch from the current human instructions', async () => {
+  await session({}, async ({ h, epoch, observation }) => {
+    const b = bounded(h, epoch, observation);
+    b.replace({ ...defaultDecisionConfiguration, instructionTemplate: 'Ephemeral objective.' });
+    const oldScope = b.scope();
+    h.controller.stopAgent();
+    assert.equal(h.controller.agentConfig(epoch, observation.sessionId, () => {}).error, 'lease-revoked');
+    const human = { ...defaultDecisionConfiguration, instructionTemplate: 'New human objective.' };
+    h.ports.readDecisionConfiguration = () => human;
+    const nextEpoch = randomUUID(); h.controller.attachAgent(nextEpoch); // Controller boundary only; real bridge requires reload.
+    const fresh = await h.controller.observe(() => {});
+    const next = h.controller.agentConfig(nextEpoch, fresh.sessionId, () => {});
+    assert.deepEqual(next.configuration, allOn(human.instructionTemplate));
+    assert.equal(next.run, null);
+    assert.equal((await h.controller.agentNext(epoch, fresh.observationId, () => {}, oldScope)).reason, 'lease-revoked');
+    assert.equal(h.sdkCalls, 0);
+  });
 });

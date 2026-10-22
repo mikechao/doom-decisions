@@ -214,16 +214,16 @@ Actually open the returned `pngPath`. Observation takes fresh passive snapshots,
 renders, verifies native/Canvas RGBA hashes, hashes PNG bytes, and proves unchanged
 native state around capture. It consumes zero gameplay tics and never constructs a
 provider. Its `observationId` binds the controller's latest observation, game
-session/tic, lease epoch, effective model, saved instructions/options and tics.
+session/tic, lease epoch, effective model, human and agent settings, revision and tics.
 Observation payloads contain no prompt text or credentials; dedicated prompt commands
-return only saved instruction text and nonsecret control state. Another observation supersedes the
+return only effective agent instructions/settings and nonsecret control state. Another observation supersedes the
 previous identity. A manual decision or saved configuration change invalidates it.
 `phase: ready` describes the capture boundary, not guaranteed future readiness.
 
 Agent observations expose all five eligible Game State signals independently of
-the five Decisions inclusion toggles. The toggles still govern the existing
-Decisions request formatter; this observation extension changes no defaults,
-saved settings, instructions or request payload semantics.
+Decisions inclusion settings. Normal requests use human saved settings;
+agent requests use the attached lease's ephemeral configuration described below.
+Both use the existing Decisions request formatter and eligibility rules.
 
 - `telemetry.readyWeapon` is the normalized nullable `{id, name, ammoType}`;
   `telemetry.ammo` is nullable inventory with `bullets`, `shells`, `cells`, and
@@ -259,7 +259,7 @@ unchanged, replacing PNG data only with a verified local file path.
 **Attach and observe never authorize charges.** After viewing that PNG, the human
 must click **Allow 1 Agent Decision** in the attached browser page. This grants
 one attempt for this page/lease epoch and the current verified observation with
-its effective model, saved instructions/options and tics. Replacing the observation
+its effective model, agent instructions/options and tics. Replacing the observation
 or editing that configuration revokes the grant; restoring old values never
 rearms it. Observe the current state and click Allow again. Then request one Decisions-selected
 legal action (no CLI action or duration argument):
@@ -315,7 +315,7 @@ the existing attachment rather than taking it over.
 
 While an agent decision owns the controller, manual Next, Continuous, observation,
 second agent decisions and saved prompt/model changes are rejected at controller
-boundaries. Tics and saved configuration are frozen before asynchronous work;
+boundaries. Tics and the selected policy's configuration are frozen before asynchronous work;
 unsaved prompt drafts do not change the request. Controls return only after safe
 settlement, with the ordinary credential gates still applied.
 
@@ -325,7 +325,7 @@ Two terminals, one existing dev server: the human runs `npm --prefix app run dev
 and manually opens `http://127.0.0.1:5174/`. In Codex, from this worktree, invoke
 `$doom-decisions play`. Codex attaches, observes and actually opens every exported
 PNG with its image-viewing tool. It retains a short navigation hypothesis and
-updates high-level saved instructions when useful. The Decisions API still chooses
+updates ephemeral high-level instructions and Game State inclusion when useful. The Decisions API still chooses
 every low-level action. No browser driving, second server, daemon or persistent map
 is involved. `play` is skill routing, not a CLI subcommand.
 
@@ -337,11 +337,13 @@ authorize this run only once; repeated clicks, prompt changes, lost responses an
 reattach never replenish it. The separate **Allow 1 Agent Decision** path retains
 its exact single-observation/configuration grant and cannot extend a bounded run.
 
-The CLI adds only effective-prompt read/write commands and scoped decision arguments:
+The CLI provides effective configuration/prompt commands and scoped decision arguments:
 
 ```sh
 node scripts/doom-agent.mjs get-prompt --lease /absolute/lease.json --session SESSION_ID
 node scripts/doom-agent.mjs set-prompt --lease /absolute/lease.json --session SESSION_ID --run RUN_ID --revision REVISION --instructions-file /absolute/instructions.txt
+node scripts/doom-agent.mjs get-config --lease /absolute/lease.json --session SESSION_ID
+node scripts/doom-agent.mjs set-config --lease /absolute/lease.json --session SESSION_ID --run RUN_ID --revision REVISION --config-file /absolute/configuration.json
 node scripts/doom-agent.mjs observe --lease /absolute/lease.json
 # Codex must actually view the new pngPath before deciding.
 node scripts/doom-agent.mjs decide --lease /absolute/lease.json --observation OBSERVATION_ID --session SESSION_ID --run RUN_ID --revision REVISION
@@ -349,25 +351,64 @@ node scripts/doom-agent.mjs decide --lease /absolute/lease.json --observation OB
 
 `get-prompt` returns `{sessionId, revision, instructions, run}` with controller-owned
 `runId`, `active`, fixed `limit: 3`, `reserved`, `sdkInvoked`, and `remaining`, or a
-fixed error. Reading never grants permission. Instruction text is the saved template,
+fixed error. Reading never grants permission. Instruction text is the effective agent template,
 with `{{tics}}` resolved only when the normal request is built. Prompt commands carry
 no key, client, provider configuration or human draft.
 
-`set-prompt` requires the current session/run and expected monotonic configuration
-revision. It updates only instructions through the same configuration boundary and
-saved value used by the human editor, preserving model, tics and all telemetry options.
-Text must be nonblank and at most 16000 characters. **Any open human prompt editor**
-rejects the remote write, even if pristine; this avoids overwriting drafts without a
-second edit-state model. Revision/editor/identity conflicts end the run. A successful
-agent write preserves remaining budget but invalidates the old observation and every
-single grant, even if old text is later restored. Codex must observe and **view a fresh
-PNG** afterward. Human saves and other model/tics/options changes end the run instead.
+Attachment initializes one frozen lease-owned configuration: copy human saved
+instructions once and enable all five inclusion flags, independently of human
+checkboxes. Authorization and decisions do not reset these values. Ordinary
+Manual/Continuous requests always use human saved configuration. Agent changes
+never save into human settings or load/change human drafts.
+
+`get-config` returns `{sessionId, revision, configuration, run}`. The run state is
+the same as get-prompt. Configuration has exactly six fields; a JSON file for a
+full replacement contains only this object, not the response envelope:
+
+```json
+{
+  "instructionTemplate": "Explore the visible opening for {{tics}} tics.",
+  "includeReadyWeapon": true,
+  "includeAmmo": false,
+  "includeHealth": true,
+  "includeFacingProbe": true,
+  "includePreviousAction": true
+}
+```
+
+Read/edit/CAS: get current configuration, change selected fields, write all six
+fields to an absolute UTF-8 JSON file, then set-config with the returned revision
+and session/run. Missing/extra keys and nonboolean flags are rejected. Instructions
+must be nonblank and at most 16000 characters. The wire command includes the existing
+`pageId`, `ownerId`, `epoch`, `commandId`, `sessionId`, `runId`, `revision`, plus
+`configuration`; get-config omits run/revision/configuration. Broker responses use
+`{pageId, epoch, commandId, config: ...}`; CLI validates and flattens that envelope.
+Fixed errors include `invalid-configuration`, `revision-conflict`, `session-mismatch`,
+`run-unavailable`, `not-ready`, `editor-open`, and `lease-revoked` (malformed wire
+commands fail as `invalid-request`). No credentials/provider objects cross this boundary.
+
+Both setters require a ready idle controller, current active bounded run and
+expected monotonic revision. **Any open human prompt editor** rejects writes.
+`set-prompt` updates only instructions in that same ephemeral configuration;
+set-config fully replaces it. Successful edits increment the shared revision,
+invalidate old observations/single grants and update the authorized run's expected
+identity while preserving run ID, remaining budget and reserved/SDK-invoked counts.
+Codex must observe and **view a fresh PNG** before the next decision. Rejected
+stale/malformed/busy writes leave settings, revision, grants and counters unchanged.
+Human saves/model/tics/options changes and detected external identity mismatches
+still end the bounded run. Already admitted requests retain their frozen settings.
+
+Budget exhaustion retains configuration for read-only inspection under the same
+lease, with zero allowance and no rearming. Stop/disconnect/page exit removes it;
+terminal or uncertain retirement discards configuration while retaining the ended
+authorization record for attempt evidence. No browser reconnect/rearming is added:
+reload is required for another attachment. Refresh starts a new page-memory session.
 
 Each valid scoped decision admission synchronously reserves one slot before any await.
 A reservation is never refunded, including missing credentials or pre-create failure.
 Actual SDK invocation is counted separately at the existing `beforeCreate` boundary;
 it is not proof of remote billing. Retries and fallback remain disabled. Each next
-cycle requires an independently verified observation matching current saved configuration.
+cycle requires an independently verified observation matching current effective configuration.
 Only healthy action AND resulting-frame verification permit continuation. Manual
 gameplay ends the run; it does not silently borrow its authorization. Failures,
 terminal/uncertain results, lease loss and Stop end remaining admission. After three
@@ -391,10 +432,12 @@ implementation):
    attempts**, invoke `$doom-decisions play`. Attach/observe and actually view the
    first PNG. Click **Allow up to 3 Agent Decisions** and confirm in chat. Record
    page/epoch/session/run ID, effective instructions/revision, N and initial tic.
-3. Have Codex issue its own instructions-only update. Confirm the saved value by
-   opening the existing editor, then close it without saving. Observe/view anew,
-   decide once, and inspect both structured evidence and actual resulting PNG.
-4. Retain/update the navigation hypothesis and saved instructions as useful; repeat
+3. Have Codex read get-config and issue an ephemeral instructions or inclusion
+   update with CAS. Confirm effective settings through get-config and confirm the
+   human editor retains its original instructions/toggles; close without saving.
+   Observe/view anew, decide once, and inspect structured evidence, request text
+   and the actual resulting PNG.
+4. Retain/update the navigation hypothesis and agent settings as useful; repeat
    observe/view/decide for at most three total reservations. Record actual remaining,
    reserved and SDK-invoked counts, legal model-selected action, requested/reported/
    verified/end tics, session continuity, matching native/Canvas hashes and visual

@@ -8,7 +8,9 @@ import {
   validAgentCommand,
   type AgentScope,
   type AgentPromptResult,
+  type AgentConfigResult,
 } from './agent-control.ts';
+import type { DecisionConfiguration } from './decision-request.ts';
 
 type Lease = { pageId: string; ownerId: string; epoch: string };
 type Stream = Pick<EventSource, 'onmessage' | 'onerror' | 'close'>;
@@ -34,6 +36,12 @@ type Ports = {
     fresh: () => void,
     update?: AgentScope & { instructions: string },
   ): AgentPromptResult;
+  config?(
+    epoch: string,
+    sessionId: string,
+    fresh: () => void,
+    update?: AgentScope & { configuration: DecisionConfiguration },
+  ): AgentConfigResult;
   stopAgent?(): void;
   decide?(
     epoch: string,
@@ -124,6 +132,7 @@ export function startAgentObservationBridge(ports: Ports) {
       let observation: AgentObservation | null = null;
       let decision: AgentDecisionResult | null = null;
       let prompt: AgentPromptResult = { error: 'not-ready' };
+      let config: AgentConfigResult = { error: 'not-ready' };
       const scope = data.runId
         ? {
             runId: data.runId,
@@ -145,7 +154,17 @@ export function startAgentObservationBridge(ports: Ports) {
           if (!ended) ports.state('settled');
         } else if (data.type === 'observe')
           observation = await ports.observe(fresh);
-        else if (ports.prompt)
+        else if (data.type === 'get-config' || data.type === 'set-config') {
+          if (ports.config)
+            config = ports.config(
+              admitted.epoch,
+              data.sessionId,
+              fresh,
+              data.type === 'set-config' && scope
+                ? { ...scope, configuration: data.configuration }
+                : undefined,
+            );
+        } else if (ports.prompt)
           prompt = ports.prompt(
             admitted.epoch,
             data.sessionId,
@@ -175,7 +194,9 @@ export function startAgentObservationBridge(ports: Ports) {
               ? { decision }
               : data.type === 'observe'
                 ? { observation }
-                : { prompt }),
+                : data.type === 'get-config' || data.type === 'set-config'
+                  ? { config }
+                  : { prompt }),
           },
           upload.signal,
         );

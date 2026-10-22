@@ -154,7 +154,7 @@ export function fixture(configuration = {}) {
     });
   }
   const browserInputs = { tics: 6, budget: 2, promptEditorOpen: false };
-  let savedConfiguration = settings.decisionConfiguration ?? defaultDecisionConfiguration;
+  const savedConfiguration = settings.decisionConfiguration ?? defaultDecisionConfiguration;
   const wasm = new Uint8Array([1, 2, 3]).buffer;
   const wad = settings.wad ?? new ArrayBuffer(12);
   const native = nativeFixture({
@@ -313,9 +313,6 @@ export function fixture(configuration = {}) {
     readTics: () => browserInputs.tics,
     readDecisionConfiguration: () => savedConfiguration,
     promptEditorOpen: () => browserInputs.promptEditorOpen,
-    saveDecisionInstructions: instructions => {
-      savedConfiguration = Object.freeze({ ...savedConfiguration, instructionTemplate: instructions });
-    },
     takeKey() {
       const captured = key;
       key = '';
