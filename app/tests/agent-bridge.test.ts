@@ -17,6 +17,7 @@ import { agentOrigin, agentPath, agentPngBytes, parseAgentObservation, parseAgen
 import { runAgentCli } from '../../scripts/doom-agent.mjs';
 import { agentObservation, pngFor } from './fixtures/agent.ts';
 import { deferred, checkpoint, fixture } from './fixtures/session.ts';
+import { death, exit } from './fixtures/synthetic-doom.ts';
 import { validAgentCommand, parseAgentPromptResult, parseAgentConfigResult } from '../src/agent-control.ts';
 
 const cleanups = [];
@@ -503,6 +504,82 @@ it('delivers one controller-selected decision through CLI and never replays or m
   assert.equal(game.view.session.controls.ready, true);
   await assert.rejects(decide(randomUUID()), /agent-stopped/);
   assert.equal(game.sdkCalls, 1);
+});
+it.each([
+  { terminal: 'death', signals: death, reservation: 1 },
+  { terminal: 'exit pending', signals: exit, reservation: 1 },
+  { terminal: 'death', signals: death, reservation: 3 },
+])('preserves verified $terminal through CLI stdout/PNG on reservation $reservation', async ({ signals, reservation }) => {
+  const consumed = (reservation - 1) * 6 + 2;
+  const game = fixture({ pngFor, at: consumed, signals });
+  cleanups.push(() => game.dispose());
+  await game.prepare();
+  const h = harness();
+  const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
+  await page.ready;
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-agent-terminal-'));
+  cleanups.push(() => rm(temporaryRoot, { recursive: true, force: true }));
+  const cli = args => runAgentCli(args, { transport: h.transport, temporaryRoot });
+  const { leaseFile, ...lease } = await cli(['attach']);
+  const base = ['--lease', leaseFile];
+  let before = await cli(['observe', ...base]);
+  assert.equal(page.allowRun(), true); // One synthetic browser grant for all reservations.
+  const config = await cli(['get-config', ...base, '--session', before.sessionId]);
+  const scope = { sessionId: before.sessionId, runId: config.run.runId, revision: config.revision };
+  const args = () => ['decide', ...base, '--observation', before.observationId,
+    '--session', scope.sessionId, '--run', scope.runId, '--revision', String(scope.revision)];
+  for (let i = 1; i < reservation; i++) {
+    assert.equal((await cli(args())).outcome, 'completed');
+    before = await cli(['observe', ...base]);
+  }
+  const command = { ...lease, commandId: before.observationId, observationId: before.observationId, ...scope };
+  const response = await h.send('decide', command).result.promise;
+  assert.equal(response.status, 200);
+  const wire = await response.json();
+
+  // Replay the actual controller/browser/broker response through the CLI process,
+  // following the existing stderr test pattern. No listener or live transport.
+  const preload = join(temporaryRoot, 'transport.mjs');
+  await writeFile(preload, `import assert from 'node:assert/strict';
+let calls = 0;
+globalThis.fetch = async (url, options) => {
+  assert.equal(++calls, 1);
+  assert.equal(url, ${JSON.stringify(`${agentOrigin}${agentPath}/decide`)});
+  assert.deepEqual(JSON.parse(options.body), ${JSON.stringify(command)});
+  return new Response(${JSON.stringify(JSON.stringify(wire))}, {status: 200});
+};`);
+  const child = spawnSync(process.execPath, ['--import', preload,
+    fileURLToPath(new URL('../../scripts/doom-agent.mjs', import.meta.url)), ...args()],
+    { encoding: 'utf8', timeout: 5000 });
+  assert.equal(child.error, undefined);
+  assert.equal(child.status, 0);
+  assert.equal(child.stderr, '');
+  const result = JSON.parse(child.stdout);
+  const { png, ...observation } = wire.decision.observation;
+  assert.deepEqual(result, { pageId: lease.pageId, epoch: lease.epoch, commandId: command.commandId,
+    pngPath: result.pngPath, ...wire.decision, observation });
+  assert.equal(result.beforeObservationId, before.observationId);
+  assert.equal(result.outcome, 'terminal');
+  assert.equal(result.reason, null);
+  assert.equal(result.sdkInvoked, true);
+  assert.equal(result.completionUncertain, false);
+  assert.deepEqual([result.requestedTics, result.reportedTics, result.verifiedTics], [6, 2, 2]);
+  assert.equal(result.cumulativeTics, before.tic + 2);
+  assert.equal(result.observation.tic, result.cumulativeTics);
+  assert.equal(result.observation.sessionId, scope.sessionId);
+  assert.equal(result.observation.phase, 'terminal');
+  assert.equal(result.observation.telemetry.health, signals === death ? 0 : before.telemetry.health);
+  assert.equal(result.observation.frame.tic, result.observation.tic);
+  assert.equal(result.observation.frame.nativeSha256, result.observation.frame.canvasSha256);
+  assert.equal(result.observation.previousAction, null);
+  assert.equal(result.observation.facingProbe, null);
+  assert.ok(isAbsolute(result.pngPath));
+  assert.deepEqual(await readFile(result.pngPath), Buffer.from(agentPngBytes(png)));
+  assert.equal(game.view.session.controls.ready, false);
+  assert.deepEqual(game.view.session.agentAuthorization, { runId: scope.runId, active: false,
+    limit: 3, reserved: reservation, sdkInvoked: reservation, remaining: 0 });
+  assert.equal(game.sdkCalls, reservation);
+  assert.equal(game.gameCalls, consumed);
 });
 it.each(['stop', 'disconnect', 'second-page'].flatMap(interruption => [false, true].map(bounded => ({ interruption, bounded }))))('$interruption revokes controller admission (bounded=$bounded) and never delivers a late paid result', async ({ interruption, bounded }) => {
   const game = fixture({ pngFor, delayedBody: true });

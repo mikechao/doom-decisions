@@ -21,8 +21,33 @@ planning, image viewing, settings changes or tool calls. `{"error":"agent-stoppe
 means the broker received a validated human **Stop Agent** request: reply
 `Agent stopped by user. Ending play.` and end this invocation immediately.
 Make no further observe/decide/get/set/attach/retry calls and do not recover or
-reattach. `lease-revoked`, disconnect, deadline/transport failure or ambiguous
-output also ends this invocation, without claiming the human clicked Stop.
+reattach.
+
+After honoring `agent-stopped`, a successful, correlated `decide` result with
+`outcome: "terminal"`, `sdkInvoked: true`, `completionUncertain: false`,
+`observation.phase: "terminal"` and matching session/tic/frame hashes plus a
+verified local terminal `pngPath` ends gameplay immediately. Only after successful
+viewing of that PNG, within this verified terminal contract,
+`observation.telemetry.health === 0` means reply
+`Doomguy died. Ending play.`; positive health means reply
+`Level exit triggered (exit pending). Ending play.` Do not claim another map
+loaded or the game was won. Raw health or a screenshot alone never proves death.
+Terminal takes priority over exhaustion, including an early tic prefix or death
+on the third/final reservation. Make no further agent CLI calls: no observe,
+decide, get/set-config, prompt edits, attach, retry or discovery, regardless of
+previous allowance. View only the already-returned local terminal PNG once as the
+sole permitted final evidence tool call. If viewing succeeds, give the matching
+acknowledgment above and end this invocation. If the PNG is missing/unreadable or
+the viewer fails, reply only
+`Terminal image inspection failed. Ending play without confirming death or exit.`
+Do not append a death, exit or human-Stop acknowledgment. End this invocation
+without retrying image viewing, recovery or further tool calls. Never restart,
+respawn, advance to another map or seek another grant or replacement lease.
+
+`retired`, `not-admitted`, uncertain completion, missing/inconsistent/malformed
+or unsupported terminal evidence, `lease-revoked`, disconnect, deadline/transport
+failure or ambiguous output also ends this invocation conservatively, without
+claiming confirmed death or that the human clicked Stop.
 Report exhausted allowance as normal completion only when returned run counters
 show `reserved === limit` and zero remaining; inactive authorization alone is
 not proof of exhaustion. All other stop/conflict/uncertainty rules still apply.
@@ -79,7 +104,8 @@ From the repository root:
    `node scripts/doom-agent.mjs decide --lease ABSOLUTE_LEASE_FILE --observation OBSERVATION_ID --session SESSION_ID --run RUN_ID --revision REVISION`.
    This requests one Decisions-selected action through the existing controller.
    Inspect structured outcome, SDK invocation and requested/reported/verified/end
-   tics. Actually open the resulting PNG and compare it with the preceding PNG.
+   tics. Apply the terminal rule above first. For healthy `completed` results,
+   actually open the resulting PNG and compare it with the preceding PNG.
    Verify session continuity and eligible `previousAction`. Terminal prefixes are
    distinct from completed N tics; other outcomes without PNGs are not new scenes.
 8. Only a healthy `completed` result with matching evidence AND an image actually
