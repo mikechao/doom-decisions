@@ -361,8 +361,15 @@ settlement, with the ordinary credential gates still applied.
 
 Two terminals, one existing dev server: the human runs `npm --prefix app run dev:agent`
 and manually opens `http://127.0.0.1:5174/`. In Codex, from this worktree, invoke
-`$doom-decisions play`. Codex attaches, observes and actually opens every exported
-PNG with its image-viewing tool. It retains a short navigation hypothesis and
+`$doom-decisions play`. Codex attaches and views the initial verified PNG and every
+completed/terminal decision result. Within the same active run and unchanged
+lease/page/epoch/session ownership, a fresh observation may reuse an earlier
+successful visual inspection only when its verified `pngSha256` and native/Canvas
+frame hashes match that inspected image. New or unverified visual identities
+require viewing; terminal viewing is always mandatory. This skips only duplicate
+image opening: fresh observation IDs, current telemetry and configuration/revision
+checks remain required. See the [skill's visual evidence reuse rule](../.agents/skills/doom-decisions/SKILL.md).
+It retains a short navigation hypothesis and
 updates ephemeral high-level instructions and Game State inclusion when useful. The Decisions API still chooses
 every low-level action. No browser driving, second server, daemon or persistent map
 is involved. `play` is skill routing, not a CLI subcommand.
@@ -384,7 +391,8 @@ node scripts/doom-agent.mjs set-prompt --lease /absolute/lease.json --session SE
 node scripts/doom-agent.mjs get-config --lease /absolute/lease.json --session SESSION_ID
 node scripts/doom-agent.mjs set-config --lease /absolute/lease.json --session SESSION_ID --run RUN_ID --revision REVISION --config-file /absolute/configuration.json
 node scripts/doom-agent.mjs observe --lease /absolute/lease.json
-# Codex must actually view the new pngPath before deciding.
+# View the fresh PNG or apply the skill's verified visual evidence reuse rule.
+# Always use this latest observation ID and the current revision for decide.
 node scripts/doom-agent.mjs decide --lease /absolute/lease.json --observation OBSERVATION_ID --session SESSION_ID --run RUN_ID --revision REVISION
 ```
 
@@ -437,7 +445,8 @@ expected monotonic revision. **Any open human prompt editor** rejects writes.
 set-config fully replaces it. Successful edits increment the shared revision,
 invalidate old observations and update the authorized run's expected
 identity while preserving run ID, remaining budget and reserved/SDK-invoked counts.
-Codex must observe and **view a fresh PNG** before the next decision. Rejected
+Codex must obtain a **fresh observation** before the next decision and view its
+PNG or apply the skill's verified visual evidence reuse rule. Rejected
 stale/malformed/busy writes leave settings, revision and counters unchanged.
 Human saves/model/tics/options changes and detected external identity mismatches
 still end the bounded run. Already admitted requests retain their frozen settings.
@@ -446,7 +455,8 @@ Before each decision, Codex chooses a horizon from current verified evidence, us
 6 as the safe default. Every nondefault decision requires a visible explanation,
 including when retaining a previous nondefault value, acknowledging uncertainty
 about the provider's next action. It writes config only when the chosen value
-changes, then re-observes/views the PNG and confirms revision before deciding.
+changes, then re-observes, views or safely reuses visual evidence, and confirms
+revision before deciding.
 Duration changes never replenish the allowance. The default prompt uses neutral
 time-horizon wording; saved/custom templates are preserved verbatim and may retain
 older human-selected wording. Review those explicitly through the disclosed

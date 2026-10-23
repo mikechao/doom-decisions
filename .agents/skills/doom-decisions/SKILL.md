@@ -1,6 +1,6 @@
 ---
 name: doom-decisions
-description: Start and supervise one process-budgeted Decisions API run in the foreground, viewing every verified Doom PNG and adapting ephemeral instructions and Game State inclusion. No browser driving or unattended loop.
+description: Start and supervise one process-budgeted Decisions API run in the foreground, viewing distinct verified Doom frames and every decision result, and adapting ephemeral instructions and Game State inclusion. No browser driving or unattended loop.
 ---
 
 # Doom Decisions — bounded foreground play
@@ -67,6 +67,31 @@ The human configures a positive safe-integer `AGENT_DECISION_BUDGET` in
 `http://127.0.0.1:5174/`. Wait for their page to reach verified ready. Reuse that
 server; a busy port is not permission to start another one.
 
+**Visual evidence reuse applies only to `observe` image opening.** Always view
+the initial PNG and every healthy completed or verified terminal `decide` PNG
+immediately, even if identical to an earlier image. Terminal/Stop/error precedence
+above is unchanged; terminal viewing is mandatory and never waits for `observe`.
+During the same active run, a fresh `observe` may reuse a successful earlier visual
+inspection only with unchanged lease/page ID/epoch/session/run ownership and a
+verified `pngSha256` equal to that of an image actually delivered to the model.
+Retain that viewed path/hash/ownership and its native/Canvas frame hashes in the
+concise conversation record, not an external cache. The CLI verifies PNG bytes
+against `pngSha256` before writing `pngPath`: use the correlated `observe` result's
+top-level hash, or `decide`'s `observation.pngSha256` for its resulting `pngPath`.
+`beforeObservationId` identifies the input, not the resulting image. Never compare
+filenames or equate PNG-byte hashes with native/Canvas RGBA hashes. Require the
+current `frame.tic === tic`, matching native/Canvas hashes, and those RGBA hashes
+to match the earlier inspected frame too. If hashes are absent, inconsistent or
+cannot be mapped safely to the inspected image, open the current PNG instead;
+existing invalid-evidence or ownership-mismatch rules still require stopping.
+Open every newly distinct verified frame at least once; failed viewing stops play.
+Reuse skips only image opening: process current telemetry, position, facing probe,
+`previousAction`, execution receipts and navigation context every time. Always
+acquire and validate a fresh observation ID and current configuration/revision
+before deciding, including after settings writes; identical pixels never restore
+an invalidated observation or authorize a stale revision. Settings writes may
+reuse visual evidence under these same conditions, never pre-write observation IDs.
+
 From the repository root:
 
 1. Run `node scripts/doom-agent.mjs attach` once. Retain its absolute `leaseFile`,
@@ -127,8 +152,9 @@ From the repository root:
    read/edit/CAS contract below. Inclusion-only edits are not prompt revisions;
    changing `instructionTemplate` through `set-config` requires the same disclosure
    and result confirmation. Model and Manual/Continuous duration remain browser-owned.
-6. Before EACH decision, obtain a fresh observation and actually view its PNG.
-   After set-prompt or set-config this is mandatory: NEVER use the pre-write observation.
+6. Before EACH decision, obtain a fresh observation and view its PNG or apply the
+   visual evidence reuse rule above. After set-prompt or set-config a fresh
+   observation is mandatory: NEVER use the pre-write observation.
    Check unchanged page/epoch/session, ready phase, current tic and image hashes.
    Get-config once to verify the same run ID/revision/frozen limit is active
    with allowance.
@@ -143,7 +169,8 @@ From the repository root:
    and nearby threats/obstacles favor earlier re-observation.
    If the chosen duration differs from effective `tics`, use the complete-replacement
    set-config contract below with current scope/revision. After confirming success,
-   obtain and view a fresh PNG and get-config again to confirm the new revision,
+   obtain a fresh observation, view or safely reuse its visual evidence, and
+   get-config again to confirm the new revision,
    same active run/frozen limit and remaining allowance before deciding. Reassess
    the horizon against that fresh evidence. Never reuse the pre-write observation.
    If duration is unchanged, do not write configuration just to repeat the value.
@@ -153,7 +180,8 @@ From the repository root:
    acknowledge that the Decisions API's next low-level action is not yet known.
    This explanation is required even when retaining the same nondefault tics from
    the previous decision. No duration explanation is required for default 6.
-7. Invoke exactly once for the observation just viewed:
+7. Invoke exactly once using the latest fresh observation ID, whether its PNG
+   was just viewed or its visual evidence safely reused:
    `node scripts/doom-agent.mjs decide --lease ABSOLUTE_LEASE_FILE --observation OBSERVATION_ID --session SESSION_ID --run RUN_ID --revision REVISION`.
    This requests one Decisions-selected action through the existing controller.
    Inspect structured outcome, SDK invocation and requested/reported/verified/end
@@ -222,8 +250,9 @@ Writes require a ready, idle controller and the current active bounded run and
 revision. `set-config` fully replaces the seven fields. `set-prompt` remains an
 instructions-only adapter to the same ephemeral configuration and revision.
 Successful edits preserve the run ID and every attempt counter, increment revision
-and invalidate old observations. Obtain and view a fresh PNG before requesting
-another decision. Changes never affect an admitted request. Rejected stale/malformed,
+and invalidate old observations. Obtain a fresh observation and view its PNG or
+apply the visual evidence reuse rule before requesting another decision.
+Changes never affect an admitted request. Rejected stale/malformed,
 busy or editor-open writes leave settings, revision and allowance unchanged;
 stop this skill workflow on conflicts rather than retrying. Human configuration
 changes still end the bounded run.
