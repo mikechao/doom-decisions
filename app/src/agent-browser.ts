@@ -9,8 +9,8 @@ import {
   type AgentScope,
   type AgentPromptResult,
   type AgentConfigResult,
+  type AgentConfiguration,
 } from './agent-control.ts';
-import type { DecisionConfiguration } from './decision-request.ts';
 
 type Lease = { pageId: string; ownerId: string; epoch: string };
 type Stream = Pick<EventSource, 'onmessage' | 'onerror' | 'close'>;
@@ -44,7 +44,7 @@ type Ports = {
     epoch: string,
     sessionId: string,
     fresh: () => void,
-    update?: AgentScope & { configuration: DecisionConfiguration },
+    update?: AgentScope & { configuration: AgentConfiguration },
   ): AgentConfigResult;
   stopAgent?(): void;
   decide?(

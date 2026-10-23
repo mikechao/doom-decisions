@@ -14,7 +14,10 @@ Attaching, observing and reading/writing agent settings never authorize charges.
 Invoke `start-run` once to claim the configured count of possibly billable
 Decisions API attempts; there is no browser authorization or chat confirmation.
 The existing Decisions provider selects EVERY low-level action; never inject an
-action or duration or ask the provider to choose a particular action identifier.
+action or routinely order a particular action identifier. Conditional tactical
+intent is allowed. Codex chooses only the agent time horizon through the bounded
+effective configuration before the provider chooses its action; never change
+duration after seeing that choice.
 
 **Termination takes priority throughout `play`:** immediately after EVERY CLI
 call, inspect its exit status and structured result before further reasoning,
@@ -73,7 +76,7 @@ From the repository root:
    content to the model. A filename, base64 or hash alone is not visual evidence.
    If viewing fails, stop before a decision. Retain `sessionId`, `observationId`,
    tic, matching native/Canvas hashes and verified telemetry.
-3. Read the effective agent configuration (instructions and five inclusion flags):
+3. Read the effective agent configuration (instructions, five inclusion flags and tics):
    `node scripts/doom-agent.mjs get-config --lease ABSOLUTE_LEASE_FILE --session SESSION_ID`.
    Require the same page/epoch/session as the fresh observation just viewed and
    `run: null`; an existing run is not permission to resume or replenish it.
@@ -123,13 +126,33 @@ From the repository root:
    manual copy/paste relay. For inclusion edits use the full get/set-config
    read/edit/CAS contract below. Inclusion-only edits are not prompt revisions;
    changing `instructionTemplate` through `set-config` requires the same disclosure
-   and result confirmation. Model and N remain browser-owned.
+   and result confirmation. Model and Manual/Continuous duration remain browser-owned.
 6. Before EACH decision, obtain a fresh observation and actually view its PNG.
    After set-prompt or set-config this is mandatory: NEVER use the pre-write observation.
    Check unchanged page/epoch/session, ready phase, current tic and image hashes.
    Get-config once to verify the same run ID/revision/frozen limit is active
    with allowance.
    If configuration/run identity changed unexpectedly, stop.
+   Choose an integer duration from 1 through 35 inclusive before EACH decision,
+   using the current verified screenshot/state, recent action outcome, threat and
+   obstacle proximity, progress, and uncertainty about the provider's next action.
+   Use 6 as the safe default when evidence does not support a change. Larger
+   durations are not automatically better: long turns can overshoot, held fire
+   can waste ammo, and held use does not prove repeated door activation. A clear
+   facing probe alone does not prove clearance; uncertain or stalled movement
+   and nearby threats/obstacles favor earlier re-observation.
+   If the chosen duration differs from effective `tics`, use the complete-replacement
+   set-config contract below with current scope/revision. After confirming success,
+   obtain and view a fresh PNG and get-config again to confirm the new revision,
+   same active run/frozen limit and remaining allowance before deciding. Reassess
+   the horizon against that fresh evidence. Never reuse the pre-write observation.
+   If duration is unchanged, do not write configuration just to repeat the value.
+   Before EVERY nondefault decision (chosen tics other than 6), state a concise,
+   observable reason in a user-visible Codex message before issuing `decide`.
+   Ground the reason in verified facts, distinguish inferences explicitly, and
+   acknowledge that the Decisions API's next low-level action is not yet known.
+   This explanation is required even when retaining the same nondefault tics from
+   the previous decision. No duration explanation is required for default 6.
 7. Invoke exactly once for the observation just viewed:
    `node scripts/doom-agent.mjs decide --lease ABSOLUTE_LEASE_FILE --observation OBSERVATION_ID --session SESSION_ID --run RUN_ID --revision REVISION`.
    This requests one Decisions-selected action through the existing controller.
@@ -165,18 +188,20 @@ never do this yourself. No reconnect, replay or rearming follows Stop/disconnect
 ## Agent settings: read, edit, CAS
 
 Attachment copies human saved instructions once and starts all five effective
-inclusion flags true. These settings belong only to that lease. They never write
+inclusion flags true. Agent `tics` starts independently at 6, never copied from the
+Manual/Continuous input. These settings belong only to that lease. They never write
 human saved instructions, checkbox selections or drafts. Manual/Continuous
 requests use human settings. Authorization and individual decisions do not reset
 agent choices. Exhaustion retains settings for inspection without replenishing
 permission; Stop/disconnect/page exit or actual retirement clears settings.
 
 `get-config` returns `{sessionId, revision, configuration, run}`. `configuration`
-has exactly these six fields (example, not instructions to replace a useful goal):
+has exactly these seven fields (example, not instructions to replace a useful goal):
 
 ```json
 {
   "instructionTemplate": "Explore toward the visible opening for {{tics}} tics.",
+  "tics": 6,
   "includeReadyWeapon": true,
   "includeAmmo": false,
   "includeHealth": true,
@@ -188,12 +213,13 @@ has exactly these six fields (example, not instructions to replace a useful goal
 Read current config, edit only the fields you intend to change, and write the
 complete configuration object to a temporary absolute JSON file. No credentials,
 provider settings or extra fields. All five flags must be booleans; instructions
-must be nonblank and at most 16000 characters. Then call:
+must be nonblank and at most 16000 characters. Required `tics` must be a number
+and an integer from 1 through 35 inclusive, with no discrete presets. Then call:
 
 `node scripts/doom-agent.mjs set-config --lease ABSOLUTE_LEASE_FILE --session SESSION_ID --run RUN_ID --revision REVISION --config-file ABSOLUTE_JSON_FILE`
 
 Writes require a ready, idle controller and the current active bounded run and
-revision. `set-config` fully replaces the six fields. `set-prompt` remains an
+revision. `set-config` fully replaces the seven fields. `set-prompt` remains an
 instructions-only adapter to the same ephemeral configuration and revision.
 Successful edits preserve the run ID and every attempt counter, increment revision
 and invalidate old observations. Obtain and view a fresh PNG before requesting
@@ -201,6 +227,14 @@ another decision. Changes never affect an admitted request. Rejected stale/malfo
 busy or editor-open writes leave settings, revision and allowance unchanged;
 stop this skill workflow on conflicts rather than retrying. Human configuration
 changes still end the bounded run.
+
+Duration edits never replenish authorization or change the process-owned attempt
+limit, reserved count or SDK-invoked count. Every admitted attempt freezes its
+duration for prompt interpolation, native execution and receipts. Saved/custom
+instructions are copied unchanged: older text may still say the human selected
+duration. Review that wording; any replacement requires the prompt disclosure
+above, never a silent rewrite of user-authored text. Retain `{{tics}}` so the
+provider sees the actual selected horizon while choosing only the action.
 
 ## Verified Game State observation contract
 

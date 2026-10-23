@@ -41,7 +41,7 @@ describe('buildDefaultDecisionRequest', () => {
           {
             type: 'choice',
             name: 'next_action',
-            instructions: `Explore the Doom level, find the exit, and survive. Choose one useful action based on the current screenshot and any verified game-state observations. Favor progress and survival over movement for its own sake. Choose neutral when waiting is tactically useful. The human has selected exactly ${n} gameplay tics for this action. Choose only the action, not its duration. The game does not advance while you are deciding. Do not assume unseen or unverified game state.`,
+            instructions: `Explore the Doom level, find the exit, and survive. Choose one useful action based on the current screenshot and any verified game-state observations. Favor progress and survival over movement for its own sake. Choose neutral when waiting is tactically useful. The selected time horizon for this action is ${n} gameplay tics. Choose only the action, not its duration. The game does not advance while you are deciding. Do not assume unseen or unverified game state.`,
             choices: [
               { value: 'neutral' },
               { value: 'forward' },
@@ -96,7 +96,7 @@ describe('buildDefaultDecisionRequest', () => {
 });
 
 it('resolves every literal {{tics}} and preserves other template text', () => {
-  expect(defaultDecisionInstructionTemplate).toContain('exactly {{tics}} gameplay tics');
+  expect(defaultDecisionInstructionTemplate).toContain('time horizon for this action is {{tics}} gameplay tics');
   for (const n of [6, 35]) {
     for (const [template, expected] of [
       ['Use fire', 'Use fire'],

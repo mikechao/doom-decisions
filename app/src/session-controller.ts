@@ -4,6 +4,8 @@ import {
   parseAgentConfiguration,
   validAgentInstructions,
   validAgentLimit,
+  validAgentTics,
+  type AgentConfiguration,
   type AgentConfigResult,
   type AgentRunState,
   type AgentScope,
@@ -257,7 +259,7 @@ export function createSessionController(
         epoch: string;
         budgetMode: boolean;
         startClaimed?: boolean;
-        configuration?: DecisionConfiguration;
+        configuration?: AgentConfiguration;
         grant?: NonNullable<typeof observed>;
         bounded?: BoundedAgentRun;
       }
@@ -309,6 +311,7 @@ export function createSessionController(
       epoch,
       budgetMode,
       configuration: Object.freeze({
+        tics: 6,
         instructionTemplate:
           ports.readDecisionConfiguration().instructionTemplate,
         includeReadyWeapon: true,
@@ -405,7 +408,7 @@ export function createSessionController(
     epoch: string,
     sessionId: string,
     assertLease: () => void,
-    update?: AgentScope & { configuration: DecisionConfiguration },
+    update?: AgentScope & { configuration: AgentConfiguration },
   ): AgentConfigResult {
     try {
       assertLease();
@@ -970,11 +973,19 @@ export function createSessionController(
         continuous.stopRequested)
     )
       return 'stopped';
-    const tics = ports.readTics();
-    if (!Number.isSafeInteger(tics) || tics < 1) {
+    const agentConfiguration = agent ? agentLease?.configuration : undefined;
+    if (agent && !agentConfiguration) return 'stopped';
+    const tics = agentConfiguration
+      ? agentConfiguration.tics
+      : ports.readTics();
+    if (
+      agent ? !validAgentTics(tics) : !Number.isSafeInteger(tics) || tics < 1
+    ) {
       display(
         run,
-        'Tics per decision must be a positive JavaScript safe integer.',
+        agent
+          ? 'Agent tics per decision must be an integer from 1 through 35.'
+          : 'Tics per decision must be a positive JavaScript safe integer.',
       );
       return 'not-admitted';
     }
@@ -1006,8 +1017,6 @@ export function createSessionController(
     }
     // Freeze duration and attempt identity before the first await. The handler
     // guard, rather than disabled styling alone, prevents overlapping admission.
-    const agentConfiguration = agent ? agentLease?.configuration : undefined;
-    if (agent && !agentConfiguration) return 'stopped';
     const attempt = admitDecision(run, tics);
     if (!attempt) return 'not-admitted';
     invalidateAgentObservation();

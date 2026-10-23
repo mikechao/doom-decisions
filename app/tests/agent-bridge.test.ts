@@ -18,7 +18,8 @@ import { runAgentCli } from '../../scripts/doom-agent.mjs';
 import { agentObservation, pngFor } from './fixtures/agent.ts';
 import { deferred, checkpoint, fixture } from './fixtures/session.ts';
 import { death, exit } from './fixtures/synthetic-doom.ts';
-import { validAgentCommand, parseAgentPromptResult, parseAgentConfigResult } from '../src/agent-control.ts';
+import { defaultDecisionInstructionTemplate } from '../src/decision-request.ts';
+import { validAgentCommand, parseAgentPromptResult, parseAgentConfigResult, parseAgentConfiguration } from '../src/agent-control.ts';
 
 const cleanups = [];
 afterEach(async () => { while (cleanups.length) await cleanups.pop()(); vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -103,6 +104,7 @@ async function budgetSession(options = {}, allowance = createAgentAllowance('3')
   const game = fixture({ pngFor, ...options });
   cleanups.push(() => game.dispose());
   await game.prepare();
+  game.browserInputs.tics = options.browserTics ?? 6;
   const h = harness(allowance);
   const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller, ...network });
   await page.ready;
@@ -200,10 +202,65 @@ it('CLI start-run claims three controller reservations without Allow and cannot 
   await assert.rejects(s.start(), /budget-closed/);
 });
 
+it('uses 6, 11 and 23 tics in one configured run through CLI config CAS and frozen provider requests', async () => {
+  const s = await budgetSession({ browserTics: 47 });
+  assert.equal((await s.get()).configuration.tics, 6, 'Independent of human duration');
+  let config = await s.start();
+  const runId = config.run.runId;
+  const file = join(tmpdir(), `doom-agent-tics-${randomUUID()}.json`);
+  cleanups.push(() => rm(file, { force: true }));
+  let cumulative = 1;
+  for (const [index, tics] of [6, 11, 23].entries()) {
+    const old = await s.observe();
+    if (tics !== config.configuration.tics) {
+      const before = config;
+      const configuration = { ...config.configuration, tics };
+      await writeFile(file, JSON.stringify(configuration));
+      config = await s.cli(['set-config', ...s.base, '--session', config.sessionId, '--run', runId,
+        '--revision', String(config.revision), '--config-file', file]);
+      assert.deepEqual(config.run, before.run);
+      assert.equal(config.revision, before.revision + 1);
+      assert.equal((await s.decide(old, config)).reason, 'stale-observation');
+      const fresh = await s.observe();
+      assert.equal((await s.decide(fresh, before)).reason, 'no-grant', 'Old revision cannot admit');
+      assert.deepEqual((await s.get()).run, config.run);
+      assert.equal(s.game.sdkCalls, index); assert.equal(s.game.gameCalls, cumulative - 1);
+    }
+    const observation = await s.observe();
+    const confirmed = await s.get();
+    assert.deepEqual(confirmed.configuration, config.configuration);
+    const result = await s.decide(observation, confirmed);
+    cumulative += tics;
+    assert.equal(result.outcome, 'completed');
+    assert.deepEqual([result.requestedTics, result.reportedTics, result.verifiedTics], [tics, tics, tics]);
+    assert.equal(result.cumulativeTics, [7, 18, 41][index]);
+    assert.equal(result.observation.tic, cumulative);
+    assert.equal(result.observation.sessionId, s.observation.sessionId);
+    assert.equal(result.observation.previousAction.tics, tics);
+    assert.equal(s.game.inputs[index].questions[0].instructions,
+      defaultDecisionInstructionTemplate.replaceAll('{{tics}}', String(tics)));
+    assert.equal(s.game.actions.at(-1).tics, tics);
+    config = await s.get();
+    assert.deepEqual(config.run, { runId, limit: 3, active: index < 2,
+      reserved: index + 1, sdkInvoked: index + 1, remaining: 2 - index });
+    assert.equal(s.game.browserInputs.tics, 47);
+  }
+  assert.equal(s.game.creations, 1); assert.equal(s.game.gameCalls, 40);
+  assert.equal((await s.decide(await s.observe(), config)).reason, 'no-grant');
+  await assert.rejects(s.start(), /budget-closed/);
+  // Human modes retain their positive-safe-integer duration, even above the agent cap.
+  assert.equal(await s.game.next(), 'completed');
+  s.game.browserInputs.budget = 1; await s.game.start();
+  assert.deepEqual(s.game.actions.slice(-2).map(action => action.tics), [47, 47]);
+  assert.equal((await s.get()).configuration.tics, 23);
+});
+
 it('executes the skill start template once against fresh CLI observation/configuration without browser grants', async () => {
   const s = await budgetSession();
   const initial = await s.get();
   const skill = await readFile(new URL('../../.agents/skills/doom-decisions/SKILL.md', import.meta.url), 'utf8');
+  const example = JSON.parse(skill.match(/```json\n([\s\S]*?)\n```/)[1]);
+  assert.equal(parseAgentConfiguration(example).tics, 6);
   const starts = [...skill.matchAll(/`(node scripts\/doom-agent\.mjs start-run [^`]+)`/g)].map(match => match[1]);
   assert.equal(starts.length, 1, 'One executable start template; no alternate claim path');
   const values = { ABSOLUTE_LEASE_FILE: s.base[1], OBSERVATION_ID: s.observation.observationId,
@@ -737,7 +794,7 @@ it.each([
   { terminal: 'death', signals: death, reservation: 3, budget: '3' },
   { terminal: 'exit pending', signals: exit, reservation: 3, budget: '3' },
 ])('preserves verified $terminal through CLI stdout/PNG on reservation $reservation (budget $budget)', async ({ signals, reservation, budget }) => {
-  const consumed = (reservation - 1) * 6 + 2;
+  const consumed = (reservation - 1) * 23 + 2;
   const game = fixture({ pngFor, at: consumed, signals });
   cleanups.push(() => game.dispose());
   await game.prepare();
@@ -752,7 +809,12 @@ it.each([
   let before = await cli(['observe', ...base]);
   if (budget) await cli(['start-run', ...base, '--observation', before.observationId, '--session', before.sessionId, '--revision', '0']);
   else assert.equal(page.legacyRun(), true); // Legacy prototype grant only when unconfigured.
-  const config = await cli(['get-config', ...base, '--session', before.sessionId]);
+  let config = await cli(['get-config', ...base, '--session', before.sessionId]);
+  const configFile = join(temporaryRoot, 'configuration.json');
+  await writeFile(configFile, JSON.stringify({ ...config.configuration, tics: 23 }));
+  config = await cli(['set-config', ...base, '--session', config.sessionId, '--run', config.run.runId,
+    '--revision', String(config.revision), '--config-file', configFile]);
+  before = await cli(['observe', ...base]);
   const scope = { sessionId: before.sessionId, runId: config.run.runId, revision: config.revision };
   const args = () => ['decide', ...base, '--observation', before.observationId,
     '--session', scope.sessionId, '--run', scope.runId, '--revision', String(scope.revision)];
@@ -791,7 +853,7 @@ globalThis.fetch = async (url, options) => {
   assert.equal(result.reason, null);
   assert.equal(result.sdkInvoked, true);
   assert.equal(result.completionUncertain, false);
-  assert.deepEqual([result.requestedTics, result.reportedTics, result.verifiedTics], [6, 2, 2]);
+  assert.deepEqual([result.requestedTics, result.reportedTics, result.verifiedTics], [23, 2, 2]);
   assert.equal(result.cumulativeTics, before.tic + 2);
   assert.equal(result.observation.tic, result.cumulativeTics);
   assert.equal(result.observation.sessionId, scope.sessionId);
@@ -1007,7 +1069,7 @@ it('round-trips config CAS through CLI/broker/browser and shares ephemeral instr
   assert.equal(page.legacyRun(), true);
   const first = await get();
   const configFile = join(temporaryRoot, 'configuration.json');
-  const configuration = { ...first.configuration, includeHealth: false, includeAmmo: false, instructionTemplate: 'Ephemeral route for {{tics}} tics.' };
+  const configuration = { ...first.configuration, tics: 11, includeHealth: false, includeAmmo: false, instructionTemplate: 'Ephemeral route for {{tics}} tics.' };
   await writeFile(configFile, JSON.stringify(configuration));
   let current = await cli(['set-config', ...base, '--session', first.sessionId, '--run', first.run.runId,
     '--revision', String(first.revision), '--config-file', configFile]);
@@ -1029,12 +1091,28 @@ it('round-trips config CAS through CLI/broker/browser and shares ephemeral instr
     assert.equal((await decide(observation)).outcome, 'completed');
   }
   assert.equal((await get()).run.remaining, 1);
-  assert.equal(game.inputs[0].questions[0].instructions, 'Ephemeral text edit 6.');
+  assert.equal(game.inputs[0].questions[0].instructions, 'Ephemeral text edit 11.');
   assert.doesNotMatch(game.inputs[0].input[0].content[0].text, /Health:|Ammo:/);
   assert.match(game.inputs[0].input[0].content[0].text, /Ready weapon:/);
   assert.equal(game.ports.readDecisionConfiguration(), savedHuman);
   page.stop();
   assert.equal(game.controller.agentConfig(attached.epoch, first.sessionId, () => {}).error, 'lease-revoked');
+});
+
+it('rejects invalid duration JSON in CLI config files before transport or authorization changes', async () => {
+  const s = await budgetSession();
+  const config = await s.start();
+  const file = join(tmpdir(), `doom-agent-invalid-tics-${randomUUID()}.json`);
+  cleanups.push(() => rm(file, { force: true }));
+  const args = ['set-config', ...s.base, '--session', config.sessionId, '--run', config.run.runId,
+    '--revision', String(config.revision), '--config-file', file];
+  for (const literal of ['"6"', '1.5', '0', '-1', '36', 'null', 'true', '9007199254740992', '1e999']) {
+    const json = JSON.stringify(config.configuration).replace('"tics":6', `"tics":${literal}`);
+    await writeFile(file, json);
+    await assert.rejects(runAgentCli(args, { transport: () => assert.fail('Invalid file reached transport') }), /Invalid command/);
+    assert.deepEqual((await s.get()).run, config.run);
+    assert.equal(s.game.sdkCalls, 0); assert.equal(s.game.gameCalls, 0);
+  }
 });
 
 it('strict config command/result schemas reject missing, extra and nonboolean fields without modifying authorization', async () => {
@@ -1049,6 +1127,8 @@ it('strict config command/result schemas reject missing, extra and nonboolean fi
   const command = { ...lease, commandId: randomUUID(), sessionId, runId: before.run.runId,
     revision: before.revision, configuration: before.configuration };
   for (const mutate of [
+    d => { delete d.configuration.tics; },
+    ...['6', null, true, 1.5, 0, -1, 36, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1].map(tics => d => { d.configuration.tics = tics; }),
     d => { delete d.configuration.includeHealth; }, d => { d.configuration.includeAmmo = 1; },
     d => { d.configuration.includeFacingProbe = null; }, d => { d.configuration.includePreviousAction = 'false'; },
     d => { d.configuration.extra = false; }, d => { d.configuration.instructionTemplate = ''; },

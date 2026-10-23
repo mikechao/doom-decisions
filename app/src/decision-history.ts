@@ -366,7 +366,7 @@ export function defineDecisionHistory() {
         const execution = entry.execution;
         write(
           '#inspector-duration',
-          `Human-selected duration: ${entry.selectedTics} tics`,
+          `Selected duration: ${entry.selectedTics} tics`,
         );
         write(
           '#inspector-execution',
@@ -471,7 +471,7 @@ export function defineDecisionHistory() {
             `Provider-reported model: ${metadata?.reportedModel ?? missing}`,
             `API request ID: ${entry.requestId ?? 'Unavailable'}`,
             `HTTP status: ${entry.http ?? 'Unavailable'}`,
-            `Human-selected N: ${entry.selectedTics}`,
+            `Selected N: ${entry.selectedTics}`,
             `Native requested / reported / independently verified: ${execution?.requestedTics ?? 'not dispatched'} / ${execution?.reportedCompletedTics ?? 'unknown'} / ${execution?.independentlyVerifiedTics ?? 0}`,
             `Cumulative verified tic: ${entry.cumulativeVerifiedTics}${execution?.completionUncertain ? ' (lower bound; completion uncertain)' : ''}`,
             `Observation tic: ${entry.observation?.tic ?? 'Unavailable'} · resulting tic: ${entry.result?.tic ?? 'Unavailable'}`,

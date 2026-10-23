@@ -396,17 +396,21 @@ no key, client, provider configuration or human draft.
 
 Attachment initializes one frozen lease-owned configuration: copy human saved
 instructions once and enable all five inclusion flags, independently of human
-checkboxes. Authorization and decisions do not reset these values. Ordinary
+checkboxes. Required agent `tics` starts independently at 6 and accepts every
+integer from 1 through 35 inclusive. Codex selects this horizon before the
+Decisions API selects the action; Manual/Continuous still use the browser input.
+Authorization and decisions do not reset these values. Ordinary
 Manual/Continuous requests always use human saved configuration. Agent changes
 never save into human settings or load/change human drafts.
 
 `get-config` returns `{sessionId, revision, configuration, run}`. The run state is
-the same as get-prompt. Configuration has exactly six fields; a JSON file for a
+the same as get-prompt. Configuration has exactly seven fields; a JSON file for a
 full replacement contains only this object, not the response envelope:
 
 ```json
 {
   "instructionTemplate": "Explore the visible opening for {{tics}} tics.",
+  "tics": 6,
   "includeReadyWeapon": true,
   "includeAmmo": false,
   "includeHealth": true,
@@ -415,10 +419,11 @@ full replacement contains only this object, not the response envelope:
 }
 ```
 
-Read/edit/CAS: get current configuration, change selected fields, write all six
+Read/edit/CAS: get current configuration, change selected fields, write all seven
 fields to an absolute UTF-8 JSON file, then set-config with the returned revision
 and session/run. Missing/extra keys and nonboolean flags are rejected. Instructions
-must be nonblank and at most 16000 characters. The wire command includes the existing
+must be nonblank and at most 16000 characters; `tics` must be a numeric integer in
+1–35. The wire command includes the existing
 `pageId`, `ownerId`, `epoch`, `commandId`, `sessionId`, `runId`, `revision`, plus
 `configuration`; get-config omits run/revision/configuration. Broker responses use
 `{pageId, epoch, commandId, config: ...}`; CLI validates and flattens that envelope.
@@ -436,6 +441,16 @@ Codex must observe and **view a fresh PNG** before the next decision. Rejected
 stale/malformed/busy writes leave settings, revision and counters unchanged.
 Human saves/model/tics/options changes and detected external identity mismatches
 still end the bounded run. Already admitted requests retain their frozen settings.
+
+Before each decision, Codex chooses a horizon from current verified evidence, using
+6 as the safe default. Every nondefault decision requires a visible explanation,
+including when retaining a previous nondefault value, acknowledging uncertainty
+about the provider's next action. It writes config only when the chosen value
+changes, then re-observes/views the PNG and confirms revision before deciding.
+Duration changes never replenish the allowance. The default prompt uses neutral
+time-horizon wording; saved/custom templates are preserved verbatim and may retain
+older human-selected wording. Review those explicitly through the disclosed
+prompt-edit workflow; every `{{tics}}` resolves to the frozen attempt duration.
 
 Budget exhaustion retains configuration for read-only inspection under the same
 lease, with zero allowance and no rearming. Stop/disconnect/page exit removes it;

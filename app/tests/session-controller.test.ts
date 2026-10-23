@@ -85,8 +85,8 @@ it('injects domain-only decisions while the controller freezes N and verifies ma
     await h.controller.startContinuous(1);
     assert.equal(create.mock.calls.length, 1, 'Later decisions retain the client');
     const [first, second] = h.view.session.evidence.decisions;
-    assert.match(inputs[0].instructions, /exactly 2 gameplay tics/);
-    assert.match(inputs[1].instructions, /exactly 35 gameplay tics/);
+    assert.match(inputs[0].instructions, /time horizon for this action is 2 gameplay tics/);
+    assert.match(inputs[1].instructions, /time horizon for this action is 35 gameplay tics/);
     assert.match(inputs[0].context, /verified tic 1\./);
     assert.match(inputs[1].context, /verified tic 3\./);
     assert.deepEqual(h.actions, [

@@ -1,6 +1,14 @@
 import { isAgentId } from './agent-observation.ts';
 import type { DecisionConfiguration } from './decision-request.ts';
 
+export type AgentConfiguration = DecisionConfiguration &
+  Readonly<{ tics: number }>;
+export const validAgentTics = (value: unknown): value is number =>
+  typeof value === 'number' &&
+  Number.isSafeInteger(value) &&
+  value >= 1 &&
+  value <= 35;
+
 export const agentRunLimit = 3;
 export const validAgentLimit = (value: unknown): value is number =>
   Number.isSafeInteger(value) && Number(value) > 0;
@@ -50,7 +58,7 @@ export type AgentConfigResult =
   | {
       sessionId: string;
       revision: number;
-      configuration: DecisionConfiguration;
+      configuration: AgentConfiguration;
       run: AgentRunState | null;
     };
 
@@ -69,7 +77,7 @@ function keys(
       names.every((name) => Object.hasOwn(value, name)),
   );
 }
-export function parseAgentConfiguration(value: unknown): DecisionConfiguration {
+export function parseAgentConfiguration(value: unknown): AgentConfiguration {
   const flags = [
     'includeReadyWeapon',
     'includeAmmo',
@@ -77,10 +85,11 @@ export function parseAgentConfiguration(value: unknown): DecisionConfiguration {
     'includeFacingProbe',
     'includePreviousAction',
   ];
-  keys(value, ['instructionTemplate', ...flags]);
+  keys(value, ['instructionTemplate', ...flags, 'tics']);
   requireValue(validAgentInstructions(value.instructionTemplate));
   requireValue(flags.every((key) => typeof value[key] === 'boolean'));
-  return value as DecisionConfiguration;
+  requireValue(validAgentTics(value.tics));
+  return value as AgentConfiguration;
 }
 export function parseAgentRunState(value: unknown): AgentRunState {
   keys(value, [

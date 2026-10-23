@@ -6,7 +6,7 @@ import type { PreviousActionOutcome } from './previous-action.ts';
 import type { NativeObservation } from './worker-shared.ts';
 
 export const defaultDecisionInstructionTemplate =
-  'Explore the Doom level, find the exit, and survive. Choose one useful action based on the current screenshot and any verified game-state observations. Favor progress and survival over movement for its own sake. Choose neutral when waiting is tactically useful. The human has selected exactly {{tics}} gameplay tics for this action. Choose only the action, not its duration. The game does not advance while you are deciding. Do not assume unseen or unverified game state.';
+  'Explore the Doom level, find the exit, and survive. Choose one useful action based on the current screenshot and any verified game-state observations. Favor progress and survival over movement for its own sake. Choose neutral when waiting is tactically useful. The selected time horizon for this action is {{tics}} gameplay tics. Choose only the action, not its duration. The game does not advance while you are deciding. Do not assume unseen or unverified game state.';
 
 export type DecisionConfiguration = Readonly<{
   instructionTemplate: string;

@@ -49,8 +49,8 @@ it('retains two exact immutable requests and call identities outside cloned evid
     assert.equal(first.inspectorRequests[2], undefined, 'Prior presentation containers stay immutable');
     assert.equal(snapshot.png, 'data:image/png;base64,historical-1');
     assert.equal(inputs[1].png, 'data:image/png;base64,historical-2');
-    assert.match(snapshot.instructions, /exactly 2 gameplay tics/);
-    assert.match(inputs[1].instructions, /exactly 5 gameplay tics/);
+    assert.match(snapshot.instructions, /time horizon for this action is 2 gameplay tics/);
+    assert.match(inputs[1].instructions, /time horizon for this action is 5 gameplay tics/);
     assert.match(snapshot.context, /verified tic 1\./);
     assert.match(inputs[1].context, /verified tic 3\./);
     assert.deepEqual(snapshot.permittedActions, ['neutral', 'forward', 'turn_right', 'backward', 'turn_left', 'fire', 'use']);

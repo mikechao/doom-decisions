@@ -13,6 +13,7 @@ async function session(options, test) {
   const h = fixture({ pngFor, ...options });
   try {
     await h.prepare();
+    h.browserInputs.tics = options.browserTics ?? 6;
     const epoch = randomUUID();
     h.controller.attachAgent(epoch);
     const observation = await h.controller.observe(() => {});
@@ -39,7 +40,7 @@ it('uses one provider-selected action and frozen tics with a verified resulting 
     assert.equal(allow(), false);
     const work = decide();
     assert.equal(h.view.session.agentBusy, true);
-    h.browserInputs.tics = 20; // Admission already froze the human's 6.
+    h.browserInputs.tics = 20; // Agent admission already froze its independent 6.
     const result = parseAgentDecisionResult(await work);
     assert.equal(result.outcome, 'completed');
     assert.equal(result.sdkInvoked, true);
@@ -343,7 +344,7 @@ it('returns all eligible evidence with flags off, including the existing displac
     choice: { answers: [{ type: 'choice', name: 'next_action', choice: 'forward' }] } }, async ({ h, epoch, observation }) => {
     assert.equal(observation.previousAction, null);
     const b = bounded(h, epoch, observation);
-    b.replace({ ...defaultDecisionConfiguration });
+    b.replace({ ...defaultDecisionConfiguration, tics: 6 });
     const fresh = await h.controller.observe(() => {});
     const result = parseAgentDecisionResult(await b.decide(fresh.observationId));
     assert.equal(result.outcome, 'completed');
@@ -503,9 +504,11 @@ it('bounded Stop preserves reader ownership and dispatched verification without 
     const dispatched = phase === 'render';
     await session(phase === 'reader' ? { delayedBody: true } : {}, async ({ h, epoch, observation }) => {
       const b = bounded(h, epoch, observation);
+      b.replace({ ...b.config().configuration, tics: 23 });
+      const fresh = await h.controller.observe(() => {});
       const scope = b.scope();
       const hold = phase === 'reader' ? undefined : h.hold(dispatched ? 'render' : 'snapshot');
-      const work = b.decide(observation.observationId);
+      const work = b.decide(fresh.observationId);
       if (hold) await hold.waiting; else await h.waiting;
       h.controller.stopAgent();
       assert.equal(h.view.session.controls.ready, false);
@@ -513,7 +516,7 @@ it('bounded Stop preserves reader ownership and dispatched verification without 
       if (hold) hold.release(); else h.releaseBody();
       assert.equal((await work).outcome, dispatched ? 'completed' : 'stopped');
       assert.equal(h.sdkCalls, phase === 'capture' ? 0 : 1);
-      assert.equal(h.gameCalls, dispatched ? 6 : 0);
+      assert.equal(h.gameCalls, dispatched ? 23 : 0);
       assert.equal(h.view.session.controls.ready, true);
       assert.equal(h.controller.agentPrompt(epoch, observation.sessionId, () => {}).error, 'lease-revoked');
       assert.equal((await h.controller.agentNext(epoch, observation.observationId, () => {}, scope)).reason, 'lease-revoked');
@@ -523,7 +526,7 @@ it('bounded Stop preserves reader ownership and dispatched verification without 
 
 const inclusionFlags = ['includeReadyWeapon', 'includeAmmo', 'includeHealth', 'includeFacingProbe', 'includePreviousAction'];
 const allOn = instructionTemplate => Object.fromEntries([
-  ['instructionTemplate', instructionTemplate], ...inclusionFlags.map(key => [key, true]),
+  ['instructionTemplate', instructionTemplate], ['tics', 6], ...inclusionFlags.map(key => [key, true]),
 ]);
 const stateText = (h, index) => h.inputs[index].input[0].content[0].text;
 const qualifiedFacing = next => Object.assign(next.native, { facingKind: 2, facingDoor: 0, facingDistance: 24 });
@@ -585,7 +588,7 @@ it('retains settings at exhaustion, exports all evidence with flags off and uses
   const human = { ...defaultDecisionConfiguration, includeHealth: true, instructionTemplate: 'Human policy {{tics}}.' };
   await session({ decisionConfiguration: human, onStep: qualifiedFacing }, async ({ h, epoch, observation }) => {
     const b = bounded(h, epoch, observation);
-    const off = { ...defaultDecisionConfiguration, instructionTemplate: 'Agent policy {{tics}}.' };
+    const off = { ...defaultDecisionConfiguration, tics: 6, instructionTemplate: 'Agent policy {{tics}}.' };
     b.replace(off);
     let fresh = await h.controller.observe(() => {});
     for (let i = 0; i < 3; i++) {
@@ -620,6 +623,8 @@ it('retains settings at exhaustion, exports all evidence with flags off and uses
 it('rejects stale, malformed and foreign configuration updates without invalidating the current observation or run', async () => {
   await session({}, async ({ h, epoch, observation }) => {
     const b = bounded(h, epoch, observation);
+    b.replace({ ...b.config().configuration, tics: 23 });
+    const fresh = await h.controller.observe(() => {});
     const before = b.config();
     const scope = b.scope();
     const call = (lease, sessionId, update) => h.controller.agentConfig(lease, sessionId, () => {}, update);
@@ -632,12 +637,19 @@ it('rejects stale, malformed and foreign configuration updates without invalidat
       [epoch, scope.sessionId, { ...valid, configuration: { ...before.configuration, extra: false } }],
       [epoch, scope.sessionId, { ...valid, configuration: { instructionTemplate: 'Missing flags.' } }],
     ];
+    for (const tics of [undefined, '6', null, true, 1.5, 0, -1, 36, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1]) {
+      const configuration = { ...before.configuration, tics };
+      if (tics === undefined) delete configuration.tics;
+      invalids.push([epoch, scope.sessionId, { ...valid, configuration }]);
+    }
     for (const args of invalids) {
       assert.ok('error' in call(...args));
       assert.deepEqual(b.config(), before);
+      assert.equal(h.sdkCalls, 0); assert.equal(h.gameCalls, 0);
     }
-    assert.equal((await b.decide(observation.observationId)).outcome, 'completed', 'Rejected changes preserve the valid observation');
+    assert.equal((await b.decide(fresh.observationId)).outcome, 'completed', 'Rejected changes preserve the valid observation');
     assert.equal(h.sdkCalls, 1);
+    assert.deepEqual(h.actions.at(-1).tics, 23);
   });
 });
 
@@ -650,7 +662,7 @@ it.each(['snapshot', 'reader', 'render'])('rejects config and prompt updates dur
     await (hold?.waiting ?? h.waiting);
     const counts = structuredClone(h.view.session.agentAuthorization);
     assert.equal(h.controller.agentConfig(epoch, observation.sessionId, () => {}, {
-      ...scope, configuration: defaultDecisionConfiguration,
+      ...scope, configuration: { ...before.configuration, tics: 23 },
     }).error, 'not-ready');
     assert.equal(h.controller.agentPrompt(epoch, observation.sessionId, () => {}, {
       ...scope, instructions: 'Cannot change the admitted request.',
@@ -662,17 +674,44 @@ it.each(['snapshot', 'reader', 'render'])('rejects config and prompt updates dur
     assert.deepEqual(b.config().configuration, before.configuration);
     assert.match(stateText(h, 0), /Ready weapon:.*\nAmmo:.*\nHealth:/);
     assert.equal(h.sdkCalls, 1);
+    assert.equal(h.inputs[0].questions[0].instructions.includes('is 6 gameplay tics'), true);
+    assert.deepEqual(h.actions.at(-1).tics, 6);
     h.controller.stopAgent();
     assert.equal(h.controller.agentConfig(epoch, observation.sessionId, () => {}, {
-      ...scope, configuration: defaultDecisionConfiguration,
+      ...scope, configuration: { ...before.configuration, tics: 23 },
     }).error, 'lease-revoked');
+  });
+});
+
+it.each([1, 35])('accepts agent duration %i and preserves custom interpolation through admission', async tics => {
+  const instructionTemplate = 'Custom {{tics}} horizon. Again {{tics}}. {{unknown}}';
+  await session({ browserTics: 47, decisionConfiguration: { ...defaultDecisionConfiguration, instructionTemplate } }, async ({ h, epoch, observation }) => {
+    const b = bounded(h, epoch, observation);
+    const before = b.config();
+    assert.equal(before.configuration.tics, 6);
+    const saved = b.replace({ ...before.configuration, tics });
+    assert.equal(saved.revision, before.revision + 1);
+    assert.deepEqual(saved.run, before.run);
+    const fresh = await h.controller.observe(() => {});
+    const scope = b.scope();
+    const work = b.decide(fresh.observationId);
+    const holdCounts = structuredClone(h.view.session.agentAuthorization);
+    assert.equal(h.controller.agentConfig(epoch, observation.sessionId, () => {}, {
+      ...scope, configuration: { ...saved.configuration, tics: 6 },
+    }).error, 'not-ready');
+    assert.deepEqual(h.view.session.agentAuthorization, holdCounts);
+    const result = await work;
+    assert.deepEqual([result.requestedTics, result.reportedTics, result.verifiedTics], [tics, tics, tics]);
+    assert.equal(h.inputs[0].questions[0].instructions, `Custom ${tics} horizon. Again ${tics}. {{unknown}}`);
+    assert.equal(h.ports.readDecisionConfiguration().instructionTemplate, instructionTemplate);
+    assert.equal(h.browserInputs.tics, 47);
   });
 });
 
 it('clears settings on Stop and initializes a new epoch from the current human instructions', async () => {
   await session({}, async ({ h, epoch, observation }) => {
     const b = bounded(h, epoch, observation);
-    b.replace({ ...defaultDecisionConfiguration, instructionTemplate: 'Ephemeral objective.' });
+    b.replace({ ...defaultDecisionConfiguration, tics: 6, instructionTemplate: 'Ephemeral objective.' });
     const oldScope = b.scope();
     h.controller.stopAgent();
     assert.equal(h.controller.agentConfig(epoch, observation.sessionId, () => {}).error, 'lease-revoked');

@@ -188,6 +188,9 @@ it('browses a representative completed decision with probabilities, usage, reque
   assert.equal(text('inspector-reported-model'), 'test-model-response');
   assertInputTokens('120');
   assert.match(text('inspector-diagnostics'), /HTTP status: 200/);
+  assert.equal(text('inspector-duration'), 'Selected duration: 2 tics');
+  assert.match(text('inspector-diagnostics'), /Selected N: 2/);
+  assert.doesNotMatch(text('inspector-diagnostics'), /Human-selected/);
   assert.equal(title.parentElement, header);
   root.display(decisions, requests);
   assert.equal(inspect(1), trigger);
