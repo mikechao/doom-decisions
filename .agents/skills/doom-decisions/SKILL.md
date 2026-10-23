@@ -92,6 +92,38 @@ before deciding, including after settings writes; identical pixels never restore
 an invalidated observation or authorize a stale revision. Settings writes may
 reuse visual evidence under these same conditions, never pre-write observation IDs.
 
+**CLI result presentation:** apply this to EVERY Doom CLI JSON operation,
+especially `decide`, `observe` and `get-config`, without adding calls. Check the
+actual orchestration tool schema first. With `functions.exec` and
+`tools.exec_command`, a completed result has `exit_code` and `output`; `text()`
+serializes objects compactly. For exit code 0 and complete, untruncated JSON
+stdout, parse once and emit only the exit status and ENTIRE parsed response:
+
+```js
+// r is the completed tools.exec_command result; check completion and exit first.
+text({ exit_code: r.exit_code, result: JSON.parse(r.output) });
+```
+
+Never emit the original shell wrapper, pretty stdout or a duplicate completed
+result on this success path. Preserve every field without summaries/omissions:
+observation IDs, page/epoch/session/run/revision identity, image paths/hashes,
+telemetry, provider usage, action, requested/reported/verified tics, accounting,
+uncertainty flags and error metadata. Exit 0 alone does not prove gameplay success;
+inspect the full result under the termination and verification rules above.
+
+A `session_id` without a final exit status is pending, NOT a decision result.
+Poll that SAME process with `tools.write_stdin`, retaining and concatenating each
+`output` chunk in order until completion; parse the assembled stdout only then
+and emit the completed result once. If `functions.exec` itself yields a cell ID,
+resume with `functions.wait`, not another CLI invocation. Allow enough output
+capacity for the full response. Never parse partial/truncated output as success.
+On nonzero exit, missing/invalid JSON, truncation or tool failure, preserve the
+actual exit status (or unknown/pending status), relevant stdout/stderr diagnostics
+and error information; do not emit a successful parsed decision. The CLI writes
+sanitized error JSON to stderr and exits 1; keep errors such as `agent-stopped`
+visible for immediate handling. Parsing/polling never authorizes another `decide`
+or any retry. Ambiguous final output follows the existing conservative stop rule.
+
 From the repository root:
 
 1. Run `node scripts/doom-agent.mjs attach` once. Retain its absolute `leaseFile`,
