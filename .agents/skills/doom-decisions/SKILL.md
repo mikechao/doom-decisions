@@ -9,9 +9,9 @@ Interpret `play` as a foreground conversation workflow using ONE single-use
 process allowance from the human-configured `AGENT_DECISION_BUDGET`. Never start
 a server/browser, prepare a game, click/drive/inspect Chrome or DevTools, read
 `.env*`, the credential bootstrap module or browser credential storage. Never
-create a daemon, autonomous CLI loop, persistent map or external memory service.
+create a daemon, unattended loop, persistent map or external memory service.
 Attaching, observing and reading/writing agent settings never authorize charges.
-Invoke `start-run` once to claim the configured count of possibly billable
+Invoke `doom_start_run` once to claim the configured count of possibly billable
 Decisions API attempts; there is no browser authorization or chat confirmation.
 The existing Decisions provider selects EVERY low-level action; never inject an
 action or routinely order a particular action identifier. Conditional tactical
@@ -19,50 +19,49 @@ intent is allowed. Codex chooses only the agent time horizon through the bounded
 effective configuration before the provider chooses its action; never change
 duration after seeing that choice.
 
-**Choose one transport at the beginning:** `$doom-decisions play` uses the CLI
-by default. Only an explicit request such as `$doom-decisions play using MCP`
-selects the optional local MCP adapter. For MCP, require all eight tools below
-to be available before attaching; otherwise end without falling back to CLI.
-Never switch transports during an invocation, recover a lost result through the
-other transport, or retry an operation. The host-managed stdio adapter does not
-start `dev:agent`, prepare a game or issue an allowance on startup.
+**`$doom-decisions play` uses MCP only.** Discover all eight tools below from
+the project's `doom_decisions` server and verify their availability before
+attachment. If any tool is missing, disabled, disconnected or ambiguous, explain
+the blocker and end without attaching or claiming a run. Never shell out to the
+CLI for gameplay, recover a lost result through another transport or retry an
+operation. `doom_attach` must be the first Doom domain call; all subsequent Doom
+domain operations use these MCP tools directly. Local temporary-file writes and
+`view_image` remain necessary evidence/settings operations.
+The host-managed stdio adapter does not start `dev:agent`, prepare a game or issue
+an allowance on startup. MCP is transport; the browser budget and Stop remain
+the authority limits.
 
-For MCP, translate each CLI recipe below to its one corresponding tool, retaining
-the same argument values, operation order and temporary settings files:
-
-| CLI operation | MCP tool | Arguments |
+| MCP tool | Purpose | Arguments |
 | --- | --- | --- |
-| `attach` | `doom_attach` | `{}` |
-| `observe` | `doom_observe` | `leaseFile` |
-| `get-config` | `doom_get_config` | `leaseFile, sessionId` |
-| `get-prompt` | `doom_get_prompt` | `leaseFile, sessionId` |
-| `start-run` | `doom_start_run` | `leaseFile, observationId, sessionId, revision` |
-| `set-config` | `doom_set_config` | `leaseFile, sessionId, runId, revision, configFile` |
-| `set-prompt` | `doom_set_prompt` | `leaseFile, sessionId, runId, revision, instructionsFile` |
-| `decide` | `doom_decide` | `leaseFile, observationId, sessionId, runId, revision` |
+| `doom_attach` | Acquire the existing lease; no provider usage | `{}` |
+| `doom_observe` | Fresh verified observation/state/local PNG | `leaseFile` |
+| `doom_get_config` | Effective configuration/revision/run accounting | `leaseFile, sessionId` |
+| `doom_get_prompt` | Effective instructions | `leaseFile, sessionId` |
+| `doom_start_run` | Claim the preconfigured finite allowance once | `leaseFile, observationId, sessionId, revision` |
+| `doom_set_config` | CAS complete seven-field replacement from file | `leaseFile, sessionId, runId, revision, configFile` |
+| `doom_set_prompt` | CAS prompt-only replacement from file | `leaseFile, sessionId, runId, revision, instructionsFile` |
+| `doom_decide` | One provider-selected action/full receipt/after-action PNG | `leaseFile, observationId, sessionId, runId, revision` |
 
-Every termination, disclosure, configuration, duration and image-inspection rule
-below applies identically to MCP calls. References to agent CLI calls include
-their MCP equivalents, including the prohibition on calls after Stop/terminal.
 Immediately inspect each MCP result's `isError` and complete domain payload before
-any other work. Use `structuredContent` when available; its compact JSON text
-content carries the same complete object. Do not reprint duplicate copies or
-invent a CLI exit code. `isError: true`, missing/truncated/inconsistent content or
+any other work. Use complete `structuredContent`; if unavailable, read the complete
+JSON text content as the fallback. Do not serialize duplicate model-facing copies
+of the same payload. Preserve every field: identities/revision, paths/hashes,
+telemetry, provider usage, action, requested/reported/verified tics, accounting,
+uncertainty and errors. `isError: true`, missing/truncated/inconsistent content or
 a connection/tool failure ends play conservatively; preserve `agent-stopped` when
 present. `isError: false` proves delivery only: non-completed outcomes still obey
 all existing stop rules. A pending call is not a receipt; never repeat it.
 MCP retains local `pngPath` output: use `view_image` and the same verified-hash
 reuse rules below, never substitute JSON or a path for an inspected image.
 
-**Termination takes priority throughout `play`:** immediately after EVERY CLI
-call, inspect its exit status and structured result before further reasoning,
+**Termination takes priority throughout `play`:** immediately after EVERY MCP
+call, inspect `isError` and the complete domain result before further reasoning,
 planning, image viewing, settings changes or tool calls. `{"error":"agent-stopped"}`
-means the broker received a validated human **Stop Agent** request: reply
+means the broker received a validated human **Stop Agent** request: reply exactly
 `Agent stopped by user. Ending play.` and end this invocation immediately.
-Make no further observe/decide/get/set/attach/retry calls and do not recover or
-reattach.
+Make no further agent calls, discovery or recovery attempts.
 
-After honoring `agent-stopped`, a successful, correlated `decide` result with
+After honoring `agent-stopped`, a successful, correlated `doom_decide` result with
 `outcome: "terminal"`, `sdkInvoked: true`, `completionUncertain: false`,
 `observation.phase: "terminal"` and matching session/tic/frame hashes plus a
 verified local terminal `pngPath` ends gameplay immediately. Only after successful
@@ -72,10 +71,9 @@ viewing of that PNG, within this verified terminal contract,
 `Level exit triggered (exit pending). Ending play.` Do not claim another map
 loaded or the game was won. Raw health or a screenshot alone never proves death.
 Terminal takes priority over exhaustion, including an early tic prefix or death
-on the final reservation. Make no further agent CLI calls: no observe,
-decide, get/set-config, prompt edits, attach, retry or discovery, regardless of
-previous allowance. View only the already-returned local terminal PNG once as the
-sole permitted final evidence tool call. If viewing succeeds, give the matching
+on the final reservation. Make no further Doom domain calls or discovery,
+regardless of previous allowance. View only the already-returned local terminal
+PNG once as the sole permitted final evidence tool call. If viewing succeeds, give the matching
 acknowledgment above and end this invocation. If the PNG is missing/unreadable or
 the viewer fails, reply only
 `Terminal image inspection failed. Ending play without confirming death or exit.`
@@ -87,12 +85,14 @@ respawn, advance to another map or seek another grant or replacement lease.
 or unsupported terminal evidence, `lease-revoked`, disconnect, deadline/transport
 failure or ambiguous output also ends this invocation conservatively, without
 claiming confirmed death or that the human clicked Stop.
+For these failures, report useful sanitized diagnostics without exposing secrets
+or claiming successful completion.
 Report exhausted allowance as normal completion only when returned run counters
 show `reserved === limit` and zero remaining; inactive authorization alone is
 not proof of exhaustion. All other stop/conflict/uncertainty rules still apply.
-This rule applies on every iteration of observe → plan → decide → verify.
+This rule applies on every iteration of `doom_observe` → plan → `doom_decide` → verify.
 
-Cancellation is cooperative at the next CLI/tool-result boundary; this Markdown
+Cancellation is cooperative at the next MCP tool-result boundary; this Markdown
 skill cannot preempt an active Codex reasoning turn. Stop between calls may need
 one next old-lease call to discover revocation; it must fail without another
 gameplay action. Never make an extra discovery call after a terminal result.
@@ -100,19 +100,25 @@ gameplay action. Never make an extra discovery call after a terminal result.
 The human configures a positive safe-integer `AGENT_DECISION_BUDGET` in
 `app/.env.agent.local`, starts `npm --prefix app run dev:agent` and manually opens
 `http://127.0.0.1:5174/`. Wait for their page to reach verified ready. Reuse that
-server; a busy port is not permission to start another one.
+server; a busy port is not permission to start another one. The tracked project
+`.codex/config.toml` registers the MCP server; Codex may need a restart from this
+worktree to discover it. `required = false` does not relax the eight-tool gameplay
+prerequisite. Do not change global Codex settings. Gameplay can send screenshots
+and included game-state data to the selected Decisions provider and incur charges;
+retain the project's existing tool approval choices.
 
-**Visual evidence reuse applies only to `observe` image opening.** Always view
-the initial PNG and every healthy completed or verified terminal `decide` PNG
+**Visual evidence reuse applies only to `doom_observe` image opening.** Always view
+the initial PNG and every healthy completed or verified terminal `doom_decide` PNG
 immediately, even if identical to an earlier image. Terminal/Stop/error precedence
-above is unchanged; terminal viewing is mandatory and never waits for `observe`.
-During the same active run, a fresh `observe` may reuse a successful earlier visual
+above is unchanged; terminal viewing is mandatory and never waits for `doom_observe`.
+During the same active run, a fresh `doom_observe` may reuse a successful earlier visual
 inspection only with unchanged lease/page ID/epoch/session/run ownership and a
 verified `pngSha256` equal to that of an image actually delivered to the model.
 Retain that viewed path/hash/ownership and its native/Canvas frame hashes in the
-concise conversation record, not an external cache. The CLI verifies PNG bytes
-against `pngSha256` before writing `pngPath`: use the correlated `observe` result's
-top-level hash, or `decide`'s `observation.pngSha256` for its resulting `pngPath`.
+concise conversation record, not an external cache. The MCP implementation verifies
+PNG bytes against `pngSha256` before writing `pngPath`: use the correlated
+`doom_observe` result's top-level hash, or `doom_decide`'s
+`observation.pngSha256` for its resulting `pngPath`.
 `beforeObservationId` identifies the input, not the resulting image. Never compare
 filenames or equate PNG-byte hashes with native/Canvas RGBA hashes. Require the
 current `frame.tic === tic`, matching native/Canvas hashes, and those RGBA hashes
@@ -127,53 +133,23 @@ before deciding, including after settings writes; identical pixels never restore
 an invalidated observation or authorize a stale revision. Settings writes may
 reuse visual evidence under these same conditions, never pre-write observation IDs.
 
-**CLI result presentation:** apply this to EVERY Doom CLI JSON operation,
-especially `decide`, `observe` and `get-config`, without adding calls. Check the
-actual orchestration tool schema first. With `functions.exec` and
-`tools.exec_command`, a completed result has `exit_code` and `output`; `text()`
-serializes objects compactly. For exit code 0 and complete, untruncated JSON
-stdout, parse once and emit only the exit status and ENTIRE parsed response:
+After tool discovery and human preparation:
 
-```js
-// r is the completed tools.exec_command result; check completion and exit first.
-text({ exit_code: r.exit_code, result: JSON.parse(r.output) });
-```
-
-Never emit the original shell wrapper, pretty stdout or a duplicate completed
-result on this success path. Preserve every field without summaries/omissions:
-observation IDs, page/epoch/session/run/revision identity, image paths/hashes,
-telemetry, provider usage, action, requested/reported/verified tics, accounting,
-uncertainty flags and error metadata. Exit 0 alone does not prove gameplay success;
-inspect the full result under the termination and verification rules above.
-
-A `session_id` without a final exit status is pending, NOT a decision result.
-Poll that SAME process with `tools.write_stdin`, retaining and concatenating each
-`output` chunk in order until completion; parse the assembled stdout only then
-and emit the completed result once. If `functions.exec` itself yields a cell ID,
-resume with `functions.wait`, not another CLI invocation. Allow enough output
-capacity for the full response. Never parse partial/truncated output as success.
-On nonzero exit, missing/invalid JSON, truncation or tool failure, preserve the
-actual exit status (or unknown/pending status), relevant stdout/stderr diagnostics
-and error information; do not emit a successful parsed decision. The CLI writes
-sanitized error JSON to stderr and exits 1; keep errors such as `agent-stopped`
-visible for immediate handling. Parsing/polling never authorizes another `decide`
-or any retry. Ambiguous final output follows the existing conservative stop rule.
-
-From the repository root:
-
-1. Run `node scripts/doom-agent.mjs attach` once. Retain its absolute `leaseFile`,
-   page ID and epoch. Reuse a live lease already owned in this conversation.
-2. Run `node scripts/doom-agent.mjs observe --lease ABSOLUTE_LEASE_FILE`.
+1. Call `doom_attach` with `{}` once. Retain its absolute `leaseFile`, owner/page
+   ID and epoch. Do not replace a stopped/stale lease or resume an existing run.
+2. Call `doom_observe` with that `leaseFile`.
    Actually open its absolute `pngPath` with `view_image` and deliver the image
    content to the model. A filename, base64 or hash alone is not visual evidence.
    If viewing fails, stop before a decision. Retain `sessionId`, `observationId`,
    tic, matching native/Canvas hashes and verified telemetry.
 3. Read the effective agent configuration (instructions, five inclusion flags and tics):
-   `node scripts/doom-agent.mjs get-config --lease ABSOLUTE_LEASE_FILE --session SESSION_ID`.
+   call `doom_get_config` with `leaseFile, sessionId`.
    Require the same page/epoch/session as the fresh observation just viewed and
    `run: null`; an existing run is not permission to resume or replenish it.
-   Use that observation ID, session ID and returned revision to invoke ONCE:
-   `node scripts/doom-agent.mjs start-run --lease ABSOLUTE_LEASE_FILE --observation OBSERVATION_ID --session SESSION_ID --revision REVISION`.
+   Call `doom_get_prompt` with `leaseFile, sessionId`; require matching ownership,
+   session, revision, `run: null` and instructions equal to `instructionTemplate`.
+   Use that observation ID, session ID and returned revision to invoke ONCE
+   `doom_start_run` with `leaseFile, observationId, sessionId, revision`.
    Inspect the result immediately. Retain its actual run ID, revision and frozen
    limit; require an active run, zero reserved/SDK-invoked counts and remaining
    equal to that positive limit. Continue without another human message.
@@ -181,25 +157,37 @@ From the repository root:
    `AGENT_DECISION_BUDGET` and fully stop/relaunch `dev:agent`. Invalid configuration
    can prevent startup; report that possibility without reading the private file.
    `budget-closed`, `claim-failed`, rejected or ambiguous claims end play: never
-   retry `start-run`, fall back to another grant, reattach or restart the server.
+   retry `doom_start_run`, fall back to another grant, reattach or restart the server.
    Browser reload and Vite internal restart cannot replenish the allowance.
 4. Keep a concise in-conversation record: goal; page/epoch/session/tic; last
    verified action/tics/outcome; visual interpretation and confidence; navigation
    hypothesis; progress/stall evidence; one next high-level objective; actual run
    counters. Also track attempts submitted/confirmed in this single run, starting
-   at zero after start-run, only to know when final accounting in step 8 is due.
+   at zero after `doom_start_run`, only to know when final accounting in step 8 is due.
    This local count never authorizes admission or proves exhaustion; the browser/
    controller and returned run counters remain authoritative.
    Separate hypotheses from verified native facts. XY endpoints or a
    screenshot do not prove a collision or door usability. Use the qualified
    `facingProbe` and existing `previousAction.text` with the limitations below;
    movement-event collision masks remain browser-only.
-5. When useful, write ONLY high-level instructions to a temporary absolute UTF-8
+5. Before EACH decision, call `doom_observe` with `leaseFile` and view its PNG or
+   apply the visual evidence reuse rule above. A fresh observation after
+   `doom_start_run` and after any `doom_set_prompt` or `doom_set_config` is mandatory:
+   NEVER use a pre-write observation. Reopen the startup PNG after `doom_start_run`;
+   the pre-run inspection cannot establish same-active-run ownership for reuse.
+   Check unchanged page/epoch/session, ready phase, current tic and image hashes.
+   Then call `doom_get_config` with `leaseFile, sessionId` once to confirm matching
+   page/epoch/session/run, expected revision/configuration, the same frozen limit,
+   an active run and remaining allowance. A matching PNG hash never skips this
+   read or the fresh observation. If configuration/run identity changed
+   unexpectedly, stop.
+
+   When useful, prepare ONLY high-level instructions for a temporary absolute UTF-8
    text file (maximum 16000 characters), retaining useful effective instructions and
    `{{tics}}`. Include uncertainty explicitly, e.g. a possible opening rather
    than invented unseen geometry. Do not include credentials, unrelated secrets or
    command/action overrides. Revise only when verified evidence warrants it.
-   Before EVERY `set-prompt` request, send a user-visible Codex commentary message:
+   Before EVERY `doom_set_prompt` request, send a user-visible Codex commentary message:
 
    - **Why change:** cite specific verified observations and explain how they
      motivate the new navigation guidance. Distinguish observations from hypotheses.
@@ -210,8 +198,8 @@ From the repository root:
    Optionally add one sentence explaining the substantive change from the current
    prompt. Write exactly the displayed replacement text to the instructions file
    and submit it unchanged through:
-   `node scripts/doom-agent.mjs set-prompt --lease ABSOLUTE_LEASE_FILE --session SESSION_ID --run RUN_ID --revision REVISION --instructions-file ABSOLUTE_TEXT_FILE`.
-   After inspecting the command's exit status and structured result, honor the
+   `doom_set_prompt` with `leaseFile, sessionId, runId, revision, instructionsFile`.
+   After inspecting `isError` and the complete domain result, honor the
    termination rules above first; otherwise briefly report whether the replacement
    was applied. Call it active and use the returned revision only after a confirmed
    successful response. Explicitly report failure, conflict or uncertainty without
@@ -219,19 +207,14 @@ From the repository root:
    Do not repeat the full prompt on decisions when it has not changed.
    A stale revision, any open human editor or other conflict ends this workflow;
    never retry or overwrite a draft. There is no
-   manual copy/paste relay. For inclusion edits use the full get/set-config
-   read/edit/CAS contract below. Inclusion-only edits are not prompt revisions;
-   changing `instructionTemplate` through `set-config` requires the same disclosure
-   and result confirmation. Model and Manual/Continuous duration remain browser-owned.
-6. Before EACH decision, obtain a fresh observation and view its PNG or apply the
-   visual evidence reuse rule above. The first observation after start-run and
-   after any set-prompt or set-config is mandatory: NEVER use a pre-write observation.
-   Check unchanged page/epoch/session, ready phase, current tic and image hashes.
-   Then get-config once to confirm matching page/epoch/session/run, expected
-   revision/configuration, the same frozen limit, an active run and remaining
-   allowance. A matching PNG hash never skips this read or the fresh observation.
-   If configuration/run identity changed unexpectedly, stop.
-   Choose an integer duration from 1 through 35 inclusive before EACH decision,
+   manual copy/paste relay. For inclusion edits use the full
+   `doom_get_config`/`doom_set_config` read/edit/CAS contract below.
+   Inclusion-only edits are not prompt revisions; changing `instructionTemplate`
+   through `doom_set_config` requires the same disclosure and result confirmation.
+   After each successful edit, repeat this step's fresh observation/image/config
+   checks, confirming the returned revision/configuration and unchanged run
+   counters before proceeding. Model and Manual/Continuous duration remain browser-owned.
+6. Choose an integer duration from 1 through 35 inclusive before EACH decision,
    using the current verified screenshot/state, recent action outcome, threat and
    obstacle proximity, progress, and uncertainty about the provider's next action.
    Use 6 as the safe default when evidence does not support a change. Larger
@@ -240,21 +223,21 @@ From the repository root:
    facing probe alone does not prove clearance; uncertain or stalled movement
    and nearby threats/obstacles favor earlier re-observation.
    If the chosen duration differs from effective `tics`, use the complete-replacement
-   set-config contract below with current scope/revision. After confirming success,
-   obtain a fresh observation, view or safely reuse its visual evidence, and
-   get-config again to confirm the new revision,
+   `doom_set_config` contract below with current scope/revision. After confirming success,
+   call `doom_observe`, view or safely reuse its visual evidence, and
+   call `doom_get_config` again to confirm the new revision,
    same active run/frozen limit and remaining allowance before deciding. Reassess
    the horizon against that fresh evidence. Never reuse the pre-write observation.
    If duration is unchanged, do not write configuration just to repeat the value.
    Before EVERY nondefault decision (chosen tics other than 6), state a concise,
-   observable reason in a user-visible Codex message before issuing `decide`.
+   observable reason in a user-visible Codex message before issuing `doom_decide`.
    Ground the reason in verified facts, distinguish inferences explicitly, and
    acknowledge that the Decisions API's next low-level action is not yet known.
    This explanation is required even when retaining the same nondefault tics from
    the previous decision. No duration explanation is required for default 6.
 7. Invoke exactly once using the latest fresh observation ID, whether its PNG
    was just viewed or its visual evidence safely reused:
-   `node scripts/doom-agent.mjs decide --lease ABSOLUTE_LEASE_FILE --observation OBSERVATION_ID --session SESSION_ID --run RUN_ID --revision REVISION`.
+   call `doom_decide` with `leaseFile, observationId, sessionId, runId, revision`.
    This requests one Decisions-selected action through the existing controller.
    Inspect structured outcome, SDK invocation and requested/reported/verified/end
    tics. Apply the terminal rule above first. For healthy `completed` results,
@@ -264,34 +247,36 @@ From the repository root:
 8. Only a successfully delivered, correlated, healthy `completed` receipt with
    matching evidence AND its verified resulting PNG actually viewed permits
    proceeding to the next observation. Process the full receipt and update the
-   navigation hypothesis. Do not routinely call get-config immediately afterward.
+   navigation hypothesis. Do not routinely call `doom_get_config` immediately afterward.
    If the bounded run may continue, repeat steps 4–7: obtain the required fresh
-   observation, then use step 6's single pre-decision get-config to verify the
-   SAME run and its allowance before another decide. The completed receipt alone
+   observation, then use step 5's single pre-decision `doom_get_config` to verify the
+   SAME run and its allowance before another `doom_decide`. The completed receipt alone
    never authorizes another decision. This is individual foreground reasoning
    between tool calls, never a script that loops independently of Codex.
 
    Final accounting exception: when locally confirmed completed decisions appear
    to consume the known frozen limit, after the final healthy receipt and required
-   image inspection call get-config once, without another observe or decide.
+   image inspection call `doom_get_config` once, without another `doom_observe`
+   or `doom_decide`.
    Require matching page/epoch/session/run, expected revision/configuration and
    frozen limit, and valid returned run counters showing `reserved === limit`
    and `remaining === 0` before reporting normal exhaustion. Neither the local
    count nor `active: false` proves exhaustion. If accounting cannot be confirmed,
-   stop conservatively; never retry decide, reclaim allowance or resume the run.
+   stop conservatively; never retry `doom_decide`, reclaim allowance or resume the run.
    Stop, terminal and error rules above take priority over this exception: never
    add post-error accounting or a recovery probe, or any call after agent-stopped;
    a verified terminal result permits only its prescribed terminal PNG viewing.
 9. Stop on exhausted/inactive authorization, Stop/lease revocation, terminal or
    retired state, session/observation mismatch, prompt conflict, failed/ambiguous
    result, uncertain consumption, unavailable image viewing or achieved goal.
-   Tell the human to click **Stop Agent** when ending early. Exhaustion requires
-   no further human input. Do not seek another run, invoke `start-run` again or
+   Except for the exact Stop/terminal replies above, tell the human to click
+   **Stop Agent** when ending early. Exhaustion requires
+   no further human input. Do not seek another run, invoke `doom_start_run` again or
    switch to manual mode to extend the cap. Manual controls resume only after
    safe settlement.
 
-Never automatically retry ANY command or replace a stopped/stale lease. Decision
-command IDs are tied to observation IDs and remain spent even on rejection. Run
+Never automatically retry ANY MCP operation or replace a stopped/stale lease.
+Decision command IDs are tied to observation IDs and remain spent even on rejection. Run
 reservations are never refunded, including pre-create failures. A lost response
 or timeout can mean unknown action outcome or charge; stop and ask the human to
 inspect the page. Abort never proves remote processing/billing stopped. Stop
@@ -311,7 +296,7 @@ requests use human settings. Authorization and individual decisions do not reset
 agent choices. Exhaustion retains settings for inspection without replenishing
 permission; Stop/disconnect/page exit or actual retirement clears settings.
 
-`get-config` returns `{sessionId, revision, configuration, run}`. `configuration`
+`doom_get_config` returns `{sessionId, revision, configuration, run}`. `configuration`
 has exactly these seven fields (example, not instructions to replace a useful goal):
 
 ```json
@@ -332,14 +317,14 @@ provider settings or extra fields. All five flags must be booleans; instructions
 must be nonblank and at most 16000 characters. Required `tics` must be a number
 and an integer from 1 through 35 inclusive, with no discrete presets. Then call:
 
-`node scripts/doom-agent.mjs set-config --lease ABSOLUTE_LEASE_FILE --session SESSION_ID --run RUN_ID --revision REVISION --config-file ABSOLUTE_JSON_FILE`
+`doom_set_config` with `leaseFile, sessionId, runId, revision, configFile`.
 
 Writes require a ready, idle controller and the current active bounded run and
-revision. `set-config` fully replaces the seven fields. `set-prompt` remains an
+revision. `doom_set_config` fully replaces the seven fields. `doom_set_prompt` remains an
 instructions-only adapter to the same ephemeral configuration and revision.
 Successful edits preserve the run ID and every attempt counter, increment revision
 and invalidate old observations. Obtain a fresh observation and view its PNG or
-apply the visual evidence reuse rule, then get-config to verify the new revision/
+apply the visual evidence reuse rule, then `doom_get_config` to verify the new revision/
 configuration and same active run/frozen limit/allowance before another decision.
 Changes never affect an admitted request. Rejected stale/malformed,
 busy or editor-open writes leave settings, revision and allowance unchanged;
@@ -408,8 +393,8 @@ formatter retains unavailable markers and previous-action eligibility/omissions.
 Coordinates retain raw native fixed-point values and angle retains unsigned raw
 bits. Observations are detached snapshots, never proof of future admission.
 The strict DTO rejects extra or missing keys, including nested objects. The
-broker and CLI use the same parser; CLI output retains every evidence field and
-replaces only PNG data with its verified local `pngPath`.
+broker and MCP implementation use the same parser; output retains every evidence
+field and replaces only PNG data with its verified local `pngPath`.
 
 If the picker does not discover this project skill, start a fresh Codex
 conversation from this worktree. Do not alter global Codex configuration.

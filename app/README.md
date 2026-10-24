@@ -210,17 +210,24 @@ behavior and production CSP stay unchanged.
 
 #### Agent control: one-command bounded play and Stop
 
-CLI is the default transport. An opt-in eight-tool local stdio MCP experiment,
-offline parity evidence and human-only project registration instructions are in
-[Doom MCP adapter](../docs/doom-agent-mcp.md). Use `$doom-decisions play using MCP`
-only after enabling it in a fresh Codex session; never switch transports in a run.
+`$doom-decisions play` uses only the eight local Doom MCP tools, with no mode
+modifier or CLI fallback. The tracked project `.codex/config.toml` registers the
+server; Codex may need a restart from this trusted worktree to discover it. Keep
+the existing per-tool `approve` choices and global `~/.codex` settings unchanged.
+The server's `required = false` permits Codex startup without MCP, but the skill
+requires all eight tools before attachment or claiming a run. See
+[Doom MCP tools](../docs/doom-agent-mcp.md). Browser budget enforcement and Stop
+remain the authority limits; MCP is transport. Gameplay can send screenshots and
+included game-state data to the selected Decisions provider and incur charges.
 
 Agent mode uses strict port **5174** and the existing same-origin, in-memory
 bridge. An occupied port fails. Close extra agent tabs. The existing bridge needs
 no additional HTTP service, browser automation or provider proxy. Only `dev:agent` registers
 a verified ready page; ordinary dev/production have no agent command routes.
 
-In a second terminal, from the repository root:
+The internal CLI remains the shared MCP implementation and an offline test/debug
+utility. The following CLI recipes document that implementation; they are not
+Codex play instructions or a fallback. From the repository root:
 
 ```sh
 node scripts/doom-agent.mjs attach
@@ -285,9 +292,9 @@ node scripts/doom-agent.mjs start-run --lease /absolute/path/to/lease.json --obs
 Use the actual IDs/revision from the fresh observation and configuration. The CLI
 cannot choose the numeric limit. A successful start returns the effective
 configuration, revision and active run with its frozen limit and counters. There
-are no browser Allow controls or follow-up chat acknowledgment. The skill then
-observes/views afresh, optionally updates its navigation instructions, and requests
-one Decisions-selected legal action at a time:
+are no browser Allow controls or follow-up chat acknowledgment. Scoped decisions
+use a fresh observation and the returned session/run/revision. The internal
+invocation requests one Decisions-selected legal action:
 
 ```sh
 node scripts/doom-agent.mjs decide --lease /absolute/path/to/lease.json --observation OBSERVATION_ID --session SESSION_ID --run RUN_ID --revision REVISION
@@ -349,7 +356,9 @@ must not be described as a human Stop. An accepted result before revoke remains
 valid; the next command discovers termination. Exhaustion retains its normal run
 counters and is distinct from revocation.
 
-`$doom-decisions play` checks every CLI result before continuing. On `agent-stopped`
+`$doom-decisions play` checks every MCP result's `isError` and complete domain
+payload (`structuredContent`, with JSON text fallback) before continuing.
+Delivery alone never proves a completed action. On `agent-stopped`
 it ends with `Agent stopped by user. Ending play.` and makes no further calls.
 This is cooperative cancellation at the next tool-result boundary, not forced
 preemption while Codex is thinking. One next old-lease call may discover Stop
@@ -364,9 +373,12 @@ settlement, with the ordinary credential gates still applied.
 
 ##### Codex foreground play
 
-Two terminals, one existing dev server: the human runs `npm --prefix app run dev:agent`
+The human runs `npm --prefix app run dev:agent`
 and manually opens `http://127.0.0.1:5174/`. In Codex, from this worktree, invoke
-`$doom-decisions play`. Codex attaches and views the initial verified PNG and every
+`$doom-decisions play`. Codex first discovers all eight MCP tools, then calls
+`doom_attach` before any other Doom operation. Missing/ambiguous tools or a
+disconnected server end play without claiming a run. Codex uses MCP directly
+thereafter and views the initial verified PNG and every
 completed/terminal decision result. Within the same active run and unchanged
 lease/page/epoch/session ownership, a fresh observation may reuse an earlier
 successful visual inspection only when its verified `pngSha256` and native/Canvas
@@ -380,15 +392,25 @@ every low-level action. No browser driving, second server, daemon or persistent 
 is involved. `play` is skill routing, not a CLI subcommand.
 
 Invoke the skill once after preparation. Codex views the initial verified PNG,
-reads get-config, invokes start-run once and uses the returned run ID, revision and
-frozen limit. It proceeds without a browser authorization click or another human
+reads `doom_get_config` and `doom_get_prompt`, invokes `doom_start_run` once and
+uses the returned run ID, revision and frozen limit. It reopens the fresh startup
+image after starting. Every decision requires a fresh `doom_observe` and
+pre-decision `doom_get_config`; there is no routine post-decision config read.
+After the final healthy result and required image viewing, one final config read
+must confirm `reserved === limit` and `remaining === 0` for normal exhaustion.
+Stop, terminal and error rules take priority over final accounting.
+It proceeds without a browser authorization click or another human
 message. The browser is for watching and **Stop Agent**, with actual remaining,
 reserved and SDK-invoked counts. Claiming permission never itself calls a provider.
 No invocation, prompt change, lost response or reattachment can replenish the
 process allowance. The skill never restarts the server or falls back to legacy
 single-decision grants.
 
-The CLI provides effective configuration/prompt commands and scoped decision arguments:
+##### Internal CLI settings reference
+
+The shared implementation/test utility provides effective configuration/prompt
+commands and scoped decision arguments. Codex play uses the corresponding MCP
+tools and the skill's temporary-file/CAS contract, never these shell recipes:
 
 ```sh
 node scripts/doom-agent.mjs get-prompt --lease /absolute/lease.json --session SESSION_ID
@@ -499,8 +521,9 @@ implementation):
    attempts, set `AGENT_DECISION_BUDGET=3`, start a fresh `dev:agent` process,
    manually open `http://127.0.0.1:5174/`, and wait for verified neutral-first
    tic **1/1/1**.
-2. Invoke `$doom-decisions play` once. Confirm there are no Allow controls and no
-   second chat message is needed. Codex attaches, views the PNG, reads config,
+2. Invoke `$doom-decisions play` once. Confirm all eight MCP tools are discovered
+   before attachment, there are no Allow controls and no second chat message is
+   needed. Codex attaches, views the PNG, reads config and prompt,
    claims once, then autonomously performs at most three decisions with individual
    reasoning and verified image inspection. Record actual page/epoch/session/run
    identity, revision, N, counters, action/tic/frame receipts and visual progress.

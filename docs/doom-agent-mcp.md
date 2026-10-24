@@ -1,8 +1,10 @@
-# Optional local Doom MCP adapter
+# Local Doom MCP gameplay tools
 
-This is a transport-parity experiment for the existing `$doom-decisions play`
-workflow. CLI remains the default and the optimized CLI-10 baseline is already
-recorded by the owner. No performance or live acceptance result is claimed here.
+`$doom-decisions play` supervises one bounded foreground run through the eight
+existing MCP tools. No mode modifier or CLI fallback is supported. The skill
+requires all eight tools before attachment; missing, disabled, disconnected or
+ambiguous tools end play without claiming or consuming a run. `doom_attach` is
+the first Doom domain call, and all later Doom operations use MCP directly.
 
 `app/agent-mcp.mjs` imports `runAgentCli` directly. It creates no HTTP listener,
 controller, grant, lease cache or budget ledger. Initializing/listing/closing the
@@ -35,6 +37,9 @@ integer. There are no MCP duration/model/action defaults or overrides.
 | `doom_set_prompt` | `leaseFile,sessionId,runId,revision,instructionsFile` | `set-prompt --lease --session --run --revision --instructions-file`; full updated instructions/run result |
 | `doom_decide` | `leaseFile,observationId` plus all-or-none `sessionId,runId,revision` | `decide --lease --observation [--session --run --revision]`; full decision receipt and resulting observation/PNG |
 
+The play skill always supplies all three scope fields to `doom_decide`.
+The shared implementation and its internal CLI/test utilities remain intact.
+
 All non-attach outputs preserve `pageId,epoch,commandId`. Configuration/prompt
 outputs preserve `sessionId,revision,configuration` or `instructions`, and `run`
 with every counter. Observations retain every telemetry, native/Canvas hash,
@@ -61,50 +66,42 @@ exclusive file writes are the CLI's existing implementation. `decide.pngPath`
 contains the verified **after-action** image; `beforeObservationId` identifies
 the input, even though the PNG filename uses that command/input ID.
 
-## Human-only project registration and acceptance
+## Project setup and foreground play
 
-Nothing registers/enables MCP automatically. Do not use global `codex mcp add`
-for this experiment. On the tested host, the human can add this table to
-**this worktree's** `.codex/config.toml` (create the directory/file if absent):
+The tracked **worktree-local** `.codex/config.toml` already registers the
+`doom_decisions` stdio server with all eight tool approval modes set to `approve`.
+Keep those approval choices. `enabled = true` loads the server; `required = false`
+allows Codex startup without it, while the skill still requires all eight tools
+for gameplay. Do not change global `~/.codex` settings or add credentials here.
 
-```toml
-[mcp_servers.doom_decisions]
-command = "/Users/mike/.nvm/versions/node/v22.20.0/bin/node"
-args = ["/Users/mike/projects/doom-decisions-agent-control/app/agent-mcp.mjs"]
-cwd = "/Users/mike/projects/doom-decisions-agent-control"
-enabled = false
-required = true
-startup_timeout_sec = 10
-tool_timeout_sec = 60
-```
+1. Open Codex from this trusted worktree. A restart/fresh session may be needed
+   to discover project MCP registration; check `/mcp` for all eight tools.
+   An unavailable server blocks play, with no alternate gameplay transport.
+2. The human privately configures a positive safe-integer `AGENT_DECISION_BUDGET`
+   in `app/.env.agent.local`, runs `npm --prefix app run dev:agent`, manually
+   opens `http://127.0.0.1:5174/` and lets the game prepare to verified readiness.
+   Gameplay can transmit screenshots and included game-state data to the selected
+   Decisions provider and incur charges. Existing project execution approvals
+   still apply.
+3. Invoke **`$doom-decisions play`** once. Codex attaches, observes and views the
+   initial PNG, reads configuration and prompt, and claims the single allowance
+   once. It observes/views afresh after starting, then checks configuration before
+   each decision. It chooses 1–35 tics (initial/default 6) with an observable
+   rationale before every nondefault decision; the Decisions API chooses actions.
+   CAS edits use temporary files and require fresh observations afterward.
+4. Each healthy completed decision requires its verified after-action PNG to be
+   viewed. There is no routine post-decision config read; final normal exhaustion
+   requires one authoritative accounting read showing `reserved === limit` and
+   `remaining === 0`. Errors, conflicts, uncertain outcomes or disconnect end play
+   without retry or recovery. Validated Stop permits only the exact Stop reply;
+   verified terminal permits only its prescribed final PNG inspection and reply.
 
-1. Review the table, then set `enabled = true` for the MCP arm. No credential
-   environment variables belong in this table. The project must be trusted for
-   project configuration to load. Do not alter global configuration.
-2. Start a **fresh Codex session from this worktree**, using the same Codex
-   model/effort as the recorded CLI-10 baseline. Check `/mcp` for the eight tools.
-   Registration in an existing session is not evidence that tools reloaded.
-3. The human configures the existing private agent settings, chooses a finite
-   5–10-attempt budget, starts `npm --prefix app run dev:agent`, opens
-   `http://127.0.0.1:5174/` manually and waits for verified readiness. Keep the
-   Decisions provider/model and gameplay/observation policy consistent with the
-   recorded baseline. Do not rerun or invent that baseline's metrics.
-4. In the new Codex session request **`$doom-decisions play using MCP`**. No other
-   skill behavior changes: Codex chooses 1–35 tics (default 6), explains every
-   nondefault decision before submission, and the Decisions API chooses actions.
-   Inspect every completed/terminal decision PNG and use the existing observation
-   hash/run-identity reuse rules. A missing MCP tool or failed call ends play;
-   never fall back to CLI inside that invocation.
-5. To disable, set `enabled = false` or remove only this table and start another
-   fresh Codex session. `$doom-decisions play` then uses CLI by default. If a prior
-   run ended ambiguously, inspect/Stop it in the browser first. A separate play
-   requires the existing human process-restart procedure; switching transports
-   never replenishes an allowance or retries an old observation.
-
-Codex's installed CLI was **0.164.0** during implementation. Configuration follows
-[official Codex MCP guidance](https://developers.openai.com/codex/mcp);
-the server API follows [SDK v2 stdio guidance](https://ts.sdk.modelcontextprotocol.io/v2/serving/stdio.html).
-Actual Codex catalog loading/rendering remains a human acceptance check.
+The [play skill](../.agents/skills/doom-decisions/SKILL.md) defines the complete
+ordering, evidence and termination rules. Browser budget enforcement and **Stop
+Agent** remain the actual authority limits; MCP adds no permission system. A new
+allowance requires the human's full `dev:agent` process restart for a separate
+invocation. Disabling or reconnecting MCP never enables CLI play or renews a run.
+Actual Codex tool discovery/rendering remains a human acceptance check.
 
 ## Evidence and limits
 
@@ -120,12 +117,11 @@ stdin EOF exit. This proves neither Chrome, real native Doom nor paid Decisions
 correctness.
 
 The SDK test client surfaces both compact text and structured output. The tested
-wire includes **two copies** of a successful domain payload. Measure actual
-Codex-visible output and token accounting in the fresh acceptance session;
-structured output is not automatically a token saving. The serialized eight-tool
-catalog measured **3,096 UTF-8 bytes** in both tested negotiations; there are no
-server instructions. Include that catalog, result
-wrappers/duplication, shell file operations and image views in the comparison.
+wire includes **two copies** of a successful domain payload. The skill uses
+`structuredContent` with JSON text fallback and does not add duplicate
+model-facing serialization. The serialized eight-tool catalog measured
+**3,096 UTF-8 bytes** in both tested negotiations; there are no server instructions.
+No MCP performance superiority is claimed.
 
 Cancellation/connection close aborts the adapter's owned fetch through the SDK
 request/lifetime signals, preserving the CLI's 15-second/35-second deadlines.
@@ -136,13 +132,9 @@ propagation and retained controller reader ownership; real host cancellation and
 transport delivery timing remain unverified. After idle MCP exit, the existing
 browser lease is not proactively revoked by a new tool; the human uses Stop.
 
-The pre-existing startup image-reuse wording across `start-run` is unchanged.
-Apply the same conservative interpretation in both arms: prior inspection outside
-the active run cannot establish unchanged run ownership for post-start reuse.
-Do not introduce a startup reuse exception during this experiment.
-
-For the human smoke, record per-operation counts, polls/continuations per decision,
-input/cached/uncached/output tokens, catalog and model-facing result sizes, unique
-PNG hashes, elapsed/provider/local time, errors and workflow friction. Gameplay
-and model nondeterminism limit comparison. Offline byte parity does not predict
-model-continuation savings.
+Reopen the startup PNG after `doom_start_run`: prior inspection outside the active
+run cannot establish unchanged run ownership for post-start reuse. A small,
+separately human-authorized browser smoke can check tool discovery, one bounded
+run, image delivery and final accounting. Record sanitized identities, counters
+and action/tic/frame receipts; it is not a transport benchmark. Stop and terminal
+acceptance remain governed by the existing isolated trial procedures.
