@@ -1,25 +1,39 @@
 // Entire browser → Vite middleware → CLI exchange uses in-memory HTTP fakes.
 // No listener, browser, game asset, WASM or provider request.
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, isAbsolute } from 'node:path';
+import { dirname, join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PassThrough, Readable } from 'node:stream';
 import { afterEach, it, vi } from 'vitest';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
+import { createAgentMcpServer } from '../agent-mcp.mjs';
 import config from '../vite.config.js';
 import { createAgentBridge, createAgentAllowance, processAgentAllowance, agentBridgePlugin } from '../agent-bridge.mjs';
 import { startAgentObservationBridge } from '../src/agent-browser.ts';
 import { agentOrigin, agentPath, agentPngBytes, parseAgentObservation, parseAgentDecisionResult } from '../src/agent-observation.ts';
-import { runAgentCli } from '../../scripts/doom-agent.mjs';
+import { agentCliError, runAgentCli } from '../../scripts/doom-agent.mjs';
 import { agentObservation, pngFor } from './fixtures/agent.ts';
 import { deferred, checkpoint, fixture } from './fixtures/session.ts';
 import { death, exit } from './fixtures/synthetic-doom.ts';
 import { defaultDecisionInstructionTemplate } from '../src/decision-request.ts';
 import { validAgentCommand, parseAgentPromptResult, parseAgentConfigResult, parseAgentConfiguration } from '../src/agent-control.ts';
+
+// Scoped deterministic seams for byte-for-byte CLI/MCP replay, including IDs and
+// paths. All other tests keep the actual implementations; no IDs are discarded.
+vi.mock('node:crypto', async original => {
+  const actual = await original();
+  return { ...actual, randomUUID: vi.fn(actual.randomUUID) };
+});
+vi.mock('node:fs/promises', async original => {
+  const actual = await original();
+  return { ...actual, mkdtemp: vi.fn(actual.mkdtemp) };
+});
 
 const cleanups = [];
 afterEach(async () => { while (cleanups.length) await cleanups.pop()(); vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -1156,4 +1170,255 @@ it('strict config command/result schemas reject missing, extra and nonboolean fi
   assert.equal((await get()).revision, before.revision + 1);
   assert.deepEqual((await get()).run, before.run);
   assert.equal(game.sdkCalls, 0);
+});
+
+async function mcpSession(options) {
+  const [clientWire, serverWire] = InMemoryTransport.createLinkedPair();
+  const handle = serveStdio(() => createAgentMcpServer(options), { transport: serverWire });
+  const client = new Client({ name: 'offline-parity', version: '1' });
+  cleanups.push(async () => { await client.close(); await handle.close(); });
+  await client.connect(clientWire);
+  return client;
+}
+const callMcp = (client, op, args) => client.callTool({ name: `doom_${op.replaceAll('-', '_')}`, arguments: args });
+function delivered(result) {
+  assert.equal(result.isError, false);
+  assert.equal(result.content.length, 1);
+  assert.equal(result.content[0].type, 'text');
+  assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
+  assert.equal(result.content[0].text, JSON.stringify(result.structuredContent));
+  return result.structuredContent;
+}
+
+it('MCP matches all eight CLI operations byte-for-byte using actual broker/controller replies, IDs and PNG paths', async () => {
+  const game = fixture({ pngFor }); cleanups.push(() => game.dispose()); await game.prepare();
+  const h = harness(createAgentAllowance('3'));
+  const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
+  await page.ready;
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-mcp-parity-'));
+  cleanups.push(() => rm(temporaryRoot, { recursive: true, force: true }));
+  let recorded, replays = 0;
+  const cliTransport = async (url, options) => {
+    const response = await h.transport(url, options);
+    recorded = { url, options, text: await response.clone().text(), status: response.status };
+    return response;
+  };
+  const client = await mcpSession({ temporaryRoot, transport: async (url, options) => {
+    replays++;
+    assert.equal(url, recorded.url);
+    for (const key of ['method', 'headers', 'body', 'redirect', 'credentials', 'cache'])
+      assert.deepEqual(options[key], recorded.options[key]);
+    assert.equal(options.signal.aborted, false);
+    return new Response(recorded.text, { status: recorded.status });
+  } });
+  const seen = new Set();
+  async function pair(op, input, args) {
+    const expected = await runAgentCli(args, { temporaryRoot, transport: cliTransport });
+    const command = JSON.parse(recorded.options.body);
+    let bytes;
+    if (expected.pngPath) { bytes = await readFile(expected.pngPath); await rm(expected.pngPath); }
+    if (op === 'attach') {
+      await rm(expected.leaseFile);
+      mkdtemp.mockResolvedValueOnce(dirname(expected.leaseFile));
+    }
+    randomUUID.mockReturnValueOnce(command.commandId ?? command.ownerId);
+    const actual = delivered(await callMcp(client, op, input));
+    assert.deepEqual(actual, expected); // No normalization of IDs, hashes, counters or paths.
+    if (bytes) {
+      assert.deepEqual(await readFile(actual.pngPath), bytes);
+      const observation = op === 'decide' ? actual.observation : actual;
+      assert.equal(createHash('sha256').update(bytes).digest('hex'), observation.pngSha256);
+      assert.equal(observation.frame.tic, observation.tic);
+      assert.equal(observation.frame.nativeSha256, observation.frame.canvasSha256);
+    }
+    seen.add(op);
+    return actual;
+  }
+  const attached = await pair('attach', {}, ['attach']);
+  const base = ['--lease', attached.leaseFile];
+  const lease = { leaseFile: attached.leaseFile };
+  const observe = () => pair('observe', lease, ['observe', ...base]);
+  let before = await observe();
+  const session = { ...lease, sessionId: before.sessionId };
+  const initial = await pair('get-config', session, ['get-config', ...base, '--session', before.sessionId]);
+  assert.equal(initial.configuration.tics, 6); assert.equal(initial.run, null);
+  await pair('get-prompt', session, ['get-prompt', ...base, '--session', before.sessionId]);
+  let current = await pair('start-run', { ...session, observationId: before.observationId, revision: initial.revision },
+    ['start-run', ...base, '--observation', before.observationId, '--session', before.sessionId, '--revision', String(initial.revision)]);
+  const counters = structuredClone(current.run);
+  const configFile = join(temporaryRoot, 'configuration.json');
+  await writeFile(configFile, JSON.stringify({ ...current.configuration, tics: 11, includeAmmo: false }));
+  const scope = () => ({ ...session, runId: current.run.runId, revision: current.revision });
+  current = await pair('set-config', { ...scope(), configFile }, ['set-config', ...base, '--session', current.sessionId,
+    '--run', current.run.runId, '--revision', String(current.revision), '--config-file', configFile]);
+  assert.deepEqual(current.run, counters); assert.equal(current.revision, initial.revision + 1);
+  const instructionsFile = join(temporaryRoot, 'instructions.txt');
+  await writeFile(instructionsFile, 'Offline route {{tics}}.');
+  const prompt = await pair('set-prompt', { ...scope(), instructionsFile }, ['set-prompt', ...base, '--session', current.sessionId,
+    '--run', current.run.runId, '--revision', String(current.revision), '--instructions-file', instructionsFile]);
+  current = { ...current, revision: prompt.revision };
+  assert.deepEqual(prompt.run, counters);
+  before = await observe(); // Both writes invalidate the pre-write observation.
+  const result = await pair('decide', { ...scope(), observationId: before.observationId }, ['decide', ...base,
+    '--observation', before.observationId, '--session', current.sessionId, '--run', current.run.runId, '--revision', String(current.revision)]);
+  assert.equal(result.outcome, 'completed'); assert.equal(result.beforeObservationId, before.observationId);
+  assert.equal(result.observation.sessionId, before.sessionId);
+  assert.equal(result.observation.tic, before.tic + 11);
+  assert.notEqual(result.observation.pngSha256, before.pngSha256);
+  assert.equal(game.inputs[0].questions[0].instructions, 'Offline route 11.');
+  assert.deepEqual([result.requestedTics, result.reportedTics, result.verifiedTics], [11, 11, 11]);
+  assert.equal(game.sdkCalls, 1); assert.equal(replays, 9);
+  assert.equal(seen.size, 8);
+});
+
+it('MCP rejects strict arguments before I/O and preserves sanitized CLI file/transport failures', async () => {
+  const s = await budgetSession();
+  let calls = 0;
+  const client = await mcpSession({ transport: (...args) => { calls++; return s.h.transport(...args); } });
+  for (const [op, args] of [
+    ['attach', { extra: true }], ['observe', { leaseFile: 'relative.json' }],
+    ['get-config', { leaseFile: s.base[1], sessionId: 'bad' }],
+    ['decide', { leaseFile: s.base[1], observationId: s.observation.observationId, sessionId: s.observation.sessionId }],
+    ['decide', { leaseFile: s.base[1], observationId: s.observation.observationId, runId: randomUUID(), revision: 0 }],
+    ['start-run', { leaseFile: s.base[1], observationId: s.observation.observationId, sessionId: s.observation.sessionId, revision: '0' }],
+    ['start-run', { leaseFile: s.base[1], observationId: s.observation.observationId, sessionId: s.observation.sessionId, revision: -1 }],
+    ['start-run', { leaseFile: s.base[1], observationId: s.observation.observationId, sessionId: s.observation.sessionId, revision: Number.MAX_SAFE_INTEGER + 1 }],
+  ]) assert.equal((await callMcp(client, op, args)).isError, true);
+  assert.equal(calls, 0);
+  const config = await s.start();
+  const file = join(dirname(s.base[1]), 'bad.json');
+  await writeFile(file, '{offline-private-content');
+  const args = { leaseFile: s.base[1], sessionId: config.sessionId, runId: config.run.runId, revision: config.revision, configFile: file };
+  const failed = await callMcp(client, 'set-config', args);
+  assert.equal(failed.isError, true);
+  assert.deepEqual(failed.structuredContent, agentCliError(Error('unsanitized file exception')));
+  assert.doesNotMatch(JSON.stringify(failed), /offline-private-content|SyntaxError|stack/);
+  assert.equal(calls, 0); assert.deepEqual((await s.get()).run, config.run);
+  const disconnected = await mcpSession({ transport: () => { throw Error('offline-private-network-content'); } });
+  const unknown = await callMcp(disconnected, 'decide', { ...args, observationId: s.observation.observationId });
+  assert.equal(unknown.isError, true); // Unknown field is a schema failure; no admission.
+  const { configFile: _file, ...scope } = args;
+  const ambiguous = await callMcp(disconnected, 'decide', { ...scope, observationId: s.observation.observationId });
+  assert.equal(ambiguous.isError, true);
+  assert.deepEqual(ambiguous.structuredContent, agentCliError(Error('unknown')));
+  assert.doesNotMatch(JSON.stringify(ambiguous), /offline-private-network-content/);
+  assert.equal(s.game.sdkCalls, 0);
+});
+
+it('MCP retains denial, revision, lease, exhaustion and Stop semantics without minting authority on restart', async () => {
+  const s = await budgetSession({}, createAgentAllowance('1'));
+  let requests = 0;
+  const options = { transport: (...args) => { requests++; return s.h.transport(...args); } };
+  let client = await mcpSession(options);
+  const input = { leaseFile: s.base[1], sessionId: s.observation.sessionId };
+  await client.listTools(); assert.equal(requests, 0);
+  const config = delivered(await callMcp(client, 'start-run', { ...input, observationId: s.observation.observationId, revision: 0 }));
+  const scope = { ...input, runId: config.run.runId, revision: config.revision };
+  const file = join(dirname(s.base[1]), 'config.json'); await writeFile(file, JSON.stringify(config.configuration));
+  const conflict = await callMcp(client, 'set-config', { ...scope, revision: config.revision + 1, configFile: file });
+  assert.equal(conflict.isError, true); assert.deepEqual(conflict.structuredContent, { error: 'revision-conflict' });
+  assert.deepEqual((await s.get()).run, config.run);
+  const foreign = await callMcp(client, 'decide', { ...scope, runId: randomUUID(), observationId: randomUUID() });
+  assert.equal(foreign.isError, true); assert.deepEqual(foreign.structuredContent, { error: 'budget-closed' });
+  const denied = delivered(await callMcp(client, 'decide', { ...scope, revision: scope.revision + 1, observationId: randomUUID() }));
+  assert.equal(denied.outcome, 'not-admitted'); assert.equal(denied.reason, 'no-grant'); assert.equal(denied.pngPath, null);
+  const stale = delivered(await callMcp(client, 'decide', { ...scope, observationId: randomUUID() }));
+  assert.equal(stale.outcome, 'not-admitted'); assert.equal(stale.reason, 'stale-observation');
+  assert.equal(s.game.sdkCalls, 0);
+  const result = delivered(await callMcp(client, 'decide', { ...scope, observationId: s.observation.observationId }));
+  assert.equal(result.outcome, 'completed'); assert.equal(s.game.sdkCalls, 1);
+  const fresh = delivered(await callMcp(client, 'observe', { leaseFile: input.leaseFile }));
+  const exhausted = delivered(await callMcp(client, 'decide', { ...scope, observationId: fresh.observationId }));
+  assert.equal(exhausted.outcome, 'not-admitted'); assert.equal(exhausted.reason, 'no-grant');
+  const ended = delivered(await callMcp(client, 'get-config', input));
+  assert.deepEqual(ended.run, { runId: scope.runId, active: false, limit: 1, reserved: 1, sdkInvoked: 1, remaining: 0 });
+  await client.close();
+  const beforeRestart = requests;
+  client = await mcpSession(options); await client.listTools();
+  assert.equal(requests, beforeRestart);
+  const closed = await callMcp(client, 'start-run', { ...input, observationId: fresh.observationId, revision: scope.revision });
+  assert.equal(closed.isError, true); assert.deepEqual(closed.structuredContent, { error: 'budget-closed' });
+  s.page.stop();
+  const stopped = await callMcp(client, 'get-config', input);
+  assert.equal(stopped.isError, true); assert.deepEqual(stopped.structuredContent, { error: 'agent-stopped' });
+  assert.equal(s.game.sdkCalls, 1);
+});
+
+it.each([{ signals: death, phase: 'terminal' }, { signals: exit, phase: 'terminal' }, { trapAt: 2, phase: null }])(
+  'MCP preserves verified terminal or uncertain retired receipts (%j)', async options => {
+    const s = await budgetSession(options.signals ? { at: 2, signals: options.signals } : { trapAt: options.trapAt });
+    const config = await s.start();
+    const client = await mcpSession({ transport: s.h.transport });
+    const result = delivered(await callMcp(client, 'decide', { leaseFile: s.base[1], sessionId: config.sessionId,
+      runId: config.run.runId, revision: config.revision, observationId: s.observation.observationId }));
+    assert.equal(result.outcome, options.phase ? 'terminal' : 'retired');
+    assert.equal(result.sdkInvoked, true); assert.equal(result.completionUncertain, !options.phase);
+    if (options.phase) {
+      assert.equal(result.observation.phase, 'terminal');
+      assert.equal(result.observation.tic, result.cumulativeTics);
+      assert.equal(result.observation.frame.nativeSha256, result.observation.frame.canvasSha256);
+      assert.equal(createHash('sha256').update(await readFile(result.pngPath)).digest('hex'), result.observation.pngSha256);
+      assert.deepEqual([result.requestedTics, result.reportedTics, result.verifiedTics], [6, 2, 2]);
+    } else { assert.equal(result.pngPath, null); assert.equal(result.observation, null); }
+    assert.equal(s.game.sdkCalls, 1);
+  });
+
+it.each(['cancel', 'disconnect'])('MCP %s closes the owned fake request, never replays, and restart cannot renew authority', async interruption => {
+  const s = await budgetSession({ delayedBody: true });
+  const config = await s.start();
+  let calls = 0, cancelled = false;
+  const options = { transport: (url, init) => {
+    calls++;
+    const reply = s.h.request(new URL(url).pathname, init);
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        cancelled = true; reply.destroyed = true; reply.emit('close');
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+      init.signal.addEventListener('abort', abort, { once: true });
+      reply.result.promise.then(response => {
+        init.signal.removeEventListener('abort', abort); resolve(response);
+      }, reject);
+    });
+  } };
+  const client = await mcpSession(options);
+  const abort = new AbortController();
+  const work = client.callTool({ name: 'doom_decide', arguments: { leaseFile: s.base[1], sessionId: config.sessionId,
+    runId: config.run.runId, revision: config.revision, observationId: s.observation.observationId } }, { signal: abort.signal });
+  const rejected = assert.rejects(work);
+  await s.game.waiting; assert.equal(s.game.sdkCalls, 1);
+  if (interruption === 'cancel') abort.abort(); else await client.close();
+  await rejected;
+  await checkpoint(() => cancelled && s.allowance.status === 'closed');
+  assert.equal(calls, 1); assert.equal(s.game.view.session.agentBusy, true);
+  await client.close();
+  const replacement = await mcpSession(options); await replacement.listTools();
+  assert.equal(calls, 1); assert.equal(s.allowance.status, 'closed');
+  s.game.releaseBody(); await checkpoint(() => !s.game.view.session.agentBusy);
+  assert.equal(s.game.sdkCalls, 1); assert.equal(s.game.gameCalls, 0);
+});
+
+it.each([{ throwOnCreate: true, outcome: 'api-failure', invoked: true }, { key: '', outcome: 'not-admitted', invoked: false }])(
+  'MCP delivers failed domain receipts without converting them to completed gameplay (%j)', async options => {
+    const s = await budgetSession(options); const config = await s.start();
+    const client = await mcpSession({ transport: s.h.transport });
+    const result = delivered(await callMcp(client, 'decide', { leaseFile: s.base[1], sessionId: config.sessionId,
+      runId: config.run.runId, revision: config.revision, observationId: s.observation.observationId }));
+    assert.equal(result.outcome, options.outcome); assert.equal(result.sdkInvoked, options.invoked);
+    assert.equal(result.pngPath, null); assert.equal(result.observation, null);
+    const ended = await s.get();
+    assert.equal(ended.run.reserved, 1); assert.equal(ended.run.active, false); assert.equal(ended.run.remaining, 0);
+    assert.equal(s.game.sdkCalls, options.invoked ? 1 : 0);
+  });
+
+it('MCP lost decide response is sanitized unknown completion, without replay or fabricated success', async () => {
+  const s = await budgetSession(); const config = await s.start(); let calls = 0;
+  const client = await mcpSession({ transport: async (...args) => {
+    calls++; await s.h.transport(...args); throw Error('offline-lost-response');
+  } });
+  const result = await callMcp(client, 'decide', { leaseFile: s.base[1], sessionId: config.sessionId,
+    runId: config.run.runId, revision: config.revision, observationId: s.observation.observationId });
+  assert.equal(result.isError, true); assert.deepEqual(result.structuredContent, agentCliError(Error('unknown')));
+  assert.equal(result.structuredContent.outcome, undefined);
+  assert.equal(calls, 1); assert.equal(s.game.sdkCalls, 1); assert.equal(s.game.gameCalls, 6);
 });

@@ -105,14 +105,19 @@ export async function runAgentCli(args, { transport = fetch, temporaryRoot = tmp
   throw Error('Usage: node scripts/doom-agent.mjs attach | observe --lease FILE | start-run --lease FILE --observation ID --session ID --revision N | get-prompt/get-config --lease FILE --session ID | set-prompt --lease FILE --session ID --run ID --revision N --instructions-file FILE | set-config --lease FILE --session ID --run ID --revision N --config-file FILE | decide --lease FILE --observation ID [--session ID --run ID --revision N] (absolute files required)');
 }
 
+// Shared by CLI stderr and the optional MCP adapter. Never expose raw exceptions.
+export function agentCliError(error) {
+  const message = errors.has(error?.message) || error?.message?.startsWith('Usage:')
+    ? error.message : 'Agent command failed; outcome may be unknown. Check the dev:agent page and lease; no retry was made.';
+  return { error: message };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     console.log(JSON.stringify(await runAgentCli(process.argv.slice(2)), null, 2));
   } catch (error) {
     // Do not print network bodies, stack traces, file contents or arbitrary errors.
-    const message = errors.has(error?.message) || error?.message?.startsWith('Usage:')
-      ? error.message : 'Agent command failed; outcome may be unknown. Check the dev:agent page and lease; no retry was made.';
-    console.error(JSON.stringify({ error: message }));
+    console.error(JSON.stringify(agentCliError(error)));
     process.exitCode = 1;
   }
 }

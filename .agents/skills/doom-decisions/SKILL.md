@@ -19,6 +19,41 @@ intent is allowed. Codex chooses only the agent time horizon through the bounded
 effective configuration before the provider chooses its action; never change
 duration after seeing that choice.
 
+**Choose one transport at the beginning:** `$doom-decisions play` uses the CLI
+by default. Only an explicit request such as `$doom-decisions play using MCP`
+selects the optional local MCP adapter. For MCP, require all eight tools below
+to be available before attaching; otherwise end without falling back to CLI.
+Never switch transports during an invocation, recover a lost result through the
+other transport, or retry an operation. The host-managed stdio adapter does not
+start `dev:agent`, prepare a game or issue an allowance on startup.
+
+For MCP, translate each CLI recipe below to its one corresponding tool, retaining
+the same argument values, operation order and temporary settings files:
+
+| CLI operation | MCP tool | Arguments |
+| --- | --- | --- |
+| `attach` | `doom_attach` | `{}` |
+| `observe` | `doom_observe` | `leaseFile` |
+| `get-config` | `doom_get_config` | `leaseFile, sessionId` |
+| `get-prompt` | `doom_get_prompt` | `leaseFile, sessionId` |
+| `start-run` | `doom_start_run` | `leaseFile, observationId, sessionId, revision` |
+| `set-config` | `doom_set_config` | `leaseFile, sessionId, runId, revision, configFile` |
+| `set-prompt` | `doom_set_prompt` | `leaseFile, sessionId, runId, revision, instructionsFile` |
+| `decide` | `doom_decide` | `leaseFile, observationId, sessionId, runId, revision` |
+
+Every termination, disclosure, configuration, duration and image-inspection rule
+below applies identically to MCP calls. References to agent CLI calls include
+their MCP equivalents, including the prohibition on calls after Stop/terminal.
+Immediately inspect each MCP result's `isError` and complete domain payload before
+any other work. Use `structuredContent` when available; its compact JSON text
+content carries the same complete object. Do not reprint duplicate copies or
+invent a CLI exit code. `isError: true`, missing/truncated/inconsistent content or
+a connection/tool failure ends play conservatively; preserve `agent-stopped` when
+present. `isError: false` proves delivery only: non-completed outcomes still obey
+all existing stop rules. A pending call is not a receipt; never repeat it.
+MCP retains local `pngPath` output: use `view_image` and the same verified-hash
+reuse rules below, never substitute JSON or a path for an inspected image.
+
 **Termination takes priority throughout `play`:** immediately after EVERY CLI
 call, inspect its exit status and structured result before further reasoning,
 planning, image viewing, settings changes or tool calls. `{"error":"agent-stopped"}`

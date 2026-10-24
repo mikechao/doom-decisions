@@ -210,9 +210,14 @@ behavior and production CSP stay unchanged.
 
 #### Agent control: one-command bounded play and Stop
 
+CLI is the default transport. An opt-in eight-tool local stdio MCP experiment,
+offline parity evidence and human-only project registration instructions are in
+[Doom MCP adapter](../docs/doom-agent-mcp.md). Use `$doom-decisions play using MCP`
+only after enabling it in a fresh Codex session; never switch transports in a run.
+
 Agent mode uses strict port **5174** and the existing same-origin, in-memory
-bridge. An occupied port fails. Close extra agent tabs. No extra server, browser
-automation, provider proxy, or dependency is involved. Only `dev:agent` registers
+bridge. An occupied port fails. Close extra agent tabs. The existing bridge needs
+no additional HTTP service, browser automation or provider proxy. Only `dev:agent` registers
 a verified ready page; ordinary dev/production have no agent command routes.
 
 In a second terminal, from the repository root:

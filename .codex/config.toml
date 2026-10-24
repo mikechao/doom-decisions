@@ -1,0 +1,31 @@
+[mcp_servers.doom_decisions]
+command = "node"
+args = ["app/agent-mcp.mjs"]
+enabled = true
+required = false
+startup_timeout_sec = 10
+tool_timeout_sec = 60
+
+[mcp_servers.doom_decisions.tools.doom_attach]
+approval_mode = "approve"
+
+[mcp_servers.doom_decisions.tools.doom_observe]
+approval_mode = "approve"
+
+[mcp_servers.doom_decisions.tools.doom_get_config]
+approval_mode = "approve"
+
+[mcp_servers.doom_decisions.tools.doom_start_run]
+approval_mode = "approve"
+
+[mcp_servers.doom_decisions.tools.doom_decide]
+approval_mode = "approve"
+
+[mcp_servers.doom_decisions.tools.doom_set_config]
+approval_mode = "approve"
+
+[mcp_servers.doom_decisions.tools.doom_get_prompt]
+approval_mode = "approve"
+
+[mcp_servers.doom_decisions.tools.doom_set_prompt]
+approval_mode = "approve"

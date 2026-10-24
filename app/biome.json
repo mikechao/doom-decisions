@@ -11,6 +11,7 @@
       "tsconfig.worker.json",
       "vite.config.js",
       "agent-bridge.mjs",
+      "agent-mcp.mjs",
       "!!dist",
       "!!public",
       "!!node_modules",
