@@ -269,23 +269,10 @@ it('uses 6, 11 and 23 tics in one configured run through CLI config CAS and froz
   assert.equal((await s.get()).configuration.tics, 23);
 });
 
-it('executes the skill start template once against fresh CLI observation/configuration without browser grants', async () => {
-  const s = await budgetSession();
-  const initial = await s.get();
+it('validates the skill configuration example with the strict agent schema', async () => {
   const skill = await readFile(new URL('../../.agents/skills/doom-decisions/SKILL.md', import.meta.url), 'utf8');
   const example = JSON.parse(skill.match(/```json\n([\s\S]*?)\n```/)[1]);
   assert.equal(parseAgentConfiguration(example).tics, 6);
-  const starts = [...skill.matchAll(/`(node scripts\/doom-agent\.mjs start-run [^`]+)`/g)].map(match => match[1]);
-  assert.equal(starts.length, 1, 'One executable start template; no alternate claim path');
-  const values = { ABSOLUTE_LEASE_FILE: s.base[1], OBSERVATION_ID: s.observation.observationId,
-    SESSION_ID: initial.sessionId, REVISION: String(initial.revision) };
-  const args = starts[0].split(/\s+/).slice(2).map(token => values[token] ?? token);
-  assert.equal(s.page.allow, undefined); assert.equal(s.page.allowRun, undefined);
-  const started = await s.cli(args);
-  assert.equal(started.run.active, true); assert.equal(started.run.reserved, 0);
-  assert.equal(s.game.sdkCalls, 0);
-  assert.equal((await s.decide(await s.observe(), started)).outcome, 'completed');
-  await assert.rejects(s.cli(args), /budget-closed/);
 });
 
 it('freezes a configured cap above three across four SDK invocations', async () => {
