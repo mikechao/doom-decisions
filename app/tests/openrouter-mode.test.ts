@@ -135,6 +135,8 @@ function browserFixture(query = '', hasPending = false) {
   element('#openrouter-connect').hidden = true;
   element('#openrouter-back').hidden = true;
   element('#openrouter-key-settings').hidden = true;
+  element('#stop-agent').disabled = false;
+  element('#view-prompt').disabled = false;
   element('#openrouter-model-gpt').value = 'openai/gpt-6-luna-decisions';
   element('#openrouter-model-gpt').checked = true;
   element('#openrouter-model-jev').value = 'typesafe/jev-1.14';
@@ -301,7 +303,7 @@ it('auto-selects included Freedoom once after agent readiness without a key, ret
   assert.match(session.factory.probe().status, /configured model: typesafe\/jev-1\.14/);
   assert.equal(h.element('#next').disabled, true);
   assert.equal(h.element('#start').disabled, true);
-  assert.match(h.element('#control-prerequisite').textContent, /Enter a temporary OpenRouter API key/);
+  assert.match(h.element('#control-prerequisite').textContent, /Agent Mode: human decision controls are disabled/);
   h.element('#key').dispatchEvent(new Event('input'));
   session.ports.present({ iwadEnabled: true });
   await settleStartup();
@@ -362,8 +364,8 @@ it.each([
   assert.equal(session.controller.next.mock.calls.length, 0);
   assert.equal(session.controller.startContinuous.mock.calls.length, 0);
   ready();
-  assert.equal(h.element('#next').disabled, false);
-  assert.equal(h.element('#start').disabled, false);
+  assert.equal(h.element('#next').disabled, true);
+  assert.equal(h.element('#start').disabled, true);
   assert.match(h.element('#openrouter-auth-status').textContent, /Local agent key.*unverified/);
   assert.equal(h.element('#key').value, '');
   assert.equal(h.values.size, 0);
@@ -374,9 +376,10 @@ it.each([
   assert.equal(h.element(other).checked, true);
   assert.equal(h.element(selected).checked, false);
   assert.equal(session.factory.probe().status.includes(`configured model: ${changedModel}`), true);
-  // The real controller consumes the same port on explicit admission.
-  session.controller.next.mockImplementation(() => session.factory.create(session.ports.takeKey()));
+  // Human admission stays fenced; simulate the agent controller's lazy client construction.
   h.element('#next').dispatchEvent(new Event('click'));
+  assert.equal(session.controller.next.mock.calls.length, 0);
+  session.factory.create(session.ports.takeKey());
   assert.deepEqual(create.mock.calls, [['offline-agent-browser-dummy']]);
   assert.equal(h.element('#openrouter-model').disabled, true);
   h.element(selected).checked = true;
@@ -1154,6 +1157,7 @@ it('exposes watch/Stop and one-time start wiring without browser grant controls'
   ports.state('available');
   assert.match(h.element('#agent-status').textContent, /\$doom-decisions play/);
   assert.equal(h.element('#stop-agent').hidden, false);
+  assert.equal(h.element('#stop-agent').disabled, false);
   const scope = { sessionId: 'session', runId: 'broker-run', revision: 0, limit: 30 };
   const fresh = () => {};
   ports.startRun('epoch', 'observation', scope, fresh);
@@ -1209,7 +1213,7 @@ it('shows bounded allowance and routes ephemeral agent settings without writing 
   assert.equal(session.ports.readDecisionConfiguration(), saved);
   assert.equal(h.element('#prompt-instructions').value, 'Unsaved human instructions');
   assert.equal(h.element('#prompt-ammo').checked, !saved.includeAmmo);
-  assert.match(h.element('#agent-status').textContent, /temporary; Configure AI Decision retains human settings/);
+  assert.match(h.element('#agent-status').textContent, /temporary; human settings are retained/);
   assert.equal(session.ports.readTics(), n);
   h.element('#prompt-dialog').open = true;
   assert.equal(session.ports.promptEditorOpen(), true);
@@ -1219,4 +1223,67 @@ it('shows bounded allowance and routes ephemeral agent settings without writing 
   present({ ...authorization, active: false, remaining: 0, reserved: 30, sdkInvoked: 29 });
   assert.match(h.element('#agent-run-status').textContent, /run exhausted · 0 of 30.*30 reserved · 29 SDK calls/);
   assert.match(h.element('#agent-run-status').textContent, /browser reload and Vite internal restart do not replenish/);
+});
+
+it('keeps human decisions disabled throughout Agent Mode and ignores synthetic human edits during an active run', async () => {
+  agent.enabled = true;
+  agent.key = 'offline-agent-browser-dummy';
+  vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'agent'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture();
+  const humanControls = ['#tics', '#next', '#budget', '#start', '#stop', '#view-prompt'];
+  // Start enabled so this checks the startup assignment, independently of HTML defaults.
+  for (const id of humanControls) h.element(id).disabled = false;
+  h.element('#prompt-dialog').open = false;
+  const showModal = vi.fn();
+  Object.assign(h.element('#prompt-dialog'), { showModal });
+  const assertDisabled = () => {
+    for (const id of humanControls) assert.equal(h.element(id).disabled, true, id);
+  };
+  await import('../src/main.ts?agent-human-controls');
+  assertDisabled(); // No controller presentation or bounded run yet.
+  session.ports.present({ iwadEnabled: true });
+  assertDisabled();
+  assert.equal(h.element('#included-freedoom').disabled, false, 'Preparation remains available');
+  ready();
+  assertDisabled(); // Ready before a bounded run also remains agent-owned.
+  const ports = bridge.start.mock.calls[0][0];
+  const authorization = { runId: 'run', active: true, limit: 30, reserved: 1, sdkInvoked: 1, remaining: 29 };
+  for (const [phase, state] of [['busy', 'deciding'], ['ready', 'settled']]) {
+    session.ports.present({ session: {
+      phase, prepared: true, hasClient: true, verifiedTics: 1,
+      evidence: { decisions: [] }, controls: { ready: true, stop: true, tics: true, iwad: false },
+      agentAuthorization: authorization,
+    } });
+    ports.state(state);
+    assertDisabled();
+  }
+  const saved = session.ports.readDecisionConfiguration();
+  const accounting = h.element('#agent-run-status').textContent;
+  for (const event of ['input', 'change']) {
+    h.element('#tics').valueAsNumber = 12;
+    h.element('#tics').dispatchEvent(new Event(event));
+  }
+  h.element('#budget').valueAsNumber = 99;
+  for (const id of ['#next', '#start', '#stop', '#view-prompt'])
+    h.element(id).dispatchEvent(new Event('click'));
+  assert.equal(showModal.mock.calls.length, 0);
+  assert.equal(h.element('#prompt-dialog').open, false);
+  // Even forcing a dialog open cannot save or reset human settings in Agent Mode.
+  h.element('#prompt-dialog').open = true;
+  h.element('#prompt-instructions').value = 'Synthetic human edit';
+  h.element('#prompt-ammo').checked = true;
+  h.element('#reset-prompt').dispatchEvent(new Event('click'));
+  assert.equal(h.element('#prompt-instructions').value, 'Synthetic human edit');
+  h.element('#save-prompt').dispatchEvent(new Event('click'));
+  assert.equal(session.ports.readDecisionConfiguration(), saved);
+  for (const name of ['next', 'startContinuous', 'stop', 'configure'])
+    assert.equal(session.controller[name].mock.calls.length, 0, name);
+  assert.equal(h.element('#agent-run-status').textContent, accounting);
+  assert.equal(h.element('#stop-agent').hidden, false);
+  assert.equal(h.element('#stop-agent').disabled, false);
+  h.element('#stop-agent').dispatchEvent(new Event('click'));
+  assert.equal(bridge.start.mock.results[0].value.stop.mock.calls.length, 1);
+  ports.state('stopped');
+  ready();
+  assertDisabled();
 });

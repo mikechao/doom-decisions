@@ -240,7 +240,7 @@ function renderAgentControls() {
     available:
       'Ready for $doom-decisions play in Codex. Codex starts the configured run once; watch here or use Stop Agent. Provider attempts may incur charges.',
     attached:
-      'Agent attached. Codex observes the game and claims the configured budget once. Agent instructions and Game State inclusion are temporary; Configure AI Decision retains human settings.',
+      'Agent attached. Codex observes the game and claims the configured budget once. Agent settings are temporary; human settings are retained.',
     deciding:
       'Agent deciding. Stop Agent fences dispatch and awaits safe settlement.',
     settled:
@@ -403,11 +403,18 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
     jevMode ? 'TypeSafe / Jev' : openRouterMode ? 'OpenRouter' : 'OpenAI',
   );
   const prerequisite = $('#control-prerequisite');
-  prerequisite.textContent = readiness.bannerText ?? '';
-  prerequisite.hidden = readiness.bannerText === null;
-  $('#next').disabled = !readiness.buttonsEnabled;
-  $('#start').disabled = !readiness.buttonsEnabled;
+  const bannerText = agentMode
+    ? 'Agent Mode: human decision controls are disabled. Codex controls tics and instructions; use Stop Agent to stop.'
+    : readiness.bannerText;
+  prerequisite.textContent = bannerText ?? '';
+  prerequisite.hidden = bannerText === null;
+  $('#next').disabled = agentMode || !readiness.buttonsEnabled;
+  $('#start').disabled = agentMode || !readiness.buttonsEnabled;
+  $('#view-prompt').disabled = agentMode;
   const sessionReady = !!run?.controls.ready;
+  $('#budget').disabled = agentMode || !sessionReady;
+  $('#stop').disabled = agentMode || !run?.controls.stop;
+  $('#tics').disabled = agentMode || !run?.controls.tics;
   const manualSetupReady =
     openRouterMode && startupReady && (!run || run.controls.iwad);
   $('#key').disabled = jevMode || !(sessionReady || manualSetupReady);
@@ -450,9 +457,6 @@ function updateControlAvailability(run: SessionRunPresentation | undefined) {
     });
   }
   renderAgentControls();
-  $('#budget').disabled = !sessionReady;
-  $('#stop').disabled = !run.controls.stop;
-  $('#tics').disabled = !run.controls.tics;
   $('#next').setAttribute('aria-busy', String(run.phase === 'busy'));
 }
 function recordedModelLabel(
@@ -723,16 +727,22 @@ document.addEventListener('pointercancel', () => {
   setupPointerActive = false;
   collapseCompletedSetup();
 });
-$('#next').addEventListener('click', () => controller.next());
-$('#start').addEventListener('click', () =>
-  controller.startContinuous($('#budget').valueAsNumber),
-);
-$('#stop').addEventListener('click', () => controller.stop());
+$('#next').addEventListener('click', () => {
+  if (!agentMode) controller.next();
+});
+$('#start').addEventListener('click', () => {
+  if (!agentMode) controller.startContinuous($('#budget').valueAsNumber);
+});
+$('#stop').addEventListener('click', () => {
+  if (!agentMode) controller.stop();
+});
 $('#stop-agent').addEventListener('click', () => agentBridge?.stop());
 for (const event of ['input', 'change']) {
   // Native number edits precede their event. Invalidate even if a later edit
   // restores the old N; value equality must never revive a browser grant.
-  $('#tics').addEventListener(event, () => controller.configure(() => {}));
+  $('#tics').addEventListener(event, () => {
+    if (!agentMode) controller.configure(() => {});
+  });
 }
 function clearPromptError() {
   $('#prompt-error').textContent = '';
@@ -778,11 +788,12 @@ function loadDecisionDraft() {
   clearPromptError();
 }
 $('#view-prompt').addEventListener('click', () => {
+  if (agentMode) return;
   loadDecisionDraft();
   $('#prompt-dialog').showModal();
 });
 $('#save-prompt').addEventListener('click', () => {
-  if (!$('#prompt-dialog').open) return;
+  if (agentMode || !$('#prompt-dialog').open) return;
   const draft = $('#prompt-instructions').value;
   if (!validAgentInstructions(draft)) {
     $('#prompt-error').hidden = false;
@@ -813,6 +824,7 @@ $('#save-prompt').addEventListener('click', () => {
   $('#prompt-dialog').close();
 });
 $('#reset-prompt').addEventListener('click', () => {
+  if (agentMode) return;
   $('#prompt-instructions').value = defaultDecisionInstructionTemplate;
   $('#prompt-ready-weapon').checked = false;
   $('#prompt-ammo').checked = false;
@@ -823,15 +835,23 @@ $('#reset-prompt').addEventListener('click', () => {
   clearPromptError();
   $('#prompt-instructions').focus();
 });
-$('#prompt-instructions').addEventListener('input', clearPromptError);
-$('#prompt-ready-weapon').addEventListener('change', updateStatePreview);
-$('#prompt-ammo').addEventListener('change', updateStatePreview);
-$('#prompt-health').addEventListener('change', updateStatePreview);
-$('#prompt-previous-action').addEventListener('change', updateStatePreview);
-$('#prompt-facing-probe').addEventListener('change', updateStatePreview);
+$('#prompt-instructions').addEventListener('input', () => {
+  if (!agentMode) clearPromptError();
+});
+for (const selector of [
+  '#prompt-ready-weapon',
+  '#prompt-ammo',
+  '#prompt-health',
+  '#prompt-previous-action',
+  '#prompt-facing-probe',
+] as const) {
+  $(selector).addEventListener('change', () => {
+    if (!agentMode) updateStatePreview();
+  });
+}
 $('#close-prompt').addEventListener('click', () => $('#prompt-dialog').close());
 $('#prompt-dialog').addEventListener('close', () => {
-  if ($('#prompt-dialog').open) return;
+  if (agentMode || $('#prompt-dialog').open) return;
   loadDecisionDraft();
   $('#view-prompt').focus();
 });
@@ -885,6 +905,8 @@ async function initialize() {
     selectIncludedFreedoom();
   }
 }
+// Apply mode ownership before asynchronous startup or any session presentation.
+updateControlAvailability(latestSession);
 if (oauth) {
   // Exchange errors are fixed helper messages, never controller exception text.
   // Auth only exchanges credentials; agent selection follows normal initialization.
