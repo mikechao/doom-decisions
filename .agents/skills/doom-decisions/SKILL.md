@@ -186,7 +186,11 @@ From the repository root:
 4. Keep a concise in-conversation record: goal; page/epoch/session/tic; last
    verified action/tics/outcome; visual interpretation and confidence; navigation
    hypothesis; progress/stall evidence; one next high-level objective; actual run
-   counters. Separate hypotheses from verified native facts. XY endpoints or a
+   counters. Also track attempts submitted/confirmed in this single run, starting
+   at zero after start-run, only to know when final accounting in step 8 is due.
+   This local count never authorizes admission or proves exhaustion; the browser/
+   controller and returned run counters remain authoritative.
+   Separate hypotheses from verified native facts. XY endpoints or a
    screenshot do not prove a collision or door usability. Use the qualified
    `facingProbe` and existing `previousAction.text` with the limitations below;
    movement-event collision masks remain browser-only.
@@ -220,11 +224,12 @@ From the repository root:
    changing `instructionTemplate` through `set-config` requires the same disclosure
    and result confirmation. Model and Manual/Continuous duration remain browser-owned.
 6. Before EACH decision, obtain a fresh observation and view its PNG or apply the
-   visual evidence reuse rule above. After set-prompt or set-config a fresh
-   observation is mandatory: NEVER use the pre-write observation.
+   visual evidence reuse rule above. The first observation after start-run and
+   after any set-prompt or set-config is mandatory: NEVER use a pre-write observation.
    Check unchanged page/epoch/session, ready phase, current tic and image hashes.
-   Get-config once to verify the same run ID/revision/frozen limit is active
-   with allowance.
+   Then get-config once to confirm matching page/epoch/session/run, expected
+   revision/configuration, the same frozen limit, an active run and remaining
+   allowance. A matching PNG hash never skips this read or the fresh observation.
    If configuration/run identity changed unexpectedly, stop.
    Choose an integer duration from 1 through 35 inclusive before EACH decision,
    using the current verified screenshot/state, recent action outcome, threat and
@@ -256,11 +261,27 @@ From the repository root:
    actually open the resulting PNG and compare it with the preceding PNG.
    Verify session continuity and eligible `previousAction`. Terminal prefixes are
    distinct from completed N tics; other outcomes without PNGs are not new scenes.
-8. Only a healthy `completed` result with matching evidence AND an image actually
-   viewed permits another iteration. Read actual counters with get-config. Update
-   the navigation hypothesis, then repeat steps 4–7 while the SAME run remains
-   active and has remaining allowance. This is individual foreground reasoning
+8. Only a successfully delivered, correlated, healthy `completed` receipt with
+   matching evidence AND its verified resulting PNG actually viewed permits
+   proceeding to the next observation. Process the full receipt and update the
+   navigation hypothesis. Do not routinely call get-config immediately afterward.
+   If the bounded run may continue, repeat steps 4–7: obtain the required fresh
+   observation, then use step 6's single pre-decision get-config to verify the
+   SAME run and its allowance before another decide. The completed receipt alone
+   never authorizes another decision. This is individual foreground reasoning
    between tool calls, never a script that loops independently of Codex.
+
+   Final accounting exception: when locally confirmed completed decisions appear
+   to consume the known frozen limit, after the final healthy receipt and required
+   image inspection call get-config once, without another observe or decide.
+   Require matching page/epoch/session/run, expected revision/configuration and
+   frozen limit, and valid returned run counters showing `reserved === limit`
+   and `remaining === 0` before reporting normal exhaustion. Neither the local
+   count nor `active: false` proves exhaustion. If accounting cannot be confirmed,
+   stop conservatively; never retry decide, reclaim allowance or resume the run.
+   Stop, terminal and error rules above take priority over this exception: never
+   add post-error accounting or a recovery probe, or any call after agent-stopped;
+   a verified terminal result permits only its prescribed terminal PNG viewing.
 9. Stop on exhausted/inactive authorization, Stop/lease revocation, terminal or
    retired state, session/observation mismatch, prompt conflict, failed/ambiguous
    result, uncertain consumption, unavailable image viewing or achieved goal.
@@ -318,7 +339,8 @@ revision. `set-config` fully replaces the seven fields. `set-prompt` remains an
 instructions-only adapter to the same ephemeral configuration and revision.
 Successful edits preserve the run ID and every attempt counter, increment revision
 and invalidate old observations. Obtain a fresh observation and view its PNG or
-apply the visual evidence reuse rule before requesting another decision.
+apply the visual evidence reuse rule, then get-config to verify the new revision/
+configuration and same active run/frozen limit/allowance before another decision.
 Changes never affect an admitted request. Rejected stale/malformed,
 busy or editor-open writes leave settings, revision and allowance unchanged;
 stop this skill workflow on conflicts rather than retrying. Human configuration
