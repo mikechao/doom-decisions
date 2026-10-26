@@ -1,8 +1,10 @@
 import {
   enabled as agentEnabled,
+  localIwad as agentLocalIwad,
   model as agentModel,
   takeKey as takeAgentKey,
 } from 'virtual:agent-bootstrap';
+import { createAgentIwad } from './agent-iwad';
 import { createIncludedFreedoom } from './bundled-freedoom';
 import {
   startAgentObservationBridge,
@@ -902,7 +904,17 @@ async function initialize() {
   await controller.initialize();
   if (agentMode && startupReady && !agentPreparationAttempted) {
     agentPreparationAttempted = true;
-    selectIncludedFreedoom();
+    if (agentLocalIwad && 'error' in agentLocalIwad) {
+      $('#status').textContent = agentLocalIwad.error;
+    } else if (agentLocalIwad) {
+      selectIwad(
+        createAgentIwad(agentLocalIwad.size),
+        'Configured local IWAD',
+        'local',
+      );
+    } else {
+      selectIncludedFreedoom();
+    }
   }
 }
 // Apply mode ownership before asynchronous startup or any session presentation.

@@ -21,10 +21,11 @@ const session = vi.hoisted(() => ({
   controller: { configure: vi.fn(change => { change(); return true; }), initialize: vi.fn(), next: vi.fn(), startContinuous: vi.fn(), stop: vi.fn(),
     prepare: vi.fn(), close: vi.fn(), restore: vi.fn(), agentPrompt: vi.fn(), agentConfig: vi.fn(), attachAgent: vi.fn(), startAgentRun: vi.fn(), stopAgent: vi.fn() },
 }));
-const agent = vi.hoisted(() => ({ enabled: false, key: '', model: 'typesafe/jev-1.14' }));
+const agent = vi.hoisted(() => ({ enabled: false, key: '', model: 'typesafe/jev-1.14', localIwad: null as null | { size: number } | { error: string } }));
 vi.mock('virtual:agent-bootstrap', () => ({
   get enabled() { return agent.enabled; },
   get model() { return agent.model; },
+  get localIwad() { return agent.localIwad; },
   takeKey() { const key = agent.key; agent.key = ''; return key; },
 }));
 vi.mock('../src/session-controller', () => ({
@@ -36,7 +37,7 @@ vi.mock('../src/decision-history', () => ({ defineDecisionHistory: () => {} }));
 // Provider/controller fixtures retain fake DOM behavior, not Shadow DOM coverage.
 vi.mock('../src/doom-button', () => ({ defineDoomButton: () => {} }));
 afterEach(() => {
-  agent.enabled = false; agent.key = ''; agent.model = 'typesafe/jev-1.14';
+  agent.enabled = false; agent.key = ''; agent.model = 'typesafe/jev-1.14'; agent.localIwad = null;
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetAllMocks(); vi.restoreAllMocks();
 });
 
@@ -312,6 +313,52 @@ it('auto-selects included Freedoom once after agent readiness without a key, ret
   assert.equal(session.controller.next.mock.calls.length, 0);
   assert.equal(session.controller.startContinuous.mock.calls.length, 0);
   assert.equal(h.transport.mock.calls.length, 0);
+});
+
+it('auto-selects the configured local IWAD once, with a lazy read and no inference', async () => {
+  agent.enabled = true;
+  agent.localIwad = { size: 12 };
+  vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'agent'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture();
+  const fetch = vi.fn(() => assert.fail('The controller mock has not read the file'));
+  vi.stubGlobal('fetch', fetch);
+  session.controller.prepare.mockImplementation(() => {
+    session.ports.present({ session: {
+      phase: 'preparing', prepared: false, hasClient: false, verifiedTics: 0,
+      controls: { ready: false, stop: false, tics: false, iwad: false }, evidence: { decisions: [] },
+    } });
+  });
+  await import('../src/main.ts?agent-configured-local-iwad');
+  await settleStartup();
+  assert.equal(session.controller.prepare.mock.calls.length, 1);
+  const [file] = session.controller.prepare.mock.calls[0];
+  assert.equal(file.size, 12);
+  assert.equal(typeof file.arrayBuffer, 'function');
+  assert.match(h.element('#setup-asset').textContent, /Configured local IWAD/);
+  assert.doesNotMatch(h.element('#setup-asset').textContent, /Freedoom/);
+  session.ports.present({ iwadEnabled: true });
+  await settleStartup();
+  assert.equal(session.controller.prepare.mock.calls.length, 1);
+  assert.equal(fetch.mock.calls.length, 0);
+  assert.equal(h.transport.mock.calls.length, 0);
+  assert.equal(h.worker.mock.calls.length, 0);
+  assert.equal(session.controller.next.mock.calls.length, 0);
+  assert.equal(session.controller.startContinuous.mock.calls.length, 0);
+});
+
+it('shows configured IWAD errors without preparing or falling back to Freedoom', async () => {
+  agent.enabled = true;
+  agent.localIwad = { error: 'Check AGENT_IWAD_PATH, then fully stop and relaunch dev:agent.' };
+  vi.stubEnv('DEV', true); vi.stubEnv('MODE', 'agent'); vi.stubEnv('VITE_DECISION_PROVIDER', undefined);
+  const h = browserFixture();
+  await import('../src/main.ts?agent-configured-iwad-error');
+  await settleStartup();
+  assert.equal(h.element('#status').textContent, agent.localIwad.error);
+  session.ports.present({ iwadEnabled: true });
+  await settleStartup();
+  assert.equal(session.controller.prepare.mock.calls.length, 0);
+  assert.equal(h.transport.mock.calls.length, 0);
+  assert.equal(bridge.start.mock.calls.length, 0);
 });
 
 it('retains preparation failure presentation without automatically retrying the asset', async () => {

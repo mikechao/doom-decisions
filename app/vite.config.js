@@ -1,15 +1,67 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { accessSync, constants, readFileSync, statSync } from 'node:fs';
+import { open } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 import { parseEnv } from 'node:util';
 import { defineConfig } from 'vite';
 import { agentBridgePlugin } from './agent-bridge.mjs';
+import {
+  agentIwadError,
+  agentIwadReadError,
+  agentIwadUrl,
+} from './src/agent-iwad.ts';
+import { agentOrigin } from './src/agent-observation.ts';
 import freedoom from './src/freedoom-identity.json' with { type: 'json' };
+import {
+  IWAD_MAX_BYTES,
+  IWAD_MIN_BYTES,
+  IWAD_SIZE_ERROR,
+} from './src/worker-shared.ts';
+
+// Only the operator's one configured file is addressable. No path is exported.
+function agentIwad(value) {
+  const path = value?.trim();
+  if (!path) return { metadata: null };
+  let size;
+  try {
+    if (!isAbsolute(path)) throw Error();
+    const stat = statSync(path);
+    if (!stat.isFile()) throw Error();
+    accessSync(path, constants.R_OK);
+    size = stat.size;
+  } catch {
+    return { metadata: { error: agentIwadError } };
+  }
+  if (size < IWAD_MIN_BYTES || size > IWAD_MAX_BYTES)
+    return {
+      metadata: {
+        error: `${IWAD_SIZE_ERROR} Check AGENT_IWAD_PATH, then fully stop and relaunch dev:agent.`,
+      },
+    };
+  return {
+    metadata: { size },
+    async read() {
+      // Recheck the opened file before reading; a replaced directory/FIFO must
+      // neither be served nor block the server. WAD admission remains native.
+      const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
+      try {
+        const stat = await file.stat();
+        if (!stat.isFile() || stat.size !== size) throw Error();
+        const bytes = await file.readFile();
+        if (bytes.byteLength !== size) throw Error();
+        return bytes;
+      } finally {
+        await file.close();
+      }
+    },
+  };
+}
 
 // Private input is read only when an agent dev page requests this module.
 // Never put its contents in Vite env/define/config: debug output can print them.
 function agentBootstrap(enabled) {
   const id = '\0doom-agent-bootstrap';
   let root;
+  let iwad;
   return {
     name: 'agent-bootstrap',
     configResolved(config) {
@@ -17,6 +69,42 @@ function agentBootstrap(enabled) {
       if (enabled && config.server.host !== '127.0.0.1')
         throw new Error('AI Agent development requires host 127.0.0.1.');
     },
+    ...(enabled
+      ? {
+          configureServer(server) {
+            server.middlewares.use(async (req, res, next) => {
+              if (req.url?.split('?')[0] !== agentIwadUrl) return next();
+              res.setHeader('Cache-Control', 'no-store');
+              res.setHeader('X-Content-Type-Options', 'nosniff');
+              if (
+                req.url !== agentIwadUrl ||
+                req.method !== 'GET' ||
+                req.headers.host !== new URL(agentOrigin).host ||
+                !['127.0.0.1', '::ffff:127.0.0.1'].includes(
+                  req.socket.remoteAddress,
+                ) ||
+                (req.headers.origin !== undefined &&
+                  req.headers.origin !== agentOrigin) ||
+                req.headers['sec-fetch-site'] !== 'same-origin'
+              ) {
+                res.statusCode = 403;
+                return res.end('Forbidden.');
+              }
+              try {
+                if (!iwad?.read) throw Error();
+                const bytes = await iwad.read();
+                res.setHeader('Content-Type', 'application/octet-stream');
+                res.setHeader('Content-Length', bytes.byteLength);
+                res.end(bytes);
+              } catch {
+                // Filesystem errors contain the private absolute path.
+                res.statusCode = 400;
+                res.end(agentIwadReadError);
+              }
+            });
+          },
+        }
+      : {}),
     resolveId(source) {
       if (source === 'virtual:agent-bootstrap') return id;
     },
@@ -34,6 +122,8 @@ function agentBootstrap(enabled) {
           // An absent/unreadable optional credential must not block the game.
           // File/parse exceptions can contain private input; never log them.
         }
+        // Freeze selection at the first bootstrap request, with no runtime switch.
+        iwad ??= agentIwad(privateEnv?.AGENT_IWAD_PATH);
         // Only this private file selects the agent model; process env is ignored.
         // Treat an explicitly blank setting like an absent one.
         const alias = privateEnv?.AGENT_MODEL?.trim() || 'jev';
@@ -50,6 +140,7 @@ function agentBootstrap(enabled) {
       // credential port; no persistent exported key, DOM field or browser storage.
       return `export const enabled = ${enabled};
 export const model = ${JSON.stringify(model)};
+export const localIwad = ${JSON.stringify(iwad?.metadata ?? null)};
 let key = ${JSON.stringify(key)};
 export function takeKey() { const result = key; key = ''; return result; }`;
     },

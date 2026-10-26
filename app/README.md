@@ -166,6 +166,27 @@ The existing frame/Canvas hash checks and five-second idle proof remain mandator
 Advanced evidence stays available. Failures use the existing error/retry controls,
 with no automatic retry loop. Refresh starts one fresh preparation.
 
+Optionally add an absolute local IWAD path to the same ignored file:
+
+```dotenv
+AGENT_IWAD_PATH=/absolute/path/to/DOOM1.WAD
+```
+
+Missing or blank keeps included Freedoom. A configured path selects that file
+instead, through the same `LocalIwad` preparation and Worker verification pipeline.
+Relative, missing, unreadable, non-file or out-of-bounds inputs produce a sanitized
+configuration error without automatically falling back to Freedoom; unsupported
+WADs fail through the existing preparation error path. Support remains best-effort
+for Doom E1M1, including owner-tested shareware `DOOM1.WAD`, with no hash allowlist.
+The operator must legally supply `DOOM1.WAD` and must never commit it.
+
+Fully stop and relaunch `dev:agent` to change the path. The absolute path stays
+server-side; the page receives only byte length (or a fixed error) and fetches bytes
+lazily during preparation from a fixed same-origin, no-store, agent-development-only
+endpoint. No file is copied into `public`, `dist` or the repository. Ordinary dev,
+preview and production do not read or expose this configured IWAD. Startup still
+makes no Decisions API call; only the browser prepares and plays the game.
+
 Agent mode defaults to `jev` (`typesafe/jev-1.14` via OpenRouter) when the file or
 `AGENT_MODEL` is missing, or the value is blank. Set `AGENT_MODEL=gpt6` for
 `openai/gpt-6-luna-decisions`. Other nonempty values block agent startup with a
