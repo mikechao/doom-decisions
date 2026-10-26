@@ -1,4 +1,8 @@
-import { isAgentId } from './agent-observation.ts';
+import {
+  isAgentId,
+  parseAgentObservation,
+  type AgentObservation,
+} from './agent-observation.ts';
 import type { DecisionConfiguration } from './decision-request.ts';
 
 export type AgentConfiguration = DecisionConfiguration &
@@ -61,6 +65,10 @@ export type AgentConfigResult =
       configuration: AgentConfiguration;
       run: AgentRunState | null;
     };
+
+// Standalone observe only; decision receipts retain the base observation DTO.
+export type AgentObserveResult = AgentObservation &
+  Exclude<AgentConfigResult, { error: string }>;
 
 function requireValue(ok: unknown): asserts ok {
   if (!ok) throw Error('Invalid agent control.');
@@ -144,6 +152,23 @@ export function parseAgentConfigResult(value: unknown): AgentConfigResult {
     if (value.run !== null) parseAgentRunState(value.run);
   }
   return value as AgentConfigResult;
+}
+
+export function parseAgentObserveResult(value: unknown): AgentObserveResult {
+  requireValue(value && typeof value === 'object' && !Array.isArray(value));
+  const { revision, configuration, run, ...observation } = value as Record<
+    string,
+    unknown
+  >;
+  parseAgentObservation(observation);
+  parseAgentConfigResult({
+    sessionId: observation.sessionId,
+    revision,
+    configuration,
+    run,
+  });
+  requireValue(observation.phase === 'ready');
+  return value as AgentObserveResult;
 }
 
 // Shared strict command validation at broker AND browser ingress. No arbitrary

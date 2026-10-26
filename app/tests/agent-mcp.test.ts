@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { it } from 'vitest';
-import { agentObservation } from './fixtures/agent.ts';
+import { agentObserveResult } from './fixtures/agent.ts';
 import { agentCliError } from '../../scripts/doom-agent.mjs';
 
 const serverPath = fileURLToPath(new URL('../agent-mcp.mjs', import.meta.url));
@@ -35,7 +35,7 @@ it.each(['legacy', 'auto'])('serves initialize/list/call over real stdio (%s), w
   const leaseFile = join(directory, 'lease.json');
   const lease = { pageId: '11111111-1111-1111-1111-111111111111',
     ownerId: '22222222-2222-2222-2222-222222222222', epoch: '33333333-3333-3333-3333-333333333333' };
-  const observation = agentObservation();
+  const observation = agentObserveResult();
   await writeFile(leaseFile, JSON.stringify(lease));
   await writeFile(preload, `
     import assert from 'node:assert/strict';

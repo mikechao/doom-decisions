@@ -18,11 +18,11 @@ import { createAgentBridge, createAgentAllowance, processAgentAllowance, agentBr
 import { startAgentObservationBridge } from '../src/agent-browser.ts';
 import { agentOrigin, agentPath, agentPngBytes, parseAgentObservation, parseAgentDecisionResult } from '../src/agent-observation.ts';
 import { agentCliError, runAgentCli } from '../../scripts/doom-agent.mjs';
-import { agentObservation, pngFor } from './fixtures/agent.ts';
+import { agentObservation, agentObserveResult, pngFor } from './fixtures/agent.ts';
 import { deferred, checkpoint, fixture } from './fixtures/session.ts';
 import { death, exit } from './fixtures/synthetic-doom.ts';
-import { defaultDecisionInstructionTemplate } from '../src/decision-request.ts';
-import { validAgentCommand, parseAgentPromptResult, parseAgentConfigResult, parseAgentConfiguration } from '../src/agent-control.ts';
+import { defaultDecisionConfiguration, defaultDecisionInstructionTemplate } from '../src/decision-request.ts';
+import { validAgentCommand, parseAgentPromptResult, parseAgentConfigResult, parseAgentConfiguration, parseAgentObserveResult } from '../src/agent-control.ts';
 
 // Scoped deterministic seams for byte-for-byte CLI/MCP replay, including IDs and
 // paths. All other tests keep the actual implementations; no IDs are discarded.
@@ -72,7 +72,7 @@ function harness(allowance) {
     if (!res.ok) throw Error(value.error);
     return value;
   };
-  const browser = (observe = async () => agentObservation(), network = {}) => {
+  const browser = (observe = async () => agentObserveResult(), network = {}) => {
     const states = [];
     let epoch;
     const handle = startAgentObservationBridge({
@@ -412,7 +412,7 @@ it('rejects malformed requests and foreign hosts/origins without echoing input',
 });
 it('delivers a correlated verified PNG through browser, broker and CLI without printing base64', async () => {
   const h = harness();
-  const observation = agentObservation();
+  const observation = agentObserveResult();
   observation.tic = observation.frame.tic = observation.counters.gametic = 7;
   observation.facingProbe = { tic: 7, kind: 4, door: 2, distance: 24 };
   observation.previousAction = { action: 'forward', tics: 6, endTic: 7,
@@ -440,7 +440,7 @@ it('delivers a correlated verified PNG through browser, broker and CLI without p
 it('fences delayed observations and duplicates, and never transfers a lease to another owner/page', async () => {
   const h = harness();
   const gate = deferred(); let fresh;
-  const page = h.browser(async check => { fresh = check; await gate.promise; check(); return agentObservation(); });
+  const page = h.browser(async check => { fresh = check; await gate.promise; check(); return agentObserveResult(); });
   await page.ready;
   const lease = await h.post('attach', { ownerId: randomUUID() });
   const command = { ...lease, commandId: randomUUID() };
@@ -476,7 +476,7 @@ it('revokes browser-local admission synchronously before server acknowledgement 
       }
       assert.fail('No result after local Stop');
     },
-    async observe(check) { captures++; fresh = check; await gate.promise; check(); return agentObservation(); },
+    async observe(check) { captures++; fresh = check; await gate.promise; check(); return agentObserveResult(); },
   });
   await handle.ready;
   const send = data => events.onmessage({ data: JSON.stringify(data) });
@@ -499,7 +499,7 @@ it('Stop aborts an in-flight result before notification; aborted/incomplete bodi
     const started = deferred(), revokeDelivery = deferred();
     const input = new PassThrough();
     let signal, upload, finishBody, closeStream;
-    const page = h.browser(async () => agentObservation(), {
+    const page = h.browser(async () => agentObserveResult(), {
       close: close => { closeStream = close; }, // Delay the stream-close notification.
       async post(path, data, transferSignal, send) {
         if (path.endsWith('/revoke')) { await revokeDelivery.promise; return send(); }
@@ -553,7 +553,7 @@ it('rechecks a fully delivered late upload after revocation, but does not cancel
     const started = deferred(), acknowledgement = deferred(), acknowledged = deferred();
     const input = new PassThrough();
     let signal, upload, finishBody;
-    const page = h.browser(async () => agentObservation(), {
+    const page = h.browser(async () => agentObserveResult(), {
       async post(path, data, transferSignal, send) {
         if (!path.endsWith('/result')) return send();
         signal = transferSignal;
@@ -647,7 +647,7 @@ it.each(['rejected', 'timeout', 'disconnect-first'])('failed Stop reason deliver
   const h = harness();
   const capture = deferred(), delivery = deferred();
   let fresh, signal, lateSend;
-  const page = h.browser(async check => { fresh = check; await capture.promise; check(); return agentObservation(); }, {
+  const page = h.browser(async check => { fresh = check; await capture.promise; check(); return agentObserveResult(); }, {
     post(path, _data, transferSignal, send) {
       if (!path.endsWith('/revoke')) return send();
       signal = transferSignal; lateSend = send;
@@ -692,7 +692,7 @@ it('requires a validated page token and intentional reason before attributing St
 });
 it('keeps a broker deadline generic for pending and subsequent commands', async () => {
   const h = harness(); const captured = deferred(), release = deferred();
-  const page = h.browser(async fresh => { captured.resolve(); await release.promise; fresh(); return agentObservation(); });
+  const page = h.browser(async fresh => { captured.resolve(); await release.promise; fresh(); return agentObserveResult(); });
   await page.ready;
   const lease = await h.post('attach', { ownerId: randomUUID() });
   vi.useFakeTimers();
@@ -1176,6 +1176,127 @@ function delivered(result) {
   assert.equal(result.content[0].text, JSON.stringify(result.structuredContent));
   return result.structuredContent;
 }
+
+it('uses one combined MCP read at startup, after start/CAS and before a decision, retaining final accounting', async () => {
+  const s = await budgetSession({}, createAgentAllowance('2'));
+  assert.equal(s.observation.run, null);
+  assert.equal(s.observation.revision, 0);
+  const ops = [];
+  const client = await mcpSession({ transport: (url, options) => {
+    ops.push(new URL(url).pathname.split('/').at(-1));
+    return s.h.transport(url, options);
+  } });
+  const input = { leaseFile: s.base[1], sessionId: s.observation.sessionId };
+  const call = async (op, fields = {}) => delivered(await callMcp(client, op, { ...input, ...fields }));
+  const prompt = await call('get-prompt');
+  assert.equal(prompt.instructions, s.observation.configuration.instructionTemplate);
+  let config = await call('start-run', { observationId: s.observation.observationId, revision: s.observation.revision });
+  const observe = async () => delivered(await callMcp(client, 'observe', { leaseFile: input.leaseFile }));
+  const first = await observe();
+  assert.notEqual(first.observationId, s.observation.observationId);
+  assert.equal(first.tic, s.observation.tic);
+  assert.equal(first.pngSha256, s.observation.pngSha256);
+  assert.deepEqual(first.configuration, config.configuration);
+  assert.deepEqual(first.run, config.run);
+  assert.deepEqual(first.run, { runId: config.run.runId, active: true, limit: 2, reserved: 0, sdkInvoked: 0, remaining: 2 });
+  const counters = structuredClone(first.run);
+  const configFile = join(dirname(input.leaseFile), 'combined-config.json');
+  const configuration = { ...first.configuration, tics: 11, includeAmmo: false };
+  await writeFile(configFile, JSON.stringify(configuration));
+  const scope = () => ({ runId: config.run.runId, revision: config.revision });
+  config = await call('set-config', { ...scope(), configFile });
+  assert.equal(config.revision, first.revision + 1);
+  assert.deepEqual(config.run, counters);
+  assert.equal((await call('decide', { ...scope(), observationId: first.observationId })).reason, 'stale-observation');
+  const afterConfig = await observe();
+  assert.deepEqual(afterConfig.configuration, configuration);
+  assert.equal(afterConfig.revision, config.revision);
+  const instructionsFile = join(dirname(input.leaseFile), 'combined-prompt.txt');
+  await writeFile(instructionsFile, 'Observe verified evidence for {{tics}} tics.');
+  const changed = await call('set-prompt', { ...scope(), instructionsFile });
+  config = { ...config, revision: changed.revision };
+  let fresh = await observe();
+  assert.equal(fresh.revision, changed.revision);
+  assert.deepEqual(fresh.configuration, { ...configuration, instructionTemplate: changed.instructions });
+  assert.deepEqual(fresh.run, counters);
+  assert.equal(ops.includes('get-config'), false);
+  for (let count = 1; count <= 2; count++) {
+    const receipt = await call('decide', { ...scope(), observationId: fresh.observationId });
+    assert.equal(receipt.outcome, 'completed');
+    assert.equal(receipt.requestedTics, 11);
+    for (const key of ['configuration', 'revision', 'run']) assert.equal(Object.hasOwn(receipt.observation, key), false);
+    assert.equal(createHash('sha256').update(await readFile(receipt.pngPath)).digest('hex'), receipt.observation.pngSha256);
+    if (count === 1) {
+      fresh = await observe();
+      assert.deepEqual(fresh.run, { ...counters, reserved: 1, sdkInvoked: 1, remaining: 1 });
+      assert.equal(fresh.revision, config.revision);
+      assert.equal(ops.includes('get-config'), false);
+    }
+  }
+  const ended = await call('get-config');
+  assert.deepEqual(ended.run, { ...counters, active: false, reserved: 2, sdkInvoked: 2, remaining: 0 });
+  const exhausted = await observe();
+  assert.deepEqual(exhausted.run, ended.run);
+  assert.equal(ops.filter(op => op === 'get-config').length, 1);
+  assert.equal(s.game.sdkCalls, 2);
+});
+
+it('composes strict observe/config validators without widening decision observation DTOs', () => {
+  const original = agentObserveResult();
+  assert.equal(parseAgentObserveResult(original), original);
+  assert.throws(() => parseAgentObservation(original));
+  const { configuration, revision, run, ...base } = original;
+  assert.equal(parseAgentObservation(base), base);
+  for (const mutate of [
+    d => { delete d.configuration; }, d => { delete d.revision; }, d => { delete d.run; },
+    d => { d.extra = true; }, d => { d.telemetry.extra = true; },
+    d => { d.configuration.extra = true; }, d => { d.configuration.includeHealth = 1; },
+    d => { d.revision = -1; }, d => { d.run = {}; },
+  ]) {
+    const value = structuredClone(original); mutate(value);
+    assert.throws(() => parseAgentObserveResult(value));
+  }
+});
+
+it.each(['missing', 'extra', 'configuration', 'revision', 'counters', 'runId', 'limit'])(
+  'rejects malformed or unissued combined observation state (%s) at broker ingress', async fault => {
+    const s = await budgetSession(); await s.start();
+    const post = s.game.controller.observe;
+    // Corrupt the actual controller reply at the existing browser port.
+    s.game.controller.observe = async fresh => {
+      const value = await post(fresh);
+      if (fault === 'missing') delete value.run;
+      if (fault === 'extra') value.configurationIdentity = 'not-public';
+      if (fault === 'configuration') value.configuration.tics = 36;
+      if (fault === 'revision') value.revision = -1;
+      if (fault === 'counters') value.run.sdkInvoked = value.run.reserved + 1;
+      if (fault === 'runId') value.run.runId = randomUUID();
+      if (fault === 'limit') { value.run.limit++; value.run.remaining++; }
+      return value;
+    };
+    await assert.rejects(s.observe(), /lease-revoked/);
+    assert.equal(s.game.sdkCalls, 0); assert.equal(s.game.gameCalls, 0);
+  },
+);
+
+it.each([
+  ['default', defaultDecisionInstructionTemplate],
+  ['maximum escaped', '\u0001'.repeat(15999) + 'x'],
+  ['maximum Unicode', '界'.repeat(16000)],
+])('retains complete %s instructions through combined broker/CLI/MCP output', async (label, instructionTemplate) => {
+  const s = await budgetSession({ decisionConfiguration: { ...defaultDecisionConfiguration, instructionTemplate } });
+  const client = await mcpSession({ transport: s.h.transport });
+  const result = delivered(await callMcp(client, 'observe', { leaseFile: s.base[1] }));
+  assert.equal(result.configuration.instructionTemplate, instructionTemplate);
+  const config = delivered(await callMcp(client, 'get-config', { leaseFile: s.base[1], sessionId: result.sessionId }));
+  const { revision, configuration, run, ...oldObservation } = result;
+  const combinedBytes = Buffer.byteLength(JSON.stringify(result));
+  const pairBytes = Buffer.byteLength(JSON.stringify(oldObservation)) + Buffer.byteLength(JSON.stringify(config));
+  console.info(`Combined observe ${label}: output=${combinedBytes} bytes; separate observe+config=${pairBytes} bytes; delta=${combinedBytes - pairBytes}`);
+  assert.deepEqual({ sessionId: result.sessionId, revision, configuration, run },
+    { sessionId: config.sessionId, revision: config.revision, configuration: config.configuration, run: config.run });
+  assert.equal(createHash('sha256').update(await readFile(result.pngPath)).digest('hex'), result.pngSha256);
+});
 
 it('MCP matches all eight CLI operations byte-for-byte using actual broker/controller replies, IDs and PNG paths', async () => {
   const game = fixture({ pngFor }); cleanups.push(() => game.dispose()); await game.prepare();

@@ -1,7 +1,6 @@
 import {
   agentPath,
   isAgentId,
-  type AgentObservation,
   type AgentDecisionResult,
 } from './agent-observation.ts';
 import {
@@ -10,6 +9,7 @@ import {
   type AgentPromptResult,
   type AgentConfigResult,
   type AgentConfiguration,
+  type AgentObserveResult,
 } from './agent-control.ts';
 
 type Lease = { pageId: string; ownerId: string; epoch: string };
@@ -26,7 +26,7 @@ type Ports = {
   pageId: string;
   post(path: string, data: unknown, signal?: AbortSignal): Promise<unknown>;
   events(path: string): Stream;
-  observe(assertFresh: () => void): Promise<AgentObservation>;
+  observe(assertFresh: () => void): Promise<AgentObserveResult>;
   attach?(epoch: string, budgetMode: boolean): void;
   startRun?(
     epoch: string,
@@ -161,7 +161,7 @@ export function startAgentObservationBridge(ports: Ports) {
         if (ended || lease !== admitted) throw Error('Agent lease revoked.');
       };
       processing = true;
-      let observation: AgentObservation | null = null;
+      let observation: AgentObserveResult | null = null;
       let decision: AgentDecisionResult | null = null;
       let prompt: AgentPromptResult = { error: 'not-ready' };
       let config: AgentConfigResult = { error: 'not-ready' };

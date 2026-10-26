@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, it, vi } from 'vitest';
 import { agentPngBytes, parseAgentObservation } from '../src/agent-observation.ts';
+import { randomUUID } from 'node:crypto';
+import { parseAgentObserveResult } from '../src/agent-control.ts';
 import { cleanup, fixture } from './fixtures/session.ts';
 import { agentObservation, pngFor } from './fixtures/agent.ts';
 import { death, observation } from './fixtures/synthetic-doom.ts';
@@ -14,12 +16,14 @@ function session(settings = {}) {
     create: vi.fn(() => assert.fail('Observation must never construct a provider')),
   };
   const h = fixture({ key: '', providerFactory, ...settings });
+  const epoch = randomUUID();
+  h.controller.attachAgent(epoch);
   const capture = h.ports.capture;
   h.ports.capture = () => {
     const { rgba } = capture();
     return { rgba, png: pngFor(rgba) };
   };
-  return { h, providerFactory };
+  return { h, epoch, providerFactory };
 }
 it('exports a fresh detached verified PNG/state with no key, provider or gameplay', async () => {
   const { h, providerFactory } = session();
@@ -28,7 +32,10 @@ it('exports a fresh detached verified PNG/state with no key, provider or gamepla
     await h.prepare();
     const before = h.native.observe();
     const result = await h.controller.observe(() => {});
-    assert.equal(parseAgentObservation(result), result);
+    assert.equal(parseAgentObserveResult(result), result);
+    assert.equal(result.run, null);
+    assert.equal(result.revision, 0);
+    assert.equal(result.configuration.tics, 6);
     assert.ok(agentPngBytes(result.png).length > 33);
     assert.equal(result.tic, 1);
     assert.equal(result.frame.nativeSha256, result.frame.canvasSha256);
@@ -39,7 +46,7 @@ it('exports a fresh detached verified PNG/state with no key, provider or gamepla
     assert.equal(h.sdkCalls, 0);
     assert.deepEqual(h.gameOps, ['snapshot', 'render', 'snapshot', 'snapshot']);
     assert.equal(providerFactory.create.mock.calls.length, 0);
-    assert.deepEqual(Object.keys(result).sort(), ['counters', 'facingProbe', 'frame', 'observationId', 'phase', 'png', 'pngSha256', 'previousAction', 'sessionId', 'telemetry', 'tic']);
+    assert.deepEqual(Object.keys(result).sort(), ['configuration', 'counters', 'facingProbe', 'frame', 'observationId', 'phase', 'png', 'pngSha256', 'previousAction', 'revision', 'run', 'sessionId', 'telemetry', 'tic']);
     assert.deepEqual(result.telemetry.readyWeapon, before.native.readyWeapon);
     assert.deepEqual(result.telemetry.ammo, before.native.ammo);
     assert.equal(result.previousAction, null);
@@ -49,14 +56,78 @@ it('exports a fresh detached verified PNG/state with no key, provider or gamepla
     result.telemetry.readyWeapon.name = 'unknown';
     result.telemetry.ammo.bullets.current = 999;
     result.telemetry.ammo.shells.max = 999;
+    result.configuration.tics = 35;
     const again = await h.controller.observe(() => {});
     assert.deepEqual(again.telemetry.readyWeapon, before.native.readyWeapon);
     assert.deepEqual(again.telemetry.ammo, before.native.ammo);
     assert.deepEqual(h.native.observe().native, before.native);
     assert.equal(again.sessionId, sessionId);
     assert.equal(again.frame.tic, 1);
+    assert.equal(again.configuration.tics, 6);
     assert.equal(again.counters.render, result.counters.render + 1);
     assert.equal(h.view.session.controls.ready, true);
+  } finally { await h.dispose(); }
+});
+
+it.each(['stop', 'configuration', 'page'])('rejects a combined capture changed by %s while hashing', async change => {
+  const { h, epoch } = session();
+  try {
+    await h.prepare();
+    const first = await h.controller.observe(() => {});
+    assert.equal(h.controller.allowAgentRun(epoch), true);
+    const hold = h.holdDigest(3);
+    const work = h.controller.observe(() => {});
+    const rejected = assert.rejects(work, /agent state changed|verification failed/);
+    await hold.waiting;
+    if (change === 'stop') h.controller.stopAgent();
+    if (change === 'configuration') h.controller.configure(() => { h.browserInputs.tics = 12; });
+    if (change === 'page') h.controller.close();
+    hold.release();
+    await rejected;
+    assert.equal(h.gameCalls, 0); assert.equal(h.sdkCalls, 0);
+    if (change === 'configuration') {
+      const next = await h.controller.observe(() => {});
+      assert.equal(next.revision, first.revision + 1);
+      assert.equal(next.run.active, false);
+      assert.equal(next.run.remaining, 0);
+      assert.ok(next.run.reserved < next.run.limit, 'Inactive is not exhausted');
+    }
+  } finally { await h.dispose(); }
+});
+
+it.each(['stop', 'configuration', 'invalidate'])('rejects %s at the busy-to-ready publication boundary', async change => {
+  const { h } = session();
+  try {
+    await h.prepare();
+    const present = h.ports.present;
+    let busy = false, injected = false;
+    h.ports.present = update => {
+      present(update);
+      if (update.session?.phase === 'busy') busy = true;
+      if (!busy || injected || update.session?.phase !== 'ready') return;
+      injected = true;
+      if (change === 'stop') h.controller.stopAgent();
+      else h.controller.configure(() => { if (change === 'configuration') h.browserInputs.tics = 12; });
+    };
+    await assert.rejects(h.controller.observe(() => {}), /agent state changed/);
+    assert.equal(injected, true);
+    assert.equal(h.gameCalls, 0); assert.equal(h.sdkCalls, 0);
+  } finally { await h.dispose(); }
+});
+
+it('rechecks continuity after the authoritative synchronous config read', async () => {
+  const { h } = session();
+  try {
+    await h.prepare();
+    let busy = false, readyChecks = 0;
+    await assert.rejects(h.controller.observe(() => {
+      if (h.view.session.phase === 'busy') busy = true;
+      // First ready check is finalization entry; second is agentConfig's gate.
+      if (busy && h.view.session.phase === 'ready' && ++readyChecks === 2)
+        h.controller.configure(() => { h.browserInputs.tics = 12; });
+    }), /agent state changed/);
+    assert.ok(readyChecks >= 3);
+    assert.equal(h.gameCalls, 0); assert.equal(h.sdkCalls, 0);
   } finally { await h.dispose(); }
 });
 
@@ -68,7 +139,7 @@ it('exports qualified facing and normalized inventory even when all inclusion fl
   });
   try {
     await h.prepare();
-    const result = parseAgentObservation(await h.controller.observe(() => {}));
+    const result = parseAgentObserveResult(await h.controller.observe(() => {}));
     assert.equal(result.telemetry.health, 100);
     assert.deepEqual(result.telemetry.readyWeapon, { id: 1, name: 'pistol', ammoType: 'bullets' });
     assert.deepEqual(result.telemetry.ammo, agentObservation().telemetry.ammo);
@@ -87,7 +158,7 @@ it('preserves nullable inventory and distinguishes unavailable from a valid no-l
     } });
     try {
       await h.prepare();
-      const result = parseAgentObservation(await h.controller.observe(() => {}));
+      const result = parseAgentObserveResult(await h.controller.observe(() => {}));
       for (const key of ['readyWeapon', 'ammo', 'weaponId', 'bullets', 'shells', 'cells', 'rockets'])
         assert.equal(result.telemetry[key], null);
       assert.deepEqual(result.facingProbe, kind === 0 ? null : { tic: 1, kind: 1, door: 0, distance: -1 });

@@ -7,13 +7,13 @@ import {
   agentPath,
   agentPngBytes,
   isAgentId,
-  parseAgentObservation,
   parseAgentDecisionResult,
 } from './src/agent-observation.ts';
 import {
   validAgentCommand,
   parseAgentPromptResult,
   parseAgentConfigResult,
+  parseAgentObserveResult,
 } from './src/agent-control.ts';
 
 const budgetError =
@@ -406,14 +406,6 @@ export function createAgentBridge(allowance = createAgentAllowance()) {
                 config.run?.runId !== pending.runId))
           )
             throw Error('correlation');
-          if (
-            !('error' in config) &&
-            allowance.limit !== null &&
-            config.run &&
-            (config.run.limit !== allowance.limit ||
-              config.run.runId !== allowance.claim?.runId)
-          )
-            throw Error('cap');
           if (pending.op === 'start-run') {
             if ('error' in config) allowance.status = 'closed';
             else if (
@@ -427,7 +419,17 @@ export function createAgentBridge(allowance = createAgentAllowance()) {
           }
         }
         if (pending.op === 'observe' && data.observation !== null)
-          observation = parseAgentObservation(data.observation);
+          observation = parseAgentObserveResult(data.observation);
+        const state = pending.op === 'observe' ? observation : config;
+        if (
+          state &&
+          !('error' in state) &&
+          allowance.limit !== null &&
+          state.run &&
+          (state.run.limit !== allowance.limit ||
+            state.run.runId !== allowance.claim?.runId)
+        )
+          throw Error('cap');
         if (observation) {
           if (
             createHash('sha256')

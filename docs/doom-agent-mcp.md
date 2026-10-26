@@ -29,7 +29,7 @@ integer. There are no MCP duration/model/action defaults or overrides.
 | MCP tool | Inputs | Existing operation / complete output |
 | --- | --- | --- |
 | `doom_attach` | `{}` | `attach`; `{ownerId,pageId,epoch,leaseFile}` |
-| `doom_observe` | `leaseFile` | `observe --lease`; full verified observation and local `pngPath` |
+| `doom_observe` | `leaseFile` | `observe --lease`; full verified observation/local `pngPath` plus configuration/revision/run |
 | `doom_get_config` | `leaseFile,sessionId` | `get-config --lease --session`; full configuration/revision/run result |
 | `doom_get_prompt` | `leaseFile,sessionId` | `get-prompt --lease --session`; full instructions/revision/run result |
 | `doom_start_run` | `leaseFile,observationId,sessionId,revision` | `start-run --lease --observation --session --revision`; full initial configuration/run result |
@@ -47,6 +47,25 @@ PNG hash, facing probe and previous-action field. Decisions preserve outcome,
 reason, input observation ID, SDK invocation, action, all requested/reported/
 verified/cumulative tics, uncertainty, provider/model/usage metadata and the
 complete after-action observation. No fields are summarized or removed.
+
+Only standalone `doom_observe` adds top-level `revision`, `configuration` and
+`run`; its existing `sessionId` scopes both evidence and settings. Configuration
+contains exactly `instructionTemplate`, `tics`, `includeReadyWeapon`, `includeAmmo`,
+`includeHealth`, `includeFacingProbe` and `includePreviousAction`. Run is null before
+claim, otherwise `{runId,active,limit,reserved,sdkInvoked,remaining}`, with the same
+validation and semantics as `doom_get_config`. The composite parser reuses the
+strict observation and config validators. The broker checks the issued run ID and
+frozen limit; PNG hash verification and local-path conversion remain unchanged.
+`doom_decide` observations retain their existing shape, without these config fields.
+
+Capture keeps the controller busy through passive native/Canvas/PNG verification.
+After the existing cleanup restores ready, synchronous finalization rechecks the
+lease, session, captured observation ID/tic/epoch and unchanged configuration
+identity, reads through the existing ready-gated config path, and checks continuity
+again before returning detached combined values. Changes during capture or
+finalization reject publication. A valid snapshot never guarantees later admission;
+`doom_decide` retains independent freshness/revision/run and dispatch fences.
+
 The source of truth is [the shared CLI](../scripts/doom-agent.mjs),
 [observation/decision DTOs](../app/src/agent-observation.ts) and
 [configuration DTOs](../app/src/agent-control.ts).
@@ -84,16 +103,18 @@ for gameplay. Do not change global `~/.codex` settings or add credentials here.
    Decisions provider and incur charges. Existing project execution approvals
    still apply.
 3. Invoke **`$doom-decisions play`** once. Codex attaches, observes and views the
-   initial PNG, reads configuration and prompt, and claims the single allowance
-   once. It observes/views afresh after starting, then checks configuration before
-   each decision. It chooses 1–35 tics (initial/default 6) with an observable
+   initial PNG, reads configuration from that result, cross-checks prompt and claims
+   the single allowance once. It observes/views afresh after starting, even at
+   identical tic/pixels. Each fresh observation supplies configuration/revision/run
+   before a decision or after CAS; no routine follow-on `doom_get_config` is needed.
+   It chooses 1–35 tics (initial/default 6) with an observable
    rationale before every nondefault decision; the Decisions API chooses actions.
-   CAS edits use temporary files and require fresh observations afterward.
+   CAS edits use temporary files and require fresh combined observations afterward.
 4. Each healthy completed decision requires its verified after-action PNG to be
    viewed. There is no routine post-decision config read; final normal exhaustion
-   requires one authoritative accounting read showing `reserved === limit` and
-   `remaining === 0`. Errors, conflicts, uncertain outcomes or disconnect end play
-   without retry or recovery. Validated Stop permits only the exact Stop reply;
+   requires one standalone `doom_get_config` accounting read showing
+   `reserved === limit` and `remaining === 0`. Errors, conflicts, uncertain outcomes
+   or disconnect end play without retry or recovery. Validated Stop permits only the exact Stop reply;
    verified terminal permits only its prescribed final PNG inspection and reply.
 
 The [play skill](../.agents/skills/doom-decisions/SKILL.md) defines the complete
@@ -111,6 +132,9 @@ responses through CLI and MCP with identical generated IDs and file paths, then
 compares the entire result and written PNG bytes. Other cases cover schema/file
 errors, CAS conflicts, stale scope/observation, exhaustion, Stop, terminal prefixes,
 uncertain retirement, lost responses and cancellation/restart without replay.
+Combined-response cases also cover busy-to-ready invalidation, settings changes
+while hashing, full seven-field CAS revalidation, malformed config/counters,
+unissued run/limit, and maximum-length escaped/Unicode instructions through MCP.
 Real child-process stdio tests exercise SDK legacy and automatic negotiation,
 initialization/listing without bridge calls, complete result/error framing and
 stdin EOF exit. This proves neither Chrome, real native Doom nor paid Decisions
@@ -120,8 +144,15 @@ The SDK test client surfaces both compact text and structured output. The tested
 wire includes **two copies** of a successful domain payload. The skill uses
 `structuredContent` with JSON text fallback and does not add duplicate
 model-facing serialization. The serialized eight-tool catalog measured
-**3,096 UTF-8 bytes** in both tested negotiations; there are no server instructions.
+**3,128 UTF-8 bytes** in both tested negotiations; there are no server instructions.
 No MCP performance superiority is claimed.
+
+With synthetic PNGs, compact single-domain outputs measured 1,758 bytes for the
+default instructions, 97,285 bytes for accepted 16,000-character escaped text and
+49,290 bytes for 16,000 Unicode characters. Each combined output was 198 bytes
+smaller than the sum of separate observation/config outputs, before MCP framing.
+These fixtures prove field preservation, not universal host output capacity or
+wall-clock/token savings; real gameplay PNGs and instructions vary.
 
 Cancellation/connection close aborts the adapter's owned fetch through the SDK
 request/lifetime signals, preserving the CLI's 15-second/35-second deadlines.

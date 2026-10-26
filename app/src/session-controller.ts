@@ -7,6 +7,7 @@ import {
   validAgentTics,
   type AgentConfiguration,
   type AgentConfigResult,
+  type AgentObserveResult,
   type AgentRunState,
   type AgentScope,
   type AgentPromptResult,
@@ -735,7 +736,7 @@ export function createSessionController(
 
   // Observation owns the same ready/busy gate as decisions, but takes no key,
   // constructs no provider and dispatches only passive snapshot/render operations.
-  async function observe(assertLease: () => void): Promise<AgentObservation> {
+  async function observe(assertLease: () => void): Promise<AgentObserveResult> {
     const run = current;
     check(
       run?.valid &&
@@ -761,10 +762,14 @@ export function createSessionController(
       }
     };
     fresh();
+    const lease = agentLease;
+    check(lease?.configuration, 'Agent lease revoked.');
+    const identity = configurationIdentity();
     invalidateAgentObservation();
     run.sessionId ??= crypto.randomUUID();
     run.phase = 'busy';
     display(run);
+    let result: AgentObservation;
     try {
       const before = await snapshot(run);
       fresh();
@@ -774,7 +779,7 @@ export function createSessionController(
       );
       await render(run); // Reuse native pixels, passive proof and Canvas readback.
       fresh();
-      return await captureAgentObservation(run, fresh);
+      result = await captureAgentObservation(run, fresh);
     } catch (error) {
       if (!(error instanceof Revoked)) retire(run);
       throw Error(
@@ -786,6 +791,33 @@ export function createSessionController(
       if (current === run && run.valid && run.phase === 'busy')
         run.phase = 'ready';
       display(run);
+    }
+    // Capture has drained and finally restored ready. Reuse the authoritative
+    // config gate, without an await between continuity checks and publication.
+    const coherent = () => {
+      fresh();
+      check(
+        agentLease === lease &&
+          run.sessionId === result.sessionId &&
+          observed?.id === result.observationId &&
+          observed.run === run &&
+          observed.epoch === lease.epoch &&
+          observed.tic === result.tic &&
+          result.tic === run.verifiedTics &&
+          observed.configuration === identity &&
+          configurationIdentity() === identity,
+        'Observation unavailable: agent state changed.',
+      );
+    };
+    try {
+      coherent();
+      const config = agentConfig(lease.epoch, result.sessionId, assertLease);
+      check(!('error' in config), 'Observation unavailable: agent not ready.');
+      coherent();
+      return structuredClone({ ...result, ...config });
+    } catch (error) {
+      invalidateAgentObservation();
+      throw error;
     }
   }
 

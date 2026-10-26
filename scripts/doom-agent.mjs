@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
-  agentOrigin, agentPath, agentPngBytes, isAgentId, parseAgentObservation, parseAgentDecisionResult,
+  agentOrigin, agentPath, agentPngBytes, isAgentId, parseAgentDecisionResult,
 } from '../app/src/agent-observation.ts';
-import { validAgentCommand, parseAgentPromptResult, parseAgentConfigResult, promptErrors, maxAgentInstructions } from '../app/src/agent-control.ts';
+import { validAgentCommand, parseAgentPromptResult, parseAgentConfigResult, parseAgentObserveResult, promptErrors, maxAgentInstructions } from '../app/src/agent-control.ts';
 
 const errors = new Set([
   'forbidden', 'invalid-request', 'no-ready-page', 'multiple-pages',
@@ -87,7 +87,7 @@ export async function runAgentCli(args, { transport = fetch, temporaryRoot = tmp
     }
     const decision = deciding ? parseAgentDecisionResult(result.decision) : null;
     if (decision && decision.beforeObservationId !== args[4]) throw Error('Invalid decision correlation.');
-    const observation = decision ? decision.observation : parseAgentObservation(result.observation);
+    const observation = decision ? decision.observation : parseAgentObserveResult(result.observation);
     let pngPath = null, metadata = null;
     if (observation) {
       const bytes = agentPngBytes(observation.png);

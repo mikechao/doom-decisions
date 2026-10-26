@@ -17,7 +17,7 @@ const tools = [
   [
     'observe',
     lease,
-    'Capture fresh verified passive evidence; follow skill image rules.',
+    'Read verified passive evidence, configuration/revision and run counters; follow skill image rules.',
   ],
   [
     'get-config',

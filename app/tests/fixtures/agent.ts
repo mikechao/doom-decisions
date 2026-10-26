@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
 import { pixels } from './synthetic-doom.ts';
 import type { AgentObservation } from '../../src/agent-observation.ts';
+import type { AgentObserveResult } from '../../src/agent-control.ts';
+import { defaultDecisionInstructionTemplate } from '../../src/decision-request.ts';
 
 // Actual PNG bytes, generated only from synthetic RGBA. No game assets/runtime.
 export function pngFor(rgba = pixels(1)) {
@@ -43,5 +45,16 @@ export function agentObservation(): AgentObservation {
     facingProbe: null,
     previousAction: null, png,
     pngSha256: createHash('sha256').update(Buffer.from(png.slice(22), 'base64')).digest('hex'),
+  };
+}
+
+export function agentObserveResult(): AgentObserveResult {
+  return {
+    ...agentObservation(), revision: 0, run: null,
+    configuration: {
+      instructionTemplate: defaultDecisionInstructionTemplate, tics: 6,
+      includeReadyWeapon: true, includeAmmo: true, includeHealth: true,
+      includeFacingProbe: true, includePreviousAction: true,
+    },
   };
 }
