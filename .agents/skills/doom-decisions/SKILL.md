@@ -118,11 +118,19 @@ above is unchanged; terminal viewing is mandatory and never waits for `doom_obse
 During the same active run, a fresh `doom_observe` may reuse a successful earlier visual
 inspection only with unchanged lease/page ID/epoch/session/run ownership and a
 verified `pngSha256` equal to that of an image actually delivered to the model.
-Retain that viewed path/hash/ownership, tic and native/Canvas frame hashes in the
-concise conversation record, including lease/owner/page/epoch/session/run scope
-and explicit successful image delivery and model inspection. Hashes alone do not
-certify viewing; do not use an external cache. The MCP implementation verifies PNG
-bytes against `pngSha256` before writing `pngPath`: use the correlated
+Immediately after each required PNG is successfully delivered and inspected by
+the model, update the concise in-conversation viewed-baseline record, especially
+after each healthy completed decision image. Record the exact viewed `pngPath`,
+`pngSha256`, tic, native and Canvas frame hashes, `leaseFile`, owner/page/epoch/
+session/run scope, and explicit successful image delivery and model inspection.
+Use only returned evidence, including retained attachment/run results; mark any
+unestablished scope as unavailable, never invent it. An incomplete baseline is
+ineligible for pairing. Replace the baseline after each successful required view;
+clear it across `doom_start_run` or lost scope continuity. Existing termination
+rules still apply; terminal images never authorize another read, and recording
+must not add narration or tools to exact Stop/terminal replies. Hashes alone do not
+certify viewing; never persist an external cache. The MCP implementation verifies
+PNG bytes against `pngSha256` before writing `pngPath`: use the correlated
 `doom_observe` result's top-level hash, or `doom_decide`'s
 `observation.pngSha256` for its resulting `pngPath`.
 `beforeObservationId` identifies the input, not the resulting image. Never compare
@@ -176,22 +184,34 @@ After tool discovery and human preparation:
    screenshot do not prove a collision or door usability. Use the qualified
    `facingProbe` and existing `previousAction.text` with the limitations below;
    movement-event collision masks remain browser-only.
-5. Before EACH decision, call `doom_observe` with `leaseFile` and view its PNG or
-   apply the visual evidence reuse rule above. A fresh observation after
-   `doom_start_run` and after any `doom_set_prompt` or `doom_set_config` is mandatory:
-   NEVER use a pre-write observation. Reopen the startup PNG after `doom_start_run`;
-   the pre-run inspection cannot establish same-active-run ownership for reuse.
-   Check unchanged page/epoch/session, ready phase, current tic and image hashes.
-   Then call `doom_get_config` with `leaseFile, sessionId` once to confirm matching
+5. Before EACH decision, obtain a fresh `doom_observe` with `leaseFile` and exactly
+   one `doom_get_config` through the ordering below. Fresh observations after
+   `doom_start_run` and any `doom_set_prompt` or `doom_set_config` remain mandatory:
+   NEVER use a pre-write observation.
+
+   Startup follows separate steps 2–3. For the first post-`doom_start_run`
+   observation, also use separate calls: return and inspect observe, open its PNG,
+   update the viewed baseline, then get-config. Reopen the startup PNG after
+   `doom_start_run`; the pre-run inspection cannot establish same-active-run
+   ownership for reuse.
+   Thereafter, with a recorded same-run viewed baseline and complete-output
+   conditions permitting, you must attempt the guarded read pair below by default.
+   Do not assume the fresh observation will match: only its returned evidence
+   determines whether config may follow within that invocation. Separate calls
+   are a fallback for a concrete eligibility or delivery constraint, not a
+   discretionary alternative for an otherwise eligible, deliverable pair.
+
+   On either path, check unchanged page/epoch/session, ready phase, current tic
+   and image hashes; view the PNG or apply the visual evidence reuse rule above.
+   The single `doom_get_config` with `leaseFile, sessionId` must confirm matching
    page/epoch/session/run, expected revision/configuration, the same frozen limit,
    an active run and remaining allowance. A matching PNG hash never skips this
    read or the fresh observation. If configuration/run identity changed
-   unexpectedly, stop. Obtain this config either separately or through the guarded
-   pair below, never both.
+   unexpectedly, stop. Never repeat config after a successful pair.
 
-   **Guarded read pair (the sole per-call model-inspection exception):** at an
-   eligible boundary, use one `functions.exec` invocation with sequential,
-   conditional `await` calls to `tools.mcp__doom_decisions__doom_observe` and
+   **Guarded read pair (the sole per-call model-inspection exception):** attempt
+   one `functions.exec` invocation with sequential, conditional `await` calls to
+   `tools.mcp__doom_decisions__doom_observe` and
    `tools.mcp__doom_decisions__doom_get_config`. This is one shot, never a loop,
    parallel dispatch or permission for a third tool call before model continuation.
    Never include `doom_decide`, `doom_set_*` or image viewing in the pair.
@@ -230,17 +250,17 @@ After tool discovery and human preparation:
    `previousAction`, hashes, configuration/revision, accounting and errors. Return
    control to the model, which honors termination first and inspects both complete
    results before planning or any further tool call. This supplies step 5's single
-   config read; do not repeat it. Post-CAS boundaries may use the same guard with
-   a fresh post-write observation; pre-write observation IDs remain invalid.
+   config read; do not repeat it. Post-CAS boundaries follow this same default
+   selection with a fresh post-write observation; pre-write IDs remain invalid.
 
    Select sufficient host output capacity before attempting the pair, and reassess
    after observe before taking the extra call. A small synthetic sample proves no
-   universal size guarantee. If complete delivery cannot be assured, use separate
-   calls; if observe already succeeded, return it completely without calling config
-   and continue separately after model inspection, never repeat observe. Never
-   summarize, truncate or drop fields to fit. Any already uncertain/truncated
-   delivery ends play conservatively, never counts as a successful pair or permits
-   recovery/replay.
+   universal size guarantee. If delivery of both complete results cannot be
+   assured, use separate calls; if observe already succeeded, return it completely
+   without calling config and continue separately after model inspection, never
+   repeat observe. Never summarize, truncate or drop fields to fit. Any already
+   uncertain/truncated delivery ends play conservatively, never counts as a
+   successful pair or permits recovery/replay.
 
    A valid new/changed frame or unknown/unreliable viewed baseline returns the
    complete observation alone for mandatory model image inspection, then ordinary
@@ -248,6 +268,13 @@ After tool discovery and human preparation:
    uncertain observation, or lease/session mismatch also returns without config,
    but follows the existing termination rules instead of continuing. No retries.
    Exact human Stop and verified terminal behavior above take priority throughout.
+
+   If pairing is not attempted despite a recorded baseline, or observe returns
+   without config, record one short, concrete reason in the conversation record
+   or permitted user-visible narration: e.g. unverified baseline, mandatory
+   post-start view, changed hashes/tic, scope mismatch, error/Stop, or uncertain
+   complete-output capacity. Honor exact Stop/terminal replies without extra
+   narration or tool calls. A reason never overrides termination or the guard.
 
    When useful, prepare ONLY high-level instructions for a temporary absolute UTF-8
    text file (maximum 16000 characters), retaining useful effective instructions and
@@ -291,8 +318,8 @@ After tool discovery and human preparation:
    and nearby threats/obstacles favor earlier re-observation.
    If the chosen duration differs from effective `tics`, use the complete-replacement
    `doom_set_config` contract below with current scope/revision. After confirming success,
-   call `doom_observe`, view or safely reuse its visual evidence, and
-   call `doom_get_config` again to confirm the new revision,
+   repeat step 5, including its guarded-pair default or justified fallback, with
+   a fresh post-write observation and one config read to confirm the new revision,
    same active run/frozen limit and remaining allowance before deciding. Reassess
    the horizon against that fresh evidence. Never reuse the pre-write observation.
    If duration is unchanged, do not write configuration just to repeat the value.
@@ -309,18 +336,20 @@ After tool discovery and human preparation:
    Inspect structured outcome, SDK invocation and requested/reported/verified/end
    tics. Apply the terminal rule above first. For healthy `completed` results,
    actually open the resulting PNG and compare it with the preceding PNG.
+   Immediately after successful delivery and model inspection, update the viewed
+   baseline record above before the next observation.
    Verify session continuity and eligible `previousAction`. Terminal prefixes are
    distinct from completed N tics; other outcomes without PNGs are not new scenes.
 8. Only a successfully delivered, correlated, healthy `completed` receipt with
    matching evidence AND its verified resulting PNG actually viewed permits
    proceeding to the next observation. Process the full receipt and update the
    navigation hypothesis. Do not routinely call `doom_get_config` immediately afterward.
-   If the bounded run may continue, repeat steps 4–7: obtain the required fresh
-   observation, then use step 5's single pre-decision `doom_get_config` to verify the
-   SAME run and its allowance before another `doom_decide`. The completed receipt alone
-   never authorizes another decision. Step 5's guarded read pair is the only exception
-   to individual foreground reasoning between Doom domain calls; never use a script
-   that loops independently of Codex.
+   If the bounded run may continue, repeat steps 4–7 using step 5's guarded-pair
+   default or justified fallback for the fresh observation and single config read
+   to verify the SAME run and its allowance before another `doom_decide`.
+   The completed receipt alone never authorizes another decision. Step 5's guarded
+   read pair is the only exception to individual foreground reasoning between Doom
+   domain calls; never use a script that loops independently of Codex.
 
    Final accounting exception: when locally confirmed completed decisions appear
    to consume the known frozen limit, after the final healthy receipt and required
@@ -391,9 +420,10 @@ Writes require a ready, idle controller and the current active bounded run and
 revision. `doom_set_config` fully replaces the seven fields. `doom_set_prompt` remains an
 instructions-only adapter to the same ephemeral configuration and revision.
 Successful edits preserve the run ID and every attempt counter, increment revision
-and invalidate old observations. Obtain a fresh observation and view its PNG or
-apply the visual evidence reuse rule, then `doom_get_config` to verify the new revision/
-configuration and same active run/frozen limit/allowance before another decision.
+and invalidate old observations. Repeat step 5's fresh observation/image/config
+verification, including its guarded-pair default or justified fallback, for the new
+revision/configuration and same active run/frozen limit/allowance before another
+decision.
 Changes never affect an admitted request. Rejected stale/malformed,
 busy or editor-open writes leave settings, revision and allowance unchanged;
 stop this skill workflow on conflicts rather than retrying. Human configuration
