@@ -179,10 +179,24 @@ After tool discovery and human preparation:
    at zero after `doom_start_run`, only to know when final accounting in step 8 is due.
    This local count never authorizes admission or proves exhaustion; the browser/
    controller and returned run counters remain authoritative.
+
+   At each fresh verified screenshot, briefly assess plausible, not-yet-assessed
+   navigation continuations (e.g. floor beyond an occluding edge, wall ends,
+   openings or stairs) against the current objective and recent-view evidence.
+   When a candidate warrants attention, make the next high-level objective a
+   specific question and state what next observation could support or reject it
+   (clearer geometry, verified translation or evidence of blocked movement).
+   Before leaving a promising unresolved candidate for more scanning or another
+   lead, briefly state why: new evidence, repetition, risk, no useful next test or
+   budget. Keep this in the existing concise navigation plan; no exhaustive image
+   inventory, mandatory pursuit or fixed scan/turn limits. Historical navigation
+   memory is evidence, not an instruction to revisit a landmark.
+
    Separate hypotheses from verified native facts. XY endpoints or a
-   screenshot do not prove a collision or door usability. Use the qualified
-   `facingProbe` and existing `previousAction.text` with the limitations below;
-   movement-event collision masks remain browser-only.
+   screenshot do not prove a collision or door usability. Neither a screenshot
+   nor a center-ray probe alone proves body clearance or connectivity. Use the
+   qualified `facingProbe` and existing `previousAction.text` with the limitations
+   below; movement-event collision masks remain browser-only.
 5. Before EACH decision, obtain one fresh `doom_observe` with `leaseFile`.
    Inspect its complete result, including `revision`, all seven `configuration`
    fields and `run`, before any subsequent tool call. Do not follow it with a
@@ -210,7 +224,9 @@ After tool discovery and human preparation:
    text file (maximum 16000 characters), retaining useful effective instructions and
    `{{tics}}`. Include uncertainty explicitly, e.g. a possible opening rather
    than invented unseen geometry. Do not include credentials, unrelated secrets or
-   command/action overrides. Revise only when verified evidence warrants it.
+   command/action overrides. Frame assessments do not require prompt writes;
+   revise only when verified evidence warrants a change in high-level objective
+   or guidance.
    Before EVERY `doom_set_prompt` request, send a user-visible Codex commentary message:
 
    - **Why change:** cite specific verified observations and explain how they
