@@ -371,13 +371,15 @@ skip all memory calls and continue normal gameplay; do not inspect private setup
 files to establish it. Keep namespaces separate and retain their uncertainty.
 
 **Find nearby leads.** At the first eligible step-5 checkpoint, call
-`doom_memory_find` with `{mapNamespace, x, y, headingDeg}` (defaults: radius 64
-Doom units, limit 3). No historical session ID or note ID is needed. Repeat only
-after material movement into a new region, return to a landmark, credible
-looping/stall evidence, or to refresh a possibly stale note for a worthwhile
-append, not unconditionally each decision. Keep a concise in-conversation
-last-lookup region/trigger to avoid repetitive queries. Allow at
-most one lookup and one meaningful record per eligible checkpoint, not a subloop.
+`doom_memory_find` with `{mapNamespace, x, y, headingDeg, radius: 128, limit: 3}`.
+The tool's optional `radius` still defaults to 64 Doom units for callers that
+omit it; this play-skill lookup passes 128 explicitly. No historical session ID
+or note ID is needed. Repeat only after material movement into a new region,
+return to a landmark, credible looping/stall evidence, or to refresh a possibly
+stale note for a worthwhile append, not unconditionally each decision. Keep a
+concise in-conversation last-lookup region/trigger to avoid repetitive queries.
+Allow at most one lookup and one meaningful record per eligible checkpoint,
+not a subloop.
 
 Inspect each candidate's `distance`, `headingDifferenceDeg`, original `hypothesis`,
 `source`, `nextQuestion` and ordered `entries` separately from the current image
