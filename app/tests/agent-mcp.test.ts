@@ -16,7 +16,8 @@ import { agentCliError } from '../../scripts/doom-agent.mjs';
 const serverPath = fileURLToPath(new URL('../agent-mcp.mjs', import.meta.url));
 const cliUrl = new URL('../../scripts/doom-agent.mjs', import.meta.url).href;
 const names = ['doom_attach', 'doom_observe', 'doom_get_config', 'doom_get_prompt',
-  'doom_start_run', 'doom_set_config', 'doom_set_prompt', 'doom_decide'].sort();
+  'doom_start_run', 'doom_set_config', 'doom_set_prompt', 'doom_decide',
+  'doom_memory_find', 'doom_memory_record'].sort();
 
 it('CLI and MCP imports are silent and do not call fetch or execute an entrypoint', () => {
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
@@ -69,7 +70,7 @@ it.each(['legacy', 'auto'])('serves initialize/list/call over real stdio (%s), w
     assert.deepEqual(catalog.tools.map(tool => tool.name).sort(), names);
     await assert.rejects(readFile(log), { code: 'ENOENT' });
     const bytes = Buffer.byteLength(JSON.stringify(catalog.tools));
-    console.info(`Doom MCP ${mode}: catalog=${bytes} UTF-8 bytes; tools=8; server instructions=0`);
+    console.info(`Doom MCP ${mode}: catalog=${bytes} UTF-8 bytes; tools=10; server instructions=0`);
     const result = await client.callTool({ name: 'doom_observe', arguments: { leaseFile } });
     assert.equal(result.isError, false);
     const data = result.structuredContent;

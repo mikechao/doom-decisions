@@ -12,6 +12,7 @@
       "vite.config.js",
       "agent-bridge.mjs",
       "agent-mcp.mjs",
+      "doom-memory.mjs",
       "!!dist",
       "!!public",
       "!!node_modules",

@@ -22,7 +22,7 @@ application or bundled into its browser/Worker modules.
 
 ## Operation parity
 
-Every input rejects unknown keys and invalid types. File paths are absolute,
+Every gameplay input rejects unknown keys and invalid types. File paths are absolute,
 IDs use the existing agent UUID validator and revision is a nonnegative safe
 integer. There are no MCP duration/model/action defaults or overrides.
 
@@ -40,7 +40,7 @@ integer. There are no MCP duration/model/action defaults or overrides.
 The play skill always supplies all three scope fields to `doom_decide`.
 The shared implementation and its internal CLI/test utilities remain intact.
 
-All non-attach outputs preserve `pageId,epoch,commandId`. Configuration/prompt
+All non-attach gameplay outputs preserve `pageId,epoch,commandId`. Configuration/prompt
 outputs preserve `sessionId,revision,configuration` or `instructions`, and `run`
 with every counter. Observations retain every telemetry, native/Canvas hash,
 PNG hash, facing probe and previous-action field. Decisions preserve outcome,
@@ -84,6 +84,100 @@ Temporary `configFile`/`instructionsFile` inputs remain required. PNG creation a
 exclusive file writes are the CLI's existing implementation. `decide.pngPath`
 contains the verified **after-action** image; `beforeObservationId` identifies
 the input, even though the PNG filename uses that command/input ID.
+
+## Offline advisory navigation memory (Milestone 1)
+
+The same stdio process also exposes exactly two independent notebook tools,
+`doom_memory_find` and `doom_memory_record` (ten tools total). They do not attach,
+read browser state, call the bridge/provider, claim a run or select an action.
+Use them only for explicitly requested offline notebook work. The existing
+`$doom-decisions play` skill is unchanged: its persistent-mapping prohibition
+still applies, and it neither discovers nor writes this notebook during play.
+
+Every note and appended assessment is **advisory and unverified**. A required
+plain-text `source` attributes a claim; it does not authenticate telemetry,
+screenshots, traversal or IWAD identity. Status is always `unverified`; status
+inputs and other unknown fields are rejected. Text claiming success is still
+unverified text. No live observation/receipt association is implemented.
+
+Storage defaults to `<repository-root>/.local/doom-memory.sqlite`, resolved from
+the module location, independent of cwd. An optional **absolute** `DOOM_MEMORY_DB`
+environment override selects another file; relative/empty overrides fail on a
+memory call without affecting ordinary gameplay tools. The host must permit
+writing that location. No `.env` file is read. There is no implicit seed data.
+Tests always select separate temporary files, never the normal notebook.
+
+Lookup opens existing storage read-only. If absent, it returns no candidates
+without creating a file/directory or loading SQLite. A valid create operation
+initializes storage; append against absent storage fails. Built-in `node:sqlite`
+loads lazily and can emit Node 22.20.0's experimental warning to stderr only when
+used. Module import, tool listing and gameplay-only use do not load it.
+
+There are two tables: `notes` stores the immutable original claim, namespace,
+anchor, source, next question and creation date, plus its current revision;
+`entries` stores ordered, dated source/assessment appends and request-id receipts.
+Revision 1's receipt represents creation; subsequent revisions hold assessments.
+Writes use short `BEGIN IMMEDIATE` transactions, a 100 ms busy timeout and DELETE
+rollback journaling. One durable SQLite file may have a temporary `-journal`
+during writes; no WAL/checkpoint service is used. Different processes can reopen
+the same path. Busy storage fails without an automatic retry. Unsupported schema
+versions or foreign databases are rejected; there is no migration framework.
+
+Tool arguments (all objects reject unknown fields):
+
+| Tool | Arguments | Result |
+| --- | --- | --- |
+| `doom_memory_find` | `mapNamespace, x, y, headingDeg, radius? = 64, limit? = 3` | `caution, candidates[]` with ID, revision, source, anchor, original hypothesis, next question, creation date, `unverified` status, distance, circular heading difference and all ordered assessment entries |
+| `doom_memory_record` create | `operation: "create", requestId, mapNamespace, x, y, headingDeg, hypothesis, nextQuestion?, source` | `noteId, revision: 1, status: "unverified", replayed` |
+| `doom_memory_record` append | `operation: "append", requestId, noteId, expectedRevision, assessment, source` | `noteId, revision, status: "unverified", replayed` |
+
+Coordinates are Doom units in [-32768, 32768], heading is degrees in [0, 360),
+radius is positive and at most 1024, and limit is an integer from 1 through 10.
+Namespace/request IDs are nonblank text up to 128 characters; source/next
+question up to 512; hypothesis/assessment up to 2000. Note IDs are UUIDs.
+Namespace matching is exact after trimming surrounding whitespace. Lookup filters
+by XY radius, sorts by distance then circular heading difference then stable ID,
+and never excludes a candidate just because it faces another direction.
+
+For example, call `doom_memory_find` offline with:
+
+```json
+{"mapNamespace":"unverified:shareware-doom1-e1m1","x":1095.593,"y":-2969.434,"headingDeg":319.921875}
+```
+
+To explicitly create a note, call `doom_memory_record` with:
+
+```json
+{"operation":"create","requestId":"pool-recess-1","mapNamespace":"unverified:shareware-doom1-e1m1","x":1095.593,"y":-2969.434,"headingDeg":319.921875,"hypothesis":"The apparent tan-column recess might continue beyond the pool room; traversal remains unestablished.","nextQuestion":"Does a clearer view show continuous player-width floor beyond the wall end?","source":"Run A, decision 22, tic 133; docs/navigation/doom1-e1m1-session-01a179df.md; archived Codex interpretation"}
+```
+
+Append using the returned `noteId`, its revision, a new request ID, required source
+and `assessment`. Repeating the exact normalized request ID/payload returns its
+original resulting revision with `replayed: true`, even if the note has since
+advanced. Conflicting reuse returns `memory-request-conflict`; a stale new append
+returns `memory-revision-conflict`. Neither changes the original or earlier entries.
+Lookup includes all assessments so disagreement stays visible; long histories
+can increase response size. Do not put credentials, prompts, auth data or complete
+provider payloads in this notebook.
+
+Proximity establishes neither the same viewpoint nor map identity, passability
+or navigation success. `unverified:shareware-doom1-e1m1` is a caller-chosen label,
+not an authenticated IWAD key. A lookup at Run D #14's pose `(1123.944, -2981.558)`
+and `19.6875°` can return A's note about 30.8 units away with a 59.8° heading
+difference. That is regional context, not recognition of the same view or proof
+that A's recess is D's separate human-described continuation.
+
+PNG storage/retrieval is deliberately unsupported in Milestone 1. The retained
+[A note](navigation/doom1-e1m1-session-01a179df.md) links its historical PNG, which
+Codex can explicitly open with `view_image`; notebook text alone does not display
+or authenticate its pixels. No D screenshot is retained here.
+
+`app/tests/doom-memory.test.ts` exercises actual stdio MCP child processes against
+isolated temporary databases with fail-on-use fetch. It checks missing-storage
+lookups, A/D regional retrieval, namespace/radius exclusions, three-process
+persistence, attributed append/retrieval, idempotency, conflicts, unverified-only
+schemas, locking and schema-version rejection. These are offline persistence
+checks, not navigation improvement or live Doom/Decisions evidence.
 
 ## Project setup and foreground play
 

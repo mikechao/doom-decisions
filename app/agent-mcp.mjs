@@ -5,6 +5,13 @@ import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod/v4';
 import { agentCliError, runAgentCli } from '../scripts/doom-agent.mjs';
 import { isAgentId } from './src/agent-observation.ts';
+import {
+  findMemory,
+  memoryError,
+  memoryFindSchema,
+  memoryRecordSchema,
+  recordMemory,
+} from './doom-memory.mjs';
 
 const file = z.string().refine(isAbsolute, 'Absolute file required.');
 const id = z.string().refine(isAgentId, 'Agent UUID required.');
@@ -118,6 +125,44 @@ export function createAgentMcpServer({
           };
         } catch (error) {
           const result = agentCliError(error);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result) }],
+            structuredContent: result,
+            isError: true,
+          };
+        }
+      },
+    );
+  }
+  for (const [name, inputSchema, description, operation] of [
+    [
+      'doom_memory_find',
+      memoryFindSchema,
+      'Find advisory, unverified regional notes by namespace and pose; no gameplay or verified map identity.',
+      findMemory,
+    ],
+    [
+      'doom_memory_record',
+      memoryRecordSchema,
+      'Create or append advisory, unverified navigation notes; source text is attribution, never proof. Offline use only; not part of play.',
+      recordMemory,
+    ],
+  ]) {
+    server.registerTool(
+      name,
+      { description, inputSchema },
+      async (input, context) => {
+        try {
+          lifetime.signal.throwIfAborted();
+          context.mcpReq.signal.throwIfAborted();
+          const result = await operation(input);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result) }],
+            structuredContent: result,
+            isError: false,
+          };
+        } catch (error) {
+          const result = memoryError(error);
           return {
             content: [{ type: 'text', text: JSON.stringify(result) }],
             structuredContent: result,
