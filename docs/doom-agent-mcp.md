@@ -85,14 +85,20 @@ exclusive file writes are the CLI's existing implementation. `decide.pngPath`
 contains the verified **after-action** image; `beforeObservationId` identifies
 the input, even though the PNG filename uses that command/input ID.
 
-## Offline advisory navigation memory (Milestone 1)
+## Advisory navigation memory (Milestone 1 storage)
 
 The same stdio process also exposes exactly two independent notebook tools,
 `doom_memory_find` and `doom_memory_record` (ten tools total). They do not attach,
 read browser state, call the bridge/provider, claim a run or select an action.
-Use them only for explicitly requested offline notebook work. The existing
-`$doom-decisions play` skill is unchanged: its persistent-mapping prohibition
-still applies, and it neither discovers nor writes this notebook during play.
+They support explicit offline notebook work and the play skill's narrow advisory
+notebook exception. With a namespace established from explicit current-session
+context, play looks up the first region after post-start observation/config/image
+checks, then opportunistically on new regions, landmark returns or looping. It
+records only meaningful new findings at eligible pre-decision checkpoints; nearby
+notes remain unverified leads. Unknown namespace skips memory. Isolated notebook
+failures do not block otherwise eligible gameplay; Stop/terminal and gameplay
+errors still take precedence, with no memory flush on exit. See the
+[skill](../.agents/skills/doom-decisions/SKILL.md#advisory-navigation-memory) for the full policy.
 
 Every note and appended assessment is **advisory and unverified**. A required
 plain-text `source` attributes a claim; it does not authenticate telemetry,

@@ -144,7 +144,7 @@ export function createAgentMcpServer({
     [
       'doom_memory_record',
       memoryRecordSchema,
-      'Create or append advisory, unverified navigation notes; source text is attribution, never proof. Offline use only; not part of play.',
+      'Create or append advisory, unverified navigation notes; source text is attribution, never proof. During play, use only at skill-approved healthy checkpoints.',
       recordMemory,
     ],
   ]) {
