@@ -254,6 +254,8 @@ After tool discovery and human preparation:
 
    - **Why change:** cite specific verified observations and explain how they
      motivate the new navigation guidance. Distinguish observations from hypotheses.
+     When historical memory materially influences the change, fold the attribution
+     required under **Advisory navigation memory** into this explanation.
    - **New Decisions API prompt:** show the full replacement text verbatim in a
      fenced text block, never a summary, diff or placeholder. Tool arguments alone
      do not count as disclosure.
@@ -408,9 +410,29 @@ Historical images never replace current inspection or establish a reuse baseline
 Choose a falsifiable high-level navigation question only if the lead warrants it;
 prefer a better current-scene objective when appropriate. The Decisions provider
 still selects every low-level action. An empty lookup needs no invented history
-or lengthy commentary. Briefly mention an old lead only when it materially
-influences the next objective. Any prompt/tic change still follows the existing
-disclosure, CAS and fresh-observation rules.
+or lengthy commentary. Any prompt/tic change still follows the existing disclosure,
+CAS and fresh-observation rules.
+
+When a retrieved historical note materially changes or helps choose a navigation
+objective, target, hypothesis to investigate or Decisions API instruction, give
+readable user-visible commentary at the time you apply that influence, preferably
+immediately before the relevant prompt update or navigation plan. Identify the
+note by ID (an unambiguous abbreviation is enough) or recognizable description;
+state the specific historical observation/hypothesis it contributes, explicitly
+as historical and advisory, not proof of current geometry or traversability;
+and explain which target/objective or specific Decisions API guidance it influenced.
+Distinguish that contribution from current verified screenshot/telemetry evidence
+and untested interpretations. Retrieval alone or later visually similar movement
+does not justify claiming use; notes that do not affect the plan need no attribution.
+
+For `doom_set_prompt`, fold this attribution into the existing pre-change
+**Why change** commentary and still show the full new prompt as required above;
+do not add a second disclosure. For a material objective change without a prompt
+edit, a short contemporaneous explanation is sufficient. Disclose once when a
+note first materially changes the target or instructions, not on every decision
+while pursuing the same objective. Disclose again only when a new note or a
+materially new application of a note changes the plan. This documents Codex's
+stated reliance, not proof that memory causally improved navigation.
 
 **Record sparingly.** Write only at the same step-5 healthy, active-run checkpoint
 after fresh image inspection and before the next decision. A reusable landmark
