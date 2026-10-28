@@ -1168,10 +1168,9 @@ async function mcpSession(options) {
   return client;
 }
 const callMcp = (client, op, args) => client.callTool({ name: `doom_${op.replaceAll('-', '_')}`, arguments: args });
-function delivered(result) {
+function delivered(result, withImage = !!result.structuredContent?.pngPath) {
   assert.equal(result.isError, false);
-  assert.equal(result.content.length, 1);
-  assert.equal(result.content[0].type, 'text');
+  assert.deepEqual(result.content.map(block => block.type), withImage ? ['text', 'image'] : ['text']);
   assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
   assert.equal(result.content[0].text, JSON.stringify(result.structuredContent));
   return result.structuredContent;
@@ -1191,7 +1190,7 @@ it('uses one combined MCP read at startup, after start/CAS and before a decision
   const prompt = await call('get-prompt');
   assert.equal(prompt.instructions, s.observation.configuration.instructionTemplate);
   let config = await call('start-run', { observationId: s.observation.observationId, revision: s.observation.revision });
-  const observe = async () => delivered(await callMcp(client, 'observe', { leaseFile: input.leaseFile }));
+  const observe = async () => delivered(await callMcp(client, 'observe', { leaseFile: input.leaseFile }), true);
   const first = await observe();
   assert.notEqual(first.observationId, s.observation.observationId);
   assert.equal(first.tic, s.observation.tic);
@@ -1286,7 +1285,7 @@ it.each([
 ])('retains complete %s instructions through combined broker/CLI/MCP output', async (label, instructionTemplate) => {
   const s = await budgetSession({ decisionConfiguration: { ...defaultDecisionConfiguration, instructionTemplate } });
   const client = await mcpSession({ transport: s.h.transport });
-  const result = delivered(await callMcp(client, 'observe', { leaseFile: s.base[1] }));
+  const result = delivered(await callMcp(client, 'observe', { leaseFile: s.base[1] }), true);
   assert.equal(result.configuration.instructionTemplate, instructionTemplate);
   const config = delivered(await callMcp(client, 'get-config', { leaseFile: s.base[1], sessionId: result.sessionId }));
   const { revision, configuration, run, ...oldObservation } = result;
@@ -1330,9 +1329,12 @@ it('MCP matches all eight CLI operations byte-for-byte using actual broker/contr
       mkdtemp.mockResolvedValueOnce(dirname(expected.leaseFile));
     }
     randomUUID.mockReturnValueOnce(command.commandId ?? command.ownerId);
-    const actual = delivered(await callMcp(client, op, input));
+    const reply = await callMcp(client, op, input);
+    const actual = delivered(reply, !!expected.pngPath);
     assert.deepEqual(actual, expected); // No normalization of IDs, hashes, counters or paths.
     if (bytes) {
+      assert.equal(reply.content[1].mimeType, 'image/png');
+      assert.deepEqual(Buffer.from(reply.content[1].data, 'base64'), bytes);
       assert.deepEqual(await readFile(actual.pngPath), bytes);
       const observation = op === 'decide' ? actual.observation : actual;
       assert.equal(createHash('sha256').update(bytes).digest('hex'), observation.pngSha256);
@@ -1441,7 +1443,7 @@ it('MCP retains denial, revision, lease, exhaustion and Stop semantics without m
   assert.equal(s.game.sdkCalls, 0);
   const result = delivered(await callMcp(client, 'decide', { ...scope, observationId: s.observation.observationId }));
   assert.equal(result.outcome, 'completed'); assert.equal(s.game.sdkCalls, 1);
-  const fresh = delivered(await callMcp(client, 'observe', { leaseFile: input.leaseFile }));
+  const fresh = delivered(await callMcp(client, 'observe', { leaseFile: input.leaseFile }), true);
   const exhausted = delivered(await callMcp(client, 'decide', { ...scope, observationId: fresh.observationId }));
   assert.equal(exhausted.outcome, 'not-admitted'); assert.equal(exhausted.reason, 'no-grant');
   const ended = delivered(await callMcp(client, 'get-config', input));

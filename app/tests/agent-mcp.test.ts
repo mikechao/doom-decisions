@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { it } from 'vitest';
-import { agentObserveResult } from './fixtures/agent.ts';
+import { agentObservation, agentObserveResult } from './fixtures/agent.ts';
 import { agentCliError } from '../../scripts/doom-agent.mjs';
 
 const serverPath = fileURLToPath(new URL('../agent-mcp.mjs', import.meta.url));
@@ -37,17 +37,51 @@ it.each(['legacy', 'auto'])('serves initialize/list/call over real stdio (%s), w
   const lease = { pageId: '11111111-1111-1111-1111-111111111111',
     ownerId: '22222222-2222-2222-2222-222222222222', epoch: '33333333-3333-3333-3333-333333333333' };
   const observation = agentObserveResult();
+  const decision = {
+    outcome: 'completed', reason: null, beforeObservationId: observation.observationId,
+    sdkInvoked: true, action: 'neutral', requestedTics: 6, reportedTics: 6,
+    verifiedTics: 6, cumulativeTics: observation.tic, completionUncertain: false,
+    requestIdentity: { provider: 'OpenRouter', requestedModel: 'offline-model' },
+    responseMetadata: { reportedModel: 'offline-model', usage: { input: 2, output: 1, total: 3 } },
+    observation: agentObservation(),
+  };
   await writeFile(leaseFile, JSON.stringify(lease));
   await writeFile(preload, `
     import assert from 'node:assert/strict';
     import { appendFileSync } from 'node:fs';
+    import fs from 'node:fs/promises';
+    import { syncBuiltinESMExports } from 'node:module';
+    const readFile = fs.readFile;
+    let observations = 0;
+    let decisions = 0, failPngRead = false;
+    fs.readFile = async (path, options) => {
+      if (String(path).endsWith('.png') && failPngRead)
+        throw Error('offline-private-unsanitized');
+      return readFile(path, options);
+    };
+    syncBuiltinESMExports();
     globalThis.fetch = async (url, options) => {
       const op = new URL(url).pathname.split('/').at(-1);
       assert.equal(new URL(url).origin, 'http://127.0.0.1:5174');
       appendFileSync(${JSON.stringify(log)}, op + '\\n');
       const data = JSON.parse(options.body);
-      if (op === 'observe') return new Response(JSON.stringify({ pageId: data.pageId,
-        epoch: data.epoch, commandId: data.commandId, observation: ${JSON.stringify(observation)} }));
+      if (op === 'observe') {
+        observations++;
+        failPngRead = observations > 1;
+        return new Response(JSON.stringify({ pageId: data.pageId,
+          epoch: data.epoch, commandId: data.commandId, observation: ${JSON.stringify(observation)} }));
+      }
+      if (op === 'decide') {
+        decisions++;
+        if (decisions === 3) return new Response('{"error":"agent-stopped"}', {status:409});
+        if (decisions === 4) throw Error('offline-private-unsanitized');
+        failPngRead = decisions === 5;
+        const decision = { ...${JSON.stringify(decision)}, beforeObservationId: data.observationId };
+        if (decisions === 2) Object.assign(decision, { outcome: 'stopped', action: null,
+          reportedTics: null, verifiedTics: null, cumulativeTics: null, observation: null });
+        return new Response(JSON.stringify({ pageId: data.pageId,
+          epoch: data.epoch, commandId: data.commandId, decision }));
+      }
       if (op === 'get-config') return new Response(' {"error":"agent-stopped"}', {status:409});
       throw Error('offline-private-unsanitized');
     };
@@ -77,15 +111,54 @@ it.each(['legacy', 'auto'])('serves initialize/list/call over real stdio (%s), w
     const { png, ...metadata } = observation;
     assert.deepEqual(data, { pageId: lease.pageId, epoch: lease.epoch, commandId: data.commandId,
       pngPath: join(directory, `${data.commandId}.png`), ...metadata });
-    assert.equal(result.content.length, 1); assert.equal(result.content[0].type, 'text');
+    assert.deepEqual(result.content.map(block => block.type), ['text', 'image']);
     assert.equal(result.content[0].text, JSON.stringify(data));
-    assert.deepEqual(await readFile(data.pngPath), Buffer.from(png.slice(22), 'base64'));
+    assert.equal(result.content[1].mimeType, 'image/png');
+    const pngBytes = Buffer.from(png.slice(22), 'base64');
+    assert.deepEqual(Buffer.from(result.content[1].data, 'base64'), pngBytes);
+    assert.deepEqual(await readFile(data.pngPath), pngBytes);
+    assert.equal('png' in data, false);
+    assert.equal(JSON.stringify(data).includes(png.slice(22)), false);
+    const decided = await client.callTool({ name: 'doom_decide', arguments: { leaseFile, observationId: observation.observationId } });
+    const { png: resultingPng, ...resultingMetadata } = decision.observation;
+    assert.equal(decided.isError, false);
+    assert.deepEqual(decided.structuredContent, { pageId: lease.pageId, epoch: lease.epoch,
+      commandId: observation.observationId, pngPath: join(directory, `${observation.observationId}.png`),
+      ...decision, observation: resultingMetadata });
+    assert.deepEqual(decided.content.map(block => block.type), ['text', 'image']);
+    assert.equal(decided.content[0].text, JSON.stringify(decided.structuredContent));
+    assert.equal(decided.content[1].mimeType, 'image/png');
+    assert.deepEqual(Buffer.from(decided.content[1].data, 'base64'), await readFile(decided.structuredContent.pngPath));
+    assert.deepEqual(Buffer.from(decided.content[1].data, 'base64'), Buffer.from(resultingPng.slice(22), 'base64'));
+    assert.equal(JSON.stringify(decided.structuredContent).includes(resultingPng.slice(22)), false);
+    const noFrame = await client.callTool({ name: 'doom_decide', arguments: { leaseFile, observationId: observation.observationId } });
+    assert.equal(noFrame.isError, false);
+    assert.deepEqual(noFrame.structuredContent, { ...decided.structuredContent, pngPath: null,
+      outcome: 'stopped', action: null, reportedTics: null, verifiedTics: null,
+      cumulativeTics: null, observation: null });
+    assert.deepEqual(noFrame.content, [{ type: 'text', text: JSON.stringify(noFrame.structuredContent) }]);
+    const decisionStopped = await client.callTool({ name: 'doom_decide', arguments: { leaseFile, observationId: observation.observationId } });
+    assert.equal(decisionStopped.isError, true);
+    assert.deepEqual(decisionStopped.structuredContent, { error: 'agent-stopped' });
+    assert.deepEqual(decisionStopped.content, [{ type: 'text', text: JSON.stringify(decisionStopped.structuredContent) }]);
     const stopped = await client.callTool({ name: 'doom_get_config', arguments: { leaseFile, sessionId: observation.sessionId } });
     assert.equal(stopped.isError, true); assert.deepEqual(stopped.structuredContent, { error: 'agent-stopped' });
+    assert.deepEqual(stopped.content, [{ type: 'text', text: JSON.stringify(stopped.structuredContent) }]);
     const unknown = await client.callTool({ name: 'doom_decide', arguments: { leaseFile, observationId: observation.observationId } });
     assert.equal(unknown.isError, true); assert.deepEqual(unknown.structuredContent, agentCliError(Error('unknown')));
+    assert.deepEqual(unknown.content, [{ type: 'text', text: JSON.stringify(unknown.structuredContent) }]);
     assert.doesNotMatch(JSON.stringify(unknown), /offline-private-unsanitized/);
-    assert.equal(await readFile(log, 'utf8'), 'observe\nget-config\ndecide\n');
+    const unreadableDecision = await client.callTool({ name: 'doom_decide', arguments: { leaseFile, observationId: decision.observation.observationId } });
+    assert.equal(unreadableDecision.isError, true);
+    assert.deepEqual(unreadableDecision.structuredContent, agentCliError(Error('unreadable')));
+    assert.deepEqual(unreadableDecision.content, [{ type: 'text', text: JSON.stringify(unreadableDecision.structuredContent) }]);
+    assert.doesNotMatch(JSON.stringify(unreadableDecision), /offline-private-unsanitized|doom-mcp-stdio-|pngPath/);
+    const unreadable = await client.callTool({ name: 'doom_observe', arguments: { leaseFile } });
+    assert.equal(unreadable.isError, true);
+    assert.deepEqual(unreadable.structuredContent, agentCliError(Error('unreadable')));
+    assert.deepEqual(unreadable.content, [{ type: 'text', text: JSON.stringify(unreadable.structuredContent) }]);
+    assert.doesNotMatch(JSON.stringify(unreadable), /offline-private-unsanitized/);
+    assert.equal(await readFile(log, 'utf8'), 'observe\ndecide\ndecide\ndecide\nget-config\ndecide\ndecide\nobserve\n');
     assert.deepEqual(errors, []);
     await client.close(); child.stdin.end();
     const [code] = await exit;
@@ -94,10 +167,11 @@ it.each(['legacy', 'auto'])('serves initialize/list/call over real stdio (%s), w
     assert.ok(lines.length >= 5);
     for (const message of lines) assert.equal(message.jsonrpc, '2.0');
     const matches = lines.filter(message => JSON.stringify(message).includes(observation.pngSha256));
-    assert.equal(matches.length, 1);
-    const copies = JSON.stringify(matches[0]).split(observation.pngSha256).length - 1;
-    assert.equal(copies, 2, 'Full receipt is present in JSON text and structured output on the wire');
-    console.info(`Doom MCP ${mode}: client surfaces content + structuredContent; wire payload copies=${copies}`);
+    assert.equal(matches.length, 2);
+    for (const match of matches)
+      assert.equal(JSON.stringify(match).split(observation.pngSha256).length - 1, 2,
+        'Full receipt is present in JSON text and structured output on the wire');
+    console.info(`Doom MCP ${mode}: observe/decide surface content + structuredContent; wire payload copies=2 each`);
   } finally {
     await client.close().catch(() => {});
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');

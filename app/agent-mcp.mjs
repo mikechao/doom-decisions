@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/server';
@@ -118,8 +119,21 @@ export function createAgentMcpServer({
           });
           signal.throwIfAborted();
           // Delivery success is not gameplay success: retain every outcome field.
+          const content = [{ type: 'text', text: JSON.stringify(result) }];
+          if (
+            (op === 'observe' || (op === 'decide' && result.observation)) &&
+            result.pngPath
+          ) {
+            const png = await readFile(result.pngPath, { signal });
+            signal.throwIfAborted();
+            content.push({
+              type: 'image',
+              data: png.toString('base64'),
+              mimeType: 'image/png',
+            });
+          }
           return {
-            content: [{ type: 'text', text: JSON.stringify(result) }],
+            content,
             structuredContent: result,
             isError: false,
           };

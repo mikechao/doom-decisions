@@ -183,15 +183,120 @@ before any subsequent Doom domain call. Image delivery alone authorizes none.
 Never call a subsequent `doom_decide` or any other Doom operation in this execution.
 Eligible observe-image reuse skips only the viewer, never receipt/model checks.
 
-Executable handoff pattern using retained values: `leaseFile`, `pageId` and
-`epoch` come from the successful attachment. Set `expectedSessionId` to `null`
-ONLY for the initial observation; thereafter use the established session ID.
-Owner continuity is enforced through that same lease file by the broker/CLI;
-receipts do not return `ownerId`. Do not fabricate missing ownership fields.
-The inline guards deliberately check required values, not an exhaustive key set.
+**Retain scope across Code Mode executions.** Use the available `store(key, value)`
+and `load(key)` helpers: they retain serializable values in this conversation,
+unlike ordinary JavaScript variables. Verify both helpers before attaching;
+if unavailable, end without attachment. Never manually transcribe, reconstruct or
+fabricate `leaseFile`, `pageId`, `epoch`, `sessionId`, `runId`, `observationId`,
+configuration `revision`, or returned memory note IDs/revisions. Every Doom call,
+including memory/settings calls and provenance text, must use retained tool values.
+Fixed store keys are local labels, not opaque IDs. Do not persist this scope to
+files/SQLite or use it to resume a previous play attempt.
+
+On the one successful attachment, after its delivery/shape checks and complete
+receipt emission, initialize from the actual domain payload `d`:
+
+```js
+store("doomPlayScope", {
+  attachment: d, sessionId: null, observation: null,
+  authorization: null, settings: null
+});
+store("doomPlayPending", null);
+store("doomPlayFatal", null);
+```
+
+Inspect the attachment before another tool call. Initialize once per fresh play
+attempt only; never clear a fatal marker or replace attachment scope to recover.
+In each subsequent gameplay/configuration call's producing execution, retain its
+complete domain result with `store("doomPlayPending", d)`. Storage alone grants
+no trust. After model inspection of the complete receipt and required image and
+ALL existing checks, promote only values from `load("doomPlayPending")`:
+
+- Observe: establish `sessionId` initially, then require continuity; set
+  `observation` and `settings` to the complete observe payload.
+- Start-run: set `authorization` to the complete claim receipt (including run ID
+  and frozen limit); clear `observation` until the fresh post-claim observe.
+- Successful set-prompt/set-config: set `settings` to the complete returned payload;
+  clear `observation` until the mandatory fresh post-edit observe.
+- Decide: inspect and clear pending; never use its resulting observation as the
+  next decision input. Step 5 still requires a fresh standalone observe.
+
+Check continuity BEFORE promotion; never adopt a mismatch as the expected scope.
+Clear pending after inspection/promotion. Example after inspecting a valid fresh
+observe and passing its applicable checks (step 2 initially, step 5 thereafter):
+run the prelude below, then append this promotion (no Doom call):
+
+```js
+const d = load("doomPlayPending");
+if (!d || typeof d !== "object" || Array.isArray(d))
+  fatal("FATAL_SCOPE_UNAVAILABLE", "pending");
+store("doomPlayScope", {
+  ...s, sessionId: s.sessionId ?? d.sessionId, observation: d, settings: d
+});
+store("doomPlayPending", null);
+```
+
+**Fatal ends the entire play attempt.** `FATAL_SCOPE_MISMATCH: <field>` or
+`FATAL_SCOPE_UNAVAILABLE: <field>` forbids ALL subsequent Doom-domain calls,
+including memory find/record, get-config/get-prompt, set-config/set-prompt, observe,
+start-run and decide, even in a new execution. Honor an already-returned
+`agent-stopped` first with its exact acknowledgment. Otherwise report the fatal
+field, ask the human to click **Stop Agent**, and end play. Never retry, refresh
+scope, reattach or reconstruct IDs. Do not mislabel scope failure as image failure
+or confirmed death/exit. Only correlated verified terminal evidence permits its
+terminal viewing/acknowledgment; viewer failures retain their existing handling.
+`exit()` ends ONLY the current JavaScript execution: the MODEL must end the whole
+workflow after the marker. The retained marker blocks compliant later entrypoints,
+not arbitrary future model/tool behavior. Apply the same field-specific fatal
+diagnostic to scope/identity/revision mismatches found during model inspection or
+other calls; do not make another tool call merely to record that marker.
+
+Use this prelude before EVERY subsequent Doom-domain call. Other operations use
+its retained values plus their applicable existing checks; choose `kind` for the
+image recipe below. Missing/untrustworthy retained scope is fatal. Owner continuity
+is enforced through the same lease by broker/CLI; observation/decision receipts
+do not return `ownerId`. Never fabricate it.
 
 ```js
 const kind = "observe";
+const fatal = (category, field) => {
+  const diagnostic = `${category}: ${field}`;
+  store("doomPlayFatal", diagnostic);
+  text({ diagnostic, playEnded: true });
+  exit();
+};
+if (load("doomPlayFatal")) {
+  text({ diagnostic: load("doomPlayFatal"), playEnded: true });
+  exit();
+}
+const s = load("doomPlayScope");
+const a = s?.attachment;
+for (const field of ["leaseFile", "pageId", "epoch"]) {
+  if (typeof a?.[field] !== "string" || !a[field] ||
+      (field === "leaseFile" && !a[field].startsWith("/")))
+    fatal("FATAL_SCOPE_UNAVAILABLE", field);
+}
+const { leaseFile, pageId, epoch } = a;
+const expectedSessionId = s.sessionId;
+if (!(expectedSessionId === null && s.observation === null &&
+      s.authorization === null && s.settings === null) &&
+    (typeof expectedSessionId !== "string" || !expectedSessionId))
+  fatal("FATAL_SCOPE_UNAVAILABLE", "sessionId");
+const sessionId = expectedSessionId;
+const runId = s.authorization?.run?.runId;
+const observationId = s.observation?.observationId;
+const revision = s.settings?.revision;
+if (kind === "decide") {
+  for (const [field, value] of Object.entries({ sessionId, runId, observationId }))
+    if (typeof value !== "string" || !value) fatal("FATAL_SCOPE_UNAVAILABLE", field);
+  if (!Number.isSafeInteger(revision) || revision < 0)
+    fatal("FATAL_SCOPE_UNAVAILABLE", "revision");
+}
+```
+
+Append this observe entry point and guarded continuation to the prelude:
+
+```js
 const receipt = await tools.mcp__doom_decisions__doom_observe({ leaseFile });
 const d = receipt?.structuredContent;
 if (d?.error === "agent-stopped" || receipt?.isError !== false ||
@@ -201,19 +306,32 @@ if (d?.error === "agent-stopped" || receipt?.isError !== false ||
 }
 const terminal = kind === "decide" && d.outcome === "terminal";
 const o = kind === "observe" ? d : d.observation;
+// Non-completed/uncertain/malformed outcomes keep existing stop precedence.
 if (!o || typeof o !== "object" || Array.isArray(o) ||
-    d.pageId !== pageId || d.epoch !== epoch ||
-    typeof o.sessionId !== "string" || !o.sessionId ||
-    (expectedSessionId !== null && o.sessionId !== expectedSessionId) ||
-    typeof o.observationId !== "string" || !o.observationId ||
     o.phase !== (terminal ? "terminal" : "ready") ||
     (kind === "decide" &&
       (!(d.outcome === "completed" || terminal) || d.sdkInvoked !== true ||
-       d.completionUncertain !== false || d.beforeObservationId !== observationId ||
-       d.commandId !== observationId))) {
+       d.completionUncertain !== false))) {
   text(d);
-  exit(); // Scope failure/non-completed results follow existing stop rules.
+  exit(); // End the entire play attempt under existing outcome/error rules.
 }
+const scopeChecks = [
+  ["pageId", d.pageId === pageId],
+  ["epoch", d.epoch === epoch],
+  ["sessionId", typeof o.sessionId === "string" && !!o.sessionId &&
+    (expectedSessionId === null || o.sessionId === expectedSessionId)],
+  ["observationId", typeof o.observationId === "string" && !!o.observationId],
+  ...(kind === "decide" ? [
+    ["beforeObservationId", d.beforeObservationId === observationId],
+    ["commandId", d.commandId === observationId]
+  ] : [])
+];
+const mismatch = scopeChecks.find(([, valid]) => !valid);
+if (mismatch) {
+  text(d); // Complete receipt once; no viewer or later Doom call.
+  fatal("FATAL_SCOPE_MISMATCH", mismatch[0]);
+}
+store("doomPlayPending", d); // Candidate only; model inspection must follow.
 text(d); // Complete domain receipt once; model interpretation follows execution.
 if (typeof d.pngPath !== "string" || !d.pngPath.startsWith("/")) {
   text({ imageInspection: "failed" });
@@ -229,12 +347,12 @@ try {
 // End execution here: model inspection must precede any further gameplay.
 ```
 
-At step 7, replace ONLY the first two lines with this decision entry point;
-retain the same guarded continuation. Use the established session ID as
-`expectedSessionId`; all step-5/6 pre-decision checks must already have passed:
+At step 7, set `kind = "decide"` in the same prelude, then replace only the
+observe tool call with this decision entry point; retain the guarded continuation.
+All step-5/6 pre-decision checks and pending-result promotions must already have
+passed. Never supply literal scope arguments:
 
 ```js
-const kind = "decide";
 const receipt = await tools.mcp__doom_decisions__doom_decide({
   leaseFile, observationId, sessionId, runId, revision
 });
