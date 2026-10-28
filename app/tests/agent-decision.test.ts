@@ -51,6 +51,7 @@ it('uses one provider-selected action and frozen tics with a verified resulting 
     assert.equal(result.cumulativeTics, 7);
     assert.equal(result.beforeObservationId, observation.observationId);
     assert.equal(result.observation.tic, 7);
+    assert.deepEqual(result.observation.mapIdentity, observation.mapIdentity);
     assert.equal(result.observation.frame.nativeSha256, result.observation.frame.canvasSha256);
     assert.notEqual(result.observation.pngSha256, observation.pngSha256);
     assert.deepEqual(h.actions.slice(1), [{ mask: 2, tics: 6 }]);
@@ -192,6 +193,7 @@ it('returns verified terminal prefixes/PNG and retires uncertain or unverifiable
       assert.equal(result.outcome, retired ? 'retired' : 'terminal');
       assert.equal(result.verifiedTics, options.trapAt ? 1 : options.faults ? 6 : 2);
       assert.equal(result.observation?.tic ?? null, retired ? null : 3);
+      assert.deepEqual(result.observation?.mapIdentity ?? null, retired ? null : observation.mapIdentity);
       assert.equal(result.observation?.previousAction ?? null, null, 'No terminal or unverified candidate is exposed');
       assert.equal(result.observation?.facingProbe ?? null, null, 'No terminal living geometry is exposed');
       assert.equal(h.view.session.controls.ready, false);

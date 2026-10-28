@@ -361,14 +361,24 @@ The observation has raw `telemetry.x/y` (signed 16.16) and unsigned
 `y = telemetry.y / 65536`, `headingDeg = telemetry.angle * 360 / 4294967296`.
 Do not convert an already converted note anchor again.
 
-**Namespace first.** Establish `mapNamespace` only from explicit current-session
-context identifying the active setup. For a human-identified shareware DOOM1.WAD
-E1M1 session, `unverified:shareware-doom1-e1m1` is an example, not a default.
-The observation exposes no authenticated IWAD/map identity. Never infer it from
-coordinates, appearance or an old note, and never reuse that namespace for bundled
-Freedoom or a different level. With no established namespace, explain briefly,
-skip all memory calls and continue normal gameplay; do not inspect private setup
-files to establish it. Keep namespaces separate and retain their uncertainty.
+**Namespace first.** Before every memory lookup or record, use only the current
+verified observation's `mapIdentity.mapKey` as `mapNamespace`. Require its lowercase
+64-hex `iwadSha256`, native `episode: 1, map: 1`, `mapSlot: "E1M1"`, and exact
+`doom-map:v1:iwad-sha256:<iwadSha256>:E1M1` key. This contract supports controlled
+noncommercial E1M1 only. Never infer identity from filenames, human assertions,
+coordinates, images/hashes, titles, prior conversations or notes. With no verified
+identity, skip memory; malformed/inconsistent gameplay output still obeys the
+existing stop rules. Never fall back to, implicitly read, migrate, relabel, copy
+or merge historical `unverified:shareware-doom1-e1m1` notes.
+
+Keep transient memory context scoped to lease/page/owner/epoch/session and mapKey.
+On any ownership or map identity change, discard lookup results, candidate note
+IDs/revisions, pose targets, last-lookup region and pending append intentions.
+Existing gameplay session-mismatch/Stop rules still end play; clearing memory
+does not authorize reattachment or continuation. A fresh invocation/session must
+start with no retained candidate references and perform its own eligible lookup.
+The namespace excludes sessionId: identical IWAD bytes and slot keep the same key
+across sessions, so that fresh lookup may retrieve the same persistent notes.
 
 **Find nearby leads.** At the first eligible step-5 checkpoint, call
 `doom_memory_find` with `{mapNamespace, x, y, headingDeg, radius: 128, limit: 3}`.
@@ -381,7 +391,10 @@ concise in-conversation last-lookup region/trigger to avoid repetitive queries.
 Allow at most one lookup and one meaningful record per eligible checkpoint,
 not a subloop.
 
-Inspect each candidate's `distance`, `headingDifferenceDeg`, original `hypothesis`,
+Require every candidate's `mapNamespace` to equal the current verified mapKey;
+otherwise treat the result as malformed memory output. Retain candidate IDs only
+with this lookup's current session/ownership scope. Inspect each candidate's
+`distance`, `headingDifferenceDeg`, original `hypothesis`,
 `source`, `nextQuestion` and ordered `entries` separately from the current image
 and unresolved questions. Different headings can still yield useful regional
 context; proximity alone identifies neither a viewpoint nor a specific opening.
@@ -406,8 +419,9 @@ attempt outcome can warrant a record. Do not save every frame/movement, repetiti
 guesses, restatements, or implicitly seed history. If no eligible checkpoint
 remains, omit the write; final accounting and all stop rules take precedence.
 
-For the same specific hypothesis, prefer append using the latest successful find's
-`noteId` and note `revision` (distinct from agent config revision):
+For the same specific hypothesis, prefer append using a `noteId` and note
+`revision` obtained/confirmed by the latest successful find for the current
+verified namespace and session/ownership context (distinct from agent config revision):
 `doom_memory_record {operation: "append", requestId, noteId, expectedRevision,
 assessment, source}`. If the retained revision may be stale, defer until a fresh
 lookup is due. For a genuinely different location or hypothesis, even nearby, use
@@ -425,7 +439,7 @@ never blindly retry or overwrite. Keep the original claim and earlier assessment
 
 Required `source` is concise plain-text attribution (maximum 512 characters): use
 available game session/observation IDs, tic and useful PNG hash/path, labeling
-Codex visual interpretation versus human-supplied identification truthfully.
+Codex visual interpretation versus verified observed map identity truthfully.
 Do not invent unavailable provenance. Put interpretation and uncertainty in the
 hypothesis/assessment (maximum 2000 characters); source text authenticates nothing.
 Optional next question is at most 512 characters; namespace/request ID at most 128.
@@ -505,6 +519,14 @@ above, never a silent rewrite of user-authored text. Retain `{{tics}}` so the
 provider sees the actual selected horizon while choosing only the action.
 
 ## Verified Game State observation contract
+
+Every successfully verified observation, including completed/terminal decision
+observations, requires `mapIdentity: {iwadSha256, episode, map, mapSlot, mapKey}`.
+The digest identifies the accepted run's raw IWAD bytes (decompressed for included
+Freedoom); episode/map are sampled from the same verified native capture as pose
+and frame. Slot/key are deterministic, strictly checked derivations. E1M1 death
+or exit-pending frames remain E1M1; no next-map inference, MAP## or title support.
+This identity scopes advisory memory; it does not verify any historical note.
 
 Every observation exports all five eligible signals regardless of agent inclusion
 flags. Codex chooses which eligible facts enter subsequent Decisions request text

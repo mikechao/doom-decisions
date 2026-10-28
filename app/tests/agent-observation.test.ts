@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, it, vi } from 'vitest';
-import { agentPngBytes, parseAgentObservation } from '../src/agent-observation.ts';
-import { randomUUID } from 'node:crypto';
+import { agentPngBytes, createAgentMapIdentity, parseAgentObservation } from '../src/agent-observation.ts';
+import { createHash, randomUUID } from 'node:crypto';
 import { parseAgentObserveResult } from '../src/agent-control.ts';
 import { cleanup, fixture } from './fixtures/session.ts';
 import { agentObservation, pngFor } from './fixtures/agent.ts';
@@ -46,7 +46,13 @@ it('exports a fresh detached verified PNG/state with no key, provider or gamepla
     assert.equal(h.sdkCalls, 0);
     assert.deepEqual(h.gameOps, ['snapshot', 'render', 'snapshot', 'snapshot']);
     assert.equal(providerFactory.create.mock.calls.length, 0);
-    assert.deepEqual(Object.keys(result).sort(), ['configuration', 'counters', 'facingProbe', 'frame', 'observationId', 'phase', 'png', 'pngSha256', 'previousAction', 'revision', 'run', 'sessionId', 'telemetry', 'tic']);
+    assert.deepEqual(Object.keys(result).sort(), ['configuration', 'counters', 'facingProbe', 'frame', 'mapIdentity', 'observationId', 'phase', 'png', 'pngSha256', 'previousAction', 'revision', 'run', 'sessionId', 'telemetry', 'tic']);
+    const identity = structuredClone(result.mapIdentity);
+    assert.deepEqual(identity, {
+      iwadSha256: h.view.session.evidence.assets.iwad.sha256,
+      episode: before.native.episode, map: before.native.map, mapSlot: 'E1M1',
+      mapKey: `doom-map:v1:iwad-sha256:${h.view.session.evidence.assets.iwad.sha256}:E1M1`,
+    });
     assert.deepEqual(result.telemetry.readyWeapon, before.native.readyWeapon);
     assert.deepEqual(result.telemetry.ammo, before.native.ammo);
     assert.equal(result.previousAction, null);
@@ -57,7 +63,9 @@ it('exports a fresh detached verified PNG/state with no key, provider or gamepla
     result.telemetry.ammo.bullets.current = 999;
     result.telemetry.ammo.shells.max = 999;
     result.configuration.tics = 35;
+    result.mapIdentity.mapKey = 'unverified:caller-mutation';
     const again = await h.controller.observe(() => {});
+    assert.deepEqual(again.mapIdentity, identity);
     assert.deepEqual(again.telemetry.readyWeapon, before.native.readyWeapon);
     assert.deepEqual(again.telemetry.ammo, before.native.ammo);
     assert.deepEqual(h.native.observe().native, before.native);
@@ -67,6 +75,84 @@ it('exports a fresh detached verified PNG/state with no key, provider or gamepla
     assert.equal(again.counters.render, result.counters.render + 1);
     assert.equal(h.view.session.controls.ready, true);
   } finally { await h.dispose(); }
+});
+
+it('binds identity to accepted bytes across fresh sessions, independent of frame hashes', async () => {
+  const results = [];
+  for (const fill of [17, 255, 17]) {
+    const wad = new Uint8Array(12).fill(fill).buffer;
+    const iwadSha256 = createHash('sha256').update(new Uint8Array(wad)).digest('hex');
+    const { h, providerFactory } = session({ wad });
+    try {
+      await h.prepare();
+      const result = await h.controller.observe(() => {});
+      assert.deepEqual(result.mapIdentity, {
+        iwadSha256, episode: 1, map: 1, mapSlot: 'E1M1',
+        mapKey: `doom-map:v1:iwad-sha256:${iwadSha256}:E1M1`,
+      });
+      results.push(result);
+      assert.equal(h.sdkCalls, 0); assert.equal(h.gameCalls, 0);
+      assert.equal(providerFactory.create.mock.calls.length, 0);
+    } finally { await h.dispose(); }
+  }
+  assert.equal(new Set(results.map(r => r.sessionId)).size, 3);
+  assert.equal(new Set(results.map(r => r.pngSha256)).size, 1, 'Identical images do not identify loaded data');
+  assert.notEqual(results[0].mapIdentity.mapKey, results[1].mapIdentity.mapKey);
+  assert.deepEqual(results[0].mapIdentity, results[2].mapIdentity, 'Same content/slot reuses the persistent namespace in a new session');
+});
+
+it.each(['episode', 'map'])('rejects native %s changes during verified capture', async field => {
+  let capturing = false;
+  const { h } = session({ mutateResult(data, result, _frame, ready) {
+    if (ready && capturing && data.op === 'snapshot') result.native[field] = 2;
+  } });
+  try {
+    await h.prepare();
+    const capture = h.ports.capture;
+    h.ports.capture = () => { capturing = true; return capture(); };
+    await assert.rejects(h.controller.observe(() => {}), /verification failed/);
+    assert.equal(h.view.session.phase, 'error');
+    assert.equal(h.sdkCalls, 0); assert.equal(h.gameCalls, 0);
+  } finally { await h.dispose(); }
+});
+
+it('requires canonical E1M1 identity and rejects missing, malformed or inconsistent DTO fields', () => {
+  const original = agentObservation();
+  const { iwadSha256 } = original.mapIdentity;
+  assert.deepEqual(createAgentMapIdentity(iwadSha256, 1, 1), original.mapIdentity);
+  assert.ok(original.mapIdentity.mapKey.length <= 128, 'Fits the existing memory namespace bound');
+  for (const [digest, episode, map] of [
+    [undefined, 1, 1], [iwadSha256.toUpperCase(), 1, 1],
+    [iwadSha256, 2, 1], [iwadSha256, 1, 2], [iwadSha256, '1', 1],
+  ]) assert.throws(() => createAgentMapIdentity(digest, episode, map), /Invalid agent observation/);
+  for (const mutate of [
+    d => { delete d.mapIdentity; },
+    d => { d.mapIdentity = null; },
+    d => { d.mapIdentity = []; },
+    ...['iwadSha256', 'episode', 'map', 'mapSlot', 'mapKey'].map(key => d => { delete d.mapIdentity[key]; }),
+    d => { d.mapIdentity.iwadSha256 = iwadSha256.toUpperCase(); },
+    d => { d.mapIdentity.iwadSha256 = 'g'.repeat(64); },
+    d => { d.mapIdentity.iwadSha256 = iwadSha256.slice(1); },
+    d => { d.mapIdentity.iwadSha256 = ` ${iwadSha256}`; },
+    d => { d.mapIdentity.iwadSha256 = `${iwadSha256}\n`; },
+    d => { d.mapIdentity.iwadSha256 = 'f'.repeat(64); }, // Valid hash, stale derived key.
+    d => { d.mapIdentity.episode = '1'; },
+    d => { d.mapIdentity.episode = 0; },
+    d => { d.mapIdentity.episode = 2; },
+    d => { d.mapIdentity.map = 1.5; },
+    d => { d.mapIdentity.map = 2; },
+    d => { d.mapIdentity.mapSlot = 'E1M2'; },
+    d => { d.mapIdentity.mapSlot = 'MAP01'; },
+    d => { d.mapIdentity.mapKey += ':extra'; },
+    d => { d.mapIdentity.mapKey = 'unverified:shareware-doom1-e1m1'; },
+    d => { d.mapIdentity.title = 'Hangar'; },
+  ]) {
+    const data = structuredClone(original); mutate(data);
+    assert.throws(() => parseAgentObservation(data), /Invalid agent observation/);
+  }
+  const terminal = structuredClone(original);
+  terminal.phase = 'terminal'; terminal.telemetry.health = 0;
+  assert.equal(parseAgentObservation(terminal).mapIdentity.mapKey, original.mapIdentity.mapKey);
 });
 
 it.each(['stop', 'configuration', 'page'])('rejects a combined capture changed by %s while hashing', async change => {

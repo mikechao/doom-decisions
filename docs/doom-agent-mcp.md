@@ -48,6 +48,17 @@ reason, input observation ID, SDK invocation, action, all requested/reported/
 verified/cumulative tics, uncertainty, provider/model/usage metadata and the
 complete after-action observation. No fields are summarized or removed.
 
+Every verified observation also requires
+`mapIdentity: {iwadSha256, episode, map, mapSlot, mapKey}`, including completed and
+terminal `doom_decide` observations. Capture combines the run-owned, independently
+matched raw IWAD digest with the native episode/map after the final unchanged-state
+check. Included Freedoom uses decompressed WAD bytes. The current contract accepts
+only controlled noncommercial E1M1 (`episode: 1, map: 1, mapSlot: "E1M1"`), with
+canonical key `doom-map:v1:iwad-sha256:<lowercase-64-hex-digest>:E1M1`. The shared
+DTO parser rejects missing/malformed identity or inconsistent derived fields.
+Exit-pending/terminal frames retain E1M1; no MAP##, title or next-map support is
+implied. Source/synthetic checks do not establish real browser/WASM association.
+
 Only standalone `doom_observe` adds top-level `revision`, `configuration` and
 `run`; its existing `sessionId` scopes both evidence and settings. Configuration
 contains exactly `instructionTemplate`, `tics`, `includeReadyWeapon`, `includeAmmo`,
@@ -91,11 +102,17 @@ The same stdio process also exposes exactly two independent notebook tools,
 `doom_memory_find` and `doom_memory_record` (ten tools total). They do not attach,
 read browser state, call the bridge/provider, claim a run or select an action.
 They support explicit offline notebook work and the play skill's narrow advisory
-notebook exception. With a namespace established from explicit current-session
-context, play looks up the first region after post-start observation/config/image
+notebook exception. Play uses only the current verified `mapIdentity.mapKey` as
+`mapNamespace` and looks up the first region after post-start observation/config/image
 checks, then opportunistically on new regions, landmark returns or looping. It
 records only meaningful new findings at eligible pre-decision checkpoints; nearby
-notes remain unverified leads. Unknown namespace skips memory. Isolated notebook
+notes remain unverified leads. Missing verified identity skips memory; malformed
+gameplay evidence retains existing stop rules. On session/ownership or map changes,
+discard transient candidates, note IDs/revisions, pose targets and pending appends.
+Append only to candidates found for the current verified namespace/session. The
+key excludes sessionId, allowing a fresh lookup to retrieve previous sessions'
+notes on the same map. Historical `unverified:shareware-doom1-e1m1` notes are never
+implicitly read, migrated or merged into verified namespaces. Isolated notebook
 failures do not block otherwise eligible gameplay; Stop/terminal and gameplay
 errors still take precedence, with no memory flush on exit. See the
 [skill](../.agents/skills/doom-decisions/SKILL.md#advisory-navigation-memory) for the full policy.

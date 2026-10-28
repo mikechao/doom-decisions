@@ -33,9 +33,12 @@ export function pngFor(rgba = pixels(1)) {
 }
 export function agentObservation(): AgentObservation {
   const hash = createHash('sha256').update(pixels(1)).digest('hex');
+  const iwadSha256 = createHash('sha256').update(new Uint8Array(12)).digest('hex');
   const png = pngFor();
   return {
     observationId: randomUUID(), sessionId: randomUUID(), tic: 1, phase: 'ready',
+    mapIdentity: { iwadSha256, episode: 1, map: 1, mapSlot: 'E1M1',
+      mapKey: `doom-map:v1:iwad-sha256:${iwadSha256}:E1M1` },
     frame: { tic: 1, nativeSha256: hash, canvasSha256: hash },
     counters: { gametic: 1, leveltime: 1, render: 3, frame: 3 },
     telemetry: { health: 100, weaponId: 1, bullets: 50, shells: 0, cells: 0, rockets: 0,

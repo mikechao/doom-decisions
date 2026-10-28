@@ -2,12 +2,21 @@ import { masks, type ActionName } from './decision.ts';
 import type { FacingProbe } from './facing-probe.ts';
 import type { NativeObservation } from './worker-shared.ts';
 
+export type AgentMapIdentity = {
+  iwadSha256: string;
+  episode: 1;
+  map: 1;
+  mapSlot: 'E1M1';
+  mapKey: string;
+};
+
 // Deliberately small allowlist: no prompts, provider objects, errors or credentials.
 export type AgentObservation = {
   observationId: string;
   sessionId: string;
   tic: number;
   phase: 'ready' | 'terminal';
+  mapIdentity: AgentMapIdentity;
   frame: { tic: number; nativeSha256: string; canvasSha256: string };
   counters: {
     gametic: number;
@@ -61,6 +70,30 @@ const integer = (value: unknown) => Number.isSafeInteger(value);
 const hash = (value: unknown) =>
   typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 
+// Formatting/validation only. The capture owner must first verify controlled
+// noncommercial E1M1 eligibility; numeric episode/map alone do not prove mode.
+export function createAgentMapIdentity(
+  iwadSha256: unknown,
+  episode: unknown,
+  map: unknown,
+): AgentMapIdentity {
+  requireValue(
+    typeof iwadSha256 === 'string' &&
+      iwadSha256.length === 64 &&
+      hash(iwadSha256) &&
+      episode === 1 &&
+      map === 1,
+  );
+  const mapSlot = `E${episode}M${map}` as const;
+  return {
+    iwadSha256,
+    episode,
+    map,
+    mapSlot,
+    mapKey: `doom-map:v1:iwad-sha256:${iwadSha256}:${mapSlot}`,
+  };
+}
+
 export function agentPngBytes(png: string): Uint8Array<ArrayBuffer> {
   requireValue(
     typeof png === 'string' &&
@@ -88,6 +121,7 @@ export function parseAgentObservation(value: unknown): AgentObservation {
     'sessionId',
     'tic',
     'phase',
+    'mapIdentity',
     'frame',
     'counters',
     'telemetry',
@@ -105,6 +139,22 @@ export function parseAgentObservation(value: unknown): AgentObservation {
   requireValue(
     (data.phase === 'ready' || data.phase === 'terminal') &&
       hash(data.pngSha256),
+  );
+  const identity = object(data.mapIdentity, [
+    'iwadSha256',
+    'episode',
+    'map',
+    'mapSlot',
+    'mapKey',
+  ]);
+  const canonical = createAgentMapIdentity(
+    identity.iwadSha256,
+    identity.episode,
+    identity.map,
+  );
+  requireValue(
+    identity.mapSlot === canonical.mapSlot &&
+      identity.mapKey === canonical.mapKey,
   );
   const frame = object(data.frame, ['tic', 'nativeSha256', 'canvasSha256']);
   requireValue(

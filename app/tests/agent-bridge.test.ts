@@ -1338,6 +1338,11 @@ it('MCP matches all eight CLI operations byte-for-byte using actual broker/contr
       assert.equal(createHash('sha256').update(bytes).digest('hex'), observation.pngSha256);
       assert.equal(observation.frame.tic, observation.tic);
       assert.equal(observation.frame.nativeSha256, observation.frame.canvasSha256);
+      const iwadSha256 = game.view.session.evidence.assets.iwad.sha256;
+      assert.deepEqual(observation.mapIdentity, {
+        iwadSha256, episode: 1, map: 1, mapSlot: 'E1M1',
+        mapKey: `doom-map:v1:iwad-sha256:${iwadSha256}:E1M1`,
+      });
     }
     seen.add(op);
     return actual;
@@ -1371,6 +1376,7 @@ it('MCP matches all eight CLI operations byte-for-byte using actual broker/contr
     '--observation', before.observationId, '--session', current.sessionId, '--run', current.run.runId, '--revision', String(current.revision)]);
   assert.equal(result.outcome, 'completed'); assert.equal(result.beforeObservationId, before.observationId);
   assert.equal(result.observation.sessionId, before.sessionId);
+  assert.deepEqual(result.observation.mapIdentity, before.mapIdentity);
   assert.equal(result.observation.tic, before.tic + 11);
   assert.notEqual(result.observation.pngSha256, before.pngSha256);
   assert.equal(game.inputs[0].questions[0].instructions, 'Offline route 11.');
@@ -1463,6 +1469,7 @@ it.each([{ signals: death, phase: 'terminal' }, { signals: exit, phase: 'termina
     assert.equal(result.sdkInvoked, true); assert.equal(result.completionUncertain, !options.phase);
     if (options.phase) {
       assert.equal(result.observation.phase, 'terminal');
+      assert.deepEqual(result.observation.mapIdentity, s.observation.mapIdentity);
       assert.equal(result.observation.tic, result.cumulativeTics);
       assert.equal(result.observation.frame.nativeSha256, result.observation.frame.canvasSha256);
       assert.equal(createHash('sha256').update(await readFile(result.pngPath)).digest('hex'), result.observation.pngSha256);

@@ -14,6 +14,7 @@ import {
 } from './agent-control.ts';
 import {
   agentPngBytes,
+  createAgentMapIdentity,
   isAgentId,
   type AgentDecisionResult,
   type AgentObservation,
@@ -59,6 +60,7 @@ import {
   IWAD_MAX_BYTES,
   IWAD_MIN_BYTES,
   IWAD_SIZE_ERROR,
+  assessE1M1,
 } from './worker-shared.ts';
 import { requestWorker } from './worker-request.ts';
 function check(ok: unknown, message: string): asserts ok {
@@ -850,6 +852,17 @@ export function createSessionController(
       'Observation changed while capturing.',
     );
     const p = after.native;
+    // Native gameEligible established noncommercial E1M1 at preparation/entry;
+    // terminal capture retains the independently verified prefix of that run.
+    check(
+      assessE1M1(after).kind === (run.terminal ? 'terminal' : 'alive'),
+      'Observation map state unsupported.',
+    );
+    const mapIdentity = createAgentMapIdentity(
+      run.evidence.assets?.iwad.sha256,
+      p.episode,
+      p.map,
+    );
     const previous = previousActionAt(previousAction, after);
     const probe = run.terminal ? undefined : facingProbeAt(after);
     run.sessionId ??= crypto.randomUUID();
@@ -858,6 +871,7 @@ export function createSessionController(
       sessionId: run.sessionId,
       tic: run.verifiedTics,
       phase: run.terminal ? 'terminal' : 'ready',
+      mapIdentity,
       frame: { ...frame },
       counters: {
         gametic: after.counters.gametic,
