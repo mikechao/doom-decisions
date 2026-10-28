@@ -53,8 +53,8 @@ configuration, or substitute shell/SQL/file writes for memory tools. The eight
 gameplay tools above remain mandatory, and `doom_attach` remains the first Doom
 domain call. Make no memory calls before attachment.
 
-The model must immediately inspect each MCP result's `isError` and complete domain
-payload before any other work. Use complete
+Inspect each MCP result's `isError` and complete domain payload immediately,
+subject only to the Code Mode image-handoff sequencing below. Use complete
 `structuredContent`; if unavailable, read the complete JSON text content as the
 fallback. Do not serialize duplicate model-facing copies
 of the same payload. Preserve every field: identities/revision, paths/hashes,
@@ -68,10 +68,10 @@ all existing stop rules. A pending call is not a receipt; never repeat it.
 MCP retains local `pngPath` output: use `view_image` and the same verified-hash
 reuse rules below, never substitute JSON or a path for an inspected image.
 
-**Termination takes priority throughout `play`:** immediately after EVERY MCP
-call, inspect `isError` and the complete domain result before further reasoning,
-planning, image viewing, settings changes or tool calls. Stop/terminal/error
-priority is unchanged.
+**Termination takes priority throughout `play`:** after EVERY MCP call, apply
+Stop/terminal/error precedence to the complete result before further work.
+Only the image-handoff exception below permits programmatic validation and
+viewing before model inspection; it never permits another Doom domain call.
 `{"error":"agent-stopped"}`
 means the broker received a validated human **Stop Agent** request: reply exactly
 `Agent stopped by user. Ending play.` and end this invocation immediately.
@@ -90,8 +90,8 @@ Terminal takes priority over exhaustion, including an early tic prefix or death
 on the final reservation. Make no further Doom domain calls or discovery,
 regardless of previous allowance. View only the already-returned local terminal
 PNG once as the sole permitted final evidence tool call. If viewing succeeds, give the matching
-acknowledgment above and end this invocation. If the PNG is missing/unreadable or
-the viewer fails, reply only
+acknowledgment above and end this invocation. If the PNG is missing/non-absolute,
+unreadable, or viewing/image forwarding fails, reply only
 `Terminal image inspection failed. Ending play without confirming death or exit.`
 Do not append a death, exit or human-Stop acknowledgment. End this invocation
 without retrying image viewing, recovery or further tool calls. Never restart,
@@ -161,12 +161,102 @@ before deciding, including after settings writes; identical pixels never restore
 an invalidated observation or authorize a stale revision. Settings writes may
 reuse visual evidence under these same conditions, never pre-write observation IDs.
 
+**Code Mode image handoff:** whenever opening a returned Doom PNG, keep the MCP
+receipt and viewer call in ONE `functions.exec` execution. Pass the exact string
+`d.pngPath` as a JavaScript value. Never transcribe, construct, interpolate or
+derive its filename from IDs or printed text. Receipt validity and model
+interpretation are separate: the CLI/MCP already parse the observation/decision
+DTO, correlate page/epoch/command, validate configuration/run structure and verify
+PNG bytes against their hash before writing the file (see
+`app/src/agent-observation.ts`, `app/src/agent-control.ts`,
+`scripts/doom-agent.mjs` and `app/agent-mcp.mjs`). Do not duplicate that parser or
+invent an exact-key allowlist in Code Mode. `pageId`, `epoch` and `commandId`
+are legitimate receipt metadata; preserve all returned fields.
+
+The sole sequencing exception permits the narrow delivery, scope, outcome/phase
+and path guards below, then emission of ONE complete domain receipt and the image.
+End the execution there. Only afterward does the model inspect the complete
+receipt and image, apply steps 2–3, 5 and 7 and the Verified Game State contract,
+and update its viewed baseline. All existing ownership, freshness, revision,
+configuration, run/accounting, frame/tic/hash and terminal checks remain required
+before any subsequent Doom domain call. Image delivery alone authorizes none.
+Never call a subsequent `doom_decide` or any other Doom operation in this execution.
+Eligible observe-image reuse skips only the viewer, never receipt/model checks.
+
+Executable handoff pattern using retained values: `leaseFile`, `pageId` and
+`epoch` come from the successful attachment. Set `expectedSessionId` to `null`
+ONLY for the initial observation; thereafter use the established session ID.
+Owner continuity is enforced through that same lease file by the broker/CLI;
+receipts do not return `ownerId`. Do not fabricate missing ownership fields.
+The inline guards deliberately check required values, not an exhaustive key set.
+
+```js
+const kind = "observe";
+const receipt = await tools.mcp__doom_decisions__doom_observe({ leaseFile });
+const d = receipt?.structuredContent;
+if (d?.error === "agent-stopped" || receipt?.isError !== false ||
+    !d || typeof d !== "object" || Array.isArray(d) || "error" in d) {
+  text({ isError: receipt?.isError, result: d ?? receipt?.content ?? null });
+  exit(); // Model applies existing Stop/error reporting; no image call.
+}
+const terminal = kind === "decide" && d.outcome === "terminal";
+const o = kind === "observe" ? d : d.observation;
+if (!o || typeof o !== "object" || Array.isArray(o) ||
+    d.pageId !== pageId || d.epoch !== epoch ||
+    typeof o.sessionId !== "string" || !o.sessionId ||
+    (expectedSessionId !== null && o.sessionId !== expectedSessionId) ||
+    typeof o.observationId !== "string" || !o.observationId ||
+    o.phase !== (terminal ? "terminal" : "ready") ||
+    (kind === "decide" &&
+      (!(d.outcome === "completed" || terminal) || d.sdkInvoked !== true ||
+       d.completionUncertain !== false || d.beforeObservationId !== observationId ||
+       d.commandId !== observationId))) {
+  text(d);
+  exit(); // Scope failure/non-completed results follow existing stop rules.
+}
+text(d); // Complete domain receipt once; model interpretation follows execution.
+if (typeof d.pngPath !== "string" || !d.pngPath.startsWith("/")) {
+  text({ imageInspection: "failed" });
+  exit();
+}
+try {
+  const viewed = await tools.view_image({ path: d.pngPath, detail: "original" });
+  image(viewed.image_url, "original");
+} catch {
+  text({ imageInspection: "failed" });
+  exit();
+}
+// End execution here: model inspection must precede any further gameplay.
+```
+
+At step 7, replace ONLY the first two lines with this decision entry point;
+retain the same guarded continuation. Use the established session ID as
+`expectedSessionId`; all step-5/6 pre-decision checks must already have passed:
+
+```js
+const kind = "decide";
+const receipt = await tools.mcp__doom_decisions__doom_decide({
+  leaseFile, observationId, sessionId, runId, revision
+});
+```
+
+Observe evidence/hash is in `d`/`d.pngSha256`; decision resulting evidence/hash
+is in `d.observation`/`d.observation.pngSha256`. Both paths are `d.pngPath`.
+Only a fully verified terminal receipt may enter terminal viewing, once, with
+the exact terminal acknowledgment or image-failure reply above afterward.
+`stopped`, `api-failure`, `retired`, `not-admitted` and uncertain results never
+authorize normal viewing. Missing structured content ends this handoff: expose
+the complete JSON text fallback once for model inspection and stop, never parse
+a printed path or repeat the MCP call. Any invalid path, malformed receipt,
+hash inconsistency, viewer rejection or failed image forwarding ends play under
+the existing reporting rules: no guessed path, viewer retry or further decision.
+
 After tool discovery and human preparation:
 
 1. Call `doom_attach` with `{}` once. Retain its absolute `leaseFile`, owner/page
    ID and epoch. Do not replace a stopped/stale lease or resume an existing run.
 2. Call `doom_observe` with that `leaseFile`.
-   Actually open its absolute `pngPath` with `view_image` and deliver the image
+   Use the Code Mode handoff to open its `pngPath` and deliver the image
    content to the model. A filename, base64 or hash alone is not visual evidence.
    If viewing fails, stop before a decision. Retain `sessionId`, `observationId`,
    tic, matching native/Canvas hashes and verified telemetry.
@@ -214,10 +304,11 @@ After tool discovery and human preparation:
    below; movement-event collision masks remain browser-only.
 5. Before EACH decision, obtain one fresh `doom_observe` with `leaseFile`.
    Inspect its complete result, including `revision`, all seven `configuration`
-   fields and `run`, before any subsequent tool call. Do not follow it with a
-   routine `doom_get_config`. Fresh observations after `doom_start_run` and any
-   `doom_set_prompt` or `doom_set_config` remain mandatory: NEVER use a pre-write
-   observation.
+   fields and `run`, using the Code Mode handoff exception only for image viewing;
+   model inspection must precede every other subsequent tool call. Do not follow
+   it with a routine `doom_get_config`. Fresh observations after `doom_start_run`
+   and any `doom_set_prompt` or `doom_set_config` remain mandatory: NEVER use a
+   pre-write observation.
 
    For the first post-`doom_start_run` observation, actually open its PNG and
    update the viewed baseline, even at identical tic/pixels. The pre-run
@@ -305,7 +396,8 @@ After tool discovery and human preparation:
    This requests one Decisions-selected action through the existing controller.
    Inspect structured outcome, SDK invocation and requested/reported/verified/end
    tics. Apply the terminal rule above first. For healthy `completed` results,
-   actually open the resulting PNG and compare it with the preceding PNG.
+   use the Code Mode handoff to open the resulting PNG, then inspect the complete
+   receipt and image and compare it with the preceding PNG.
    Immediately after successful delivery and model inspection, update the viewed
    baseline record above before the next observation.
    Verify session continuity and eligible `previousAction`. Terminal prefixes are
@@ -601,9 +693,10 @@ formatter retains unavailable markers and previous-action eligibility/omissions.
 
 Coordinates retain raw native fixed-point values and angle retains unsigned raw
 bits. Observations are detached snapshots, never proof of future admission.
-The strict DTO rejects extra or missing keys, including nested objects. The
-broker and MCP implementation use the same parser; output retains every evidence
-field and replaces only PNG data with its verified local `pngPath`.
+The strict DTO parser at broker/CLI ingress rejects extra or missing DTO keys,
+including nested objects. MCP output is a different envelope: it retains every
+evidence field, replaces PNG data with verified local `pngPath`, and adds
+`pageId`, `epoch` and `commandId`. Do not apply DTO exact-key rules to that envelope.
 
 If the picker does not discover this project skill, start a fresh Codex
 conversation from this worktree. Do not alter global Codex configuration.
