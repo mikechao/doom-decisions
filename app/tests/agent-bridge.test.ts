@@ -979,6 +979,106 @@ it('CLI reads and CAS-writes only effective instructions, then uses three indivi
   await assert.rejects(get(), /agent-stopped/);
 });
 
+it.each(['set-prompt', 'set-config'].flatMap(op => [
+  ['no newline', 'Exact goal {{tics}}.'], ['LF', 'Exact goal {{tics}}.\n'],
+  ['CRLF', 'Exact goal\r\n{{tics}}.\r\n'], ['Unicode', '  尋找出口 — café 🛡️ {{tics}}.\n'],
+].map(([label, instructions]) => [op, label, instructions])))(
+  'CLI settings acknowledgment preserves %s %s from the submitted file snapshot', async (op, _label, instructions) => {
+    const s = await budgetSession(); const before = await s.start();
+    const file = join(dirname(s.base[1]), op === 'set-config' ? 'config.json' : 'instructions.txt');
+    const configuration = { ...before.configuration, instructionTemplate: instructions, tics: 11, includeAmmo: false };
+    await writeFile(file, op === 'set-config' ? JSON.stringify(configuration) : instructions);
+    let requests = 0;
+    const result = await runAgentCli([op, ...s.base, '--session', before.sessionId, '--run', before.run.runId,
+      '--revision', String(before.revision), op === 'set-config' ? '--config-file' : '--instructions-file', file], {
+      transport: async (url, options) => {
+        requests++;
+        const command = JSON.parse(options.body);
+        assert.equal(op === 'set-config' ? command.configuration.instructionTemplate : command.instructions, instructions);
+        const response = await s.h.transport(url, options);
+        const data = await response.json();
+        // Verification must use the submitted snapshot, never reread this file.
+        await writeFile(file, 'Changed after submission; not the expected acknowledgment.');
+        if (op === 'set-config') data.config.configuration = Object.fromEntries(Object.entries(data.config.configuration).reverse());
+        return new Response(JSON.stringify(data), { status: response.status });
+      },
+    });
+    assert.equal(op === 'set-config' ? result.configuration.instructionTemplate : result.instructions, instructions);
+    if (op === 'set-config') assert.deepEqual(result.configuration, configuration);
+    assert.equal(result.revision, before.revision + 1);
+    assert.deepEqual(result.run, before.run);
+    assert.equal(requests, 1); assert.equal(s.game.sdkCalls, 0); assert.equal(s.game.gameCalls, 0);
+  },
+);
+
+it.each(['set-prompt', 'set-config'].flatMap(op => [
+  'missing LF', 'changed LF', 'unchanged revision', 'skipped revision',
+  ...(op === 'set-config' ? ['tics', 'includeReadyWeapon', 'includeAmmo', 'includeHealth', 'includeFacingProbe', 'includePreviousAction'] : []),
+].map(fault => [op, fault])))(
+  'CLI settings acknowledgment rejects schema-valid %s %s without resubmission', async (op, fault) => {
+    const s = await budgetSession(); const before = await s.start();
+    const file = join(dirname(s.base[1]), op === 'set-config' ? 'config.json' : 'instructions.txt');
+    const instructions = 'Private replacement {{tics}}.\n';
+    const configuration = { ...before.configuration, instructionTemplate: instructions };
+    await writeFile(file, op === 'set-config' ? JSON.stringify(configuration) : instructions);
+    let requests = 0;
+    await assert.rejects(runAgentCli([op, ...s.base, '--session', before.sessionId, '--run', before.run.runId,
+      '--revision', String(before.revision), op === 'set-config' ? '--config-file' : '--instructions-file', file], {
+      transport: async (url, options) => {
+        requests++;
+        const response = await s.h.transport(url, options);
+        const data = await response.json();
+        const result = op === 'set-config' ? data.config : data.prompt;
+        const text = op === 'set-config' ? result.configuration : result;
+        const key = op === 'set-config' ? 'instructionTemplate' : 'instructions';
+        if (fault === 'missing LF') text[key] = instructions.slice(0, -1);
+        else if (fault === 'changed LF') text[key] = instructions.slice(0, -1) + '\r\n';
+        else if (fault === 'unchanged revision') result.revision = before.revision;
+        else if (fault === 'skipped revision') result.revision = before.revision + 2;
+        else if (fault === 'tics') result.configuration.tics = 12;
+        else result.configuration[fault] = !result.configuration[fault];
+        // These responses pass the existing DTO boundary; only acknowledgment
+        // comparison can reject them. The real controller has already applied it.
+        (op === 'set-config' ? parseAgentConfigResult : parseAgentPromptResult)(result);
+        return new Response(JSON.stringify(data), { status: response.status });
+      },
+    }), error => {
+      assert.match(error.message, /Invalid settings acknowledgment/);
+      assert.deepEqual(agentCliError(error), agentCliError(Error('unknown')));
+      assert.equal(JSON.stringify(agentCliError(error)).includes(instructions.trim()), false);
+      return true;
+    });
+    assert.equal(requests, 1);
+    const applied = await s.get();
+    assert.equal(applied.configuration.instructionTemplate, instructions);
+    assert.equal(applied.revision, before.revision + 1);
+    assert.deepEqual(applied.run, before.run);
+    assert.equal(s.game.sdkCalls, 0); assert.equal(s.game.gameCalls, 0);
+  },
+);
+
+it.each(['set-prompt', 'set-config'])('MCP returns a sanitized %s acknowledgment failure without retry or image', async op => {
+  const s = await budgetSession(); const before = await s.start();
+  const file = join(dirname(s.base[1]), op === 'set-config' ? 'config.json' : 'instructions.txt');
+  await writeFile(file, op === 'set-config' ? JSON.stringify(before.configuration) : 'Private instructions.\n');
+  let requests = 0;
+  const client = await mcpSession({ transport: async (url, options) => {
+    requests++;
+    const response = await s.h.transport(url, options);
+    const data = await response.json();
+    if (op === 'set-config') data.config.configuration.includeHealth = !data.config.configuration.includeHealth;
+    else data.prompt.instructions = 'A different private prompt.';
+    return new Response(JSON.stringify(data), { status: response.status });
+  } });
+  const result = await callMcp(client, op, { leaseFile: s.base[1], sessionId: before.sessionId,
+    runId: before.run.runId, revision: before.revision,
+    ...(op === 'set-config' ? { configFile: file } : { instructionsFile: file }) });
+  assert.equal(result.isError, true);
+  assert.deepEqual(result.structuredContent, agentCliError(Error('unknown')));
+  assert.deepEqual(result.content, [{ type: 'text', text: JSON.stringify(result.structuredContent) }]);
+  assert.equal(requests, 1); assert.equal(s.game.sdkCalls, 0); assert.equal(s.game.gameCalls, 0);
+});
+
 it('strict prompt and bounded command shapes reject extra fields and fence foreign owner/epoch/session/run identities', async () => {
   const game = fixture({ pngFor });
   cleanups.push(() => game.dispose());

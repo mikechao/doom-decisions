@@ -82,6 +82,13 @@ export async function runAgentCli(args, { transport = fetch, temporaryRoot = tmp
       const prompt = configCommand ? parseAgentConfigResult(result.config) : parseAgentPromptResult(result.prompt);
       if ('error' in prompt) throw Error(prompt.error);
       if (prompt.sessionId !== command.sessionId || (setting && prompt.run?.runId !== command.runId)) throw Error('Invalid prompt correlation.');
+      // Compare the parsed acknowledgment with the exact submitted snapshot;
+      // never trim instructions or reread a file that may have changed meanwhile.
+      if (setting && (prompt.revision !== command.revision + 1 ||
+          (configCommand
+            ? !Object.entries(command.configuration).every(([key, value]) => prompt.configuration[key] === value)
+            : prompt.instructions !== command.instructions)))
+        throw Error('Invalid settings acknowledgment.');
       if (starting && (!prompt.run?.active || prompt.revision !== command.revision)) throw Error('claim-failed');
       return { pageId: lease.pageId, epoch: lease.epoch, commandId, ...prompt };
     }
