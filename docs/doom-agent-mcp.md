@@ -96,15 +96,17 @@ exclusive file writes are the CLI's existing implementation. `decide.pngPath`
 contains the verified **after-action** image; `beforeObservationId` identifies
 the input, even though the PNG filename uses that command/input ID.
 
-## Advisory navigation memory (Milestone 1 storage)
+## Advisory navigation memory (SQLite v2)
 
 The same stdio process also exposes exactly two independent notebook tools,
 `doom_memory_find` and `doom_memory_record` (ten tools total). They do not attach,
 read browser state, call the bridge/provider, claim a run or select an action.
 They support explicit offline notebook work and the play skill's narrow advisory
 notebook exception. Play uses only the current verified `mapIdentity.mapKey` as
-`mapNamespace` and looks up the first region after post-start observation/config/image
-checks, then opportunistically on new regions, landmark returns or looping. It
+`mapNamespace` and discovers active landmarks across that map, then nearby notes,
+after post-start observation/config/image checks. These two separately inspected
+startup reads are the sole exception to one lookup per checkpoint; later reads are
+event-driven on new regions, landmark returns, looping or a worthwhile revision refresh. It
 records only meaningful new findings at eligible pre-decision checkpoints; nearby
 notes remain unverified leads. Missing verified identity skips memory; malformed
 gameplay evidence retains existing stop rules. On session/ownership or map changes,
@@ -136,10 +138,22 @@ initializes storage; append against absent storage fails. Built-in `node:sqlite`
 loads lazily and can emit Node 22.20.0's experimental warning to stderr only when
 used. Module import, tool listing and gameplay-only use do not load it.
 
+Schema v2 keeps the same application ID and default `.local/doom-memory.sqlite`
+filename. Version-1 and foreign databases return `memory-schema-unsupported`
+without changing their contents/version. There is no automatic deletion or migration.
+For the one-time fresh-memory rollout, after reviewing the change: stop the
+MCP/agent process, remove the existing `.local/doom-memory.sqlite` file, then restart.
+The first valid create lazily initializes v2; a missing-database lookup still writes nothing.
+
 There are two tables: `notes` stores the immutable original claim, namespace,
-anchor, source, next question and creation date, plus its current revision;
+observer anchor, source, next question and creation date, plus its current revision
+and mutable landmark/exploration flags;
 `entries` stores ordered, dated source/assessment appends and request-id receipts.
 Revision 1's receipt represents creation; subsequent revisions hold assessments.
+Both tables store `is_landmark` and `is_active_exploration` as constrained 0/1
+integers, with active implying landmark; public values are booleans. Notes default
+false/false. Every entry, including creation, snapshots the effective flags at that
+revision. Active means eligible unfinished exploration, not a run-selected objective.
 Writes use short `BEGIN IMMEDIATE` transactions, a 100 ms busy timeout and DELETE
 rollback journaling. One durable SQLite file may have a temporary `-journal`
 during writes; no WAL/checkpoint service is used. Different processes can reopen
@@ -150,9 +164,10 @@ Tool arguments (all objects reject unknown fields):
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
-| `doom_memory_find` | `mapNamespace, x, y, headingDeg, radius? = 64, limit? = 3` | `caution, candidates[]` with ID, revision, source, anchor, original hypothesis, next question, creation date, `unverified` status, distance, circular heading difference and all ordered assessment entries |
-| `doom_memory_record` create | `operation: "create", requestId, mapNamespace, x, y, headingDeg, hypothesis, nextQuestion?, source` | `noteId, revision: 1, status: "unverified", replayed` |
-| `doom_memory_record` append | `operation: "append", requestId, noteId, expectedRevision, assessment, source` | `noteId, revision, status: "unverified", replayed` |
+| `doom_memory_find` nearby | `mode?: "nearby", mapNamespace, x, y, headingDeg, radius? = 64, limit? = 3` | `caution, candidates[]` with ID, revision, source, observer anchor, original hypothesis/question, creation date, `unverified` status, both flags, distance, circular heading difference and ordered assessments with flag snapshots |
+| `doom_memory_find` active | `mode: "active-landmarks", mapNamespace, limit? = 3` | `mode, mapNamespace, caution, candidates[], hasMore`; same note/history fields, without distance/heading delta |
+| `doom_memory_record` create | `operation: "create", requestId, mapNamespace, x, y, headingDeg, hypothesis, nextQuestion?, source, isLandmark? = false, isActiveExploration? = false` | `noteId, revision: 1, status: "unverified", replayed` |
+| `doom_memory_record` append | `operation: "append", requestId, noteId, expectedRevision, assessment, source, flags?: {isLandmark, isActiveExploration}` | `noteId, revision, status: "unverified", replayed` |
 
 Coordinates are Doom units in [-32768, 32768], heading is degrees in [0, 360),
 radius is positive and at most 1024, and limit is an integer from 1 through 10.
@@ -161,6 +176,15 @@ question up to 512; hypothesis/assessment up to 2000. Note IDs are UUIDs.
 Namespace matching is exact after trimming surrounding whitespace. Lookup filters
 by XY radius, sorts by distance then circular heading difference then stable ID,
 and never excludes a candidate just because it faces another direction.
+
+Active mode rejects pose/radius fields and selects only notes with both flags true
+in the exact namespace, ordered by creation date then note ID, independent of pose.
+It fetches one extra note to determine `hasMore`; false means all matching stored
+notes at that read snapshot were returned, not complete knowledge of the map.
+The default limit is 3 (maximum 10); no history paging or candidate pagination is provided.
+Ordered assessments retain disagreements and proposed next experiments; the latest
+free-text suggestion is advisory, never proof. Selection stays in Codex session
+context and does not change a note's active flag.
 
 For example, call `doom_memory_find` offline with:
 
@@ -179,6 +203,14 @@ and `assessment`. Repeating the exact normalized request ID/payload returns its
 original resulting revision with `replayed: true`, even if the note has since
 advanced. Conflicting reuse returns `memory-request-conflict`; a stale new append
 returns `memory-revision-conflict`. Neither changes the original or earlier entries.
+Omitted append flags preserve both values; supplied flags require both booleans
+and atomically replace the pair alongside the new revision/assessment. Promotion,
+activation, deactivation, reopening and explicit false/false downgrade are allowed;
+false/true is rejected at validation and storage boundaries. Flags participate in
+request hashing, and replay never reapplies an old flag snapshot. There is no
+flag-only write or mutable original question. Record bounded attempts and their
+limits; inconclusive/local abandonment keeps exploration active. Resolve or retire
+only with an attributed rationale at an eligible checkpoint, without an end-of-run flush.
 Lookup includes all assessments so disagreement stays visible; long histories
 can increase response size. Do not put credentials, prompts, auth data or complete
 provider payloads in this notebook.
@@ -198,8 +230,9 @@ or authenticate its pixels. No D screenshot is retained here.
 `app/tests/doom-memory.test.ts` exercises actual stdio MCP child processes against
 isolated temporary databases with fail-on-use fetch. It checks missing-storage
 lookups, A/D regional retrieval, namespace/radius exclusions, three-process
-persistence, attributed append/retrieval, idempotency, conflicts, unverified-only
-schemas, locking and schema-version rejection. These are offline persistence
+persistence, active discovery without pose/known IDs, flag transitions/snapshots,
+idempotency, competing revision writes, storage invariants, deterministic bounds,
+locking and byte-preserving old/foreign-schema rejection. These are offline persistence
 checks, not navigation improvement or live Doom/Decisions evidence.
 
 ## Project setup and foreground play

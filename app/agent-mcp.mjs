@@ -152,13 +152,13 @@ export function createAgentMcpServer({
     [
       'doom_memory_find',
       memoryFindSchema,
-      'Find advisory, unverified regional notes by namespace and pose; no gameplay or verified map identity.',
+      'Find advisory, unverified notes nearby by namespace and pose, or mode active-landmarks by namespace without pose. No gameplay or verified map identity.',
       findMemory,
     ],
     [
       'doom_memory_record',
       memoryRecordSchema,
-      'Create or append advisory, unverified navigation notes; source text is attribution, never proof. During play, use only at skill-approved healthy checkpoints.',
+      'Create or append advisory, unverified navigation notes; append may replace both landmark/exploration flags with an assessment and revision CAS. Source text is attribution, never proof. During play, use only at skill-approved healthy checkpoints.',
       recordMemory,
     ],
   ]) {
