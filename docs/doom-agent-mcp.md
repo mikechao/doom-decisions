@@ -107,7 +107,10 @@ notebook exception. Play uses only the current verified `mapIdentity.mapKey` as
 after post-start observation/config/image checks. These two separately inspected
 startup reads are the sole exception to one lookup per checkpoint; later reads are
 event-driven on new regions, landmark returns, looping or a worthwhile revision refresh. It
-records only meaningful new findings at eligible pre-decision checkpoints; nearby
+records meaningful new findings at eligible pre-decision checkpoints, with only the
+skill's [single optional final assessment append](../.agents/skills/doom-decisions/SKILL.md#final-assessment-after-normal-exhaustion)
+after confirmed healthy normal exhaustion. No post-exhaustion lookup or create is
+allowed. The skill defines the complete gate, assessment and reporting rules; nearby
 notes remain unverified leads. Missing verified identity skips memory; malformed
 gameplay evidence retains existing stop rules. On session/ownership or map changes,
 discard transient candidates, note IDs/revisions, pose targets and pending appends.
@@ -116,7 +119,7 @@ key excludes sessionId, allowing a fresh lookup to retrieve previous sessions'
 notes on the same map. Historical `unverified:shareware-doom1-e1m1` notes are never
 implicitly read, migrated or merged into verified namespaces. Isolated notebook
 failures do not block otherwise eligible gameplay; Stop/terminal and gameplay
-errors still take precedence, with no memory flush on exit. See the
+errors still take precedence; the final append is no general exit flush. See the
 [skill](../.agents/skills/doom-decisions/SKILL.md#advisory-navigation-memory) for the full policy.
 
 Every note and appended assessment is **advisory and unverified**. A required
@@ -124,6 +127,12 @@ plain-text `source` attributes a claim; it does not authenticate telemetry,
 screenshots, traversal or IWAD identity. Status is always `unverified`; status
 inputs and other unknown fields are rejected. Text claiming success is still
 unverified text. No live observation/receipt association is implemented.
+
+Final-assessment eligibility and at-most-one append are procedural Codex discipline,
+not server enforcement. Final accounting is a snapshot, not an atomic permission
+token: an unobserved browser Stop click may precede an advisory append because
+memory tools have no server-side lease/Stop fence. Known Stop/terminal replies and
+gameplay authorization remain unchanged.
 
 Storage defaults to `<repository-root>/.local/doom-memory.sqlite`, resolved from
 the module location, independent of cwd. An optional **absolute** `DOOM_MEMORY_DB`
@@ -210,10 +219,13 @@ false/true is rejected at validation and storage boundaries. Flags participate i
 request hashing, and replay never reapplies an old flag snapshot. There is no
 flag-only write or mutable original question. Record bounded attempts and their
 limits; inconclusive/local abandonment keeps exploration active. Resolve or retire
-only with an attributed rationale at an eligible checkpoint, without an end-of-run flush.
-Lookup includes all assessments so disagreement stays visible; long histories
-can increase response size. Do not put credentials, prompts, auth data or complete
-provider payloads in this notebook.
+only with an attributed rationale under the skill's write-eligibility rules.
+The original `nextQuestion` is immutable; a final assessment's latest recommendation
+belongs in its appended text. For returned active notes, existing `active-landmarks`
+retrieval exposes ordered assessments to independent sessions; nearby retrieval
+also returns history. All assessments remain visible, including disagreements;
+long histories can increase response size. Do not put credentials, prompts, auth
+data or complete provider payloads in this notebook.
 
 Proximity establishes neither the same viewpoint nor map identity, passability
 or navigation success. `unverified:shareware-doom1-e1m1` is a caller-chosen label,
@@ -264,9 +276,12 @@ for gameplay. Do not change global `~/.codex` settings or add credentials here.
    CAS edits use temporary files and require fresh combined observations afterward.
 4. Each healthy completed decision requires its verified after-action PNG to be
    viewed. There is no routine post-decision config read; final normal exhaustion
-   requires one standalone `doom_get_config` accounting read showing
-   `reserved === limit` and `remaining === 0`. Errors, conflicts, uncertain outcomes
-   or disconnect end play without retry or recovery. Validated Stop permits only the exact Stop reply;
+   requires the existing single standalone `doom_get_config` accounting read and the
+   skill's [final assessment gate](../.agents/skills/doom-decisions/SKILL.md#final-assessment-after-normal-exhaustion).
+   Only that gate permits the optional final append before the normal retrospective;
+   it grants no observation, gameplay, settings edit or extra accounting read.
+   Gameplay/configuration errors, conflicts, uncertain outcomes or disconnect end
+   play without retry or recovery. Validated Stop permits only the exact Stop reply;
    verified terminal permits only its prescribed final PNG inspection and reply.
 
 The [play skill](../.agents/skills/doom-decisions/SKILL.md) defines the complete

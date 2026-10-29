@@ -76,8 +76,8 @@ Apply termination before any next tool call, including memory and accounting:
   inspected, reply only
   `Terminal image inspection failed. Ending play without confirming death or exit.`
   Do not add a death/exit/Stop acknowledgment. No retry or further tool calls.
-- Normal exhaustion requires final authoritative `reserved === limit` and
-  `remaining === 0`; `active: false` alone does not prove exhaustion.
+- Normal exhaustion requires the complete [final assessment gate](#final-assessment-after-normal-exhaustion);
+  `active: false` or zero remaining alone does not prove exhaustion.
 
 Cancellation is cooperative at result boundaries; the skill cannot preempt
 reasoning. Stop between calls may be learned from the next old-lease operation,
@@ -207,9 +207,11 @@ settings-file path. Reads do not overwrite the retained standalone observation.
 For final accounting after a healthy decision, get sessionId directly from
 `load("doomLast").observation.sessionId`; use attachment's leaseFile.
 
-Every error/early exit or image-forwarding exception above ends the WHOLE attempt,
-not merely JavaScript. If structured content is unavailable, emit complete text
-fallback and stop; text is not visual evidence. If image emission returns but the
+Every gameplay/configuration error or early exit, or image-forwarding exception
+above ends the WHOLE attempt, not merely JavaScript. Notebook failures follow
+[advisory memory failure rules](#advisory-navigation-memory).
+For gameplay/configuration, if structured content is unavailable, emit complete
+text fallback and stop; text is not visual evidence. If image emission returns but the
 image is not visible/inspectable, stop too. Never rerun a call or retry forwarding.
 A terminal result permits only that image handoff, inspection and prescribed reply;
 there is no next operation. These sequencing/stopping rules require model discipline;
@@ -286,22 +288,73 @@ local storage does not enforce understanding or revoke the browser lease.
    image inspection permit navigation updates and another step-5 observation.
 8. When healthy completed decisions appear to consume the frozen limit, after
    inspecting the last image call `doom_get_config` once for authoritative final
-   accounting, without another observe/decide. Confirm `reserved === limit` and
-   `remaining === 0`; report failure/ambiguity without retry. Stop/terminal/error
+   accounting, without another observe/decide. Apply the
+   [final assessment gate](#final-assessment-after-normal-exhaustion) below;
+   report accounting failure/ambiguity without retry. Stop/terminal/error/uncertainty
    precedence forbids this call after such outcomes. Exhaustion needs no human
    input; early ending/achieved goal requires the human to click **Stop Agent**.
    Never extend the cap through manual mode, reattachment or another claim.
 
-   Only after confirmed healthy normal exhaustion and authoritative final accounting,
-   give a short report: the selected (or most recently explicitly revised) objective;
-   **Outcome: achieved / partially advanced / disproven / inconclusive** with observed
-   evidence; remaining uncertainty; and one concrete suggested next-run experiment.
-   Do not infer success from displacement, probes or ambiguous images. State
-   **Persistence status**: which note ID/revision and recommendation were already
-   saved, if any, versus final-only conclusions not persisted. Use only receipts
-   already inspected; make no memory write, observation, gameplay or other tool call
-   for this retrospective. Stop/terminal exact replies and error/uncertainty precedence
-   remain unchanged; those paths require no retrospective.
+## Final assessment after normal exhaustion
+
+Require every admitted decision, including the final one, to have an unambiguous
+`outcome: "completed"`, nonterminal receipt and an actually inspected resulting
+image. No earlier failed/uncertain decision, lost reply or pending operation can
+be treated as normal completion. Inspect the existing single final `doom_get_config`
+receipt for the original session/run identity, expected configuration revision and
+coherent positive safe-integer frozen `limit`, with `reserved === limit`,
+`sdkInvoked === reserved`, `remaining === 0` and `active === false`.
+Counters alone do not establish successful actions. Any known Stop, terminal,
+gameplay/configuration error, ambiguous completion, changed session/map/ownership
+or other immediate-stop signal takes precedence; follow its existing reply/abort
+path without a final append or normal retrospective.
+
+Compare the initially announced objective, any explicit evidence-based revision
+and its reason, and the inspected final evidence. Assess
+**Outcome: achieved / partially advanced / disproven / inconclusive**, separating
+verified observations and measured limitations from interpretation, unresolved
+connectivity and one concrete next-run experiment. Revising the objective does not
+retroactively achieve the initial question; motion, screenshots alone or a clear
+center ray do not certify traversal.
+
+Before the final report, permit at most ONE optional `doom_memory_record` **append**
+only when all of these hold:
+
+- Memory remains available from this invocation's startup capability check, and a
+  directly relevant note was already discovered in the same verified map namespace,
+  session and ownership context. Use the final inspected observation's mapKey;
+  no lookup or create is permitted after exhaustion. With no relevant note, skip.
+- Meaningful new information exists, including a bounded negative/inconclusive
+  result that narrows the next test; do not write boilerplate because a run ended.
+- A usable latest known note revision is retained from the relevant find or an
+  acknowledged prior append. Skip a known-stale revision. Use the existing CAS,
+  fresh request-ID and source rules; retain the exact payload and acknowledgment.
+- No immediate-stop signal described above is known before the append.
+
+Put the initial objective, any revised objective/reason, final outcome/progress,
+observed evidence/limits, remaining uncertainty and next experiment concisely in
+`assessment`. Use real observed IDs/tics and relevant hashes/attribution in `source`
+within existing limits; never manufacture provenance or promote advisory text to
+verified truth. The immutable original `nextQuestion` stays unchanged; the latest
+recommendation belongs in the assessment. Choose one directly relevant recipient
+if multiple notes influenced the run and attribute the others there. Keep unresolved
+exploration active; flag changes still require the existing resolution/retirement rationale.
+
+Inspect the append receipt. On conflict, rejection, lost/ambiguous acknowledgment
+or another memory failure, do not retry, reread or make another write. An isolated
+memory failure does not retroactively invalidate healthy gameplay. Give the short
+normal retrospective whether persistence was **confirmed**, **skipped**, **failed**
+or **unknown**, unless an existing immediate-stop path takes precedence. State
+**Persistence status** with acknowledged note ID/revision and saved recommendation
+where available; distinguish saved conclusions from final-only conclusions. An
+explicit rejection is failed; a missing/ambiguous acknowledgment is unknown; explain
+skips. An attempted write or unknown reply is never confirmed persistence. After
+final accounting, this append is the only permitted tool call; then make no further calls.
+
+This is procedural model discipline, not server-enforced finalization. The config
+receipt is a snapshot, not an atomic permission token. Memory tools do not check
+the browser lease or Stop: an unobserved Stop click may precede this advisory append.
+Known Stop/terminal rules and gameplay authorization remain unchanged.
 
 ## Advisory navigation memory
 
@@ -399,22 +452,24 @@ while pursuing the same objective. Disclose again only when a new note or a
 materially new application of a note changes the plan. This documents Codex's
 stated reliance, not proof that memory causally improved navigation.
 
-**Record sparingly.** Write only at the same step-5 healthy, active-run checkpoint
-after fresh image inspection and before the next decision. A reusable landmark
+**Record sparingly.** Except for the single optional
+[final assessment append](#final-assessment-after-normal-exhaustion), write only
+at the same step-5 healthy, active-run checkpoint after fresh image inspection and
+before the next decision. A reusable landmark
 with a testable unknown, a materially better sightline, or a newly clarified
 attempt outcome can warrant a record. Do not save every frame/movement, repetitive
 guesses, restatements, or implicitly seed history. If no eligible checkpoint
-remains, omit the write; final accounting and all stop rules take precedence.
+remains, omit the checkpoint write; final accounting and all stop rules take precedence.
 Do not force a write just before the final decision.
 
-For the same specific hypothesis, prefer append using a `noteId` and note
-`revision` obtained/confirmed by the latest successful find for the current
+For the same specific hypothesis, prefer append using a `noteId` and latest note
+`revision` from a successful find or its acknowledged append for the current
 verified namespace and session/ownership context (distinct from agent config revision):
 `doom_memory_record {operation: "append", requestId, noteId, expectedRevision,
 assessment, source, flags?}`. Optional `flags` must contain the complete boolean pair
-`{isLandmark, isActiveExploration}`; omission preserves both. If the retained revision
-may be stale, defer until a fresh lookup is due. For a genuinely different location
-or hypothesis, even nearby, use
+`{isLandmark, isActiveExploration}`; omission preserves both. During active play, if
+the retained revision may be stale, defer until a fresh lookup is due. For a
+genuinely different location or hypothesis, even nearby, use
 `{operation: "create", requestId, mapNamespace, x, y, headingDeg, hypothesis,
 nextQuestion?, source, isLandmark?, isActiveExploration?}`. Create flags default false;
 active exploration requires a landmark, and impossible pairs are rejected.
@@ -459,9 +514,11 @@ not usable leads. A shared MCP disconnect, lost/uncertain gameplay result or any
 existing gameplay/configuration
 stop condition still ends play. Notebook operations neither check live lease
 revocation nor authorize admission. Never call memory after known Stop Agent,
-terminal, exhaustion, achieved goal, uncertain result, or another immediate-stop
-state, nor between a stop indication and its required reply. Exact Stop/terminal replies and the
-terminal image handoff/inspection remain unchanged; no end-of-run memory flush.
+terminal, early goal completion, uncertain result, or another immediate-stop
+state, nor between a stop indication and its required reply. Beyond step 8's single
+final accounting read, only the
+[final assessment append](#final-assessment-after-normal-exhaustion) is permitted
+after exhaustion. Exact Stop/terminal replies and terminal image handoff/inspection remain unchanged.
 
 ## Agent settings: read, edit, CAS
 
