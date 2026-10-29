@@ -399,24 +399,21 @@ and manually opens `http://127.0.0.1:5174/`. In Codex, from this worktree, invok
 `$doom-decisions play`. Codex first discovers all eight MCP tools, then calls
 `doom_attach` before any other Doom operation. Missing/ambiguous tools or a
 disconnected server end play without claiming a run. Codex uses MCP directly
-thereafter and views the initial verified PNG and every
-completed/terminal decision result. Within the same active run and unchanged
-lease/page/epoch/session ownership, a fresh observation may reuse an earlier
-successful visual inspection only when its verified `pngSha256` and native/Canvas
-frame hashes match that inspected image. New or unverified visual identities
-require viewing; terminal viewing is always mandatory. This skips only duplicate
-image opening: fresh observation IDs, current telemetry and configuration/revision
-checks remain required. See the [skill's visual evidence reuse rule](../.agents/skills/doom-decisions/SKILL.md).
+thereafter through Code Mode and inspects every successful observation and
+completed/terminal decision image in its producing execution, even at identical
+pixels. See the [skill's image handoff rules](../.agents/skills/doom-decisions/SKILL.md).
 It retains a short navigation hypothesis and
 updates ephemeral high-level instructions and Game State inclusion when useful. The Decisions API still chooses
 every low-level action. No browser driving, second server, daemon or persistent map
 is involved. `play` is skill routing, not a CLI subcommand.
 
-Invoke the skill once after preparation. Codex views the initial verified PNG,
-reads `doom_get_config` and `doom_get_prompt`, invokes `doom_start_run` once and
-uses the returned run ID, revision and frozen limit. It reopens the fresh startup
-image after starting. Every decision requires a fresh `doom_observe` and
-pre-decision `doom_get_config`; there is no routine post-decision config read.
+Invoke the skill once after preparation. Codex inspects the initial `doom_observe`
+receipt/PNG, including the complete `configuration.instructionTemplate` and revision,
+then invokes `doom_start_run` once and inspects the returned run ID and frozen limit.
+It observes and inspects afresh after starting. Every decision requires a fresh
+`doom_observe` with configuration/revision/run; no routine `doom_get_prompt` or
+`doom_get_config` cross-check is needed. Both tools remain for independent reads
+and diagnostics; there is no routine post-decision config read.
 After the final healthy result and required image viewing, one final config read
 must confirm `reserved === limit` and `remaining === 0` for normal exhaustion.
 Stop, terminal and error rules take priority over final accounting.

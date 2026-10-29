@@ -34,7 +34,7 @@ relax the eight-tool prerequisite or authorize gameplay.
 | `doom_attach` | `{}` | Acquire lease; no provider usage |
 | `doom_observe` | `leaseFile` | Passive verified PNG, state, configuration/revision/run |
 | `doom_get_config` | `leaseFile, sessionId` | Effective settings and final accounting |
-| `doom_get_prompt` | `leaseFile, sessionId` | Effective instructions |
+| `doom_get_prompt` | `leaseFile, sessionId` | Effective instructions for independent reads/diagnostics |
 | `doom_start_run` | `leaseFile, observationId, sessionId, revision` | Claim process allowance once |
 | `doom_set_config` | `leaseFile, sessionId, runId, revision, configFile` | CAS complete seven-field replacement |
 | `doom_set_prompt` | `leaseFile, sessionId, runId, revision, instructionsFile` | CAS prompt-only replacement |
@@ -187,14 +187,14 @@ local storage does not enforce understanding or revoke the browser lease.
 ## Foreground procedure
 
 1. Attach once, then observe and inspect the initial receipt/image. An existing
-   run is not permission to resume it: require `run: null`. Read effective settings
-   from this combined observation; do not add a routine get-config.
-2. Call `doom_get_prompt` using attachment's leaseFile and the observed sessionId;
-   inspect the effective instructions. Then invoke `doom_start_run` ONCE using
-   that standalone observation's sessionId, observationId and revision. Inspect the
-   claim and actual frozen allowance. On budget-unavailable, tell the human to set
-   a positive safe-integer budget and fully relaunch dev:agent. Budget-closed,
-   rejected/ambiguous claim or any other error ends play, never retry/replenish.
+   run is not permission to resume it: require `run: null`. Read effective settings,
+   including complete `configuration.instructionTemplate`, at this observation's
+   `revision`; do not add a routine get-config or get-prompt.
+2. Invoke `doom_start_run` ONCE using that standalone observation's sessionId,
+   observationId and revision. Inspect the claim and actual frozen allowance. On
+   budget-unavailable, tell the human to set a positive safe-integer budget and fully
+   relaunch dev:agent. Budget-closed, rejected/ambiguous claim or any other error
+   ends play, never retry/replenish.
 3. Use step 5 for the mandatory fresh standalone observe after the claim, even at
    unchanged pixels/tic. A claim receipt is not decision input. Keep a concise
    conversation record: goal, last action/outcome, visual confidence, navigation hypothesis,

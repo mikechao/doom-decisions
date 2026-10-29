@@ -1285,16 +1285,19 @@ it('uses one combined MCP read at startup, after start/CAS and before a decision
     ops.push(new URL(url).pathname.split('/').at(-1));
     return s.h.transport(url, options);
   } });
-  const input = { leaseFile: s.base[1], sessionId: s.observation.sessionId };
+  const observe = async () => delivered(await callMcp(client, 'observe', { leaseFile: s.base[1] }), true);
+  const initial = await observe();
+  assert.equal(initial.run, null);
+  assert.equal(initial.revision, 0);
+  assert.deepEqual(initial.configuration, s.observation.configuration);
+  const input = { leaseFile: s.base[1], sessionId: initial.sessionId };
   const call = async (op, fields = {}) => delivered(await callMcp(client, op, { ...input, ...fields }));
-  const prompt = await call('get-prompt');
-  assert.equal(prompt.instructions, s.observation.configuration.instructionTemplate);
-  let config = await call('start-run', { observationId: s.observation.observationId, revision: s.observation.revision });
-  const observe = async () => delivered(await callMcp(client, 'observe', { leaseFile: input.leaseFile }), true);
+  let config = await call('start-run', { observationId: initial.observationId, revision: initial.revision });
   const first = await observe();
-  assert.notEqual(first.observationId, s.observation.observationId);
-  assert.equal(first.tic, s.observation.tic);
-  assert.equal(first.pngSha256, s.observation.pngSha256);
+  assert.deepEqual(ops, ['observe', 'start-run', 'observe']);
+  assert.notEqual(first.observationId, initial.observationId);
+  assert.equal(first.tic, initial.tic);
+  assert.equal(first.pngSha256, initial.pngSha256);
   assert.deepEqual(first.configuration, config.configuration);
   assert.deepEqual(first.run, config.run);
   assert.deepEqual(first.run, { runId: config.run.runId, active: true, limit: 2, reserved: 0, sdkInvoked: 0, remaining: 2 });
@@ -1337,6 +1340,7 @@ it('uses one combined MCP read at startup, after start/CAS and before a decision
   const exhausted = await observe();
   assert.deepEqual(exhausted.run, ended.run);
   assert.equal(ops.filter(op => op === 'get-config').length, 1);
+  assert.equal(ops.includes('get-prompt'), false);
   assert.equal(s.game.sdkCalls, 2);
 });
 
@@ -1380,6 +1384,7 @@ it.each(['missing', 'extra', 'configuration', 'revision', 'counters', 'runId', '
 
 it.each([
   ['default', defaultDecisionInstructionTemplate],
+  ['exact whitespace', ' \tExplore for {{tics}} tics.\r\n  Preserve spacing.\t \n'],
   ['maximum escaped', '\u0001'.repeat(15999) + 'x'],
   ['maximum Unicode', '界'.repeat(16000)],
 ])('retains complete %s instructions through combined broker/CLI/MCP output', async (label, instructionTemplate) => {
@@ -1388,6 +1393,12 @@ it.each([
   const result = delivered(await callMcp(client, 'observe', { leaseFile: s.base[1] }), true);
   assert.equal(result.configuration.instructionTemplate, instructionTemplate);
   const config = delivered(await callMcp(client, 'get-config', { leaseFile: s.base[1], sessionId: result.sessionId }));
+  const prompt = delivered(await callMcp(client, 'get-prompt', { leaseFile: s.base[1], sessionId: result.sessionId }));
+  assert.deepEqual(prompt, {
+    pageId: result.pageId, epoch: result.epoch, commandId: prompt.commandId,
+    sessionId: result.sessionId, revision: result.revision,
+    instructions: instructionTemplate, run: result.run,
+  });
   const { revision, configuration, run, ...oldObservation } = result;
   const combinedBytes = Buffer.byteLength(JSON.stringify(result));
   const pairBytes = Buffer.byteLength(JSON.stringify(oldObservation)) + Buffer.byteLength(JSON.stringify(config));

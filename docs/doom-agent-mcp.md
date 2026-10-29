@@ -220,10 +220,12 @@ for gameplay. Do not change global `~/.codex` settings or add credentials here.
    Decisions provider and incur charges. Existing project execution approvals
    still apply.
 3. Invoke **`$doom-decisions play`** once. Codex attaches, observes and views the
-   initial PNG, reads configuration from that result, cross-checks prompt and claims
-   the single allowance once. It observes/views afresh after starting, even at
-   identical tic/pixels. Each fresh observation supplies configuration/revision/run
-   before a decision or after CAS; no routine follow-on `doom_get_config` is needed.
+   initial PNG, reads configuration and complete `configuration.instructionTemplate`
+   at that result's revision and claims the single allowance once. It observes/views
+   afresh after starting, even at identical tic/pixels. Each fresh observation
+   supplies configuration/revision/run
+   before a decision or after CAS; no routine follow-on `doom_get_config` or
+   `doom_get_prompt` is needed. Both tools retain independent read/diagnostic uses.
    It chooses 1–35 tics (initial/default 6) with an observable
    rationale before every nondefault decision; the Decisions API chooses actions.
    CAS edits use temporary files and require fresh combined observations afterward.
