@@ -19,9 +19,11 @@ opens `http://127.0.0.1:5174/` and waits for verified readiness. Reuse that serv
 Never start another instance or change global Codex settings. Screenshots and
 included Game State can reach the selected provider and incur charges.
 
-Use the existing `doom_decisions` MCP tools through Code Mode only. Discover all
-eight gameplay/configuration tools before attachment; missing/disabled/ambiguous
-availability ends play. `doom_attach` is the first Doom domain call. Never use
+Use the existing `doom_decisions` MCP tools through Code Mode only. In one startup
+execution, discover all ten tools, check each required gameplay/configuration tool
+and attach once using the recipe below. Missing, duplicated or non-callable required
+tools end play before attachment, without retry or recovery. `doom_attach` is the
+first Doom domain call. Never use
 shell CLI gameplay, another transport/viewer, reconnect, reattach or replay to
 recover a result. Temporary settings files are local inputs, not another transport.
 Preserve host approval choices; a denied gameplay/configuration call ends play.
@@ -40,8 +42,9 @@ relax the eight-tool prerequisite or authorize gameplay.
 | `doom_set_prompt` | `leaseFile, sessionId, runId, revision, instructionsFile` | CAS prompt-only replacement |
 | `doom_decide` | `leaseFile, observationId, sessionId, runId, revision` | One provider-selected action and resulting PNG |
 
-Also discover optional `doom_memory_find` and `doom_memory_record`. Missing tools
-or denied memory approval disable memory, not gameplay. Make no memory calls
+The same startup execution checks optional `doom_memory_find` and
+`doom_memory_record` and retains whether both are available. Missing either tool
+or denied memory approval disables memory, not gameplay. Make no memory calls
 before attachment. Never substitute shell/SQL/file writes or broaden permissions.
 Attaching, observing and settings operations grant no attempts; only the one
 `doom_start_run` claims the configured allowance. The browser/controller and
@@ -108,16 +111,44 @@ to files/notebook. If retained data/helpers are unavailable, end play. No pendin
 promotion, copied authorization object, previous-operation dispatcher or fatal marker.
 Initialize attachment once; never reset these slots to recover an ended attempt.
 
-Attach once:
+Discover/check and attach once in ONE execution; discovery is not an MCP operation.
+Inspect the complete attachment receipt before the next execution; do not chain observe:
 
 ```js
-const r = await tools.mcp__doom_decisions__doom_attach({});
+const required = [
+  "mcp__doom_decisions__doom_attach",
+  "mcp__doom_decisions__doom_observe",
+  "mcp__doom_decisions__doom_get_config",
+  "mcp__doom_decisions__doom_start_run",
+  "mcp__doom_decisions__doom_decide",
+  "mcp__doom_decisions__doom_set_config",
+  "mcp__doom_decisions__doom_get_prompt",
+  "mcp__doom_decisions__doom_set_prompt"
+];
+const optional = [
+  "mcp__doom_decisions__doom_memory_find",
+  "mcp__doom_decisions__doom_memory_record"
+];
+const available = name =>
+  ALL_TOOLS.filter(entry => entry.name === name).length === 1 &&
+  typeof tools[name] === "function";
+const unavailableRequired = required.filter(name => !available(name));
+const memoryAvailable = optional.map(available).every(Boolean);
+text({ unavailableRequired, memoryAvailable });
+store("doomMemoryAvailable", memoryAvailable);
+if (unavailableRequired.length) {
+  text({ prerequisiteFailure: "Required Doom tools unavailable; ending play without attachment." });
+  exit();
+}
+const attachName = ALL_TOOLS.find(entry => entry.name === required[0]).name;
+const r = await tools[attachName]({});
 const d = r.structuredContent;
 text({ isError: r.isError, result: d ?? r.content?.filter(b => b.type === "text") });
 if (r.isError !== false || !d || "error" in d) exit();
 store("doomAttachment", d);
 store("doomObservation", null);
 store("doomLast", d);
+// END: inspect this attachment receipt before another operation.
 ```
 
 Observe (one complete execution; inspect before the next call):
@@ -254,6 +285,9 @@ local storage does not enforce understanding or revoke the browser lease.
 ## Advisory navigation memory
 
 Use only the two optional notebook tools, individually inspecting each result.
+Before any memory operation, require `load("doomMemoryAvailable") === true`;
+otherwise skip memory for this invocation. Reuse this startup capability result;
+never rediscover tools or re-enable memory during the invocation.
 The observation has raw `telemetry.x/y` (signed 16.16) and unsigned
 `telemetry.angle`, not converted pose fields. Pass `x = telemetry.x / 65536`,
 `y = telemetry.y / 65536`, `headingDeg = telemetry.angle * 360 / 4294967296`.
@@ -365,7 +399,8 @@ a center-ray probe or an image alone cannot establish verified traversal.
 approval is not a failed gameplay receipt: report briefly, abandon that memory
 operation and continue current-observation reasoning only if gameplay remains
 eligible. Except for the deferred revision-conflict reread above, disable memory
-for this invocation after failure; do not retry, recover via another transport,
+with `store("doomMemoryAvailable", false)` for this invocation after failure;
+do not retry, recover via another transport,
 or change permissions. Treat malformed memory results as isolated memory failure,
 not usable leads. A shared MCP disconnect, lost/uncertain gameplay result or any
 existing gameplay/configuration
