@@ -102,3 +102,11 @@ Preserve upstream notices, licenses, and source/build provenance; review engine 
 Use concise, descriptive commit subjects and keep changes focused.
 
 Pull requests should describe the change, link relevant issues, and list validation performed. Include screenshots for visual changes. Doom source, adapter, and build changes are reviewed and committed with the root repository as ordinary file changes.
+
+## Skill validation
+
+When validating `.agents/skills/doom-decisions`, use:
+
+`~/.venvs/codex-skill-validator/bin/python /Users/mike/.codex/skills/.system/skill-creator/scripts/quick_validate.py .agents/skills/doom-decisions`
+
+The validator requires PyYAML, installed in the dedicated virtual environment.
