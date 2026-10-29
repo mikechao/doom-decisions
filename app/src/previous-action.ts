@@ -50,7 +50,12 @@ export function createPreviousActionOutcome(
   const lines = [
     `Previous verified action: ${action} (${execution.independentlyVerifiedTics} tics).`,
   ];
-  if (action === 'forward' || action === 'backward') {
+  if (
+    action === 'forward' ||
+    action === 'backward' ||
+    action === 'turn_left' ||
+    action === 'turn_right'
+  ) {
     const dx = (end.x - start.x) / 65536;
     const dy = (end.y - start.y) / 65536;
     const changed = receipt.steps.some(

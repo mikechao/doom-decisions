@@ -44,12 +44,28 @@ it('distinguishes stationary samples, return to origin, and signed exact displac
     assert.doesNotMatch(outcome.text, /wall|collision|blocked|exit|failure/i);
 });
 
-it('does not judge turns, fire, use or neutral by their translation', () => {
-  for (const action of ['turn_left', 'turn_right', 'fire', 'use', 'neutral'])
-    assert.equal(sample(action, [[0, 0], [0, 0]]).outcome.text, `Previous verified action: ${action} (2 tics).`);
+it.each(['turn_left', 'turn_right'])('reports measured translation during %s without assigning a cause', action => {
+  const { outcome } = sample(action, [[-256, 655360], [-548, 1362586]]);
+  assert.equal(outcome.text, `Previous verified action: ${action} (2 tics).\nPlayer XY displacement: dx=-0.00836181640625, dy=20.791412353515625 Doom units; net translation observed.`);
+  assert.doesNotMatch(outcome.text, /No net displacement|momentum|caused|blocked|collision/i);
 });
 
-it('rejects unavailable coordinates, actor identity, unsupported states and unhealthy executions', () => {
+it.each(['turn_left', 'turn_right'])('distinguishes stationary %s from movement returning to its starting position', action => {
+  const stationary = sample(action, [[0, 0], [0, 0]]).outcome;
+  assert.equal(stationary.text, `Previous verified action: ${action} (2 tics).\nPlayer XY displacement: dx=0, dy=0 Doom units; unchanged at each recorded tic boundary.\nNo net displacement observed; cause unknown.`);
+  const returned = sample(action, [[-65536, 1], [0, 0]]).outcome;
+  assert.match(returned.text, /dx=0, dy=0.*endpoints equal; intermediate recorded positions changed/);
+  assert.doesNotMatch(returned.text, /unchanged at each/);
+});
+
+it('preserves action-only feedback for fire, use and neutral regardless of translation', () => {
+  for (const action of ['fire', 'use', 'neutral']) {
+    for (const positions of [[[0, 0], [0, 0]], [[65536, -65536], [131072, 0]]])
+      assert.equal(sample(action, positions).outcome.text, `Previous verified action: ${action} (2 tics).`);
+  }
+});
+
+it.each(['forward', 'turn_left', 'turn_right'])('rejects unavailable coordinates, actor identity, unsupported states and unhealthy executions for %s', action => {
   const invalid = [
     { x: undefined }, { y: null }, { x: NaN }, { y: Infinity }, { x: 0.5 },
     { x: -2147483649 }, { y: 2147483648 }, { actorEqual: 0 }, { liveActor: 0 },
@@ -58,15 +74,15 @@ it('rejects unavailable coordinates, actor identity, unsupported states and unhe
   ];
   for (const mutation of invalid) {
     for (const boundary of ['before', 'middle', 'last']) {
-      const { before, receipt, execution } = sample('forward', [[0, 0], [0, 0]]);
+      const { before, receipt, execution } = sample(action, [[0, 0], [0, 0]]);
       const native = boundary === 'before' ? before.native : receipt.steps[boundary === 'middle' ? 0 : 1].native;
       Object.assign(native, mutation);
-      assert.equal(createPreviousActionOutcome('forward', before, receipt, execution), undefined, `${boundary}: ${Object.keys(mutation)}`);
+      assert.equal(createPreviousActionOutcome(action, before, receipt, execution), undefined, `${boundary}: ${Object.keys(mutation)}`);
     }
   }
   for (const mutation of [{ complete: false }, { terminal: true }, { completionUncertain: true }, { independentlyVerifiedTics: 0 }]) {
-    const { before, receipt, execution } = sample();
-    assert.equal(createPreviousActionOutcome('forward', before, receipt, { ...execution, ...mutation }), undefined);
+    const { before, receipt, execution } = sample(action);
+    assert.equal(createPreviousActionOutcome(action, before, receipt, { ...execution, ...mutation }), undefined);
   }
 });
 
