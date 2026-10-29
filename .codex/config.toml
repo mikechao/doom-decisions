@@ -29,3 +29,6 @@ approval_mode = "approve"
 
 [mcp_servers.doom_decisions.tools.doom_set_prompt]
 approval_mode = "approve"
+
+[features.code_mode]
+direct_only_tool_namespaces = ["mcp__doom_decisions"]

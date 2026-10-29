@@ -2,6 +2,7 @@
 // native Worker/WASM or provider. Policy coverage stays in agent-bridge.test.ts.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -107,7 +108,8 @@ it.each(['legacy', 'auto'])('serves initialize/list/call over real stdio (%s), w
     console.info(`Doom MCP ${mode}: catalog=${bytes} UTF-8 bytes; tools=10; server instructions=0`);
     const result = await client.callTool({ name: 'doom_observe', arguments: { leaseFile } });
     assert.equal(result.isError, false);
-    const data = result.structuredContent;
+    assert.equal('structuredContent' in result, false);
+    const data = JSON.parse(result.content[0].text);
     const { png, ...metadata } = observation;
     assert.deepEqual(data, { pageId: lease.pageId, epoch: lease.epoch, commandId: data.commandId,
       pngPath: join(directory, `${data.commandId}.png`), ...metadata });
@@ -116,24 +118,28 @@ it.each(['legacy', 'auto'])('serves initialize/list/call over real stdio (%s), w
     assert.equal(result.content[1].mimeType, 'image/png');
     const pngBytes = Buffer.from(png.slice(22), 'base64');
     assert.deepEqual(Buffer.from(result.content[1].data, 'base64'), pngBytes);
+    assert.equal(createHash('sha256').update(pngBytes).digest('hex'), data.pngSha256);
     assert.deepEqual(await readFile(data.pngPath), pngBytes);
     assert.equal('png' in data, false);
     assert.equal(JSON.stringify(data).includes(png.slice(22)), false);
     const decided = await client.callTool({ name: 'doom_decide', arguments: { leaseFile, observationId: observation.observationId } });
     const { png: resultingPng, ...resultingMetadata } = decision.observation;
     assert.equal(decided.isError, false);
-    assert.deepEqual(decided.structuredContent, { pageId: lease.pageId, epoch: lease.epoch,
+    assert.equal('structuredContent' in decided, false);
+    const decidedData = JSON.parse(decided.content[0].text);
+    assert.deepEqual(decidedData, { pageId: lease.pageId, epoch: lease.epoch,
       commandId: observation.observationId, pngPath: join(directory, `${observation.observationId}.png`),
       ...decision, observation: resultingMetadata });
     assert.deepEqual(decided.content.map(block => block.type), ['text', 'image']);
-    assert.equal(decided.content[0].text, JSON.stringify(decided.structuredContent));
+    assert.equal(decided.content[0].text, JSON.stringify(decidedData));
     assert.equal(decided.content[1].mimeType, 'image/png');
-    assert.deepEqual(Buffer.from(decided.content[1].data, 'base64'), await readFile(decided.structuredContent.pngPath));
+    assert.deepEqual(Buffer.from(decided.content[1].data, 'base64'), await readFile(decidedData.pngPath));
     assert.deepEqual(Buffer.from(decided.content[1].data, 'base64'), Buffer.from(resultingPng.slice(22), 'base64'));
-    assert.equal(JSON.stringify(decided.structuredContent).includes(resultingPng.slice(22)), false);
+    assert.equal(createHash('sha256').update(Buffer.from(decided.content[1].data, 'base64')).digest('hex'), decidedData.observation.pngSha256);
+    assert.equal(JSON.stringify(decidedData).includes(resultingPng.slice(22)), false);
     const noFrame = await client.callTool({ name: 'doom_decide', arguments: { leaseFile, observationId: observation.observationId } });
     assert.equal(noFrame.isError, false);
-    assert.deepEqual(noFrame.structuredContent, { ...decided.structuredContent, pngPath: null,
+    assert.deepEqual(noFrame.structuredContent, { ...decidedData, pngPath: null,
       outcome: 'stopped', action: null, reportedTics: null, verifiedTics: null,
       cumulativeTics: null, observation: null });
     assert.deepEqual(noFrame.content, [{ type: 'text', text: JSON.stringify(noFrame.structuredContent) }]);
@@ -168,10 +174,12 @@ it.each(['legacy', 'auto'])('serves initialize/list/call over real stdio (%s), w
     for (const message of lines) assert.equal(message.jsonrpc, '2.0');
     const matches = lines.filter(message => JSON.stringify(message).includes(observation.pngSha256));
     assert.equal(matches.length, 2);
-    for (const match of matches)
-      assert.equal(JSON.stringify(match).split(observation.pngSha256).length - 1, 2,
-        'Full receipt is present in JSON text and structured output on the wire');
-    console.info(`Doom MCP ${mode}: observe/decide surface content + structuredContent; wire payload copies=2 each`);
+    for (const match of matches) {
+      assert.equal('structuredContent' in match.result, false);
+      assert.equal(JSON.stringify(match).split(observation.pngSha256).length - 1, 1,
+        'Full receipt is present once in JSON text on the wire');
+    }
+    console.info(`Doom MCP ${mode}: observe/decide surface JSON text + PNG without structuredContent; wire payload copies=1 each`);
   } finally {
     await client.close().catch(() => {});
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');

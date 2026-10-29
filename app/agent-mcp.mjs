@@ -134,7 +134,11 @@ export function createAgentMcpServer({
           }
           return {
             content,
-            structuredContent: result,
+            ...(content.some(
+              (block) => block.type === 'image' && block.mimeType === 'image/png',
+            )
+              ? {}
+              : { structuredContent: result }),
             isError: false,
           };
         } catch (error) {
