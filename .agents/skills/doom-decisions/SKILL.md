@@ -155,15 +155,33 @@ correct scope or inspected the receipt/image.
    what the current screenshot/verified telemetry supports (with material historical
    influence attributed below), and an observable sign for answering or revising it.
    Combine this with memory attribution or a prompt edit's **Why change** when
-   applicable; avoid duplicate announcements, prompt edits solely to announce it,
-   or per-decision restatement.
+   applicable; avoid duplicate announcements or per-decision restatement. When
+   selecting or materially changing an actionable navigation objective, ensure the
+   effective `instructionTemplate` communicates it before the next decision,
+   using step 5's prompt-update procedure if needed. Disclose material objective
+   changes; commentary or advisory-memory records alone do not reach the provider.
+   Avoid ceremonial edits when the effective prompt already expresses the current
+   objective.
 4. Assess plausible untested continuations against the objective and recent views.
    When one warrants attention, state a specific navigation question and what
    observation could support/reject it. Before abandoning a promising unresolved
    candidate, briefly state why (new evidence, repetition, risk, useful test or
    budget). Avoid exhaustive inventories, fixed scan limits or mandatory pursuit.
-   Separate native facts from hypotheses; images, XY endpoints and center rays
-   cannot alone prove collision, connectivity, body clearance or door usability.
+   High-level guidance should still be spatially concrete: when the current
+   inspected screenshot supports it, describe the target with stable visual anchors
+   and its current screen-relative direction. Reassess bearings after turning or
+   moving; an old direction or historical note is not current visual proof. If the
+   target is occluded, lost or ambiguous, say so and guide reacquisition or a bounded
+   disambiguating observation; never invent a bearing or silently identify another
+   opening as the same landmark.
+   Distinguish aligning/reacquiring, approaching, and testing access/traversability.
+   When alignment suffices, consider an approach test rather than continued scanning.
+   Frame short targeted tests as intent; the provider still chooses every action.
+   Separate native facts from hypotheses: movement attempts, XY displacement,
+   clear center rays or screenshots alone do not prove passage entry, connectivity,
+   body clearance or door usability. A verified failed/blocked test can inform the
+   next experiment; explain inconclusive results and claim blockage only with
+   relevant evidence.
 5. Before EVERY decision, use a fresh standalone `doom_observe` and inspect its
    complete receipt/image, effective configuration and live run. A healthy
    checkpoint requires ready state, an active run and remaining allowance; any
@@ -173,8 +191,11 @@ correct scope or inspected the receipt/image.
    decision observation as next input. Application freshness gates do not enforce
    this exact standalone-observe sequence or prove image inspection.
 
-   At this checkpoint apply advisory memory below when due. Revise high-level
-   guidance only when evidence warrants a change, retaining useful instructions,
+   At this checkpoint apply advisory memory below when due and compare the effective
+   prompt with the current objective and inspected evidence. Update when the prompt
+   becomes materially stale about the target, its relative direction, the navigation
+   phase, or the next useful test; otherwise leave it unchanged. There is no edit quota,
+   mandatory frequency or fixed stationary-turn trigger. Retain useful instructions,
    uncertainty and `{{tics}}`. Before EVERY prompt replacement (including through
    set-config), send user-visible commentary with **Why change** grounded in verified
    observations versus hypotheses and **New Decisions API prompt** containing the
@@ -197,8 +218,11 @@ correct scope or inspected the receipt/image.
 7. Call `doom_decide` once using the inspected standalone observation. Inspect the
    full outcome/usage/action/tic receipt and resulting image before proceeding.
    Terminal prefixes differ from completed N tics; outcomes without PNGs are not
-   new scenes. Apply termination first. Only healthy completed results plus actual
-   image inspection permit navigation updates and another step-5 observation.
+   new scenes. Apply termination first. After each healthy completed decision and
+   inspection of its fresh resulting observation/image, reassess whether the target
+   is still identifiable, guidance remains current and the next useful experiment
+   has changed. Apply any warranted prompt update at the next eligible step-5
+   checkpoint; only healthy completed results plus image inspection permit it.
 8. When healthy completed decisions appear to consume the frozen limit, after
    inspecting the last image call `doom_get_config` once for authoritative final
    accounting, without another observe/decide. Apply the
@@ -360,8 +384,9 @@ does not justify claiming use; notes that do not affect the plan need no attribu
 For `doom_set_prompt`, fold this attribution into the existing pre-change
 **Why change** commentary and still show the full new prompt as required above;
 do not add a second disclosure. For a material objective change without a prompt
-edit, a short contemporaneous explanation is sufficient. Disclose once when a
-note first materially changes the target or instructions, not on every decision
+edit, a short contemporaneous explanation suffices only if the effective prompt
+already communicates the new actionable intent; otherwise follow step 5. Disclose
+once when a note first materially changes the target or instructions, not on every decision
 while pursuing the same objective. Disclose again only when a new note or a
 materially new application of a note changes the plan. This documents Codex's
 stated reliance, not proof that memory causally improved navigation.
