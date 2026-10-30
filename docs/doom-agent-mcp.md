@@ -1,7 +1,8 @@
 # Local Doom MCP gameplay tools
 
 `$doom-decisions play` supervises one bounded foreground run through the eight
-existing MCP tools. No mode modifier or CLI fallback is supported. The skill
+existing gameplay/configuration tools as direct native Codex calls. No mode
+modifier, Code Mode orchestration or CLI fallback is supported. The skill
 requires all eight tools before attachment; missing, disabled, disconnected or
 ambiguous tools end play without claiming or consuming a run. `doom_attach` is
 the first Doom domain call, and all later Doom operations use MCP directly.
@@ -81,8 +82,11 @@ The source of truth is [the shared CLI](../scripts/doom-agent.mjs),
 [observation/decision DTOs](../app/src/agent-observation.ts) and
 [configuration DTOs](../app/src/agent-control.ts).
 
-MCP returns compact JSON text plus the same complete object as
-`structuredContent`. `isError:false` means a valid receipt was delivered, matching
+Successful image-bearing MCP results return complete compact JSON text and a
+separate `image/png` block in `content`, deliberately omitting `structuredContent`.
+Non-image results retain JSON text plus the same object as `structuredContent`;
+error responses retain their existing text/structured behavior.
+`isError:false` means a valid receipt was delivered, matching
 CLI exit 0; it does not turn `not-admitted`, `api-failure`, `stopped`, `retired` or
 `terminal` into completed gameplay. Existing verification/termination rules apply.
 CLI exceptions use the same exported sanitizer, with `{error}` in an MCP
@@ -236,8 +240,9 @@ that A's recess is D's separate human-described continuation.
 
 PNG storage/retrieval is deliberately unsupported in Milestone 1. The retained
 [A note](navigation/doom1-e1m1-session-01a179df.md) links its historical PNG, which
-Codex can explicitly open with `view_image`; notebook text alone does not display
-or authenticate its pixels. No D screenshot is retained here.
+Codex can explicitly open with `view_image` during separate offline review;
+play never uses a file/viewer fallback for required native images. Notebook text
+alone does not display or authenticate its pixels. No D screenshot is retained here.
 
 `app/tests/doom-memory.test.ts` exercises actual stdio MCP child processes against
 isolated temporary databases with fail-on-use fetch. It checks missing-storage
@@ -253,10 +258,14 @@ The tracked **worktree-local** `.codex/config.toml` already registers the
 `doom_decisions` stdio server with all eight tool approval modes set to `approve`.
 Keep those approval choices. `enabled = true` loads the server; `required = false`
 allows Codex startup without it, while the skill still requires all eight tools
-for gameplay. Do not change global `~/.codex` settings or add credentials here.
+for gameplay. The project setting
+`features.code_mode.direct_only_tool_namespaces = ["mcp__doom_decisions"]`
+exposes these as direct native tools. Do not change global `~/.codex` settings or
+add credentials here.
 
 1. Open Codex from this trusted worktree. A restart/fresh session may be needed
-   to discover project MCP registration; check `/mcp` for all eight tools.
+   to discover project MCP registration; require all eight native tools and check
+   the two optional memory tools before attachment.
    An unavailable server blocks play, with no alternate gameplay transport.
 2. The human privately configures a positive safe-integer `AGENT_DECISION_BUDGET`
    in `app/.env.agent.local`, runs `npm --prefix app run dev:agent`, manually
@@ -307,12 +316,13 @@ initialization/listing without bridge calls, complete result/error framing and
 stdin EOF exit. This proves neither Chrome, real native Doom nor paid Decisions
 correctness.
 
-The SDK test client surfaces both compact text and structured output. The tested
-wire includes **two copies** of a successful domain payload. The skill uses
-`structuredContent` with JSON text fallback and does not add duplicate
-model-facing serialization. The serialized eight-tool catalog measured
-**3,128 UTF-8 bytes** in both tested negotiations; there are no server instructions.
-No MCP performance superiority is claimed.
+The SDK tests cover both legacy and automatic negotiation. For successful
+image-bearing observe/decide results, the tested wire includes **one JSON copy**
+of the domain payload plus PNG, with no `structuredContent`. Non-image results
+retain text and structured output (two domain-payload copies). The skill reads
+the complete native text receipt and directly delivered pixels without additional
+model-facing serialization. There are no server instructions; no MCP performance
+superiority is claimed.
 
 With synthetic PNGs, compact single-domain outputs measured 1,758 bytes for the
 default instructions, 97,285 bytes for accepted 16,000-character escaped text and
@@ -330,9 +340,13 @@ propagation and retained controller reader ownership; real host cancellation and
 transport delivery timing remain unverified. After idle MCP exit, the existing
 browser lease is not proactively revoked by a new tool; the human uses Stop.
 
-Reopen the startup PNG after `doom_start_run`: prior inspection outside the active
-run cannot establish unchanged run ownership for post-start reuse. A small,
-separately human-authorized browser smoke can check tool discovery, one bounded
-run, image delivery and final accounting. Record sanitized identities, counters
-and action/tic/frame receipts; it is not a transport benchmark. Stop and terminal
-acceptance remain governed by the existing isolated trial procedures.
+Obtain and inspect a fresh standalone observation/PNG after `doom_start_run`:
+prior inspection outside the active run cannot establish unchanged run ownership
+for post-start reuse. The owner reports two separately authorized direct-native
+smokes with the current response shape: attach/observe returned a complete receipt,
+`run: null` and inspectable E1M1 pixels; a single-decision run returned `forward`,
+verified 6/6/6 tics at tic 7, inspectable starting/resulting images and final
+`limit = reserved = sdkInvoked = 1`, `remaining = 0`, `active = false`.
+These are reported live checks, not a transport benchmark or validation of every
+play-skill branch. Stop and terminal acceptance remain governed by the existing
+isolated trial procedures.

@@ -19,13 +19,13 @@ opens `http://127.0.0.1:5174/` and waits for verified readiness. Reuse that serv
 Never start another instance or change global Codex settings. Screenshots and
 included Game State can reach the selected provider and incur charges.
 
-Use the existing `doom_decisions` MCP tools through Code Mode only. In one startup
-execution, discover all ten tools, check each required gameplay/configuration tool
-and attach once using the recipe below. Missing, duplicated or non-callable required
-tools end play before attachment, without retry or recovery. `doom_attach` is the
-first Doom domain call. Never use
-shell CLI gameplay, another transport/viewer, reconnect, reattach or replay to
-recover a result. Temporary settings files are local inputs, not another transport.
+Use the `mcp__doom_decisions` tools as direct native Codex calls only. Before
+attachment, check that all eight gameplay/configuration tools below are natively
+available. If any is unavailable, end play before attachment; do not use generated
+discovery code, Code Mode, `functions.exec`, shell gameplay or another transport to
+compensate. Call `doom_attach` once as the first Doom-domain operation. Never
+reconnect, reattach or replay to recover a result. Preparing temporary local
+settings files is allowed; it does not authorize shell gameplay/orchestration.
 Preserve host approval choices; a denied gameplay/configuration call ends play.
 The tracked project config registers the optional server; discovery may require a
 fresh Codex conversation from this worktree. Optional server startup does not
@@ -42,9 +42,9 @@ relax the eight-tool prerequisite or authorize gameplay.
 | `doom_set_prompt` | `leaseFile, sessionId, runId, revision, instructionsFile` | CAS prompt-only replacement |
 | `doom_decide` | `leaseFile, observationId, sessionId, runId, revision` | One provider-selected action and resulting PNG |
 
-The same startup execution checks optional `doom_memory_find` and
-`doom_memory_record` and retains whether both are available. Missing either tool
-or denied memory approval disables memory, not gameplay. Make no memory calls
+At startup also check optional native `doom_memory_find` and
+`doom_memory_record` and remember in conversation whether both are available.
+Missing either tool or denied memory approval disables memory, not gameplay. Make no memory calls
 before attachment. Never substitute shell/SQL/file writes or broaden permissions.
 Attaching, observing and settings operations grant no attempts; only the one
 `doom_start_run` claims the configured allowance. The browser/controller and
@@ -65,15 +65,14 @@ Apply termination before any next tool call, including memory and accounting:
 
 - `{"error":"agent-stopped"}` means validated human Stop. Reply exactly
   `Agent stopped by user. Ending play.` No image or further calls.
-- A verified `doom_decide` `outcome: "terminal"` ends gameplay. Forward its image
-  in the producing execution and inspect it before replying exactly
+- A verified `doom_decide` `outcome: "terminal"` ends gameplay. Inspect its directly
+  delivered image before replying exactly
   `Doomguy died. Ending play.` when `observation.telemetry.health === 0`, or
   `Level exit triggered (exit pending). Ending play.` for positive health.
   Terminal takes priority over exhaustion, even on the final attempt or an early
   tic prefix. Raw health or an image alone does not establish terminal outcome.
   Never claim another map loaded, restart, respawn or seek another allowance.
-- If a terminal image is absent, malformed, cannot be forwarded or cannot be
-  inspected, reply only
+- If a terminal image is absent, malformed or cannot be inspected, reply only
   `Terminal image inspection failed. Ending play without confirming death or exit.`
   Do not add a death/exit/Stop acknowledgment. No retry or further tool calls.
 - Normal exhaustion requires the complete [final assessment gate](#final-assessment-after-normal-exhaustion);
@@ -88,134 +87,48 @@ verification. Result delivery can be revoked after action consumption. No lost
 response, rejected command or failed reservation authorizes a refund or replay.
 A new allowance requires the human's full process restart for a separate invocation.
 
-## Thin Code Mode handoff
+## Native calls and receipt provenance
 
-Exactly ONE MCP operation per `functions.exec`, with its complete useful receipt
-and required native image emitted in that SAME execution. End the execution and
-inspect the VISIBLE receipt/image before choosing another operation. Forwarding
-success and retained data never prove model inspection. Inspect every successful
-observe and healthy completed/verified terminal decide image, even identical pixels.
-No visual cache, base64 decoding, path copying, filename construction or `view_image`.
+Make exactly ONE native MCP call, then inspect its full visible receipt before
+choosing any next operation. For every successful `doom_observe` and frame-bearing
+`doom_decide`, inspect the directly delivered image pixels too, even at identical
+pixels/tic. A reported image, marker, local `pngPath` or hash does not prove that
+pixels were visible/inspectable. Missing or uninspectable required pixels end the
+whole attempt under the termination rules; never replay or use a file/viewer
+fallback, visual cache or base64 decoding.
+
+Successful image-bearing responses deliver complete JSON in MCP text content
+alongside a separate `image/png` block and deliberately omit `structuredContent`.
+Read that text and the native image directly; do not require or reconstruct
+structured metadata. Non-image responses may still include `structuredContent`.
+Inspect the actually returned outcome, IDs, revision, telemetry, provider/usage,
+PNG/hash and accounting fields without summarizing away evidence.
 
 CLI/broker/controller own DTO/schema, correlation, native/Canvas/PNG integrity,
 lease/run admission, revision and observation freshness. The CLI also verifies
 successful settings acknowledgments against the exact submitted prompt/configuration
-and revision increment. Do not generate another validator or reconstruct expected
-IDs, hashes, strings or revisions. Notice errors/unexpected changes in the visible
-receipt and stop; do not turn that inspection into field-by-field JavaScript guards.
+and revision increment. Do not author JavaScript parsers/validators or reconstruct
+expected IDs, hashes, strings or revisions. Notice errors/unexpected changes in
+the visible receipt and apply the termination rules.
 
-Use `store`/`load` for whole authoritative domain receipts: `doomAttachment`,
-`doomObservation` (latest standalone observe only), and `doomLast` (latest result).
-Derive opaque arguments directly from them, never transcribe IDs or persist scope
-to files/notebook. If retained data/helpers are unavailable, end play. No pending
-promotion, copied authorization object, previous-operation dispatcher or fatal marker.
-Initialize attachment once; never reset these slots to recover an ended attempt.
+Copy arguments from native receipts in conversation context:
 
-Discover/check and attach once in ONE execution; discovery is not an MCP operation.
-Inspect the complete attachment receipt before the next execution; do not chain observe:
+- Use `leaseFile` from the accepted attachment for all lease-scoped calls.
+- For claim, decision and settings writes, use `sessionId` and `revision` from
+  the latest inspected standalone `doom_observe`; use its `observationId` for
+  claim/decision and its `run.runId`, when present, for decision/settings writes.
+  Claim and successful settings changes require a new standalone observation;
+  an after-action decision observation never supplies the next decision's scope.
+  Supply the actual absolute UTF-8 settings-file path for writes.
+- For the one-time final accounting read, use the final completed decision's
+  `observation.sessionId` and the attachment's `leaseFile`.
+- For memory append, use note ID and latest known note revision from an eligible
+  lookup or acknowledged append, never the configuration revision.
 
-```js
-const required = [
-  "mcp__doom_decisions__doom_attach",
-  "mcp__doom_decisions__doom_observe",
-  "mcp__doom_decisions__doom_get_config",
-  "mcp__doom_decisions__doom_start_run",
-  "mcp__doom_decisions__doom_decide",
-  "mcp__doom_decisions__doom_set_config",
-  "mcp__doom_decisions__doom_get_prompt",
-  "mcp__doom_decisions__doom_set_prompt"
-];
-const optional = [
-  "mcp__doom_decisions__doom_memory_find",
-  "mcp__doom_decisions__doom_memory_record"
-];
-const available = name =>
-  ALL_TOOLS.filter(entry => entry.name === name).length === 1 &&
-  typeof tools[name] === "function";
-const unavailableRequired = required.filter(name => !available(name));
-const memoryAvailable = optional.map(available).every(Boolean);
-text({ unavailableRequired, memoryAvailable });
-store("doomMemoryAvailable", memoryAvailable);
-if (unavailableRequired.length) {
-  text({ prerequisiteFailure: "Required Doom tools unavailable; ending play without attachment." });
-  exit();
-}
-const attachName = ALL_TOOLS.find(entry => entry.name === required[0]).name;
-const r = await tools[attachName]({});
-const d = r.structuredContent;
-text({ isError: r.isError, result: d ?? r.content?.filter(b => b.type === "text") });
-if (r.isError !== false || !d || "error" in d) exit();
-store("doomAttachment", d);
-store("doomObservation", null);
-store("doomLast", d);
-// END: inspect this attachment receipt before another operation.
-```
-
-Observe (one complete execution; inspect before the next call):
-
-```js
-store("doomObservation", null);
-const r = await tools.mcp__doom_decisions__doom_observe({
-  leaseFile: load("doomAttachment").leaseFile
-});
-const d = r.structuredContent;
-text({ isError: r.isError, result: d ?? r.content?.filter(b => b.type === "text") });
-store("doomLast", d);
-if (r.isError !== false || !d || "error" in d) exit();
-if ("outcome" in d && d.outcome !== "completed" && d.outcome !== "terminal") exit();
-try {
-  const block = r.content?.find(b => b.type === "image" && b.mimeType === "image/png");
-  if (!block) throw new Error("Required image unavailable");
-  image(block, "original");
-} catch {
-  text({ imageInspection: "failed", playEnded: true });
-  exit();
-}
-store("doomObservation", "outcome" in d ? null : d);
-// END: model inspects the complete receipt and image before another operation.
-```
-
-For decide, replace ONLY the observe recipe's initial clearing/call with this;
-retain its entire receipt/image continuation. The input must be the latest
-standalone observation already inspected by the model:
-
-```js
-const o = load("doomObservation");
-store("doomObservation", null);
-const r = await tools.mcp__doom_decisions__doom_decide({
-  leaseFile: load("doomAttachment").leaseFile,
-  observationId: o.observationId, sessionId: o.sessionId,
-  runId: o.run.runId, revision: o.revision
-});
-```
-
-For each non-image operation, make its ONE call and append just this continuation:
-
-```js
-const d = r.structuredContent;
-text({ isError: r.isError, result: d ?? r.content?.filter(b => b.type === "text") });
-store("doomLast", d);
-if (r.isError !== false || !d || "error" in d) exit();
-// END: inspect this receipt before any next tool call.
-```
-
-Use `o = load("doomObservation")` for claim/write arguments: session/revision
-from `o`, observation ID for claim, `o.run.runId` for writes, and leaseFile from
-attachment. Clear `doomObservation` before claim/write after deriving arguments;
-only a new standalone observe may populate it again. Supply the actual absolute
-settings-file path. Reads do not overwrite the retained standalone observation.
-For final accounting after a healthy decision, get sessionId directly from
-`load("doomLast").observation.sessionId`; use attachment's leaseFile.
-
-Every gameplay/configuration error or early exit, or image-forwarding exception
-above ends the WHOLE attempt, not merely JavaScript. Notebook failures follow
-[advisory memory failure rules](#advisory-navigation-memory).
-For gameplay/configuration, if structured content is unavailable, emit complete
-text fallback and stop; text is not visual evidence. If image emission returns but the
-image is not visible/inspectable, stop too. Never rerun a call or retry forwarding.
-A terminal result permits only that image handoff, inspection and prescribed reply;
-there is no next operation. These sequencing/stopping rules require model discipline;
-local storage does not enforce understanding or revoke the browser lease.
+These are model inspection and transcription duties, not another state system.
+Keep operational scope in conversation; notebook provenance follows the source
+rules below. Application freshness checks do not prove that Codex copied the
+correct scope or inspected the receipt/image.
 
 ## Foreground procedure
 
@@ -359,9 +272,10 @@ Known Stop/terminal rules and gameplay authorization remain unchanged.
 ## Advisory navigation memory
 
 Use only the two optional notebook tools, individually inspecting each result.
-Before any memory operation, require `load("doomMemoryAvailable") === true`;
-otherwise skip memory for this invocation. Reuse this startup capability result;
-never rediscover tools or re-enable memory during the invocation.
+Before any memory operation, require both optional native tools to have been
+available at startup and memory to remain enabled for this invocation; otherwise
+skip. Keep this in conversation context; never rediscover tools or re-enable memory
+during the invocation.
 The observation has raw `telemetry.x/y` (signed 16.16) and unsigned
 `telemetry.angle`, not converted pose fields. Pass `x = telemetry.x / 65536`,
 `y = telemetry.y / 65536`, `headingDeg = telemetry.angle * 360 / 4294967296`.
@@ -507,8 +421,7 @@ a center-ray probe or an image alone cannot establish verified traversal.
 approval is not a failed gameplay receipt: report briefly, abandon that memory
 operation and continue current-observation reasoning only if gameplay remains
 eligible. Except for the deferred revision-conflict reread above, disable memory
-with `store("doomMemoryAvailable", false)` for this invocation after failure;
-do not retry, recover via another transport,
+for this invocation after failure; do not retry, recover via another transport,
 or change permissions. Treat malformed memory results as isolated memory failure,
 not usable leads. A shared MCP disconnect, lost/uncertain gameplay result or any
 existing gameplay/configuration
@@ -518,7 +431,7 @@ terminal, early goal completion, uncertain result, or another immediate-stop
 state, nor between a stop indication and its required reply. Beyond step 8's single
 final accounting read, only the
 [final assessment append](#final-assessment-after-normal-exhaustion) is permitted
-after exhaustion. Exact Stop/terminal replies and terminal image handoff/inspection remain unchanged.
+after exhaustion. Exact Stop/terminal replies and terminal image inspection remain unchanged.
 
 ## Agent settings: read, edit, CAS
 
@@ -564,7 +477,7 @@ instructions-only adapter to the same ephemeral configuration and revision.
 Successful edits preserve the run ID and every attempt counter, increment revision
 and invalidate old observations. Repeat step 5's standalone observation and image
 inspection, reading the effective settings/run from that combined response before
-another decision. Do not generate acknowledgment or scope comparisons.
+another decision.
 Changes never affect an admitted request. Rejected stale/malformed,
 busy or editor-open writes leave settings, revision and allowance unchanged;
 stop this skill workflow on conflicts rather than retrying. Human configuration
@@ -640,13 +553,13 @@ formatter retains unavailable markers and previous-action eligibility/omissions.
 Coordinates retain raw native fixed-point values and angle retains unsigned raw
 bits. Observations are detached snapshots, never proof of future admission.
 The strict DTO parser at broker/CLI ingress rejects extra or missing DTO keys,
-including nested objects. MCP output is a different envelope: `structuredContent`
-retains observation/decision metadata (including verified local `pngPath`) and
-adds `pageId`, `epoch` and `commandId`; PNG data is carried by the image block.
-Its `content` includes duplicate JSON text plus `image/png` for successful
-frame-bearing observe/decide results; errors and non-image outcomes are text-only.
-Use the image block, never the metadata path, for visual delivery. Do not apply
-DTO exact-key rules to that envelope.
+including nested objects. MCP output is a different envelope: successful
+image-bearing observe/decide results contain complete JSON text plus `image/png`
+in `content`, without `structuredContent`. The JSON retains all domain metadata
+(including verified local `pngPath`) and `pageId`, `epoch` and `commandId`; the
+separate image block carries the pixels. Non-image results and errors remain
+text-only in `content` and may also include `structuredContent`. Inspect the native
+image, never the metadata path. Do not apply DTO exact-key rules to that envelope.
 
 If the picker does not discover this project skill, start a fresh Codex
 conversation from this worktree. Do not alter global Codex configuration.
