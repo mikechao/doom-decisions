@@ -705,73 +705,8 @@ async function runLive(trial: string) {
   let leaseFile: string | undefined;
   let receiptNumber = 0;
   try {
-    const report = await supervise(
-      {
-        async cli(args, signal) {
-          const result = await runAgentCli(args, {
-            temporaryRoot: root,
-            transport: (url, init) =>
-              fetch(url, { ...init, signal: AbortSignal.any([signal, init?.signal ?? signal]) }),
-          });
-          if (args[0] === 'attach') leaseFile = parseLease(result).leaseFile;
-          // Private local receipts retain correlation/native evidence, excluding
-          // full instructions. Neither these files nor their IDs enter ACP input.
-          const { configuration, instructions: _instructions, ...evidence } = record(result);
-          if (configuration) {
-            const { instructionTemplate: _template, ...settings } = record(configuration);
-            evidence.configuration = settings;
-          }
-          await writeFile(join(root, `receipt-${++receiptNumber}.json`), JSON.stringify(evidence), {
-            signal,
-            flag: 'wx',
-            mode: 0o600,
-          });
-          return result;
-        },
-        readPng: (path, signal) => readFile(path, { signal }),
-        async writeInstructions(text, signal) {
-          requireLive(leaseFile);
-          promptFile = join(dirname(leaseFile), 'supervisor-instructions.txt');
-          await writeFile(promptFile, text, { signal, flag: 'wx', mode: 0o600 });
-          return promptFile;
-        },
-        async createACP(signal) {
-          const { createACPProvider } = await import('@mcpc-tech/acp-ai-provider');
-          const { generateText } = await import('ai');
-          signal.throwIfAborted();
-          const provider = createACPProvider({
-            command: fileURLToPath(new URL('node_modules/.bin/codex-acp', import.meta.url)),
-            env: { INITIAL_AGENT_MODE: 'read-only' },
-            session: { cwd, mcpServers: [] },
-            persistSession: true,
-          });
-          const model = provider.languageModel();
-          return {
-            connect: () => provider.connect(),
-            initSession: () => provider.initSession(),
-            getSessionId: () => provider.getSessionId(),
-            cleanup: () => provider.cleanup(),
-            generate: ({ text, image, signal: turnSignal, onCallStart }) =>
-              generateText({
-                model,
-                maxRetries: 0,
-                abortSignal: turnSignal,
-                messages: [
-                  {
-                    role: 'user',
-                    content: [
-                      { type: 'text', text },
-                      { type: 'image', image, mediaType: 'image/png' },
-                    ],
-                  },
-                ],
-                onLanguageModelCallStart: onCallStart,
-              }),
-          };
-        },
-      },
-      { signal: abort.signal },
-    );
+    const ports = createLivePorts();
+    const report = await supervise(ports, { signal: abort.signal });
     await writeFile(join(root, 'report.json'), `${JSON.stringify({ versions, ...report }, null, 2)}\n`, {
       flag: 'wx',
       mode: 0o600,
@@ -787,6 +722,73 @@ async function runLive(trial: string) {
     process.removeListener('SIGINT', cancel);
     process.removeListener('SIGTERM', cancel);
     if (promptFile) await rm(promptFile, { force: true });
+  }
+
+  // Construct closures only; I/O and ACP initialization remain inside the invoked ports.
+  function createLivePorts(): SupervisorPorts {
+    return {
+      async cli(args, signal) {
+        const result = await runAgentCli(args, {
+          temporaryRoot: root,
+          transport: (url, init) => fetch(url, { ...init, signal: AbortSignal.any([signal, init?.signal ?? signal]) }),
+        });
+        if (args[0] === 'attach') leaseFile = parseLease(result).leaseFile;
+        // Private local receipts retain correlation/native evidence, excluding
+        // full instructions. Neither these files nor their IDs enter ACP input.
+        const { configuration, instructions: _instructions, ...evidence } = record(result);
+        if (configuration) {
+          const { instructionTemplate: _template, ...settings } = record(configuration);
+          evidence.configuration = settings;
+        }
+        await writeFile(join(root, `receipt-${++receiptNumber}.json`), JSON.stringify(evidence), {
+          signal,
+          flag: 'wx',
+          mode: 0o600,
+        });
+        return result;
+      },
+      readPng: (path, signal) => readFile(path, { signal }),
+      async writeInstructions(text, signal) {
+        requireLive(leaseFile);
+        promptFile = join(dirname(leaseFile), 'supervisor-instructions.txt');
+        await writeFile(promptFile, text, { signal, flag: 'wx', mode: 0o600 });
+        return promptFile;
+      },
+      async createACP(signal) {
+        const { createACPProvider } = await import('@mcpc-tech/acp-ai-provider');
+        const { generateText } = await import('ai');
+        signal.throwIfAborted();
+        const provider = createACPProvider({
+          command: fileURLToPath(new URL('node_modules/.bin/codex-acp', import.meta.url)),
+          env: { INITIAL_AGENT_MODE: 'read-only' },
+          session: { cwd, mcpServers: [] },
+          persistSession: true,
+        });
+        const model = provider.languageModel();
+        return {
+          connect: () => provider.connect(),
+          initSession: () => provider.initSession(),
+          getSessionId: () => provider.getSessionId(),
+          cleanup: () => provider.cleanup(),
+          generate: ({ text, image, signal: turnSignal, onCallStart }) =>
+            generateText({
+              model,
+              maxRetries: 0,
+              abortSignal: turnSignal,
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text },
+                    { type: 'image', image, mediaType: 'image/png' },
+                  ],
+                },
+              ],
+              onLanguageModelCallStart: onCallStart,
+            }),
+        };
+      },
+    };
   }
 }
 
