@@ -1,0 +1,16 @@
+{
+  "name": "codex-acp-ai-sdk7-fixture-proof",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "preflight": "node --experimental-strip-types runner.ts --preflight",
+    "trial": "node --experimental-strip-types runner.ts --trial"
+  },
+  "dependencies": {
+    "@agentclientprotocol/codex-acp": "2.5.0",
+    "@mcpc-tech/acp-ai-provider": "0.3.9",
+    "ai": "7.0.159"
+  },
+  "devDependencies": { "@types/node": "22.20.0" }
+}

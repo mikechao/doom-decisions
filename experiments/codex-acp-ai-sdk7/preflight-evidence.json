@@ -1,0 +1,42 @@
+{
+  "mode": "--preflight",
+  "outcome": "BLOCKED",
+  "category": "UNSUPPORTED_PERMISSION_BOUNDARY",
+  "versions": {
+    "ai": "7.0.159",
+    "@mcpc-tech/acp-ai-provider": "0.3.9",
+    "@agentclientprotocol/codex-acp": "2.5.0",
+    "@openai/codex": "0.165.0"
+  },
+  "interfaces": {
+    "factory": true,
+    "v3Generate": true,
+    "methods": {
+      "connect": true,
+      "initSession": true,
+      "getSessionId": true,
+      "cleanup": true
+    }
+  },
+  "providerSourceSha256": "6c731016ebe4507813338c7f5155ee3946135812744387b4bc8f988a2ad5f863",
+  "firstBlockerConfirmed": true,
+  "fixtures": [
+    {
+      "name": "a",
+      "bytes": 2195,
+      "sha256": "59598686d50e9a65fc29f2c303d7b47dfb977b07a21174013d3ab7a72b8cfd76"
+    },
+    {
+      "name": "b",
+      "bytes": 2198,
+      "sha256": "a339a39d477c51e74d1e46aa061939f539c207532060a873451e9b15ae27e03e"
+    }
+  ],
+  "processConnected": "NOT_RUN",
+  "acpInitialized": "NOT_RUN",
+  "sessionStarted": "NOT_RUN",
+  "inferenceTurnsAdmitted": 0,
+  "trial": "NOT_RUN",
+  "cleanup": "NOT_NEEDED_NO_PROCESS",
+  "elapsedMs": 2
+}
