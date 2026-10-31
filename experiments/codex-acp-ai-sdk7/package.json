@@ -5,7 +5,7 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "preflight": "node --experimental-strip-types runner.ts --preflight",
-    "trial": "node --experimental-strip-types runner.ts --trial"
+    "trial": "node --experimental-strip-types runner.ts --trial 2>/dev/null"
   },
   "dependencies": {
     "@agentclientprotocol/codex-acp": "2.5.0",

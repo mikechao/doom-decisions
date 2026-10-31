@@ -1,4 +1,135 @@
-# ACP + AI SDK 7 comparison — BLOCKED before process startup
+# ACP + AI SDK 7 two-image trial — INCONCLUSIVE
+
+2026-10-31. The static hard stop has been replaced by a real runtime trial.
+**`npm run trial` was executed exactly once. `provider.connect()` failed during
+ACP initialization after 576 ms. Zero inference turns were attempted, admitted,
+or completed; no session was created.** No second invocation, alternate CLI,
+provider fallback, login, or configuration repair was attempted. The exclusive
+ignored `.local/trial-started` marker remains, including after this failure.
+
+| Check | Observed result |
+| --- | --- |
+| Provider/model construction | Reached using the real installed public API |
+| ACP initialization | Failed: `ACP_INITIALIZATION_FAILED` |
+| Session startup/persistence | Not reached |
+| Image A / image B | Neither submitted |
+| JSON validity / exact marker comparisons | Not run |
+| Nonce / exact previous-target recall | Not run |
+| Finish reasons / usage | No results; usage absent, not zero |
+| Tools / authorization operations | `NOT_OBSERVABLE` |
+| Cleanup | Public cleanup returned; local session ID cleared; child/descendant exit unverified |
+| Host runner exit | Code 1 |
+
+See [trial-evidence.json](trial-evidence.json) for exact versions and fixture
+hashes. The failure happened before AI SDK `generateText`, so it is **not evidence
+of an AI SDK 7 generation interoperability failure**. Raw adapter stderr and
+arbitrary error messages were discarded rather than logged; the exact startup
+cause is unresolved. This run did not identify an interactive-login request.
+
+## Implemented path
+
+[runner.ts](runner.ts) constructs `createACPProvider`, calls `languageModel()`
+once, then public `connect()` and `initSession()`. It uses
+`INITIAL_AGENT_MODE=read-only`, a dedicated `.local/fixture-cwd`, `mcpServers: []`,
+and `persistSession: true`. Startup recovery and normal existing-login behavior
+inside the adapter are permitted by the updated task. The previous static gate
+is preserved in [preflight.ts](preflight.ts) and never gates `--trial`.
+
+The runnable generation path sends existing sibling PNG **bytes**, not paths,
+as AI SDK image parts to `generateText({ maxRetries: 0 })`. There are at most two
+sequential calls on the same model/provider; each submits only one new user
+message/image and a fresh explicitly synthetic, unverified DTO. A alone includes
+the nonce; B includes neither that nonce, A's image, nor A's chosen target.
+Session IDs must match before and after each call. Prompts forbid tools, shell,
+file operations, browsing, approvals, authentication operations, memory writes,
+and gameplay. No proposal is executed.
+
+JSON is prompt-guided, **not native schema enforcement**. The unchanged sibling
+`validateProposal` and `assess` are imported read-only; expected marker locations
+are never included in prompts. Only SDK `stop` with raw ACP `end_turn` translates
+to `completed`. Actual reasons are recorded. A requires null recall fields and
+an exact marker match before B can proceed. B's nonce and exact previous-target
+recall are checked separately from its exact current marker set. Invalid,
+truncated, ambiguous, or failed A responses stop the trial without another call.
+
+The exclusive marker is created before even startup; a repeated invocation stops
+without starting a provider or overwriting original evidence. Manual removal
+requires **fresh explicit authorization**, and the program never removes it.
+Cleanup is in `finally`; connection/session waits are bounded at 45 seconds each,
+generation waits at 120 seconds each. Abort/timeout/cleanup do not prove remote
+processing or billing stopped. The npm trial script redirects stderr to
+`/dev/null` because this provider otherwise forwards arbitrary child stderr.
+
+## Commands and validation
+
+From this prepared checkout, the following non-inference checks passed before
+the trial and again after the final reporting edits:
+
+```sh
+cd /Users/mike/projects/doom-decisions-app-server/experiments/codex-acp-ai-sdk7
+node /Users/mike/projects/doom-decisions/app/node_modules/typescript/bin/tsc -p .
+/Users/mike/projects/doom-decisions/app/node_modules/.bin/biome lint runner.ts preflight.ts
+git diff --check
+```
+
+The one runtime command executed was:
+
+```sh
+npm run trial
+```
+
+Do not rerun it under this task's consumed authorization. `npm run preflight`
+remains a historical **static** `BLOCKED` diagnostic (exit 1), not a prerequisite
+for the runtime command. It was not rerun. No install, upgrade, build, app test,
+browser, Doom, Decisions API, commit, push, or credential/configuration edit was
+performed. The preexisting `preflight-evidence.json` edit remains untouched.
+Earlier README material is retained below as historical findings.
+
+## Cost, comparison, and limits
+
+Authored physical TypeScript LOC, including comments/blanks: **163 runtime
+runner + 67 historical static preflight = 230 implementation LOC; 0 new test
+LOC**. The runtime imports the existing 68-line sibling proposal module, which
+imports the 70-line fixture module without invoking its file-writing entry point.
+Counting all reused source gives 301 runtime-path LOC, or 368 with the historical
+preflight. The direct App Server baseline is **389 implementation + 50 test LOC**
+and also admitted zero turns; neither result is an equivalent successful runtime
+proof. No bespoke RPC client or transport was added here. The smaller authored
+runner establishes less lifecycle/tool evidence than that baseline.
+
+Unchanged direct dependencies: `ai@7.0.159`, provider `0.3.9`, adapter `2.5.0`,
+plus dev-only Node types. Bundled Codex is `0.165.0`; the provider additionally
+installs **AI SDK 6.0.320** transitively. Static SDK 7/V3 compatibility passes;
+runtime generation interoperability remains untested. The layers are host AI
+SDK 7 → community provider → ACP adapter → bundled Codex/App Server, compared
+with the baseline's host RPC → App Server. Fewer authored lines come with more
+dependencies and indirection, not demonstrated runtime simplification yet.
+
+The provider's first-option auto-permission policy, inherited environment/tools
+and MCP authority, and lazy authentication remain prototype limitations. Empty
+`mcpServers` and read-only mode do not establish tool denial or complete isolation.
+The public provider has no permission interception callback. Returned SDK tool
+calls are checked before the next turn, but internal activity/permissions are not
+fully observable or preventable during generation; `NOT_OBSERVABLE` is not zero.
+Public cleanup returns void and cannot certify descendant exit. Synthetic vision
+or a future PASS would not establish safe tool isolation or live Doom navigation.
+
+**Smallest next experiment:** under fresh authorization, run one startup-only
+ACP connection with a narrowly allowlisted error code/diagnostic, so the observed
+initialization failure has an actionable cause. No dependency upgrade, alternate
+framework, configuration repair, or further inference is justified yet. This is
+a response to an observed runtime failure, not a new static prerequisite gate.
+
+---
+
+## Historical static-only attempts (superseded runtime status)
+
+The remainder records prior task policies and their unexecuted plans. Statements
+that `runner.ts` is static-only or that `trial` cannot start are historical;
+the implementation and actual result above supersede them. All preexisting
+historical text, including the connection-only investigation, is retained.
+
+### Original report: BLOCKED before process startup
 
 2026-10-31. **Gate A did not pass. Two-turn trial: NOT RUN; zero inference
 admissions.** Static package/API inspection found an unsupported permission
@@ -152,9 +283,57 @@ The direct baseline also records an earlier stock App Server failure before
 `initialize`, with unknown stderr cause. Nothing here shows ACP fixes either
 that failure or the later `account/read` blocker.
 
-**Recommendation / single next experiment:** investigate a published provider
-API/version that exposes fail-closed permission handling and disables automatic
-authentication/retry, then rerun zero-inference connect/session preflight with
-sanitized output. Do not authorize the image trial on the present evidence.
-Synthetic vision/context results, even if later successful, would not establish
-Doom gameplay or navigation success.
+## Connection-only source gate — STATIC_GATE_BLOCKED
+
+A subsequent connection-only task authorized one handshake, conditional on source
+inspection, with no retry or fallback. **No connection test was implemented or
+launched.** The installed package versions still match the table and lockfile.
+The command symlink resolves to this experiment's installed
+`@agentclientprotocol/codex-acp/dist/index.js`; the planned child cwd is this
+experiment's `.local/fixture-cwd/` (not created). `INITIAL_AGENT_MODE=read-only`
+and `mcpServers: []` remain planned, unapplied settings. Parent-environment
+inheritance and inherited MCP authority remain unaudited; no environment values
+or private configuration/auth files were read.
+
+Installed-source trace (paths below are relative to this directory):
+
+- Provider `node_modules/@mcpc-tech/acp-ai-provider/index.mjs:2200` constructs the
+  provider; `:2118` calls `connectClient()` directly. `:1051–1122` spawns the
+  configured command and awaits ACP `initialize`; it does not call lazy auth,
+  `initSession`, `session/new`, prompt APIs or permission selection. Its nested
+  `@agentclientprotocol/sdk/dist/acp.js:436` sends one initialize request.
+- Adapter `node_modules/@agentclientprotocol/codex-acp/dist/index.js:54222`
+  starts the App Server and constructs the ACP router. `:28097` selects bundled
+  Codex unless `CODEX_PATH` is inherited. No override was supplied or inspected.
+  `:49695–49708` handles ACP initialize, calls `ensureAppServer()`, then forwards
+  native initialize through `:41138` and `:42913`.
+- **Blocking retry path:** adapter `:51092` delegates `ensureAppServer()` to
+  recovery `ensureRunning()` (`:44020`). If the initial App Server has died,
+  it calls `respawn()` (`:44288`), then `restart()` (`:44308`), which reaches
+  `spawnClient()` (`:44251`, called at `:44331`) and supervisor `spawn()` (`:44660`). Thus one public
+  `connect()` invocation can relaunch the native process before initialization.
+  This is a conditional, source-derived recovery path, **not an observed crash
+  or retry**. No public provider setting disables it. The no-retry constraint
+  cannot be established with the permitted public interface and unchanged
+  adapter configuration, so the static gate stops the launch.
+- No explicit login, authentication or token-refresh call was found on this
+  connection path. There is an **explicit post-response status read**, beyond
+  the handshake: `:49708` schedules `publishFirstAuthStatusAfterResponse()`
+  (`:51201`), which reaches `readAgentAuthIdentity()` (`:51238`), possibly
+  `config/read` (`:41518`) and `getAccount()` (`:41488`, `refreshToken: false`).
+  These are status reads, not token-refresh requests. Incidental Codex-managed
+  state reads/network behavior are not established by this JavaScript trace.
+
+Observed process/handshake outcomes: **NOT RUN**; cleanup **NOT NEEDED**.
+Session requests and model-turn admissions: **0**. No runtime session ID exists
+to inspect. No `connect-evidence.json` was created because the conditional
+implementation/launch gate was not satisfied. Typecheck, lint and diff checks
+passed; no dependencies or lockfile changed. The preexisting timing-only edit
+to `preflight-evidence.json` was preserved. `preflight` remains blocked and
+`trial` remains fail-closed; neither command was executed for this diagnostic.
+Tool isolation, permission denial, session startup, image delivery, context
+retention and structured proposals remain untested.
+
+**Single next action:** review whether the adapter's conditional pre-initialize
+process respawn is acceptable for a future, separately authorized connection-only
+invocation. The current no-retry authorization was not used to launch anything.

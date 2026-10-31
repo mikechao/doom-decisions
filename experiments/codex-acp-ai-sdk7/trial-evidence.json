@@ -1,0 +1,39 @@
+{
+  "outcome": "INCONCLUSIVE",
+  "versions": {
+    "ai": "7.0.159",
+    "@mcpc-tech/acp-ai-provider": "0.3.9",
+    "@agentclientprotocol/codex-acp": "2.5.0",
+    "@openai/codex": "0.165.0",
+    "providerNestedAI": "6.0.320",
+    "node": "v22.20.0"
+  },
+  "fixtures": [
+    {
+      "name": "a",
+      "bytes": 2195,
+      "sha256": "59598686d50e9a65fc29f2c303d7b47dfb977b07a21174013d3ab7a72b8cfd76"
+    },
+    {
+      "name": "b",
+      "bytes": 2198,
+      "sha256": "a339a39d477c51e74d1e46aa061939f539c207532060a873451e9b15ae27e03e"
+    }
+  ],
+  "acpInitialized": false,
+  "sessionStarted": false,
+  "sessionId": null,
+  "sessionPersisted": null,
+  "inferenceTurnsAttempted": 0,
+  "inferenceTurnsAdmitted": 0,
+  "inferenceTurnsCompleted": 0,
+  "turns": [],
+  "admissionMeaning": "AI SDK provider-call start; not an independent remote acceptance receipt",
+  "toolActivity": "NOT_OBSERVABLE",
+  "permissionActivity": "NOT_OBSERVABLE",
+  "evaluation": "NOT_RUN",
+  "usage": null,
+  "cleanup": "PUBLIC_CLEANUP_RETURNED_SESSION_CLEARED_EXIT_UNVERIFIED",
+  "elapsedMs": 576,
+  "errorCategory": "ACP_INITIALIZATION_FAILED"
+}
