@@ -1,4 +1,11 @@
-# ACP + AI SDK 7 two-image trial — INCONCLUSIVE
+# ACP + AI SDK 7 experiments
+
+The latest synthetic trial evidence in `trial-evidence.json` records **PASS**
+for two completed turns. The older diagnostic narrative below is historical.
+The separate [one-real-Doom-observation experiment](REAL-DOOM.md) implements
+offline validation and a manual one-shot advisory runner. The owner reports
+one completed inference and human-reviewed visual grounding on 2026-10-31;
+telemetry grounding was shallow and no gameplay progress was tested.
 
 ## Connection-only diagnostic — FAILED (2026-10-31)
 
