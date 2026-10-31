@@ -164,47 +164,7 @@ export async function supervise(
     overallMs?: number;
   } = {},
 ) {
-  const report = {
-    outcome: 'failed' as 'completed' | 'failed' | 'uncertain' | 'stopped' | 'terminal',
-    stage: 'initialization',
-    errorCategory: null as string | null,
-    transportError: null as string | null,
-    startRunCalls: 0,
-    decideCalls: 0,
-    supervisorCalls: 0,
-    providerCallStarts: 0,
-    acpSessionStarts: 0,
-    acpSessions: 0,
-    sameACPSession: false,
-    claim: 'not-attempted' as 'not-attempted' | 'unknown' | 'acknowledged',
-    attachment: 'unknown' as 'unknown' | 'acknowledged',
-    decisionDelivery: 'not-attempted' as 'not-attempted' | 'unknown' | 'validated-receipt',
-    domainOutcome: null as string | null,
-    decisionSdkInvoked: null as boolean | null,
-    verifiedActions: 0,
-    verifiedTics: null as number | null,
-    cumulativeTics: null as number | null,
-    completionUncertain: null as boolean | null,
-    action: null as string | null,
-    requestedTics: null as number | null,
-    reportedTics: null as number | null,
-    accounting: null as Omit<AgentRunState, 'runId'> | null,
-    decisionsUsage: 'unavailable' as
-      | 'unavailable'
-      | { input: number | null; output: number | null; total: number | null },
-    supervisorUsage: [] as Usage[],
-    totalCost: 'unavailable',
-    proposal: null as DoomProposal | null,
-    reassessment: null as DoomReassessment | null,
-    reassessmentDiagnostic: null as ReturnType<typeof reassessmentDiagnostic> | null,
-    achievement: 'advisory-only; never engine-verified',
-    guidance: 'not-applied',
-    cleanup: 'not-created',
-    internalCodexTools: 'not-isolated-or-fully-observable',
-    retryBoundary: 'host-and-ai-sdk-only; ACP lazy-auth can retry internally',
-    noFurtherGameplayScheduled: true,
-    humanStopRequired: false,
-  };
+  const report = initialReport();
   const abort = new AbortController();
   const cancel = () => abort.abort();
   options.signal?.addEventListener('abort', cancel, { once: true });
@@ -213,6 +173,363 @@ export async function supervise(
   let acp: SupervisorACP | undefined;
   let attached = false;
   let finished = false;
+
+  try {
+    const { lease, initial } = await attachAndObserveInitial();
+    const before = initial.observation;
+    const advisory = await openAdvisorySession();
+    const proposal = await proposeNavigation(advisory, initial);
+
+    // Prepare the complete guidance before claiming the nonrefundable allowance.
+    const guidance = composeGuidance(before.configuration.instructionTemplate, proposal);
+    const file = await bounded('instructions-file', () => ports.writeInstructions(guidance, abort.signal));
+    const runId = await claimOneDecision(lease, before);
+    const promptAcknowledgment = await applyGuidanceCAS(lease, before, runId, guidance, file);
+    const ready = await observeAndConfirmGuidance(lease, before, runId, guidance, promptAcknowledgment);
+
+    // The provider selects the action; the browser owns duration and execution.
+    // This command supplies scope, never an action override.
+    const after = await requestAndValidateDecision(lease, ready, runId);
+    const receipt = after.receipt;
+    // Prefix evidence is already recorded. Stop/terminal/unsuccessful results cannot reassess.
+    if (receipt.outcome !== 'completed' && receipt.outcome !== 'terminal')
+      fail(receipt.outcome === 'stopped' ? 'AGENT_STOPPED' : 'DECISION_NOT_COMPLETED');
+    requireLive(receipt.reason === null && receipt.requestedTics === 6 && receipt.verifiedTics !== null);
+    if (receipt.outcome === 'terminal') fail('TERMINAL');
+    report.verifiedActions = 1;
+
+    await readExhaustedAccounting(lease, ready, runId);
+    await reassessOriginalObjective(advisory, initial, after);
+    report.outcome = 'completed';
+    report.stage = 'complete';
+  } catch (error) {
+    report.errorCategory = error instanceof HostFailure ? error.message : 'INVALID_EVIDENCE_OR_MODEL_RESULT';
+    report.outcome =
+      report.errorCategory === 'AGENT_STOPPED'
+        ? 'stopped'
+        : report.errorCategory === 'TERMINAL'
+          ? 'terminal'
+          : report.claim !== 'not-attempted' && !report.accounting
+            ? 'uncertain'
+            : 'failed';
+    report.humanStopRequired = attached && !['stopped', 'terminal'].includes(report.outcome);
+  } finally {
+    finished = true;
+    abort.abort();
+    options.signal?.removeEventListener('abort', cancel);
+    if (acp) {
+      try {
+        acp.cleanup();
+        report.cleanup =
+          acp.getSessionId() === null ? 'returned-session-cleared; child-exit-unverified' : 'session-not-cleared';
+      } catch {
+        report.cleanup = 'cleanup-failed; child-exit-unverified';
+      }
+      if (report.outcome === 'completed' && report.cleanup !== 'returned-session-cleared; child-exit-unverified')
+        report.outcome = 'uncertain';
+    }
+  }
+  return report;
+
+  // Phase helpers retain the report as the invocation/evidence ledger. Evidence
+  // passed between phases stays distinct from transport and checkpoint mechanics.
+  type Lease = ReturnType<typeof parseLease>;
+  type ObservationEvidence = Awaited<ReturnType<typeof liveObserve>>;
+  type Observation = ObservationEvidence['observation'];
+  type AdvisorySession = { supervisor: SupervisorACP; acpSession: string };
+
+  async function attachAndObserveInitial() {
+    attached = true; // A lost attach response can still leave ownership behind.
+    const lease = parseLease(await command(['attach']));
+    report.attachment = 'acknowledged';
+    const initialRaw = await command(['observe', '--lease', lease.leaseFile]);
+    const initial = await bounded('initial-observation', () =>
+      liveObserve(
+        // Materialization is read separately so parsing never causes transport I/O.
+        initialRaw,
+        lease,
+        ports.readPng,
+        abort.signal,
+      ),
+    );
+    const before = initial.observation;
+    requireLive(
+      before.run === null &&
+        before.configuration.tics === 6 &&
+        before.configuration.instructionTemplate.includes('{{tics}}'),
+    );
+    return { lease, initial };
+  }
+
+  async function openAdvisorySession(): Promise<AdvisorySession> {
+    report.cleanup = 'creation-outcome-unverified';
+    const supervisor = await bounded(
+      'acp-create',
+      async () => {
+        const value = await ports.createACP(abort.signal);
+        if (abort.signal.aborted) {
+          value.cleanup();
+          fail('HOST_CANCELLED');
+        }
+        return value;
+      },
+      45_000,
+    );
+    acp = supervisor; // Register cleanup ownership before connect/init can fail.
+    await bounded('acp-connect', () => supervisor.connect(), 45_000);
+    await bounded(
+      'acp-session',
+      () => {
+        report.acpSessionStarts++;
+        return supervisor.initSession();
+      },
+      45_000,
+    );
+    const acpSession = supervisor.getSessionId();
+    requireLive(acpSession);
+    report.acpSessions = 1;
+    return { supervisor, acpSession };
+  }
+
+  async function proposeNavigation(advisory: AdvisorySession, initial: ObservationEvidence) {
+    report.proposal = safeAdvisory(
+      validateDoomProposal(
+        await checkpoint(
+          advisory,
+          `${instructions}\nChoose ONE observable navigation objective/question. Shape=${JSON.stringify(proposalShape)}\nSTATE=${JSON.stringify(initial.payload)}`,
+          initial.image,
+        ),
+      ),
+    );
+    return report.proposal;
+  }
+
+  async function claimOneDecision(lease: Lease, before: Observation) {
+    const configuration = before.configuration;
+    open();
+    const started = configResult(
+      await command([
+        'start-run',
+        '--lease',
+        lease.leaseFile,
+        '--observation',
+        before.observationId,
+        '--session',
+        before.sessionId,
+        '--revision',
+        String(before.revision),
+      ]),
+      lease,
+    );
+    if ('error' in started) fail(started.error === 'lease-revoked' ? 'LEASE_REVOKED' : 'CLAIM_REJECTED');
+    requireLive(
+      started.sessionId === before.sessionId &&
+        started.revision === before.revision &&
+        same(started.configuration, configuration) &&
+        started.run,
+    );
+    const runId = started.run.runId;
+    runMatches(started.run, runId);
+    report.claim = 'acknowledged';
+    return runId;
+  }
+
+  async function applyGuidanceCAS(lease: Lease, before: Observation, runId: string, guidance: string, file: string) {
+    report.guidance = 'application-unknown';
+    const changed = promptResult(
+      await command([
+        'set-prompt',
+        '--lease',
+        lease.leaseFile,
+        '--session',
+        before.sessionId,
+        '--run',
+        runId,
+        '--revision',
+        String(before.revision),
+        '--instructions-file',
+        file,
+      ]),
+      lease,
+    );
+    if ('error' in changed) fail('GUIDANCE_REJECTED');
+    requireLive(
+      changed.sessionId === before.sessionId &&
+        changed.revision === before.revision + 1 &&
+        changed.instructions === guidance,
+    );
+    runMatches(changed.run, runId);
+    report.guidance = 'last-acknowledged; current-state-unverified';
+    return changed;
+  }
+
+  async function observeAndConfirmGuidance(
+    lease: Lease,
+    before: Observation,
+    runId: string,
+    guidance: string,
+    changed: Awaited<ReturnType<typeof applyGuidanceCAS>>,
+  ) {
+    const configuration = before.configuration;
+    const freshRaw = await command(['observe', '--lease', lease.leaseFile]);
+    const fresh = await bounded('fresh-observation', () => liveObserve(freshRaw, lease, ports.readPng, abort.signal));
+    const ready = fresh.observation;
+    sameGame(ready, before);
+    requireLive(
+      ready.revision === changed.revision &&
+        same(ready.configuration, { ...configuration, instructionTemplate: guidance }) &&
+        ready.observationId !== before.observationId &&
+        ready.tic === before.tic &&
+        same(ready.frame, before.frame) &&
+        same(ready.telemetry, before.telemetry) &&
+        same(ready.facingProbe, before.facingProbe) &&
+        same(ready.previousAction, before.previousAction) &&
+        ready.counters.leveltime === before.counters.leveltime,
+    );
+    runMatches(ready.run, runId);
+    return ready;
+  }
+
+  async function requestAndValidateDecision(lease: Lease, ready: Observation, runId: string) {
+    open();
+    const decisionRaw = await command([
+      'decide',
+      '--lease',
+      lease.leaseFile,
+      '--observation',
+      ready.observationId,
+      '--session',
+      ready.sessionId,
+      '--run',
+      runId,
+      '--revision',
+      String(ready.revision),
+    ]);
+    const after = await bounded('decision-evidence', () =>
+      liveDecision(decisionRaw, lease, ready, ports.readPng, abort.signal),
+    );
+    const receipt = after.receipt;
+    report.decisionDelivery = 'validated-receipt';
+    report.domainOutcome = receipt.outcome;
+    report.decisionSdkInvoked = receipt.sdkInvoked;
+    report.action = receipt.action;
+    report.requestedTics = receipt.requestedTics;
+    report.reportedTics = receipt.reportedTics;
+    // A retired/uncertain result can still retain an independently verified
+    // native prefix. Preserve it without calling the whole action completed.
+    report.verifiedTics = receipt.verifiedTics;
+    report.cumulativeTics = receipt.cumulativeTics;
+    report.completionUncertain = receipt.completionUncertain;
+    if (receipt.responseMetadata && Object.values(receipt.responseMetadata.usage).some((n) => n !== null))
+      report.decisionsUsage = receipt.responseMetadata.usage;
+    return after;
+  }
+
+  async function readExhaustedAccounting(lease: Lease, ready: Observation, runId: string) {
+    const final = configResult(
+      await command(['get-config', '--lease', lease.leaseFile, '--session', ready.sessionId]),
+      lease,
+    );
+    if ('error' in final) fail('ACCOUNTING_UNAVAILABLE');
+    requireLive(
+      final.sessionId === ready.sessionId &&
+        final.revision === ready.revision &&
+        same(final.configuration, ready.configuration),
+    );
+    const { runId: _runId, ...counts } = runMatches(final.run, runId, true);
+    report.accounting = counts;
+    report.guidance = 'lease-local-retained; exhausted run cannot restore through set-prompt';
+  }
+
+  async function reassessOriginalObjective(
+    advisory: AdvisorySession,
+    initial: ObservationEvidence,
+    after: Awaited<ReturnType<typeof liveDecision>>,
+  ) {
+    requireLive(after.image && after.payload);
+    // Completion, cancellation, session and tool checks stay outside text validation.
+    const reassessmentText: unknown = await checkpoint(
+      advisory,
+      `${instructions}\nReassess the ORIGINAL objective from the prior turn against the new POST-ACTION image. No more gameplay will occur.\nShape=${JSON.stringify(reassessmentShape)}\nORIGINAL_OBJECTIVE=${JSON.stringify(report.proposal)}\nBEFORE=${JSON.stringify(initial.payload)}\nAFTER=${JSON.stringify(after.payload)}`,
+      after.image,
+    );
+    // Both checkpoints passed their before/after ID checks; not proof of
+    // invisible provider-internal continuity or reassessment acceptance.
+    report.sameACPSession = true;
+    report.stage = 'reassessment-validation';
+    let parsed: unknown;
+    function rejectReassessment(category: string, jsonParsed: boolean): never {
+      report.reassessmentDiagnostic = reassessmentDiagnostic(reassessmentText, jsonParsed, parsed);
+      fail(category);
+    }
+    if (typeof reassessmentText !== 'string') rejectReassessment('INVALID_REASSESSMENT_SHAPE', false);
+    try {
+      parsed = JSON.parse(reassessmentText);
+    } catch (error) {
+      if (error instanceof SyntaxError) rejectReassessment('INVALID_REASSESSMENT_JSON', false);
+      throw error;
+    }
+    let validated: DoomReassessment;
+    try {
+      validated = validateDoomReassessment(reassessmentText);
+    } catch (error) {
+      // These are the existing validators' explicit rejection sentinels only.
+      // TypeErrors and other unexpected exceptions retain the generic category.
+      if (
+        error instanceof Error &&
+        error.constructor === Error &&
+        ['INVALID_REASSESSMENT', 'INVALID_PROPOSAL'].includes(error.message)
+      )
+        rejectReassessment('INVALID_REASSESSMENT_SHAPE', true);
+      throw error;
+    }
+    try {
+      report.reassessment = safeAdvisory(validated);
+    } catch (error) {
+      if (error instanceof HostFailure && error.message === 'UNSAFE_ADVISORY_TEXT')
+        rejectReassessment('UNSAFE_ADVISORY_TEXT', true);
+      throw error;
+    }
+    requireLive(advisory.supervisor.getSessionId() === advisory.acpSession);
+  }
+
+  // Shared mechanics preserve the original operation bounds, invocation timing,
+  // cancellation fences, and protocol checks; phases do not add outer timeouts.
+  async function checkpoint(advisory: AdvisorySession, text: string, image: Uint8Array) {
+    const { supervisor, acpSession } = advisory;
+    open();
+    requireLive(supervisor.getSessionId() === acpSession && report.supervisorCalls < 2);
+    let calls = 0;
+    const result = await bounded(
+      'acp-checkpoint',
+      () => {
+        report.supervisorCalls++;
+        return supervisor.generate({
+          text,
+          image,
+          signal: abort.signal,
+          onCallStart() {
+            open();
+            calls++;
+            report.providerCallStarts++;
+            requireLive(calls === 1);
+          },
+        });
+      },
+      120_000,
+    );
+    open();
+    requireLive(
+      calls === 1 &&
+        supervisor.getSessionId() === acpSession &&
+        result.finishReason === 'stop' &&
+        result.rawFinishReason === 'end_turn' &&
+        result.steps.every((step) => step.toolCalls.length === 0),
+    );
+    report.supervisorUsage.push(usage(result.totalUsage));
+    return result.text;
+  }
+
   function open() {
     if (abort.signal.aborted || finished) fail('HOST_CANCELLED');
     if (Date.now() >= until) fail('HOST_DEADLINE');
@@ -271,280 +588,50 @@ export async function supervise(
       args[0] === 'decide' ? 35_000 : 15_000,
     );
   }
-  try {
-    attached = true; // A lost attach response can still leave ownership behind.
-    const lease = parseLease(await command(['attach']));
-    report.attachment = 'acknowledged';
-    const base = ['--lease', lease.leaseFile];
-    const initialRaw = await command(['observe', ...base]);
-    const initial = await bounded('initial-observation', () =>
-      liveObserve(
-        // Materialization is read separately so parsing never causes transport I/O.
-        initialRaw,
-        lease,
-        ports.readPng,
-        abort.signal,
-      ),
-    );
-    const before = initial.observation;
-    requireLive(
-      before.run === null &&
-        before.configuration.tics === 6 &&
-        before.configuration.instructionTemplate.includes('{{tics}}'),
-    );
-    const configuration = before.configuration;
-    report.cleanup = 'creation-outcome-unverified';
-    const supervisor = await bounded(
-      'acp-create',
-      async () => {
-        const value = await ports.createACP(abort.signal);
-        if (abort.signal.aborted) {
-          value.cleanup();
-          fail('HOST_CANCELLED');
-        }
-        return value;
-      },
-      45_000,
-    );
-    acp = supervisor;
-    await bounded('acp-connect', () => supervisor.connect(), 45_000);
-    await bounded(
-      'acp-session',
-      () => {
-        report.acpSessionStarts++;
-        return supervisor.initSession();
-      },
-      45_000,
-    );
-    const acpSession = supervisor.getSessionId();
-    requireLive(acpSession);
-    report.acpSessions = 1;
-    async function checkpoint(text: string, image: Uint8Array) {
-      open();
-      requireLive(supervisor.getSessionId() === acpSession && report.supervisorCalls < 2);
-      let calls = 0;
-      const result = await bounded(
-        'acp-checkpoint',
-        () => {
-          report.supervisorCalls++;
-          return supervisor.generate({
-            text,
-            image,
-            signal: abort.signal,
-            onCallStart() {
-              open();
-              calls++;
-              report.providerCallStarts++;
-              requireLive(calls === 1);
-            },
-          });
-        },
-        120_000,
-      );
-      open();
-      requireLive(
-        calls === 1 &&
-          supervisor.getSessionId() === acpSession &&
-          result.finishReason === 'stop' &&
-          result.rawFinishReason === 'end_turn' &&
-          result.steps.every((step) => step.toolCalls.length === 0),
-      );
-      report.supervisorUsage.push(usage(result.totalUsage));
-      return result.text;
-    }
-    report.proposal = safeAdvisory(
-      validateDoomProposal(
-        await checkpoint(
-          `${instructions}\nChoose ONE observable navigation objective/question. Shape=${JSON.stringify(proposalShape)}\nSTATE=${JSON.stringify(initial.payload)}`,
-          initial.image,
-        ),
-      ),
-    );
-    const guidance = composeGuidance(configuration.instructionTemplate, report.proposal);
-    const file = await bounded('instructions-file', () => ports.writeInstructions(guidance, abort.signal));
-    open();
-    const started = configResult(
-      await command([
-        'start-run',
-        ...base,
-        '--observation',
-        before.observationId,
-        '--session',
-        before.sessionId,
-        '--revision',
-        String(before.revision),
-      ]),
-      lease,
-    );
-    if ('error' in started) fail(started.error === 'lease-revoked' ? 'LEASE_REVOKED' : 'CLAIM_REJECTED');
-    requireLive(
-      started.sessionId === before.sessionId &&
-        started.revision === before.revision &&
-        same(started.configuration, configuration) &&
-        started.run,
-    );
-    const runId = started.run.runId;
-    runMatches(started.run, runId);
-    report.claim = 'acknowledged';
-    report.guidance = 'application-unknown';
-    const changed = promptResult(
-      await command([
-        'set-prompt',
-        ...base,
-        '--session',
-        before.sessionId,
-        '--run',
-        runId,
-        '--revision',
-        String(before.revision),
-        '--instructions-file',
-        file,
-      ]),
-      lease,
-    );
-    if ('error' in changed) fail('GUIDANCE_REJECTED');
-    requireLive(
-      changed.sessionId === before.sessionId &&
-        changed.revision === before.revision + 1 &&
-        changed.instructions === guidance,
-    );
-    runMatches(changed.run, runId);
-    report.guidance = 'last-acknowledged; current-state-unverified';
-    const freshRaw = await command(['observe', ...base]);
-    const fresh = await bounded('fresh-observation', () => liveObserve(freshRaw, lease, ports.readPng, abort.signal));
-    const ready = fresh.observation;
-    sameGame(ready, before);
-    requireLive(
-      ready.revision === changed.revision &&
-        same(ready.configuration, { ...configuration, instructionTemplate: guidance }) &&
-        ready.observationId !== before.observationId &&
-        ready.tic === before.tic &&
-        same(ready.frame, before.frame) &&
-        same(ready.telemetry, before.telemetry) &&
-        same(ready.facingProbe, before.facingProbe) &&
-        same(ready.previousAction, before.previousAction) &&
-        ready.counters.leveltime === before.counters.leveltime,
-    );
-    runMatches(ready.run, runId);
-    open();
-    const decisionRaw = await command([
-      'decide',
-      ...base,
-      '--observation',
-      ready.observationId,
-      '--session',
-      ready.sessionId,
-      '--run',
-      runId,
-      '--revision',
-      String(ready.revision),
-    ]);
-    const after = await bounded('decision-evidence', () =>
-      liveDecision(decisionRaw, lease, ready, ports.readPng, abort.signal),
-    );
-    const receipt = after.receipt;
-    report.decisionDelivery = 'validated-receipt';
-    report.domainOutcome = receipt.outcome;
-    report.decisionSdkInvoked = receipt.sdkInvoked;
-    report.action = receipt.action;
-    report.requestedTics = receipt.requestedTics;
-    report.reportedTics = receipt.reportedTics;
-    // A retired/uncertain result can still retain an independently verified
-    // native prefix. Preserve it without calling the whole action completed.
-    report.verifiedTics = receipt.verifiedTics;
-    report.cumulativeTics = receipt.cumulativeTics;
-    report.completionUncertain = receipt.completionUncertain;
-    if (receipt.responseMetadata && Object.values(receipt.responseMetadata.usage).some((n) => n !== null))
-      report.decisionsUsage = receipt.responseMetadata.usage;
-    if (receipt.outcome !== 'completed' && receipt.outcome !== 'terminal')
-      fail(receipt.outcome === 'stopped' ? 'AGENT_STOPPED' : 'DECISION_NOT_COMPLETED');
-    requireLive(receipt.reason === null && receipt.requestedTics === 6 && receipt.verifiedTics !== null);
-    if (receipt.outcome === 'terminal') fail('TERMINAL');
-    report.verifiedActions = 1;
-    const final = configResult(await command(['get-config', ...base, '--session', ready.sessionId]), lease);
-    if ('error' in final) fail('ACCOUNTING_UNAVAILABLE');
-    requireLive(
-      final.sessionId === ready.sessionId &&
-        final.revision === ready.revision &&
-        same(final.configuration, ready.configuration),
-    );
-    const { runId: _runId, ...counts } = runMatches(final.run, runId, true);
-    report.accounting = counts;
-    report.guidance = 'lease-local-retained; exhausted run cannot restore through set-prompt';
-    requireLive(after.image && after.payload);
-    // Completion, cancellation, session and tool checks stay outside text validation.
-    const reassessmentText: unknown = await checkpoint(
-      `${instructions}\nReassess the ORIGINAL objective from the prior turn against the new POST-ACTION image. No more gameplay will occur.\nShape=${JSON.stringify(reassessmentShape)}\nORIGINAL_OBJECTIVE=${JSON.stringify(report.proposal)}\nBEFORE=${JSON.stringify(initial.payload)}\nAFTER=${JSON.stringify(after.payload)}`,
-      after.image,
-    );
-    // Both checkpoints passed their before/after ID checks; not proof of
-    // invisible provider-internal continuity or reassessment acceptance.
-    report.sameACPSession = true;
-    report.stage = 'reassessment-validation';
-    let parsed: unknown;
-    function rejectReassessment(category: string, jsonParsed: boolean): never {
-      report.reassessmentDiagnostic = reassessmentDiagnostic(reassessmentText, jsonParsed, parsed);
-      fail(category);
-    }
-    if (typeof reassessmentText !== 'string') rejectReassessment('INVALID_REASSESSMENT_SHAPE', false);
-    try {
-      parsed = JSON.parse(reassessmentText);
-    } catch (error) {
-      if (error instanceof SyntaxError) rejectReassessment('INVALID_REASSESSMENT_JSON', false);
-      throw error;
-    }
-    let validated: DoomReassessment;
-    try {
-      validated = validateDoomReassessment(reassessmentText);
-    } catch (error) {
-      // These are the existing validators' explicit rejection sentinels only.
-      // TypeErrors and other unexpected exceptions retain the generic category.
-      if (
-        error instanceof Error &&
-        error.constructor === Error &&
-        ['INVALID_REASSESSMENT', 'INVALID_PROPOSAL'].includes(error.message)
-      )
-        rejectReassessment('INVALID_REASSESSMENT_SHAPE', true);
-      throw error;
-    }
-    try {
-      report.reassessment = safeAdvisory(validated);
-    } catch (error) {
-      if (error instanceof HostFailure && error.message === 'UNSAFE_ADVISORY_TEXT')
-        rejectReassessment('UNSAFE_ADVISORY_TEXT', true);
-      throw error;
-    }
-    requireLive(acp.getSessionId() === acpSession);
-    report.outcome = 'completed';
-    report.stage = 'complete';
-  } catch (error) {
-    report.errorCategory = error instanceof HostFailure ? error.message : 'INVALID_EVIDENCE_OR_MODEL_RESULT';
-    report.outcome =
-      report.errorCategory === 'AGENT_STOPPED'
-        ? 'stopped'
-        : report.errorCategory === 'TERMINAL'
-          ? 'terminal'
-          : report.claim !== 'not-attempted' && !report.accounting
-            ? 'uncertain'
-            : 'failed';
-    report.humanStopRequired = attached && !['stopped', 'terminal'].includes(report.outcome);
-  } finally {
-    finished = true;
-    abort.abort();
-    options.signal?.removeEventListener('abort', cancel);
-    if (acp) {
-      try {
-        acp.cleanup();
-        report.cleanup =
-          acp.getSessionId() === null ? 'returned-session-cleared; child-exit-unverified' : 'session-not-cleared';
-      } catch {
-        report.cleanup = 'cleanup-failed; child-exit-unverified';
-      }
-      if (report.outcome === 'completed' && report.cleanup !== 'returned-session-cleared; child-exit-unverified')
-        report.outcome = 'uncertain';
-    }
+
+  function initialReport() {
+    return {
+      outcome: 'failed' as 'completed' | 'failed' | 'uncertain' | 'stopped' | 'terminal',
+      stage: 'initialization',
+      errorCategory: null as string | null,
+      transportError: null as string | null,
+      startRunCalls: 0,
+      decideCalls: 0,
+      supervisorCalls: 0,
+      providerCallStarts: 0,
+      acpSessionStarts: 0,
+      acpSessions: 0,
+      sameACPSession: false,
+      claim: 'not-attempted' as 'not-attempted' | 'unknown' | 'acknowledged',
+      attachment: 'unknown' as 'unknown' | 'acknowledged',
+      decisionDelivery: 'not-attempted' as 'not-attempted' | 'unknown' | 'validated-receipt',
+      domainOutcome: null as string | null,
+      decisionSdkInvoked: null as boolean | null,
+      verifiedActions: 0,
+      verifiedTics: null as number | null,
+      cumulativeTics: null as number | null,
+      completionUncertain: null as boolean | null,
+      action: null as string | null,
+      requestedTics: null as number | null,
+      reportedTics: null as number | null,
+      accounting: null as Omit<AgentRunState, 'runId'> | null,
+      decisionsUsage: 'unavailable' as
+        | 'unavailable'
+        | { input: number | null; output: number | null; total: number | null },
+      supervisorUsage: [] as Usage[],
+      totalCost: 'unavailable',
+      proposal: null as DoomProposal | null,
+      reassessment: null as DoomReassessment | null,
+      reassessmentDiagnostic: null as ReturnType<typeof reassessmentDiagnostic> | null,
+      achievement: 'advisory-only; never engine-verified',
+      guidance: 'not-applied',
+      cleanup: 'not-created',
+      internalCodexTools: 'not-isolated-or-fully-observable',
+      retryBoundary: 'host-and-ai-sdk-only; ACP lazy-auth can retry internally',
+      noFurtherGameplayScheduled: true,
+      humanStopRequired: false,
+    };
   }
-  return report;
 }
 
 function installedVersions() {
