@@ -1,5 +1,57 @@
 # ACP + AI SDK 7 two-image trial — INCONCLUSIVE
 
+## Connection-only diagnostic — FAILED (2026-10-31)
+
+The separately authorized `npm run diagnose-connect` was executed **once**.
+`provider.connect()` rejected in **521 ms**. The caught exception included ACP
+error code **1001**, **Codex process exit code 1**, and permission-denial wording.
+Sanitized detail: “Codex process has exited; App Server exited or terminated;
+Permission denied or operation not permitted.” Installed adapter source defines
+1001 as `CODEX_PROCESS_EXITED_ERROR_CODE`, confirming an underlying App Server
+failure rather than an unlocated `codex-acp` executable or missing fixture cwd.
+The exact denied operation/resource was not preserved by the allowlisted
+classifier; a host sandbox restriction is a hypothesis, not an established cause.
+
+The executable was readable/executable, resolved to this installation's adapter,
+and `.local/fixture-cwd/` existed as a directory. Args were `[]`. Installed
+versions matched the lock: AI SDK **7.0.159**, provider **0.3.9**, adapter **2.5.0**,
+bundled Codex **0.165.0**, Node **22.20.0**. ACP initialization was **not confirmed**;
+public `connect()` never returned successfully. The public API provides no
+separate initialize-success receipt on this failure path. No session was created
+and **0 inference turns** occurred. Public cleanup returned and the local session
+ID was null; descendant termination remains unverified.
+
+```sh
+cd /Users/mike/projects/doom-decisions-app-server/experiments/codex-acp-ai-sdk7
+npm run diagnose-connect
+```
+
+This command's authorization is consumed. Its separate exclusive marker is
+`.local/connect-diagnostic-1-started`; repeats require explicit authorization
+and a fresh attempt identifier. Neither marker is automatically removed.
+[connect-diagnostic-evidence.json](connect-diagnostic-evidence.json) contains only
+allowlisted phrases/codes, relative setup labels, versions, and observations.
+Raw stderr is suppressed and not retained. Overlapping matches were classified
+as App Server exit before generic permission wording after the run, without a
+second invocation or new observation.
+
+[diagnose-connect.ts](diagnose-connect.ts) imports only the provider, performs
+one public connection call with a 45-second host wait, and cleans up in `finally`.
+It never calls session creation, authentication, inference, or tools. TypeScript,
+Biome lint, and `git diff --check` passed before execution and after reporting
+edits. `runner.ts`, the trial marker/evidence, static preflight, dependency lock,
+and sibling experiment remain unchanged. The preexisting edit to static
+preflight evidence is preserved. Historical `preflight` is intentionally blocked,
+not a live startup test. Known auto-permission/inherited-tool limitations remain;
+this connection failure says nothing about AI SDK generation viability.
+
+**Smallest next action:** identify the denied App Server startup operation in a
+separately authorized connection diagnostic with narrowly allowlisted operation
+context. No executable/cwd correction, package upgrade, or global configuration
+change is justified by this result alone. No further runtime attempt was made.
+
+## Previous two-image trial result
+
 2026-10-31. The static hard stop has been replaced by a real runtime trial.
 **`npm run trial` was executed exactly once. `provider.connect()` failed during
 ACP initialization after 576 ms. Zero inference turns were attempted, admitted,
@@ -114,7 +166,7 @@ fully observable or preventable during generation; `NOT_OBSERVABLE` is not zero.
 Public cleanup returns void and cannot certify descendant exit. Synthetic vision
 or a future PASS would not establish safe tool isolation or live Doom navigation.
 
-**Smallest next experiment:** under fresh authorization, run one startup-only
+**Previous proposed next experiment (now executed above):** under fresh authorization, run one startup-only
 ACP connection with a narrowly allowlisted error code/diagnostic, so the observed
 initialization failure has an actionable cause. No dependency upgrade, alternate
 framework, configuration repair, or further inference is justified yet. This is
