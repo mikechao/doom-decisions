@@ -1,11 +1,10 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { writeSync } from 'node:fs';
+import { readFileSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { agentCliError, runAgentCli } from '../../scripts/doom-agent.mjs';
 import { maxAgentInstructions, type AgentRunState } from '../../app/src/agent-control.ts';
-import { installedVersions } from './doom-observation-once.ts';
 import {
   proposalShape,
   reassessmentShape,
@@ -546,6 +545,25 @@ export async function supervise(
     }
   }
   return report;
+}
+
+function installedVersions() {
+  const local = (path: string) => new URL(path, import.meta.url);
+  const pins = {
+    ai: '7.0.159',
+    '@mcpc-tech/acp-ai-provider': '0.3.9',
+    '@agentclientprotocol/codex-acp': '2.5.0',
+    '@openai/codex': '0.165.0',
+    '@mcpc-tech/acp-ai-provider/node_modules/ai': '6.0.320',
+  };
+  const lock = JSON.parse(readFileSync(local('package-lock.json'), 'utf8'));
+  for (const [name, version] of Object.entries(pins)) {
+    const installed = JSON.parse(readFileSync(local(`node_modules/${name}/package.json`), 'utf8'));
+    if (installed.version !== version || lock.packages[`node_modules/${name}`]?.version !== version)
+      throw new Error('VERSION_MISMATCH');
+  }
+  if (Number(process.versions.node.split('.')[0]) !== 22) throw new Error('NODE_22_REQUIRED');
+  return { ...pins, node: process.version };
 }
 
 const help =

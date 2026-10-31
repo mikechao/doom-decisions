@@ -1,15 +1,10 @@
 {
-  "name": "codex-acp-ai-sdk7-fixture-proof",
+  "name": "codex-acp-ai-sdk7-supervisor",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
-    "doom:validate": "node --experimental-strip-types doom-observation-once.ts --validate",
-    "doom:infer": "node --experimental-strip-types doom-observation-once.ts --infer 2>/dev/null",
-    "doom:test": "node --experimental-strip-types --test doom-observation.test.ts",
-    "preflight": "node --experimental-strip-types runner.ts --preflight",
-    "trial": "node --experimental-strip-types runner.ts --trial 2>/dev/null",
-    "diagnose-connect": "node --experimental-strip-types diagnose-connect.ts 2>/dev/null"
+    "test": "node --experimental-strip-types --test supervisor.test.ts"
   },
   "dependencies": {
     "@agentclientprotocol/codex-acp": "2.5.0",

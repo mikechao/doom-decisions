@@ -1,8 +1,26 @@
 # One-action Doom supervisor prototype
 
-Implementation and offline evidence only. **No live supervisor trial has been run.**
-The human must separately approve the first trial after code review. This does
-not authorize an agent to launch a browser/server, attach, or run inference.
+One active prototype: Codex through ACP and AI SDK 7 supplies high-level navigation
+guidance; the existing browser Decisions API selects the single low-level action.
+The owner reports a completed live cycle in Trial 002 (details below). Another
+trial requires fresh human approval; this document does not authorize an agent
+to launch a browser/server, attach, or run inference. The two-decision experiment
+is on hold.
+
+## Owner-reported live outcomes
+
+Trial 001 executed `turn_right` with six verified tics, reaching cumulative tic 7.
+It failed only at final advisory reassessment validation, after the verified action.
+Trial 002 reported `outcome: completed`: two ACP checkpoints in the same observed
+session ID, one verified Decisions action, an accepted advisory reassessment and
+an exhausted limit of 1. These are owner-supplied live reports, not independent
+verification by this cleanup; neither trial was rerun or its private evidence read.
+
+Reassessment rejection diagnostics now distinguish JSON parsing, strict shape
+validation and unsafe advisory text from checkpoint/session failures. Rejection
+metadata includes only allowlisted types, bounded byte counts, expected-key
+presence, unexpected-key counts and status/limit flags. It retains no raw model
+text, arbitrary key names/values or parser errors, and does not relax validation.
 
 ## Human invocation, after separate approval
 
@@ -25,14 +43,14 @@ From this experiment directory, the human may then run **once**, using a new ID:
 
 ```sh
 node --experimental-strip-types supervisor.ts \
-  --live --authorize-one-decision --trial review-001 2>/dev/null
+  --live --authorize-one-decision --trial NEW_ID 2>/dev/null
 ```
 
 This can incur **two Codex supervisor calls plus one browser Decisions request**.
 The stderr redirect follows the existing experiment pattern: the provider forwards
 arbitrary adapter stderr. Do not collect raw stderr or private transcripts.
 With no arguments or `--help`, the command prints help and performs no I/O to
-Doom/ACP. Partial/extra opt-in arguments fail closed. Do not use `doom:infer`.
+Doom/ACP. Partial/extra opt-in arguments fail closed.
 
 ## Boundary and sequence
 
@@ -122,24 +140,27 @@ fresh human approval and an independently configured browser allowance/process.
 
 ## Offline checks performed
 
-From the repository root, using already installed tools in the sibling checkout:
+From the repository root, using already installed local tools:
 
 ```sh
 node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/supervisor.test.ts
-node /Users/mike/projects/doom-decisions/app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7
+node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7
 ```
 
 Biome lint and non-writing format checks also cover `supervisor.ts`,
-`live-observation.ts`, `supervisor.test.ts`, and `doom-proposal.ts` using space
-indentation (2), single JavaScript quotes and line width 120. `allowJs` enables
+`live-observation.ts`, `supervisor.test.ts`, and `doom-proposal.ts`. For formatting,
+pass `--indent-style=space --indent-width=2 --javascript-formatter-quote-style=single
+--line-width=120` without `--write` to match the existing style. `allowJs` enables
 typing the existing imported `.mjs` transport without editing it.
 
-**16 test groups passed**, covering the complete healthy sequence, real CLI over
+**24 top-level tests passed**, covering the complete healthy sequence, real CLI over
 fake transport, stale checkpoint denial, wrong scope/revision/limit, Stop,
 unsettled/late ACP results, cancellation after claim, lost mutating replies without
 replay, corrupt/missing PNGs and strict DTOs, accounting, terminal precedence,
-advisory reassessment/unknown usage, cleanup failure, and the inert default/import.
+advisory reassessment/unknown usage, rejection diagnostics and redaction,
+cleanup failure, and the inert default/import.
 The fake controller is deliberately small; it is not live browser/WASM evidence.
 Tests use temporary synthetic flat-color PNGs and fake model/provider responses;
 no real broker, network, Codex, Decisions API, WAD, private capture or consumed
-one-shot marker is needed. Live correctness remains unverified.
+one-shot marker is needed. These checks do not independently verify the
+owner-reported live outcomes or broader live correctness.
