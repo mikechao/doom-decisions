@@ -1,0 +1,14 @@
+{
+  "name": "codex-app-server-fixture-proof",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test proof.test.ts",
+    "preflight": "node --experimental-strip-types runner.ts --preflight",
+    "trial": "node --experimental-strip-types runner.ts --trial",
+    "fixtures": "node --experimental-strip-types fixtures.ts"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.0"
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "mode": "--preflight",
+  "cli": "codex-cli 0.166.0",
+  "startedAt": "2026-10-30T23:28:13.025Z",
+  "hostTurnTimeoutMs": 120000,
+  "inferenceTurnsAdmitted": 0,
+  "inheritedMcpCount": 4,
+  "turns": [],
+  "outcome": "INCONCLUSIVE",
+  "configuredIsolation": {
+    "sandbox": "read-only",
+    "approvalPolicy": "never",
+    "approvalsReviewer": "user",
+    "webSearch": "disabled",
+    "disabledFeatures": {
+      "shell_tool": false,
+      "unified_exec": false,
+      "shell_snapshot": false,
+      "apps": false,
+      "plugins": false,
+      "remote_plugin": false,
+      "hooks": false,
+      "multi_agent": false,
+      "multi_agent_v2": false,
+      "goals": false,
+      "memories": false,
+      "browser_use": false,
+      "browser_use_external": false,
+      "computer_use": false,
+      "image_generation": false,
+      "in_app_browser": false,
+      "code_mode_host": false,
+      "skill_search": false,
+      "skill_mcp_dependency_install": false,
+      "sleep_tool": false,
+      "daemon_auto_start": false,
+      "unbounded_connection_retries": false,
+      "code_mode": false
+    },
+    "inheritedMcpDisabled": true,
+    "mcpCount": 4,
+    "projectDocMaxBytes": 0,
+    "localLogDir": true,
+    "localSqliteHome": true,
+    "requestRetries": 0,
+    "streamRetries": 0
+  },
+  "blocker": "RPC error code -32603",
+  "cleanup": {
+    "code": 0,
+    "signal": null,
+    "shutdown": "stdin EOF"
+  },
+  "toolExecutions": 0,
+  "deniedServerRequests": 0,
+  "stderr": {
+    "bytes": 0,
+    "warnings": 0,
+    "errors": 0,
+    "contentPersisted": false,
+    "safeStartupErrors": []
+  },
+  "elapsedMs": 111,
+  "ledger": [
+    {
+      "event": "initialize",
+      "id": 1,
+      "ms": 47
+    },
+    {
+      "event": "response",
+      "id": 1,
+      "errorCode": null,
+      "errorSummary": null,
+      "ms": 98
+    },
+    {
+      "event": "config/read",
+      "id": 2,
+      "ms": 98
+    },
+    {
+      "event": "remoteControl/status/changed",
+      "threadId": null,
+      "turnId": null,
+      "itemType": null,
+      "status": null,
+      "ms": 98
+    },
+    {
+      "event": "response",
+      "id": 2,
+      "errorCode": null,
+      "errorSummary": null,
+      "ms": 105
+    },
+    {
+      "event": "account/read",
+      "id": 3,
+      "ms": 105
+    },
+    {
+      "event": "response",
+      "id": 3,
+      "errorCode": -32603,
+      "errorSummary": "failed to load workspace requirements: invalid data",
+      "ms": 107
+    }
+  ]
+}
