@@ -332,6 +332,77 @@ async function using<T>(work: (h: Awaited<ReturnType<typeof fixture>>) => Promis
   }
 }
 
+function modelResult(text: unknown): Awaited<ReturnType<SupervisorACP['generate']>> {
+  // Deliberately allow runtime contract violations in the fake provider only.
+  return { text: text as string, finishReason: 'stop', rawFinishReason: 'end_turn', steps: [], totalUsage: {} };
+}
+
+function setReassessmentText(h: Awaited<ReturnType<typeof fixture>>, text: unknown) {
+  h.setGeneration(async (input) => {
+    input.onCallStart();
+    return modelResult(h.generationInputs.length === 1 ? JSON.stringify(proposal) : text);
+  });
+}
+
+function assertNoReplay(h: Awaited<ReturnType<typeof fixture>>, report: Awaited<ReturnType<typeof supervise>>) {
+  assert.equal(report.outcome, 'failed');
+  assert.equal(report.reassessment, null);
+  assert.equal(report.startRunCalls, 1);
+  assert.equal(report.decideCalls, 1);
+  assert.ok(report.supervisorCalls <= 2);
+  assert.equal(h.sdkCalls, 1);
+  assert.equal(h.actionSelections, 1);
+  assert.deepEqual(
+    h.commands.map((call) => call.op),
+    ['attach', 'observe', 'start-run', 'set-prompt', 'observe', 'decide', 'get-config'],
+  );
+  assert.deepEqual(report.accounting, { active: false, limit: 1, reserved: 1, sdkInvoked: 1, remaining: 0 });
+  assert.equal(report.noFurtherGameplayScheduled, true);
+  assert.equal(report.humanStopRequired, true);
+  assert.equal(h.events.at(-1), 'cleanup');
+  assert.match(report.cleanup, /returned-session-cleared/);
+}
+
+const canaries = [
+  'CANARY_UNEXPECTED_KEY',
+  'CANARY_PRIVATE_VALUE',
+  'CANARY_SCREENSHOT.png',
+  'https://canary.invalid/private',
+  'sk-CANARY_SECRET_TOKEN',
+  '/private/CANARY_PATH',
+];
+const privateText = canaries.join(' ');
+
+function assertRedacted(report: Awaited<ReturnType<typeof supervise>>) {
+  const serialized = JSON.stringify(report);
+  for (const canary of canaries) assert.ok(!serialized.includes(canary));
+  const diagnostic = must(report.reassessmentDiagnostic);
+  assert.deepEqual(
+    Object.keys(diagnostic).sort(),
+    [
+      'inputIsString',
+      'utf8BytesUpTo8193',
+      'byteLimitExceeded',
+      'hasFenceMarker',
+      'jsonParsed',
+      'rootType',
+      'keysPresent',
+      'unexpectedKeyCount',
+      'statusValid',
+      'delegatedByteLimitExceeded',
+      'fieldTextOverLimit',
+      'evidenceCountOverLimit',
+    ].sort(),
+  );
+  assert.deepEqual(
+    Object.keys(diagnostic.keysPresent).sort(),
+    ['status', 'visualEvidence', 'telemetryEvidence', 'uncertainty'].sort(),
+  );
+  assert.ok(JSON.stringify(diagnostic).length < 600);
+  assert.ok(diagnostic.utf8BytesUpTo8193 === null || diagnostic.utf8BytesUpTo8193 <= 8193);
+  return diagnostic;
+}
+
 test('happy path uses real CLI with fake HTTP/controller and exactly one provider action', async () =>
   using(async (h) => {
     const report = await supervise(h.ports);
@@ -354,6 +425,9 @@ test('happy path uses real CLI with fake HTTP/controller and exactly one provide
     assert.equal(h.creates, 1);
     assert.equal(report.acpSessions, 1);
     assert.equal(report.sameACPSession, true);
+    assert.deepEqual(report.reassessment, reassessment);
+    assert.equal(report.reassessmentDiagnostic, null);
+    assert.equal(report.errorCategory, null);
     assert.equal(report.startRunCalls, 1);
     assert.equal(report.decideCalls, 1);
     assert.equal(report.supervisorCalls, 2);
@@ -688,6 +762,277 @@ test('reassessment remains advisory; invalid status/evidence cannot become verif
       assert.equal(report.reassessment?.status ?? null, patch.status === 'achieved' ? 'achieved' : null);
     });
 });
+
+test('fenced and malformed second responses have JSON-only rejection metadata', async () => {
+  for (const text of [
+    `\`\`\`json\n${JSON.stringify({ ...reassessment, uncertainty: privateText })}\n\`\`\``,
+    `~~~json\n${privateText}\n~~~`,
+    `{ ${JSON.stringify(privateText)}: }`,
+    `${privateText}${'x'.repeat(9000)}`,
+  ])
+    await using(async (h) => {
+      setReassessmentText(h, text);
+      const report = await supervise(h.ports);
+      assertNoReplay(h, report);
+      assert.equal(report.errorCategory, 'INVALID_REASSESSMENT_JSON');
+      assert.equal(report.sameACPSession, true);
+      assert.equal(report.supervisorCalls, 2);
+      assert.equal(report.supervisorUsage.length, 2);
+      const diagnostic = assertRedacted(report);
+      assert.equal(diagnostic.inputIsString, true);
+      assert.equal(diagnostic.jsonParsed, false);
+      assert.equal(diagnostic.rootType, null);
+      assert.equal(diagnostic.utf8BytesUpTo8193, Math.min(Buffer.byteLength(text), 8193));
+      assert.equal(diagnostic.byteLimitExceeded, Buffer.byteLength(text) > 8192);
+      assert.equal(diagnostic.hasFenceMarker, text.includes('```') || text.includes('~~~'));
+      assert.equal(diagnostic.unexpectedKeyCount, null);
+    });
+});
+
+test('existing strict reassessment and delegated proposal rules keep shape rejections distinct', async () => {
+  const privateReassessment = { ...reassessment, uncertainty: privateText };
+  const cases: {
+    value: unknown;
+    missing?: string;
+    extra?: number;
+    textOver?: boolean;
+    countOver?: boolean;
+    byteOver?: boolean;
+  }[] = [
+    ...Object.keys(reassessment).map((missing) => ({
+      value: Object.fromEntries(Object.entries(privateReassessment).filter(([key]) => key !== missing)),
+      missing,
+    })),
+    { value: { ...privateReassessment, [canaries[0]]: privateText }, extra: 1 },
+    { value: { ...privateReassessment, [canaries[0]]: privateText, [canaries[2]]: privateText }, extra: 2 },
+    ...['verified', privateText, null, ['achieved'], 1].map((status) => ({
+      value: { ...privateReassessment, status },
+    })),
+    ...[[], [''], ['   '], ['\u0000'], ['\u007f'], ['line\nbreak'], [12], privateText, null].flatMap((evidence) => [
+      { value: { ...privateReassessment, visualEvidence: evidence } },
+      { value: { ...privateReassessment, telemetryEvidence: evidence } },
+    ]),
+    ...['', '   ', '\t', '\u007f', 1, [], null].map((uncertainty) => ({ value: { ...reassessment, uncertainty } })),
+    { value: { ...privateReassessment, visualEvidence: [privateText + 'x'.repeat(401)] }, textOver: true },
+    { value: { ...privateReassessment, telemetryEvidence: [privateText + 'x'.repeat(401)] }, textOver: true },
+    { value: { ...reassessment, uncertainty: privateText + 'x'.repeat(801) }, textOver: true },
+    { value: { ...privateReassessment, visualEvidence: Array(6).fill(privateText) }, countOver: true },
+    { value: { ...privateReassessment, telemetryEvidence: Array(6).fill(privateText) }, countOver: true },
+    {
+      value: {
+        ...privateReassessment,
+        visualEvidence: Array(5).fill('界'.repeat(400)),
+        telemetryEvidence: Array(5).fill('界'.repeat(400)),
+      },
+      byteOver: true,
+    },
+    ...[null, [], privateText, true, 17].map((value) => ({ value })),
+  ];
+  for (const { value, missing, extra, textOver, countOver, byteOver } of cases)
+    await using(async (h) => {
+      setReassessmentText(h, JSON.stringify(value));
+      const report = await supervise(h.ports);
+      assertNoReplay(h, report);
+      assert.equal(report.errorCategory, 'INVALID_REASSESSMENT_SHAPE');
+      assert.equal(report.sameACPSession, true);
+      assert.equal(report.supervisorCalls, 2);
+      const diagnostic = assertRedacted(report);
+      assert.equal(diagnostic.jsonParsed, true);
+      assert.equal(diagnostic.rootType, value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value);
+      assert.equal(diagnostic.byteLimitExceeded, byteOver ?? false);
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        assert.deepEqual(diagnostic.keysPresent, {
+          status: missing !== 'status',
+          visualEvidence: missing !== 'visualEvidence',
+          telemetryEvidence: missing !== 'telemetryEvidence',
+          uncertainty: missing !== 'uncertainty',
+        });
+        assert.equal(diagnostic.unexpectedKeyCount, extra ?? 0);
+        assert.equal(diagnostic.fieldTextOverLimit, textOver ?? false);
+        assert.equal(diagnostic.evidenceCountOverLimit, countOver ?? false);
+        assert.equal(diagnostic.statusValid, (value as Json).status === 'uncertain');
+      }
+    });
+});
+
+test('byte cap measures UTF-8; padding and delegated serialized-size rejection remain strict', async () => {
+  const nearLimit = {
+    ...reassessment,
+    visualEvidence: Array(5).fill('é'.repeat(400)),
+    telemetryEvidence: Array(5).fill('é'.repeat(400)),
+    uncertainty: 'é'.repeat(20),
+  };
+  const delegated = {
+    target: 'Reassess original objective',
+    visualEvidence: nearLimit.visualEvidence,
+    telemetryEvidence: nearLimit.telemetryEvidence,
+    uncertainty: nearLimit.uncertainty,
+    nextExperiment: 'No further gameplay authorized',
+  };
+  assert.ok(Buffer.byteLength(JSON.stringify(nearLimit)) <= 8192);
+  assert.ok(Buffer.byteLength(JSON.stringify(delegated)) > 8192);
+  for (const text of [JSON.stringify(nearLimit), ' '.repeat(8193) + JSON.stringify(reassessment)])
+    await using(async (h) => {
+      setReassessmentText(h, text);
+      const report = await supervise(h.ports);
+      assertNoReplay(h, report);
+      assert.equal(report.errorCategory, 'INVALID_REASSESSMENT_SHAPE');
+      const diagnostic = assertRedacted(report);
+      assert.equal(diagnostic.jsonParsed, true);
+      assert.equal(diagnostic.fieldTextOverLimit, false);
+      assert.equal(diagnostic.byteLimitExceeded, Buffer.byteLength(text) > 8192);
+      assert.equal(diagnostic.delegatedByteLimitExceeded, text === JSON.stringify(nearLimit));
+      assert.equal(diagnostic.utf8BytesUpTo8193, Math.min(Buffer.byteLength(text), 8193));
+    });
+});
+
+test('unsafe second-turn advisory text retains its separate category without retaining content', async () =>
+  using(async (h) => {
+    setReassessmentText(h, JSON.stringify({ ...reassessment, uncertainty: privateText }));
+    const report = await supervise(h.ports);
+    assertNoReplay(h, report);
+    assert.equal(report.errorCategory, 'UNSAFE_ADVISORY_TEXT');
+    assert.equal(report.sameACPSession, true);
+    const diagnostic = assertRedacted(report);
+    assert.equal(diagnostic.jsonParsed, true);
+    assert.equal(diagnostic.rootType, 'object');
+    assert.equal(diagnostic.unexpectedKeyCount, 0);
+    assert.equal(diagnostic.statusValid, true);
+  }));
+
+test('non-string second-turn output is rejected without coercion or inspecting arbitrary objects', async () => {
+  for (const value of [
+    undefined,
+    null,
+    12,
+    [privateText],
+    {
+      [canaries[0]]: privateText,
+      toString() {
+        throw new Error(privateText);
+      },
+    },
+  ])
+    await using(async (h) => {
+      setReassessmentText(h, value);
+      const report = await supervise(h.ports);
+      assertNoReplay(h, report);
+      assert.equal(report.errorCategory, 'INVALID_REASSESSMENT_SHAPE');
+      assert.equal(report.sameACPSession, true);
+      const diagnostic = assertRedacted(report);
+      assert.equal(diagnostic.inputIsString, false);
+      assert.equal(diagnostic.utf8BytesUpTo8193, null);
+      assert.equal(diagnostic.jsonParsed, false);
+      assert.equal(diagnostic.rootType, null);
+    });
+});
+
+test('second checkpoint failures are never caught as reassessment JSON or shape failures', async () => {
+  for (const kind of [
+    'provider-json',
+    'provider-shape',
+    'session-before',
+    'session-after',
+    'tool',
+    'finish',
+    'duplicate-call',
+    'cancel',
+    'deadline',
+  ])
+    await using(async (h) => {
+      const abort = new AbortController();
+      if (kind === 'session-before') {
+        const original = h.ports.cli;
+        h.ports.cli = async (args, signal) => {
+          const result = await original(args, signal);
+          if (args[0] === 'get-config') h.changeACPSession();
+          return result;
+        };
+      }
+      h.setGeneration(async (input) => {
+        input.onCallStart();
+        if (h.generationInputs.length === 1) return modelResult(JSON.stringify(proposal));
+        if (kind === 'provider-json') throw new SyntaxError(privateText);
+        if (kind === 'provider-shape') throw new Error('INVALID_REASSESSMENT');
+        if (kind === 'session-after') h.changeACPSession();
+        if (kind === 'duplicate-call') input.onCallStart();
+        if (kind === 'cancel') abort.abort();
+        if (kind === 'deadline' || kind === 'cancel') return new Promise(() => {});
+        const result = modelResult(`\`\`\`${privateText}`);
+        if (kind === 'tool') result.steps = [{ toolCalls: [{}] }];
+        if (kind === 'finish') result.finishReason = 'length';
+        return result;
+      });
+      const report = await supervise(h.ports, { signal: abort.signal, stageMs: kind === 'deadline' ? 50 : 1000 });
+      assertNoReplay(h, report);
+      assert.equal(
+        report.errorCategory,
+        kind === 'cancel'
+          ? 'HOST_CANCELLED'
+          : kind === 'deadline'
+            ? 'HOST_DEADLINE'
+            : 'INVALID_EVIDENCE_OR_MODEL_RESULT',
+      );
+      assert.equal(report.sameACPSession, false);
+      assert.equal(report.reassessmentDiagnostic, null);
+      assert.equal(report.supervisorCalls, kind === 'session-before' ? 1 : 2);
+      assert.equal(report.supervisorUsage.length, 1);
+      for (const canary of canaries) assert.ok(!JSON.stringify(report).includes(canary));
+    });
+});
+
+test('unexpected validator programming exceptions retain the generic category', async () => {
+  for (const error of [new Error(privateText), new TypeError('INVALID_REASSESSMENT')])
+    await using(async (h) => {
+      const text = JSON.stringify(reassessment);
+      setReassessmentText(h, text);
+      const parse = JSON.parse;
+      let reads = 0;
+      JSON.parse = (...args: Parameters<typeof JSON.parse>) => {
+        if (args[0] === text && ++reads === 2) throw error;
+        return parse(...args);
+      };
+      let report: Awaited<ReturnType<typeof supervise>>;
+      try {
+        report = await supervise(h.ports);
+      } finally {
+        JSON.parse = parse;
+      }
+      assertNoReplay(h, report);
+      assert.equal(report.errorCategory, 'INVALID_EVIDENCE_OR_MODEL_RESULT');
+      assert.equal(report.sameACPSession, true);
+      assert.equal(report.reassessmentDiagnostic, null);
+      for (const canary of canaries) assert.ok(!JSON.stringify(report).includes(canary));
+    });
+});
+
+test('the final session guard is preserved independently of passed checkpoint boundary checks', async () =>
+  using(async (h) => {
+    const create = h.ports.createACP;
+    h.ports.createACP = async (signal) => {
+      const acp = await create(signal);
+      let reads = 0;
+      return {
+        ...acp,
+        getSessionId() {
+          // Initial ID, two before/after checkpoint pairs, then final guard.
+          if (++reads === 6) h.changeACPSession();
+          return acp.getSessionId();
+        },
+      };
+    };
+    const report = await supervise(h.ports);
+    assert.equal(report.outcome, 'failed');
+    assert.equal(report.errorCategory, 'INVALID_EVIDENCE_OR_MODEL_RESULT');
+    assert.equal(report.sameACPSession, true);
+    assert.deepEqual(report.reassessment, reassessment);
+    assert.equal(report.reassessmentDiagnostic, null);
+    assert.equal(report.decideCalls, 1);
+    assert.equal(report.supervisorCalls, 2);
+    assert.equal(h.sdkCalls, 1);
+    assert.equal(report.noFurtherGameplayScheduled, true);
+    assert.equal(h.events.at(-1), 'cleanup');
+  }));
 
 test('a retired decision preserves its verified native prefix without claiming completed action or recovery', async () =>
   using(

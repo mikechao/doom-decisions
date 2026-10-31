@@ -70,6 +70,57 @@ function safeAdvisory<T>(value: T): T {
   return value;
 }
 
+// Rejection-only allowlist: never copy text, key names, values or parser errors.
+// 8193 is a sentinel for anything beyond the validator's 8192-byte limit.
+function reassessmentDiagnostic(raw: unknown, jsonParsed: boolean, value?: unknown) {
+  const inputIsString = typeof raw === 'string';
+  const bytes = inputIsString ? Buffer.byteLength(raw) : null;
+  const object =
+    jsonParsed && value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  const keysPresent = {
+    status: object !== null && Object.hasOwn(object, 'status'),
+    visualEvidence: object !== null && Object.hasOwn(object, 'visualEvidence'),
+    telemetryEvidence: object !== null && Object.hasOwn(object, 'telemetryEvidence'),
+    uncertainty: object !== null && Object.hasOwn(object, 'uncertainty'),
+  };
+  const evidence = object ? [object.visualEvidence, object.telemetryEvidence] : [];
+  // Mirror only the delegated byte-limit measurement, never its acceptance.
+  const delegatedBytes = object
+    ? Buffer.byteLength(
+        JSON.stringify({
+          target: 'Reassess original objective',
+          visualEvidence: object.visualEvidence,
+          telemetryEvidence: object.telemetryEvidence,
+          uncertainty: object.uncertainty,
+          nextExperiment: 'No further gameplay authorized',
+        }),
+      )
+    : null;
+  return {
+    inputIsString,
+    utf8BytesUpTo8193: bytes === null ? null : Math.min(bytes, 8193),
+    byteLimitExceeded: bytes === null ? null : bytes > 8192,
+    hasFenceMarker: inputIsString && (raw.includes('```') || raw.includes('~~~')),
+    jsonParsed,
+    rootType: !jsonParsed ? null : value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value,
+    keysPresent,
+    unexpectedKeyCount: object ? Object.keys(object).filter((key) => !Object.hasOwn(keysPresent, key)).length : null,
+    statusValid: object
+      ? typeof object.status === 'string' && ['continue', 'revise', 'achieved', 'uncertain'].includes(object.status)
+      : null,
+    delegatedByteLimitExceeded: delegatedBytes === null ? null : delegatedBytes > 8192,
+    fieldTextOverLimit: object
+      ? (typeof object.uncertainty === 'string' && object.uncertainty.length > 800) ||
+        evidence.some(
+          (items) => Array.isArray(items) && items.some((item) => typeof item === 'string' && item.length > 400),
+        )
+      : null,
+    evidenceCountOverLimit: object ? evidence.some((items) => Array.isArray(items) && items.length > 5) : null,
+  };
+}
+
 export function composeGuidance(base: string, proposal: DoomProposal) {
   requireLive(base.includes('{{tics}}'));
   const text = `${base}\n\nAdvisory navigation interpretation (unverified): ${JSON.stringify({
@@ -146,6 +197,7 @@ export async function supervise(
     totalCost: 'unavailable',
     proposal: null as DoomProposal | null,
     reassessment: null as DoomReassessment | null,
+    reassessmentDiagnostic: null as ReturnType<typeof reassessmentDiagnostic> | null,
     achievement: 'advisory-only; never engine-verified',
     guidance: 'not-applied',
     cleanup: 'not-created',
@@ -421,16 +473,49 @@ export async function supervise(
     report.accounting = counts;
     report.guidance = 'lease-local-retained; exhausted run cannot restore through set-prompt';
     requireLive(after.image && after.payload);
-    report.reassessment = safeAdvisory(
-      validateDoomReassessment(
-        await checkpoint(
-          `${instructions}\nReassess the ORIGINAL objective from the prior turn against the new POST-ACTION image. No more gameplay will occur.\nShape=${JSON.stringify(reassessmentShape)}\nORIGINAL_OBJECTIVE=${JSON.stringify(report.proposal)}\nBEFORE=${JSON.stringify(initial.payload)}\nAFTER=${JSON.stringify(after.payload)}`,
-          after.image,
-        ),
-      ),
+    // Completion, cancellation, session and tool checks stay outside text validation.
+    const reassessmentText: unknown = await checkpoint(
+      `${instructions}\nReassess the ORIGINAL objective from the prior turn against the new POST-ACTION image. No more gameplay will occur.\nShape=${JSON.stringify(reassessmentShape)}\nORIGINAL_OBJECTIVE=${JSON.stringify(report.proposal)}\nBEFORE=${JSON.stringify(initial.payload)}\nAFTER=${JSON.stringify(after.payload)}`,
+      after.image,
     );
-    report.sameACPSession = acp.getSessionId() === acpSession;
-    requireLive(report.sameACPSession);
+    // Both checkpoints passed their before/after ID checks; not proof of
+    // invisible provider-internal continuity or reassessment acceptance.
+    report.sameACPSession = true;
+    report.stage = 'reassessment-validation';
+    let parsed: unknown;
+    function rejectReassessment(category: string, jsonParsed: boolean): never {
+      report.reassessmentDiagnostic = reassessmentDiagnostic(reassessmentText, jsonParsed, parsed);
+      fail(category);
+    }
+    if (typeof reassessmentText !== 'string') rejectReassessment('INVALID_REASSESSMENT_SHAPE', false);
+    try {
+      parsed = JSON.parse(reassessmentText);
+    } catch (error) {
+      if (error instanceof SyntaxError) rejectReassessment('INVALID_REASSESSMENT_JSON', false);
+      throw error;
+    }
+    let validated: DoomReassessment;
+    try {
+      validated = validateDoomReassessment(reassessmentText);
+    } catch (error) {
+      // These are the existing validators' explicit rejection sentinels only.
+      // TypeErrors and other unexpected exceptions retain the generic category.
+      if (
+        error instanceof Error &&
+        error.constructor === Error &&
+        ['INVALID_REASSESSMENT', 'INVALID_PROPOSAL'].includes(error.message)
+      )
+        rejectReassessment('INVALID_REASSESSMENT_SHAPE', true);
+      throw error;
+    }
+    try {
+      report.reassessment = safeAdvisory(validated);
+    } catch (error) {
+      if (error instanceof HostFailure && error.message === 'UNSAFE_ADVISORY_TEXT')
+        rejectReassessment('UNSAFE_ADVISORY_TEXT', true);
+      throw error;
+    }
+    requireLive(acp.getSessionId() === acpSession);
     report.outcome = 'completed';
     report.stage = 'complete';
   } catch (error) {
