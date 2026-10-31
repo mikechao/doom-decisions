@@ -5,13 +5,15 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { runAgentCli } from '../../scripts/doom-agent.mjs';
 import { validAgentCommand, type AgentConfiguration, type AgentRunState } from '../../app/src/agent-control.ts';
 import type { AgentDecisionResult, AgentObservation } from '../../app/src/agent-observation.ts';
 import { buildDefaultDecisionRequest } from '../../app/src/decision-request.ts';
 import { liveDecision, liveObserve, parseLease } from './live-observation.ts';
-import { supervise, supervisorMain, type SupervisorACP, type SupervisorPorts } from './supervisor.ts';
+import { supervise, type SupervisorACP, type SupervisorPorts } from './supervisor-workflow.ts';
+import { supervisorMain } from './supervisor.ts';
 
 function must<T>(value: T | null | undefined): T {
   assert.ok(value !== null && value !== undefined);
@@ -1133,7 +1135,7 @@ test('no-live default/help/import reject network and ACP/process imports; malfor
     ['--live', '--authorize-one-decision'],
     ['--live', '--authorize-one-decision', '--trial', '../bad'],
   ]) {
-    await supervisorMain(
+    const code = await supervisorMain(
       args,
       async (id) => {
         launched.push(id);
@@ -1143,6 +1145,7 @@ test('no-live default/help/import reject network and ACP/process imports; malfor
         output.push(text);
       },
     );
+    assert.equal(code, args.length === 0 || args[0] === '--help' ? 0 : 2);
   }
   assert.deepEqual([...launched], []);
   assert.equal(output.length, 5);
@@ -1152,15 +1155,27 @@ test('no-live default/help/import reject network and ACP/process imports; malfor
   });
   assert.deepEqual(launched, ['fake-only']);
   const moduleUrl = new URL('./supervisor.ts', import.meta.url).href;
-  const source = `
-    import { registerHooks } from 'node:module';
+  const workflowUrl = new URL('./supervisor-workflow.ts', import.meta.url).href;
+  const guard = `
+    import fs from 'node:fs/promises';
+    import { registerHooks, syncBuiltinESMExports } from 'node:module';
+    let attempted = false;
+    function forbidden() { attempted = true; throw Error('Forbidden offline operation'); }
+    process.on('exit', () => { if (attempted) process.exitCode = 99; });
     registerHooks({ resolve(s, c, next) {
-      if (/^(ai$|@mcpc-tech\\/|@agentclientprotocol\\/|node:(child_process|http|https|net|tls|dns)$)/.test(s)) throw Error('Forbidden offline import');
+      if (/^(ai$|@mcpc-tech\\/|@agentclientprotocol\\/|node:(child_process|http|https|net|tls|dns)$)/.test(s)) forbidden();
       return next(s,c);
     }});
-    globalThis.fetch = () => { throw Error('Offline default attempted fetch'); };
-    const { supervisorMain } = await import(${JSON.stringify(moduleUrl)});
-    if (await supervisorMain([]) !== 0) throw Error('Help failed');
+    for (const name of ['mkdir', 'mkdtemp', 'rm', 'writeFile']) fs[name] = forbidden;
+    syncBuiltinESMExports();
+    globalThis.fetch = forbidden;
+  `;
+  const source = `${guard}
+    const workflow = await import(${JSON.stringify(workflowUrl)});
+    const legacy = await import(${JSON.stringify(moduleUrl)});
+    if (legacy.supervise !== workflow.supervise || legacy.composeGuidance !== workflow.composeGuidance)
+      throw Error('Workflow compatibility exports changed');
+    if (await legacy.supervisorMain([]) !== 0) throw Error('Help failed');
   `;
   const child = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '--eval', source], {
     encoding: 'utf8',
@@ -1168,4 +1183,26 @@ test('no-live default/help/import reject network and ACP/process imports; malfor
   });
   assert.equal(child.status, 0, child.stderr);
   assert.match(child.stdout, /Offline by default/);
+  const entryCases = [
+    { args: [], code: 0 },
+    { args: ['--help'], code: 0 },
+    { args: ['--live'], code: 2 },
+    { args: ['--live', '--authorize-one-decision', '--trial', '../bad'], code: 2 },
+    { args: ['--live', '--authorize-one-decision', '--trial', 'fake-only', '--extra'], code: 2 },
+  ];
+  for (const { args, code } of entryCases) {
+    const entry = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--import',
+        `data:text/javascript,${encodeURIComponent(guard)}`,
+        fileURLToPath(moduleUrl),
+        ...args,
+      ],
+      { encoding: 'utf8', timeout: 5000 },
+    );
+    assert.equal(entry.status, code, entry.stderr);
+    assert.match(entry.stdout, /Offline by default/);
+  }
 });

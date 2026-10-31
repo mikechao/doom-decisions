@@ -54,8 +54,13 @@ Doom/ACP. Partial/extra opt-in arguments fail closed.
 
 ## Boundary and sequence
 
-`supervise` requires injected ports; real I/O exists only behind `supervisorMain`'s
-explicit gate. `runLive` imports the existing `runAgentCli` directly. The sequence is:
+`supervisor-workflow.ts` owns `supervise`, its injected port contracts, workflow
+evidence/report ledger, checkpoint protocol, cancellation/deadlines and ACP cleanup.
+`supervisor.ts` retains the gated CLI entry, `runLive`, concrete adapters, trial files,
+signals and report publication, and re-exports the existing workflow APIs for
+compatibility. `supervise` requires injected ports; real I/O exists only behind
+`supervisorMain`'s explicit gate. `runLive` imports the existing `runAgentCli`
+directly. The sequence is:
 
 1. `attach`, then `observe`; validate the materialized DTO/lease/correlation,
    `run:null`, ready state, six tics, and a base template containing `{{tics}}`.
@@ -147,7 +152,7 @@ node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/supervisor.
 node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7
 ```
 
-Biome lint and non-writing format checks also cover `supervisor.ts`,
+Biome lint and non-writing format checks also cover `supervisor.ts`, `supervisor-workflow.ts`,
 `live-observation.ts`, `supervisor.test.ts`, and `doom-proposal.ts`. For formatting,
 pass `--indent-style=space --indent-width=2 --javascript-formatter-quote-style=single
 --line-width=120` without `--write` to match the existing style. `allowJs` enables
@@ -158,7 +163,8 @@ fake transport, stale checkpoint denial, wrong scope/revision/limit, Stop,
 unsettled/late ACP results, cancellation after claim, lost mutating replies without
 replay, corrupt/missing PNGs and strict DTOs, accounting, terminal precedence,
 advisory reassessment/unknown usage, rejection diagnostics and redaction,
-cleanup failure, and the inert default/import.
+cleanup failure, compatibility exports, inert imports, and guarded standalone
+default/help/malformed-argument exit paths.
 The fake controller is deliberately small; it is not live browser/WASM evidence.
 Tests use temporary synthetic flat-color PNGs and fake model/provider responses;
 no real broker, network, Codex, Decisions API, WAD, private capture or consumed

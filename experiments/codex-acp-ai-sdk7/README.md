@@ -10,8 +10,10 @@ on hold.
 
 Active files:
 
-- `supervisor.ts`: gated live entry, injectable workflow and fail-closed installed/
-  lock version checks (including nested AI SDK and Node 22).
+- `supervisor.ts`: gated live entry, concrete adapters, trial/report lifecycle and
+  fail-closed installed/lock version checks (including nested AI SDK and Node 22).
+- `supervisor-workflow.ts`: injectable one-action workflow, evidence/report ledger,
+  ACP checkpoint protocol, cancellation/deadline guards and ACP cleanup ownership.
 - `live-observation.ts`: strict live DTO, PNG and correlation validation.
 - `doom-proposal.ts`: strict advisory proposal/reassessment schemas and validators.
 - `supervisor.test.ts`: fake-only offline regression coverage.
