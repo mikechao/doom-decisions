@@ -1,17 +1,19 @@
-# One-action Doom supervisor
+# Bounded Doom supervisor
 
 This directory contains one active prototype: Codex through ACP and Vercel AI
 SDK 7 proposes high-level navigation guidance over browser Doom. The existing
 Decisions API selects the low-level action; the application retains lease,
-budget, Stop and native/frame verification authority. One invocation admits at
-most one Decisions action, with an initial ACP proposal and a final advisory
-reassessment in the same observed ACP session. The two-decision experiment is
-on hold.
+budget, Stop and native/frame verification authority. Explicit one-action mode
+retains its initial proposal and final advisory reassessment. Milestone 1 adds a
+fixed two-decision mode: checkpoint 2 reassesses the first verified action and
+supplies replacement guidance before decision 2. Both modes use one persistent
+ACP session and at most two checkpoints; two-decision mode has no third/final
+checkpoint. Live execution still requires separate human approval.
 
 | File | Responsibility |
 | --- | --- |
 | `supervisor.ts` | Gated live entry, installed/lock version admission, exclusive trial setup, signals, port composition, report publication and cleanup scheduling; stable workflow re-exports. |
-| `supervisor-workflow.ts` | Injectable one-action policy, evidence/report ledger, ACP checkpoints, session checks, cancellation/deadlines and ACP cleanup ownership. |
+| `supervisor-workflow.ts` | Injectable fixed one/two-action policy, evidence/report ledger, ACP checkpoints, session checks, cancellation/deadlines and ACP cleanup ownership. |
 | `supervisor-cli.ts` | In-process Doom CLI calls, lease tracking, sanitized numbered receipts, PNG reads, temporary instruction-file creation and removal. |
 | `supervisor-acp.ts` | Lazy AI SDK/ACP imports, provider/model configuration and session/generation/cleanup methods. |
 | `live-observation.ts` | Strict live DTO, PNG and correlation validation. |
@@ -25,8 +27,9 @@ does not import adapters. `supervisor-cli.ts` reuses `scripts/doom-agent.mjs` vi
 remains authoritative for gameplay; Codex ACP supplies advisory navigation guidance
 only. Both adapter factories are inert until their ports are invoked.
 
-The CLI adapter owns the temporary instruction-file path, recording it before the
-exclusive write so cleanup also covers partial write failure. The entrypoint calls
+The CLI adapter exclusively creates at most two distinct 0600 instructions files.
+It registers ownership after creation and before writing, so partial-write cleanup
+cannot delete an existing file after EEXIST. The entrypoint calls
 its cleanup in `finally` after report publication (or failure), after removing signal
 listeners. Cleanup failures propagate as before; hard interruption may leave the
 file. The workflow separately owns ACP cleanup before returning its report.
@@ -63,6 +66,13 @@ and visual-grounding evidence. The owner found the single-frame visual grounding
 substantially accurate, with shallow telemetry grounding and no gameplay progress
 tested. Their superseded runners, replay-specific tests and tracked reports are
 available in Git history; they are no longer supported entry points here.
+
+The offline two-action proof captures two actual OpenRouter SDK-serialized HTTP
+Request bodies in scoped fake fetch, through the real request builder and provider.
+Synthetic GUIDANCE_ONE_ALPHA is replaced by GUIDANCE_TWO_BETA; both requests retain
+the original base and resolve the six-tic horizon. The controller/native and ACP
+are fake. Existing app tests cover controller CAS/admission; no new app runtime
+changes or fixture framework were needed.
 
 This remains a prototype. Valid JSON and advisory status do not prove navigation
 success. Read-only mode and empty MCP configuration do not establish full Codex

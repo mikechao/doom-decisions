@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { requireLive } from './live-observation.ts';
 import { createACPPort } from './supervisor-acp.ts';
 import { createCLIPorts } from './supervisor-cli.ts';
-import { supervise, type SupervisorPorts } from './supervisor-workflow.ts';
+import { supervise, type SupervisorMode, type SupervisorPorts } from './supervisor-workflow.ts';
 
 export { composeGuidance, supervise, type SupervisorACP, type SupervisorPorts } from './supervisor-workflow.ts';
 
@@ -29,7 +29,7 @@ function installedVersions() {
 }
 
 const help =
-  'Offline by default. After separate human approval only: node --experimental-strip-types supervisor.ts --live --authorize-one-decision --trial NEW_ID 2>/dev/null\nRequires one visible prepared dev:agent page, AGENT_DECISION_BUDGET=1, and browser Stop Agent available.\n';
+  'Offline by default. After separate human approval only: node --experimental-strip-types supervisor.ts --live --authorize-one-decision --trial NEW_ID 2>/dev/null\nOr: --live --authorize-two-decisions --trial NEW_ID 2>/dev/null\nRequires one visible prepared dev:agent page, matching AGENT_DECISION_BUDGET=1 or 2 (restart server after configuration), and browser Stop Agent available.\n';
 
 // Entry and optional runtime are separate from the injectable offline workflow.
 // Existing historical markers/runners are never invoked.
@@ -47,17 +47,17 @@ export async function supervisorMain(
   if (
     args.length !== 4 ||
     args[0] !== '--live' ||
-    args[1] !== '--authorize-one-decision' ||
+    !['--authorize-one-decision', '--authorize-two-decisions'].includes(args[1]) ||
     args[2] !== '--trial' ||
     !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}$/.test(args[3])
   ) {
     print(help);
     return 2;
   }
-  return launch(args[3]);
+  return launch(args[3], args[1] === '--authorize-two-decisions' ? 'two' : 'one');
 }
 
-async function runLive(trial: string) {
+async function runLive(trial: string, mode: SupervisorMode) {
   const versions = installedVersions();
   // The provider can otherwise write raw transcript/debug artifacts on import.
   requireLive(!process.env.DEBUG?.trim() && !process.env.ACP_AI_PROVIDER_DEBUG?.trim());
@@ -66,10 +66,14 @@ async function runLive(trial: string) {
   const root = fileURLToPath(new URL(`supervisor-${trial}/`, local));
   // Exclusive new namespace BEFORE attach/startup. Never removed or reused.
   await mkdir(root, { mode: 0o700 });
-  await writeFile(join(root, 'started.json'), JSON.stringify({ startedAt: new Date().toISOString(), decisions: 1 }), {
-    flag: 'wx',
-    mode: 0o600,
-  });
+  await writeFile(
+    join(root, 'started.json'),
+    JSON.stringify({ startedAt: new Date().toISOString(), decisions: mode === 'two' ? 2 : 1 }),
+    {
+      flag: 'wx',
+      mode: 0o600,
+    },
+  );
   const cwd = join(root, 'acp-cwd');
   await mkdir(cwd, { mode: 0o700 });
   const abort = new AbortController();
@@ -79,7 +83,7 @@ async function runLive(trial: string) {
   const { cleanup, ...cliPorts } = createCLIPorts(root);
   try {
     const ports: SupervisorPorts = { ...cliPorts, createACP: createACPPort(cwd) };
-    const report = await supervise(ports, { signal: abort.signal });
+    const report = await supervise(ports, { signal: abort.signal, mode });
     await writeFile(join(root, 'report.json'), `${JSON.stringify({ versions, ...report }, null, 2)}\n`, {
       flag: 'wx',
       mode: 0o600,

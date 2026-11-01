@@ -44,6 +44,7 @@ export type DoomReassessment = {
   visualEvidence: string[];
   telemetryEvidence: string[];
   uncertainty: string;
+  nextGuidance: { target: string; nextExperiment: string } | null;
 };
 
 export const reassessmentShape = {
@@ -51,6 +52,10 @@ export const reassessmentShape = {
   visualEvidence: ['A visible change or lack of change in the new image'],
   telemetryEvidence: ['A supplied before/after fact or lack of change'],
   uncertainty: 'Limits on assessing the ORIGINAL objective from this evidence',
+  nextGuidance: {
+    target: 'For continue/revise: one high-level observable objective; otherwise nextGuidance must be null',
+    nextExperiment: 'One defensible next observable question; uncertain means none can be offered',
+  },
 };
 
 export function validateDoomReassessment(raw: string): DoomReassessment {
@@ -59,19 +64,31 @@ export function validateDoomReassessment(raw: string): DoomReassessment {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('INVALID_REASSESSMENT');
   const result = value as Record<string, unknown>;
   if (
-    Object.keys(result).sort().join(',') !== 'status,telemetryEvidence,uncertainty,visualEvidence' ||
+    Object.keys(result).sort().join(',') !== 'nextGuidance,status,telemetryEvidence,uncertainty,visualEvidence' ||
     typeof result.status !== 'string' ||
     !['continue', 'revise', 'achieved', 'uncertain'].includes(result.status)
   )
     throw new Error('INVALID_REASSESSMENT');
+  const continuing = result.status === 'continue' || result.status === 'revise';
+  const guidance = result.nextGuidance;
+  if (continuing) {
+    if (
+      !guidance ||
+      typeof guidance !== 'object' ||
+      Array.isArray(guidance) ||
+      Object.keys(guidance).sort().join(',') !== 'nextExperiment,target'
+    )
+      throw new Error('INVALID_REASSESSMENT');
+  } else if (guidance !== null) throw new Error('INVALID_REASSESSMENT');
+  const next = guidance as DoomReassessment['nextGuidance'];
   // Reuse the same bounded text/evidence rules; this validates structure only.
   validateDoomProposal(
     JSON.stringify({
-      target: 'Reassess original objective',
+      target: continuing ? next?.target : 'Reassess original objective',
       visualEvidence: result.visualEvidence,
       telemetryEvidence: result.telemetryEvidence,
       uncertainty: result.uncertainty,
-      nextExperiment: 'No further gameplay authorized',
+      nextExperiment: continuing ? next?.nextExperiment : 'No further gameplay authorized',
     }),
   );
   return result as DoomReassessment;

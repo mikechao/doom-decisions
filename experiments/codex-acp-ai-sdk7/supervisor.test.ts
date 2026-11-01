@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
@@ -11,8 +11,16 @@ import { runAgentCli } from '../../scripts/doom-agent.mjs';
 import { validAgentCommand, type AgentConfiguration, type AgentRunState } from '../../app/src/agent-control.ts';
 import type { AgentDecisionResult, AgentObservation } from '../../app/src/agent-observation.ts';
 import { buildDefaultDecisionRequest } from '../../app/src/decision-request.ts';
+import type { DecisionDiagnostics, DecisionLifecycle } from '../../app/src/decision-provider.ts';
+import { createCLIPorts } from './supervisor-cli.ts';
 import { liveDecision, liveObserve, parseLease } from './live-observation.ts';
-import { supervise, type SupervisorACP, type SupervisorPorts } from './supervisor-workflow.ts';
+import {
+  composeGuidance,
+  supervise,
+  type SupervisorACP,
+  type SupervisorMode,
+  type SupervisorPorts,
+} from './supervisor-workflow.ts';
 import { supervisorMain } from './supervisor.ts';
 
 function must<T>(value: T | null | undefined): T {
@@ -33,6 +41,22 @@ const reassessment = {
   visualEvidence: ['The new perspective still shows the opening.'],
   telemetryEvidence: ['Health remains 100.'],
   uncertainty: 'One action does not establish connectivity.',
+  nextGuidance: null,
+};
+const firstGuidance = { ...proposal, target: 'GUIDANCE_ONE_ALPHA: inspect the opening' };
+const nextReassessment = {
+  ...reassessment,
+  status: 'revise',
+  nextGuidance: {
+    target: 'GUIDANCE_TWO_BETA: inspect the newly visible wall edge',
+    nextExperiment: 'Is the wall edge continuous in the new perspective?',
+  },
+};
+type Wire = {
+  model: string;
+  provider: { allow_fallbacks: boolean };
+  state: unknown[];
+  questions: { next_action: { type: string; instructions: string; criteria: Record<string, null> } };
 };
 
 // Actual PNG bytes from synthetic flat RGBA only. No WAD, private screenshot,
@@ -74,7 +98,7 @@ const lastPng = syntheticPng(2);
 
 type Json = Record<string, unknown>;
 type Fault = (op: string, data: Json, reply: Json, index: number) => void;
-async function fixture(fault?: Fault) {
+async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
   const root = await mkdtemp(join(tmpdir(), 'doom-supervisor-test-'));
   const pageId = randomUUID(),
     epoch = randomUUID(),
@@ -83,6 +107,30 @@ async function fixture(fault?: Fault) {
   const events: string[] = [],
     commands: { op: string; data: Json }[] = [];
   const generationInputs: Parameters<SupervisorACP['generate']>[0][] = [];
+  const wires: Wire[] = [];
+  const observations: AgentObservation[] = [];
+  const originalFetch = globalThis.fetch;
+  // Only the two-action fixture invokes the real provider/SDK. No fallback transport.
+  if (mode === 'two') {
+    globalThis.fetch = async (input) => {
+      assert.ok(input instanceof Request);
+      assert.equal(input.url, 'https://openrouter.ai/api/alpha/decisions');
+      assert.equal(input.method, 'POST');
+      assert.equal(input.headers.get('authorization'), 'Bearer offline-supervisor-dummy');
+      wires.push(JSON.parse(await input.text()) as Wire);
+      return Response.json({
+        model: 'openai/gpt-6-luna-decisions',
+        answers: { next_action: { type: 'choice', choice: 'turn_right' } },
+        usage: { input_tokens: 123, output_tokens: 0 },
+      });
+    };
+  }
+  const provider =
+    mode === 'two'
+      ? (await import('../../app/src/openrouter-decision-provider.ts')).openRouterDecisionProviderFactory.create(
+          'offline-supervisor-dummy',
+        )
+      : null;
   let ownerId: unknown,
     run: AgentRunState | null = null,
     revision = 0,
@@ -164,12 +212,14 @@ async function fixture(fault?: Fault) {
       const correlation = { pageId, epoch, commandId: data.commandId };
       if (op === 'observe') {
         lastObservation = observation();
+        observations.push(lastObservation);
         reply = { ...correlation, observation: { ...lastObservation, ...snapshotConfig() } };
       } else if (op === 'start-run') {
         assert.equal(run, null);
         assert.equal(data.observationId, must(lastObservation).observationId);
         assert.equal(data.revision, revision);
-        run = { runId: randomUUID(), active: true, limit: 1, reserved: 0, sdkInvoked: 0, remaining: 1 };
+        const limit = mode === 'two' ? 2 : 1;
+        run = { runId: randomUUID(), active: true, limit, reserved: 0, sdkInvoked: 0, remaining: limit };
         reply = { ...correlation, config: snapshotConfig() };
       } else if (op === 'set-prompt') {
         assert.equal(data.runId, must(run).runId);
@@ -177,6 +227,7 @@ async function fixture(fault?: Fault) {
         preWriteObservation = lastObservation;
         configuration.instructionTemplate = String(data.instructions);
         revision++;
+        lastObservation = undefined;
         reply = {
           ...correlation,
           prompt: { sessionId, revision, instructions: configuration.instructionTemplate, run: { ...run } },
@@ -186,7 +237,7 @@ async function fixture(fault?: Fault) {
         const reason =
           !run?.active || run.remaining === 0 || data.revision !== revision || data.runId !== run.runId
             ? 'no-grant'
-            : data.observationId !== must(lastObservation).observationId
+            : data.observationId !== lastObservation?.observationId
               ? 'stale-observation'
               : null;
         if (reason) {
@@ -207,16 +258,52 @@ async function fixture(fault?: Fault) {
           };
           return Response.json({ ...correlation, decision: denied });
         }
-        assert.equal(must(run).remaining, 1);
         assert.equal(data.sessionId, sessionId);
-        const request = buildDefaultDecisionRequest(tic, 6, must(lastObservation).png, undefined, configuration);
+        const observed = must(lastObservation);
+        const request = buildDefaultDecisionRequest(
+          tic,
+          6,
+          observed.png,
+          undefined,
+          configuration,
+          observed.telemetry,
+          observed.previousAction ? { ...observed.previousAction, x: 0, y: 0 } : undefined,
+        );
         effectiveInstructions = request.instructions;
         // Only this fake provider/controller chooses the action; host command
         // schema contains no action override and request permits the stock set.
         assert.ok(request.permittedActions.includes('turn_right'));
+        const bounded = must(run);
+        bounded.reserved++;
+        bounded.remaining = bounded.limit - bounded.reserved;
+        lastObservation = undefined;
+        if (provider) {
+          const lifecycle: DecisionLifecycle = {};
+          const diagnostics: DecisionDiagnostics = { requestId: null, http: null, latencyMs: null };
+          const result = await provider.request(
+            request,
+            lifecycle,
+            diagnostics,
+            {
+              assertFresh() {},
+              beforeCreate() {
+                sdkCalls++;
+                bounded.sdkInvoked++;
+              },
+              onReadStateChange() {},
+            },
+            performance.now(),
+          );
+          await lifecycle.sdkRead;
+          assert.ok(result.kind === 'choice');
+          assert.equal(result.action, 'turn_right');
+        } else {
+          // Legacy one-action fake: this count is not SDK serialization evidence.
+          sdkCalls++;
+          bounded.sdkInvoked++;
+        }
         actionSelections++;
-        sdkCalls++;
-        run = { ...must(run), active: false, reserved: 1, sdkInvoked: 1, remaining: 0 };
+        bounded.active = bounded.remaining > 0;
         tic += 6;
         const decision: AgentDecisionResult = {
           outcome: 'completed',
@@ -242,7 +329,17 @@ async function fixture(fault?: Fault) {
   };
   let generation: SupervisorACP['generate'] = async (input) => {
     input.onCallStart();
-    return modelResult(JSON.stringify(generationInputs.length === 1 ? proposal : reassessment));
+    return modelResult(
+      JSON.stringify(
+        generationInputs.length === 1
+          ? mode === 'two'
+            ? firstGuidance
+            : proposal
+          : mode === 'two'
+            ? nextReassessment
+            : reassessment,
+      ),
+    );
   };
   const ports: SupervisorPorts = {
     cli: (args, signal) =>
@@ -255,8 +352,8 @@ async function fixture(fault?: Fault) {
       }),
     readPng: (path, signal) => readFile(path, { signal }),
     async writeInstructions(text) {
-      const path = join(root, 'instructions.txt');
-      await writeFile(path, text);
+      const path = join(root, `instructions-${commands.filter((call) => call.op === 'set-prompt').length + 1}.txt`);
+      await writeFile(path, text, { flag: 'wx', mode: 0o600 });
       return path;
     },
     async createACP() {
@@ -290,6 +387,8 @@ async function fixture(fault?: Fault) {
     events,
     commands,
     generationInputs,
+    wires,
+    observations,
     transport,
     configuration,
     baseInstructions,
@@ -315,13 +414,18 @@ async function fixture(fault?: Fault) {
       return must(preWriteObservation);
     },
     async dispose() {
+      if (mode === 'two') globalThis.fetch = originalFetch;
       await rm(root, { recursive: true, force: true });
     },
   };
 }
 
-async function using<T>(work: (h: Awaited<ReturnType<typeof fixture>>) => Promise<T>, fault?: Fault) {
-  const h = await fixture(fault);
+async function using<T>(
+  work: (h: Awaited<ReturnType<typeof fixture>>) => Promise<T>,
+  fault?: Fault,
+  mode: SupervisorMode = 'one',
+) {
+  const h = await fixture(fault, mode);
   try {
     return await work(h);
   } finally {
@@ -464,7 +568,7 @@ function assertRedacted(report: Awaited<ReturnType<typeof supervise>>) {
   );
   assert.deepEqual(
     Object.keys(diagnostic.keysPresent).sort(),
-    ['status', 'visualEvidence', 'telemetryEvidence', 'uncertainty'].sort(),
+    ['status', 'visualEvidence', 'telemetryEvidence', 'uncertainty', 'nextGuidance'].sort(),
   );
   assert.ok(JSON.stringify(diagnostic).length < 600);
   assert.ok(diagnostic.utf8BytesUpTo8193 === null || diagnostic.utf8BytesUpTo8193 <= 8193);
@@ -501,16 +605,16 @@ test('happy path uses real CLI with fake HTTP/controller and exactly one provide
     assert.equal(report.supervisorCalls, 2);
     assert.equal(h.sdkCalls, 1);
     assert.equal(h.actionSelections, 1);
-    assert.equal(report.action, 'turn_right');
+    assert.equal(report.decisions[0].action, 'turn_right');
     assert.equal(report.verifiedActions, 1);
-    assert.equal(report.verifiedTics, 6);
-    assert.equal(report.cumulativeTics, 7);
+    assert.equal(report.decisions[0].verifiedTics, 6);
+    assert.equal(report.decisions[0].cumulativeTics, 7);
     assert.deepEqual(report.accounting, { active: false, limit: 1, reserved: 1, sdkInvoked: 1, remaining: 0 });
     assert.deepEqual(report.supervisorUsage, ['unavailable', 'unavailable']);
-    assert.equal(report.decisionsUsage, 'unavailable');
+    assert.equal(report.decisions[0].usage, 'unavailable');
     assert.equal(report.totalCost, 'unavailable');
     assert.equal(report.achievement, 'advisory-only; never engine-verified');
-    assert.match(report.guidance, /lease-local-retained/);
+    assert.match(must(report.guidance.at(-1)), /lease-local-retained/);
     assert.match(report.cleanup, /exit-unverified/);
     assert.ok(h.configuration.instructionTemplate.startsWith(h.baseInstructions));
     assert.ok(h.configuration.instructionTemplate.includes('{{tics}}'));
@@ -618,7 +722,7 @@ test('lost start-run or decide response is unknown and never retried', async () 
           assert.equal(report.claim, 'unknown');
           assert.equal(report.decideCalls, 0);
         } else {
-          assert.equal(report.decisionDelivery, 'unknown');
+          assert.equal(report.decisions[0].delivery, 'unknown');
           assert.equal(h.sdkCalls, 1);
           assert.equal(report.verifiedActions, 0);
         }
@@ -794,6 +898,8 @@ test('bad decision, terminal outcome or accounting forbids reassessment and any 
 test('reassessment remains advisory; invalid status/evidence cannot become verified achievement', async () => {
   for (const patch of [
     { status: 'achieved' },
+    { status: 'continue', nextGuidance: nextReassessment.nextGuidance },
+    { status: 'revise', nextGuidance: nextReassessment.nextGuidance },
     { status: 'verified' },
     { status: ['achieved'] },
     { status: null },
@@ -807,13 +913,14 @@ test('reassessment remains advisory; invalid status/evidence cannot become verif
         return modelResult(JSON.stringify(h.generationInputs.length === 1 ? proposal : { ...reassessment, ...patch }));
       });
       const report = await supervise(h.ports);
-      assert.equal(report.outcome, patch.status === 'achieved' ? 'completed' : 'failed');
+      const accepted = typeof patch.status === 'string' && ['achieved', 'continue', 'revise'].includes(patch.status);
+      assert.equal(report.outcome, accepted ? 'completed' : 'failed');
       assert.equal(report.achievement, 'advisory-only; never engine-verified');
       assert.equal(report.decideCalls, 1);
       assert.equal(report.supervisorCalls, 2);
       assert.equal(h.sdkCalls, 1);
       assert.deepEqual(report.supervisorUsage, ['unavailable', 'unavailable']);
-      assert.equal(report.reassessment?.status ?? null, patch.status === 'achieved' ? 'achieved' : null);
+      assert.equal(report.reassessment?.status ?? null, accepted ? patch.status : null);
     });
 });
 
@@ -900,6 +1007,7 @@ test('existing strict reassessment and delegated proposal rules keep shape rejec
           visualEvidence: missing !== 'visualEvidence',
           telemetryEvidence: missing !== 'telemetryEvidence',
           uncertainty: missing !== 'uncertainty',
+          nextGuidance: missing !== 'nextGuidance',
         });
         assert.equal(diagnostic.unexpectedKeyCount, extra ?? 0);
         assert.equal(diagnostic.fieldTextOverLimit, textOver ?? false);
@@ -1097,12 +1205,12 @@ test('a retired decision preserves its verified native prefix without claiming c
     async (h) => {
       const report = await supervise(h.ports);
       assert.equal(report.outcome, 'uncertain');
-      assert.equal(report.domainOutcome, 'retired');
-      assert.equal(report.decisionDelivery, 'validated-receipt');
+      assert.equal(report.decisions[0].outcome, 'retired');
+      assert.equal(report.decisions[0].delivery, 'validated-receipt');
       assert.equal(report.verifiedActions, 0);
-      assert.equal(report.verifiedTics, 2);
-      assert.equal(report.cumulativeTics, 3);
-      assert.equal(report.completionUncertain, true);
+      assert.equal(report.decisions[0].verifiedTics, 2);
+      assert.equal(report.decisions[0].cumulativeTics, 3);
+      assert.equal(report.decisions[0].completionUncertain, true);
       assert.equal(report.accounting, null);
       assert.equal(report.supervisorCalls, 1);
       assert.equal(report.decideCalls, 1);
@@ -1270,4 +1378,516 @@ test('no-live default/help/import reject network and ACP/process imports; malfor
     assert.equal(entry.status, code, entry.stderr);
     assert.match(entry.stdout, /Offline by default/);
   }
+});
+
+// New-boundary cases retain the real CLI, request builder, OpenRouter provider
+// and installed SDK. Only broker/controller/native and ACP are synthetic.
+test('two-action feedback reaches two SDK-serialized HTTP bodies with replacement guidance', async () =>
+  using(
+    async (h) => {
+      const report = await supervise(h.ports, { mode: 'two' });
+      assert.equal(
+        report.outcome,
+        'completed',
+        JSON.stringify({
+          stage: report.stage,
+          error: report.errorCategory,
+          transport: report.transportError,
+          events: h.events,
+          wires: h.wires.length,
+        }),
+      );
+      assert.deepEqual(h.events, [
+        'attach',
+        'observe',
+        'create',
+        'connect',
+        'init',
+        'ACP1',
+        'start-run',
+        'set-prompt',
+        'observe',
+        'decide',
+        'observe',
+        'ACP2',
+        'set-prompt',
+        'observe',
+        'decide',
+        'get-config',
+        'cleanup',
+      ]);
+      assert.equal(report.startRunCalls, 1);
+      assert.equal(report.decideCalls, 2);
+      assert.equal(report.supervisorCalls, 2);
+      assert.equal(report.providerCallStarts, 2);
+      assert.equal(report.acpSessionStarts, 1);
+      assert.equal(report.sameACPSession, true);
+      assert.equal(h.creates, 1);
+      assert.equal(h.sdkCalls, 2);
+      assert.equal(report.verifiedActions, 2);
+      assert.deepEqual(report.interimAccounting, { active: true, limit: 2, reserved: 1, sdkInvoked: 1, remaining: 1 });
+      assert.deepEqual(report.accounting, { active: false, limit: 2, reserved: 2, sdkInvoked: 2, remaining: 0 });
+      assert.deepEqual(
+        report.decisions.map((d) => [
+          d.delivery,
+          d.outcome,
+          d.sdkInvoked,
+          d.requestedTics,
+          d.reportedTics,
+          d.verifiedTics,
+          d.cumulativeTics,
+        ]),
+        [
+          ['validated-receipt', 'completed', true, 6, 6, 6, 7],
+          ['validated-receipt', 'completed', true, 6, 6, 6, 13],
+        ],
+      );
+      const writes = h.commands.filter((c) => c.op === 'set-prompt');
+      const decisions = h.commands.filter((c) => c.op === 'decide');
+      assert.deepEqual(
+        writes.map((c) => c.data.revision),
+        [0, 1],
+      );
+      assert.deepEqual(
+        decisions.map((c) => c.data.revision),
+        [1, 2],
+      );
+      assert.equal(new Set(writes.concat(decisions).map((c) => c.data.runId)).size, 1);
+      assert.equal(new Set(h.observations.map((o) => o.observationId)).size, 4);
+      assert.deepEqual(
+        decisions.map((c) => c.data.observationId),
+        [h.observations[1].observationId, h.observations[3].observationId],
+      );
+      assert.ok(decisions.every((c) => !Object.hasOwn(c.data, 'action') && !Object.hasOwn(c.data, 'tics')));
+      assert.match(h.generationInputs[1].text, /ORIGINAL_OBJECTIVE=.*GUIDANCE_ONE_ALPHA/);
+      assert.match(h.generationInputs[1].text, /BEFORE=.*"tic":1/);
+      assert.match(h.generationInputs[1].text, /AFTER=.*"tic":7/);
+      assert.deepEqual(h.generationInputs[1].image, lastPng.image);
+      assert.equal(h.wires.length, 2, 'Two actual Request bodies emitted by the pinned SDK');
+      const expectedFirst = composeGuidance(h.baseInstructions, firstGuidance).replaceAll('{{tics}}', '6');
+      const expectedSecond = composeGuidance(h.baseInstructions, {
+        ...nextReassessment.nextGuidance,
+        uncertainty: nextReassessment.uncertainty,
+      }).replaceAll('{{tics}}', '6');
+      assert.equal(h.wires[0].questions.next_action.instructions, expectedFirst);
+      assert.equal(h.wires[1].questions.next_action.instructions, expectedSecond);
+      const firstBlock = expectedFirst.slice(h.baseInstructions.replaceAll('{{tics}}', '6').length);
+      assert.ok(!h.wires[1].questions.next_action.instructions.includes(firstBlock));
+      assert.ok(!h.wires[1].questions.next_action.instructions.includes('GUIDANCE_ONE_ALPHA'));
+      for (const [index, wire] of h.wires.entries()) {
+        assert.equal(wire.model, 'openai/gpt-6-luna-decisions');
+        assert.deepEqual(wire.provider, { allow_fallbacks: false }, 'SDK snake-case serialization');
+        assert.equal(wire.questions.next_action.type, 'choice');
+        assert.deepEqual(wire.questions.next_action.criteria, {
+          neutral: null,
+          forward: null,
+          turn_right: null,
+          backward: null,
+          turn_left: null,
+          fire: null,
+          use: null,
+        });
+        assert.ok(wire.questions.next_action.instructions.startsWith(h.baseInstructions.replaceAll('{{tics}}', '6')));
+        assert.ok(!wire.questions.next_action.instructions.includes('{{tics}}'));
+        const state = String(wire.state[0]);
+        assert.ok(state.startsWith(`Current rendered Doom frame at verified tic ${index === 0 ? 1 : 7}.`));
+        assert.match(state, /Ready weapon: pistol/);
+        assert.match(state, /Health: 100/);
+        assert.ok(!state.includes('Ammo:'));
+        assert.equal(state.includes('Mock controller verified a turn.'), index === 1);
+        assert.deepEqual(wire.state[1], {
+          type: 'image_url',
+          image_url: { url: h.observations[index === 0 ? 1 : 3].png },
+        });
+      }
+      const published = JSON.stringify(report);
+      for (const secret of [
+        h.root,
+        h.baseInstructions,
+        expectedFirst,
+        expectedSecond,
+        'offline-supervisor-dummy',
+        'private-acp-session',
+      ])
+        assert.ok(!published.includes(secret));
+      assert.equal(report.humanStopRequired, false);
+    },
+    undefined,
+    'two',
+  ));
+
+test('two-action mode rejects incorrect allowance and interim/native/post-CAS evidence before second SDK call', async () => {
+  const faults: Fault[] = [
+    (op, _data, reply) => {
+      if (op === 'start-run') Object.assign((reply.config as { run: AgentRunState }).run, { limit: 1, remaining: 1 });
+    },
+    (op, _data, reply, index) => {
+      if (op === 'observe' && index === 3)
+        Object.assign((reply.observation as { run: AgentRunState }).run, { sdkInvoked: 0 });
+    },
+    (op, _data, reply, index) => {
+      if (op === 'observe' && index === 3) (reply.observation as AgentObservation).telemetry.x++;
+    },
+    (op, _data, reply, index) => {
+      if (op === 'observe' && index === 3) (reply.observation as Json).revision = 0;
+    },
+    (op, _data, reply, index) => {
+      if (op === 'observe' && index === 3)
+        (reply.observation as { configuration: AgentConfiguration }).configuration = {
+          ...(reply.observation as { configuration: AgentConfiguration }).configuration,
+          includeAmmo: true,
+        };
+    },
+    (op, _data, reply, index) => {
+      if (op === 'set-prompt' && index === 2) (reply.prompt as Json).revision = 1;
+    },
+    (op, _data, reply, index) => {
+      if (op === 'observe' && index === 4) (reply.observation as Json).revision = 1;
+    },
+    (op, _data, reply, index) => {
+      if (op === 'observe' && index === 4) (reply.observation as AgentObservation).telemetry.angle++;
+    },
+  ];
+  for (const [index, fault] of faults.entries())
+    await using(
+      async (h) => {
+        const report = await supervise(h.ports, { mode: 'two' });
+        assert.notEqual(report.outcome, 'completed');
+        assert.equal(report.startRunCalls, 1);
+        assert.equal(report.decideCalls, index === 0 ? 0 : 1);
+        assert.equal(h.wires.length, index === 0 ? 0 : 1);
+        assert.equal(report.verifiedActions, index === 0 ? 0 : 1);
+        assert.equal(report.humanStopRequired, true);
+      },
+      fault,
+      'two',
+    );
+});
+
+test('second CAS invalidates its prior observation; stale CAS never reaches the SDK', async () => {
+  for (const kind of ['cas', 'observation', 'reused-interim', 'reused-fresh'])
+    await using(
+      async (h) => {
+        const cli = h.ports.cli;
+        h.ports.cli = async (args, signal) => {
+          if (
+            kind === 'cas' &&
+            args[0] === 'set-prompt' &&
+            h.commands.filter((c) => c.op === 'set-prompt').length === 1
+          ) {
+            const stale = [...args];
+            stale[8] = '0';
+            return cli(stale, signal);
+          }
+          if (kind === 'observation' && args[0] === 'decide' && h.wires.length === 1) {
+            const stale = [...args];
+            stale[4] = h.observations[2].observationId;
+            const denied = (await cli(stale, signal)) as AgentDecisionResult;
+            assert.equal(denied.outcome, 'not-admitted');
+            assert.equal(denied.sdkInvoked, false);
+            return denied;
+          }
+          const result = await cli(args, signal);
+          if (
+            args[0] === 'observe' &&
+            ((kind === 'reused-interim' && h.observations.length === 3) ||
+              (kind === 'reused-fresh' && h.observations.length === 4))
+          ) {
+            (result as AgentObservation).observationId = h.observations[1].observationId;
+          }
+          return result;
+        };
+        const report = await supervise(h.ports, { mode: 'two' });
+        assert.notEqual(report.outcome, 'completed');
+        assert.equal(h.wires.length, 1);
+        assert.equal(report.verifiedActions, 1);
+        assert.equal(report.startRunCalls, 1);
+        assert.equal(report.humanStopRequired, true);
+        if (kind === 'observation') {
+          // The supervisor also rejects the response's substituted observation correlation.
+          assert.equal(report.decisions[1].delivery, 'unknown');
+          assert.equal(report.decisions[1].sdkInvoked, null);
+        }
+      },
+      undefined,
+      'two',
+    );
+});
+
+test('interim guidance must be strict, safe, different and from the same tool-free ACP session', async () => {
+  for (const kind of [
+    'continue',
+    'missing',
+    'null',
+    'extra',
+    'empty',
+    'null-target',
+    'oversize',
+    'unsafe',
+    'action',
+    'use',
+    'duration',
+    'unknown',
+    'unchanged',
+    'session',
+    'tool',
+  ]) {
+    await using(
+      async (h) => {
+        h.setGeneration(async (input) => {
+          input.onCallStart();
+          if (h.generationInputs.length === 1) return modelResult(JSON.stringify(firstGuidance));
+          if (kind === 'session') h.changeACPSession();
+          const value: Json = structuredClone(nextReassessment);
+          if (kind === 'continue') value.status = 'continue';
+          if (kind === 'missing') delete value.nextGuidance;
+          if (kind === 'null') value.nextGuidance = null;
+          if (kind === 'extra') value.nextGuidance = { ...nextReassessment.nextGuidance, action: 'turn_right' };
+          if (kind === 'empty') value.nextGuidance = { ...nextReassessment.nextGuidance, target: ' ' };
+          if (kind === 'null-target') value.nextGuidance = { ...nextReassessment.nextGuidance, target: null };
+          if (kind === 'oversize') value.nextGuidance = { ...nextReassessment.nextGuidance, target: 'x'.repeat(801) };
+          if (kind === 'unsafe')
+            value.nextGuidance = { ...nextReassessment.nextGuidance, target: 'https://canary.invalid/private' };
+          if (kind === 'action') value.nextGuidance = { ...nextReassessment.nextGuidance, target: 'turn_right' };
+          if (kind === 'use') value.nextGuidance = { ...nextReassessment.nextGuidance, target: 'use' };
+          if (kind === 'duration') value.uncertainty = 'Inspect for 6 tics';
+          if (kind === 'unknown') value.status = 'unknown';
+          if (kind === 'unchanged') {
+            value.nextGuidance = { target: firstGuidance.target, nextExperiment: firstGuidance.nextExperiment };
+            value.uncertainty = firstGuidance.uncertainty;
+          }
+          return modelResult(JSON.stringify(value), 'stop', kind === 'tool' ? [unexpectedToolCall] : []);
+        });
+        const report = await supervise(h.ports, { mode: 'two' });
+        assert.equal(report.supervisorCalls, 2);
+        assert.equal(report.acpSessionStarts, 1);
+        assert.equal(report.startRunCalls, 1);
+        assert.equal(h.wires.length, kind === 'continue' ? 2 : 1);
+        if (kind === 'continue') assert.equal(report.outcome, 'completed');
+        else {
+          assert.notEqual(report.outcome, 'completed');
+          assert.equal(report.humanStopRequired, true);
+          assert.equal(report.accounting, null);
+          assert.equal(report.interimAccounting?.remaining, 1);
+          assert.equal(h.commands.filter((c) => c.op === 'set-prompt').length, 1);
+          assert.equal(report.verifiedActions, 1);
+        }
+        if (kind === 'unchanged') assert.equal(report.errorCategory, 'UNCHANGED_GUIDANCE');
+        if (kind === 'unsafe') assert.ok(!JSON.stringify(report).includes('https://canary.invalid'));
+      },
+      undefined,
+      'two',
+    );
+  }
+});
+
+test('achieved/uncertain early exits retain active unused authority and require browser Stop Agent', async () => {
+  for (const status of ['achieved', 'uncertain'])
+    await using(
+      async (h) => {
+        h.setGeneration(async (input) => {
+          input.onCallStart();
+          return modelResult(
+            JSON.stringify(h.generationInputs.length === 1 ? firstGuidance : { ...reassessment, status }),
+          );
+        });
+        const report = await supervise(h.ports, { mode: 'two' });
+        assert.equal(report.outcome, 'partial');
+        assert.equal(report.stage, 'early-advisory-end');
+        assert.equal(report.humanStopRequired, true);
+        assert.deepEqual(report.interimAccounting, {
+          active: true,
+          limit: 2,
+          reserved: 1,
+          sdkInvoked: 1,
+          remaining: 1,
+        });
+        assert.equal(report.accounting, null);
+        assert.equal(report.verifiedActions, 1);
+        assert.equal(report.decideCalls, 1);
+        assert.equal(report.supervisorCalls, 2);
+        assert.equal(h.wires.length, 1);
+        assert.equal(h.commands.filter((c) => c.op === 'set-prompt').length, 1);
+      },
+      undefined,
+      'two',
+    );
+});
+
+test('Stop, terminal, partial or lost first mutation never schedules interim ACP or a second action', async () => {
+  for (const kind of ['stop', 'terminal', 'partial', 'lost-start', 'lost-prompt', 'lost-decide'])
+    await using(
+      async (h) => {
+        const report = await supervise(h.ports, { mode: 'two' });
+        assert.notEqual(report.outcome, 'completed');
+        const beforeDecision = kind === 'lost-start' || kind === 'lost-prompt';
+        assert.equal(report.decideCalls, beforeDecision ? 0 : 1);
+        assert.equal(h.wires.length, beforeDecision ? 0 : 1);
+        for (const operation of ['start-run', 'set-prompt', 'decide'])
+          assert.ok(h.commands.filter((command) => command.op === operation).length <= 1);
+        assert.equal(report.supervisorCalls, 1);
+        assert.equal(report.accounting, null);
+        assert.equal(report.interimAccounting, null);
+        if (kind === 'partial') {
+          assert.equal(report.outcome, 'uncertain');
+          assert.equal(report.decisions[0].verifiedTics, 2);
+          assert.equal(report.decisions[0].reportedTics, 3);
+          assert.equal(report.decisions[0].cumulativeTics, 3);
+          assert.equal(report.verifiedActions, 0);
+        }
+        if (kind.startsWith('lost')) {
+          assert.equal(report.outcome, 'uncertain');
+          assert.equal(report.humanStopRequired, true);
+        }
+        if (kind === 'terminal') {
+          assert.equal(report.outcome, 'terminal');
+          assert.equal(report.decisions[0].requestedTics, 6);
+          assert.equal(report.decisions[0].reportedTics, 2);
+          assert.equal(report.decisions[0].verifiedTics, 2);
+          assert.equal(report.verifiedActions, 0);
+        }
+        if (kind === 'stop') assert.equal(report.outcome, 'stopped');
+      },
+      (op, _data, reply) => {
+        if (op === kind.replace('lost-', '')) throw Error('lost reply');
+        if (kind === 'lost-start' && op === 'start-run') throw Error('lost reply');
+        if (kind === 'lost-prompt' && op === 'set-prompt') throw Error('lost reply');
+        if (op !== 'decide') return;
+        if (kind === 'stop') throw Error('agent-stopped');
+        const result = reply.decision as AgentDecisionResult;
+        if (kind === 'terminal') {
+          result.outcome = 'terminal';
+          result.reportedTics = result.verifiedTics = 2;
+          result.cumulativeTics = 3;
+          must(result.observation).phase = 'terminal';
+          must(result.observation).tic = 3;
+          must(result.observation).frame.tic = 3;
+          must(result.observation).counters.gametic = 3;
+          must(result.observation).counters.leveltime = 3;
+          must(result.observation).previousAction = null;
+          must(result.observation).telemetry.health = 0;
+        }
+        if (kind === 'partial')
+          Object.assign(result, {
+            outcome: 'retired',
+            reportedTics: 3,
+            verifiedTics: 2,
+            cumulativeTics: 3,
+            completionUncertain: true,
+            observation: null,
+          });
+      },
+      'two',
+    );
+});
+
+test('lost second CAS/decision responses remain uncertain despite valid interim accounting; never replay', async () => {
+  for (const lost of ['set-prompt', 'decide'])
+    await using(
+      async (h) => {
+        const report = await supervise(h.ports, { mode: 'two' });
+        assert.equal(report.outcome, 'uncertain');
+        assert.equal(report.humanStopRequired, true);
+        assert.equal(report.interimAccounting?.remaining, 1);
+        assert.equal(report.accounting, null);
+        assert.equal(report.verifiedActions, 1);
+        assert.equal(report.startRunCalls, 1);
+        assert.equal(report.supervisorCalls, 2);
+        assert.equal(h.commands.filter((c) => c.op === lost).length, 2);
+        assert.equal(h.wires.length, lost === 'decide' ? 2 : 1);
+        assert.equal(report.decideCalls, lost === 'decide' ? 2 : 1);
+        if (lost === 'decide') {
+          assert.equal(report.decisions[1].delivery, 'unknown');
+          assert.equal(report.decisions[1].sdkInvoked, null);
+          assert.equal(report.decisions[1].verifiedTics, null);
+        } else assert.equal(report.guidance[1], 'application-unknown');
+      },
+      (op, _data, _reply, index) => {
+        if (op === lost && index === 2) throw Error('lost reply');
+      },
+      'two',
+    );
+});
+
+test('instruction files are distinct, exclusive 0600 and cleaned only after owned creation', async () => {
+  for (const failure of ['none', 'exists', 'partial']) {
+    const root = await mkdtemp(join(tmpdir(), 'doom-instructions-test-'));
+    const originalFetch = globalThis.fetch;
+    const files = createCLIPorts(root);
+    try {
+      globalThis.fetch = async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        return Response.json({ pageId: randomUUID(), epoch: randomUUID(), ownerId: body.ownerId });
+      };
+      const signal = new AbortController().signal;
+      const lease = parseLease(await files.cli(['attach'], signal));
+      const first = await files.writeInstructions('private synthetic first', signal);
+      const secondPath = join(dirname(lease.leaseFile), 'supervisor-instructions-2.txt');
+      assert.equal((await stat(first)).mode & 0o777, 0o600);
+      if (failure === 'exists') {
+        await writeFile(secondPath, 'preexisting owner evidence', { flag: 'wx' });
+        await assert.rejects(files.writeInstructions('must not replace', signal), { code: 'EEXIST' });
+      } else if (failure === 'partial') {
+        // Inject a write failure after exclusive creation and actual prefix bytes.
+        const { FileHandle } = await import('node:fs/promises').then(async (fs) => {
+          const probe = await fs.open(join(root, 'probe'), 'wx');
+          const prototype = Object.getPrototypeOf(probe);
+          await probe.close();
+          return { FileHandle: prototype };
+        });
+        const write = FileHandle.writeFile;
+        FileHandle.writeFile = async function (this: Awaited<ReturnType<typeof import('node:fs/promises').open>>) {
+          await write.call(this, 'partial private prefix');
+          throw Error('synthetic disk write failure');
+        };
+        try {
+          await assert.rejects(
+            files.writeInstructions('private synthetic second', signal),
+            /synthetic disk write failure/,
+          );
+        } finally {
+          FileHandle.writeFile = write;
+        }
+        assert.equal(await readFile(secondPath, 'utf8'), 'partial private prefix');
+      } else {
+        const second = await files.writeInstructions('private synthetic second', signal);
+        assert.notEqual(second, first);
+        assert.equal((await stat(second)).mode & 0o777, 0o600);
+        await assert.rejects(files.writeInstructions('third forbidden', signal));
+      }
+      await files.cleanup();
+      await assert.rejects(readFile(first), { code: 'ENOENT' });
+      if (failure === 'exists') assert.equal(await readFile(secondPath, 'utf8'), 'preexisting owner evidence');
+      else await assert.rejects(readFile(secondPath), { code: 'ENOENT' });
+      assert.equal(JSON.parse(await readFile(join(dirname(lease.leaseFile), 'lease.json'), 'utf8')).epoch, lease.epoch);
+      assert.ok(await readFile(join(root, 'receipt-1.json')));
+    } finally {
+      globalThis.fetch = originalFetch;
+      await files.cleanup();
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('live gates bind one/two independently and reject mixed or arbitrary authorization without launch', async () => {
+  const launched: { id: string; mode: SupervisorMode }[] = [];
+  const launch = async (id: string, mode: SupervisorMode) => {
+    launched.push({ id, mode });
+    return 0 as const;
+  };
+  for (const [flag, mode] of [
+    ['--authorize-one-decision', 'one'],
+    ['--authorize-two-decisions', 'two'],
+  ] as const) {
+    assert.equal(await supervisorMain(['--live', flag, '--trial', 'fake-only'], launch), 0);
+    assert.deepEqual(launched.at(-1), { id: 'fake-only', mode });
+  }
+  for (const args of [
+    ['--live', '--authorize-two-decisions'],
+    ['--live', '--authorize-two-decisions', '--trial', '../bad'],
+    ['--live', '--authorize-one-decision', '--authorize-two-decisions', '--trial', 'fake-only'],
+    ['--live', '--authorize-three-decisions', '--trial', 'fake-only'],
+  ])
+    assert.equal(await supervisorMain(args, launch, () => {}), 2);
+  assert.equal(launched.length, 2);
 });

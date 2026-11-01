@@ -3,6 +3,7 @@ import type { ACPProvider } from '@mcpc-tech/acp-ai-provider';
 import type { generateText } from 'ai';
 import { agentCliError } from '../../scripts/doom-agent.mjs';
 import { maxAgentInstructions, type AgentRunState } from '../../app/src/agent-control.ts';
+import type { AgentObservation } from '../../app/src/agent-observation.ts';
 import {
   proposalShape,
   reassessmentShape,
@@ -34,6 +35,19 @@ export type SupervisorPorts = {
   createACP(signal: AbortSignal): Promise<SupervisorACP>;
 };
 type Usage = 'unavailable' | { inputTokens: number | null; outputTokens: number | null; totalTokens: number | null };
+export type SupervisorMode = 'one' | 'two';
+type DecisionEvidence = {
+  delivery: 'unknown' | 'validated-receipt';
+  outcome: string | null;
+  sdkInvoked: boolean | null;
+  action: string | null;
+  requestedTics: number | null;
+  reportedTics: number | null;
+  verifiedTics: number | null;
+  cumulativeTics: number | null;
+  completionUncertain: boolean | null;
+  usage: 'unavailable' | { input: number | null; output: number | null; total: number | null };
+};
 class HostFailure extends Error {}
 function fail(category: string): never {
   throw new HostFailure(category);
@@ -70,17 +84,23 @@ function reassessmentDiagnostic(raw: unknown, jsonParsed: boolean, value?: unkno
     visualEvidence: object !== null && Object.hasOwn(object, 'visualEvidence'),
     telemetryEvidence: object !== null && Object.hasOwn(object, 'telemetryEvidence'),
     uncertainty: object !== null && Object.hasOwn(object, 'uncertainty'),
+    nextGuidance: object !== null && Object.hasOwn(object, 'nextGuidance'),
   };
   const evidence = object ? [object.visualEvidence, object.telemetryEvidence] : [];
+  const next =
+    object?.nextGuidance && typeof object.nextGuidance === 'object' && !Array.isArray(object.nextGuidance)
+      ? (object.nextGuidance as Record<string, unknown>)
+      : null;
+  const continuing = object?.status === 'continue' || object?.status === 'revise';
   // Mirror only the delegated byte-limit measurement, never its acceptance.
   const delegatedBytes = object
     ? Buffer.byteLength(
         JSON.stringify({
-          target: 'Reassess original objective',
+          target: continuing ? next?.target : 'Reassess original objective',
           visualEvidence: object.visualEvidence,
           telemetryEvidence: object.telemetryEvidence,
           uncertainty: object.uncertainty,
-          nextExperiment: 'No further gameplay authorized',
+          nextExperiment: continuing ? next?.nextExperiment : 'No further gameplay authorized',
         }),
       )
     : null;
@@ -98,7 +118,9 @@ function reassessmentDiagnostic(raw: unknown, jsonParsed: boolean, value?: unkno
       : null,
     delegatedByteLimitExceeded: delegatedBytes === null ? null : delegatedBytes > 8192,
     fieldTextOverLimit: object
-      ? (typeof object.uncertainty === 'string' && object.uncertainty.length > 800) ||
+      ? [object.uncertainty, next?.target, next?.nextExperiment].some(
+          (text) => typeof text === 'string' && text.length > 800,
+        ) ||
         evidence.some(
           (items) => Array.isArray(items) && items.some((item) => typeof item === 'string' && item.length > 400),
         )
@@ -107,8 +129,21 @@ function reassessmentDiagnostic(raw: unknown, jsonParsed: boolean, value?: unkno
   };
 }
 
-export function composeGuidance(base: string, proposal: DoomProposal) {
+export function composeGuidance(
+  base: string,
+  proposal: Pick<DoomProposal, 'target' | 'nextExperiment' | 'uncertainty'>,
+) {
   requireLive(base.includes('{{tics}}'));
+  // Conservative explicit-directive guard, not semantic isolation of natural language.
+  safeAdvisory(proposal);
+  for (const text of [proposal.target, proposal.nextExperiment, proposal.uncertainty]) {
+    if (
+      /\b(?:neutral|forward|turn_right|backward|turn_left|fire)\b|^\s*use\s*$|\b(?:action|choose|select|press|hold|turn)\s+(?:use|left|right)\b|\b(?:tics?|ticks?|seconds?|milliseconds?|duration)\b/i.test(
+        text,
+      )
+    )
+      fail('UNSAFE_ADVISORY_TEXT');
+  }
   const text = `${base}\n\nAdvisory navigation interpretation (unverified): ${JSON.stringify({
     objective: proposal.target,
     question: proposal.nextExperiment,
@@ -128,30 +163,32 @@ function usage(value: Generation['totalUsage']): Usage {
   return Object.values(result).some((n) => n !== null) ? result : 'unavailable';
 }
 
-function runMatches(run: AgentRunState | null, runId: string, exhausted = false) {
+function runMatches(run: AgentRunState | null, runId: string, limit: 1 | 2, completed: number) {
   requireLive(
     run &&
       run.runId === runId &&
-      run.limit === 1 &&
-      run.active === !exhausted &&
-      run.reserved === Number(exhausted) &&
-      run.sdkInvoked === Number(exhausted) &&
-      run.remaining === Number(!exhausted),
+      run.limit === limit &&
+      run.active === completed < limit &&
+      run.reserved === completed &&
+      run.sdkInvoked === completed &&
+      run.remaining === limit - completed,
   );
   return run;
 }
 
 // No real defaults: callers must supply every I/O port. The linear workflow has
-// exactly one decide call site and no recovery/retry path.
+// one or two fixed decisions and no recovery/retry path.
 export async function supervise(
   ports: SupervisorPorts,
   options: {
     signal?: AbortSignal;
     stageMs?: number;
     overallMs?: number;
+    mode?: SupervisorMode;
   } = {},
 ) {
   const report = initialReport();
+  const limit = options.mode === 'two' ? 2 : 1;
   const abort = new AbortController();
   const cancel = () => abort.abort();
   options.signal?.addEventListener('abort', cancel, { once: true });
@@ -160,33 +197,58 @@ export async function supervise(
   let acp: SupervisorACP | undefined;
   let attached = false;
   let finished = false;
+  let mutationPending = false;
+  const observationIds = new Set<string>();
+  const decidedIds = new Set<string>();
 
   try {
+    requireLive(options.mode === undefined || options.mode === 'one' || options.mode === 'two');
     const { lease, initial } = await attachAndObserveInitial();
     const before = initial.observation;
     const advisory = await openAdvisorySession();
     const proposal = await proposeNavigation(advisory, initial);
 
     // Prepare the complete guidance before claiming the nonrefundable allowance.
-    const guidance = composeGuidance(before.configuration.instructionTemplate, proposal);
+    const originalTemplate = before.configuration.instructionTemplate;
+    const guidance = composeGuidance(originalTemplate, proposal);
     const file = await bounded('instructions-file', () => ports.writeInstructions(guidance, abort.signal));
-    const runId = await claimOneDecision(lease, before);
+    const runId = await claimRun(lease, before);
     const promptAcknowledgment = await applyGuidanceCAS(lease, before, runId, guidance, file);
     const ready = await observeAndConfirmGuidance(lease, before, runId, guidance, promptAcknowledgment);
 
     // The provider selects the action; the browser owns duration and execution.
     // This command supplies scope, never an action override.
     const after = await requestAndValidateDecision(lease, ready, runId);
-    const receipt = after.receipt;
-    // Prefix evidence is already recorded. Stop/terminal/unsuccessful results cannot reassess.
-    if (receipt.outcome !== 'completed' && receipt.outcome !== 'terminal')
-      fail(receipt.outcome === 'stopped' ? 'AGENT_STOPPED' : 'DECISION_NOT_COMPLETED');
-    requireLive(receipt.reason === null && receipt.requestedTics === 6 && receipt.verifiedTics !== null);
-    if (receipt.outcome === 'terminal') fail('TERMINAL');
-    report.verifiedActions = 1;
-
-    await readExhaustedAccounting(lease, ready, runId);
-    await reassessOriginalObjective(advisory, initial, after);
+    acceptCompleted(after);
+    if (limit === 1) {
+      await readExhaustedAccounting(lease, ready, runId);
+      await reassessOriginalObjective(advisory, initial, after);
+    } else {
+      const interim = await observeInterim(lease, ready, runId, after);
+      await reassessOriginalObjective(advisory, initial, after);
+      const reassessment = report.reassessment;
+      requireLive(reassessment);
+      if (reassessment.nextGuidance === null) {
+        report.outcome = 'partial';
+        report.stage = 'early-advisory-end';
+        report.humanStopRequired = true;
+        return report;
+      }
+      const secondGuidance = composeGuidance(originalTemplate, {
+        ...reassessment.nextGuidance,
+        uncertainty: reassessment.uncertainty,
+      });
+      if (secondGuidance === guidance) fail('UNCHANGED_GUIDANCE');
+      const secondFile = await bounded('instructions-file', () =>
+        ports.writeInstructions(secondGuidance, abort.signal),
+      );
+      const secondAcknowledgment = await applyGuidanceCAS(lease, interim, runId, secondGuidance, secondFile);
+      const secondReady = await observeAndConfirmGuidance(lease, interim, runId, secondGuidance, secondAcknowledgment);
+      const secondAfter = await requestAndValidateDecision(lease, secondReady, runId);
+      acceptCompleted(secondAfter);
+      await readExhaustedAccounting(lease, secondReady, runId);
+      // Exactly two ACP checkpoints. No final advisory turn in two-decision mode.
+    }
     report.outcome = 'completed';
     report.stage = 'complete';
   } catch (error) {
@@ -196,7 +258,9 @@ export async function supervise(
         ? 'stopped'
         : report.errorCategory === 'TERMINAL'
           ? 'terminal'
-          : report.claim !== 'not-attempted' && !report.accounting
+          : mutationPending ||
+              report.decisions.some((decision) => decision.completionUncertain) ||
+              (report.claim !== 'not-attempted' && !report.accounting && !report.interimAccounting)
             ? 'uncertain'
             : 'failed';
     report.humanStopRequired = attached && !['stopped', 'terminal'].includes(report.outcome);
@@ -212,8 +276,10 @@ export async function supervise(
       } catch {
         report.cleanup = 'cleanup-failed; child-exit-unverified';
       }
-      if (report.outcome === 'completed' && report.cleanup !== 'returned-session-cleared; child-exit-unverified')
+      if (report.outcome === 'completed' && report.cleanup !== 'returned-session-cleared; child-exit-unverified') {
         report.outcome = 'uncertain';
+        report.humanStopRequired = attached;
+      }
     }
   }
   return report;
@@ -224,6 +290,52 @@ export async function supervise(
   type ObservationEvidence = Awaited<ReturnType<typeof liveObserve>>;
   type Observation = ObservationEvidence['observation'];
   type AdvisorySession = { supervisor: SupervisorACP; acpSession: string };
+
+  function rememberObservation(observation: AgentObservation) {
+    requireLive(!observationIds.has(observation.observationId));
+    observationIds.add(observation.observationId);
+  }
+
+  function unchangedNative(next: AgentObservation, previous: AgentObservation) {
+    sameGame(next, previous);
+    requireLive(
+      next.tic === previous.tic &&
+        same(next.frame, previous.frame) &&
+        same(next.telemetry, previous.telemetry) &&
+        same(next.facingProbe, previous.facingProbe) &&
+        same(next.previousAction, previous.previousAction) &&
+        next.counters.leveltime === previous.counters.leveltime,
+    );
+  }
+
+  function acceptCompleted(after: Awaited<ReturnType<typeof liveDecision>>) {
+    const receipt = after.receipt;
+    // Prefix evidence is already recorded. Stop/terminal/unsuccessful results cannot continue.
+    if (receipt.outcome !== 'completed' && receipt.outcome !== 'terminal')
+      fail(receipt.outcome === 'stopped' ? 'AGENT_STOPPED' : 'DECISION_NOT_COMPLETED');
+    requireLive(receipt.reason === null && receipt.requestedTics === 6 && receipt.verifiedTics !== null);
+    if (receipt.outcome === 'terminal') fail('TERMINAL');
+    report.verifiedActions++;
+  }
+
+  async function observeInterim(
+    lease: Lease,
+    ready: Observation,
+    runId: string,
+    after: Awaited<ReturnType<typeof liveDecision>>,
+  ) {
+    requireLive(after.receipt.observation);
+    const raw = await command(['observe', '--lease', lease.leaseFile]);
+    const { observation } = await bounded('interim-observation', () =>
+      liveObserve(raw, lease, ports.readPng, abort.signal),
+    );
+    unchangedNative(observation, after.receipt.observation);
+    requireLive(observation.revision === ready.revision && same(observation.configuration, ready.configuration));
+    const { runId: _runId, ...counts } = runMatches(observation.run, runId, limit, 1);
+    rememberObservation(observation);
+    report.interimAccounting = counts;
+    return observation;
+  }
 
   async function attachAndObserveInitial() {
     attached = true; // A lost attach response can still leave ownership behind.
@@ -240,6 +352,7 @@ export async function supervise(
       ),
     );
     const before = initial.observation;
+    rememberObservation(before);
     requireLive(
       before.run === null &&
         before.configuration.tics === 6 &&
@@ -291,7 +404,7 @@ export async function supervise(
     return report.proposal;
   }
 
-  async function claimOneDecision(lease: Lease, before: Observation) {
+  async function claimRun(lease: Lease, before: Observation) {
     const configuration = before.configuration;
     open();
     const started = configResult(
@@ -316,13 +429,15 @@ export async function supervise(
         started.run,
     );
     const runId = started.run.runId;
-    runMatches(started.run, runId);
+    runMatches(started.run, runId, limit, 0);
     report.claim = 'acknowledged';
+    mutationPending = false;
     return runId;
   }
 
   async function applyGuidanceCAS(lease: Lease, before: Observation, runId: string, guidance: string, file: string) {
-    report.guidance = 'application-unknown';
+    requireLive(report.guidance.length < limit);
+    report.guidance.push('application-unknown');
     const changed = promptResult(
       await command([
         'set-prompt',
@@ -345,8 +460,9 @@ export async function supervise(
         changed.revision === before.revision + 1 &&
         changed.instructions === guidance,
     );
-    runMatches(changed.run, runId);
-    report.guidance = 'last-acknowledged; current-state-unverified';
+    runMatches(changed.run, runId, limit, report.verifiedActions);
+    mutationPending = false;
+    report.guidance[report.guidance.length - 1] = 'last-acknowledged; current-state-unverified';
     return changed;
   }
 
@@ -361,19 +477,15 @@ export async function supervise(
     const freshRaw = await command(['observe', '--lease', lease.leaseFile]);
     const fresh = await bounded('fresh-observation', () => liveObserve(freshRaw, lease, ports.readPng, abort.signal));
     const ready = fresh.observation;
-    sameGame(ready, before);
+    unchangedNative(ready, before);
     requireLive(
       ready.revision === changed.revision &&
         same(ready.configuration, { ...configuration, instructionTemplate: guidance }) &&
-        ready.observationId !== before.observationId &&
-        ready.tic === before.tic &&
-        same(ready.frame, before.frame) &&
-        same(ready.telemetry, before.telemetry) &&
-        same(ready.facingProbe, before.facingProbe) &&
-        same(ready.previousAction, before.previousAction) &&
-        ready.counters.leveltime === before.counters.leveltime,
+        ready.observationId !== before.observationId,
     );
-    runMatches(ready.run, runId);
+    runMatches(ready.run, runId, limit, report.verifiedActions);
+    rememberObservation(ready);
+    report.guidance[report.guidance.length - 1] = 'independently-observed';
     return ready;
   }
 
@@ -396,19 +508,22 @@ export async function supervise(
       liveDecision(decisionRaw, lease, ready, ports.readPng, abort.signal),
     );
     const receipt = after.receipt;
-    report.decisionDelivery = 'validated-receipt';
-    report.domainOutcome = receipt.outcome;
-    report.decisionSdkInvoked = receipt.sdkInvoked;
-    report.action = receipt.action;
-    report.requestedTics = receipt.requestedTics;
-    report.reportedTics = receipt.reportedTics;
+    const evidence = report.decisions[report.decisions.length - 1];
+    evidence.delivery = 'validated-receipt';
+    evidence.outcome = receipt.outcome;
+    evidence.sdkInvoked = receipt.sdkInvoked;
+    evidence.action = receipt.action;
+    evidence.requestedTics = receipt.requestedTics;
+    evidence.reportedTics = receipt.reportedTics;
     // A retired/uncertain result can still retain an independently verified
     // native prefix. Preserve it without calling the whole action completed.
-    report.verifiedTics = receipt.verifiedTics;
-    report.cumulativeTics = receipt.cumulativeTics;
-    report.completionUncertain = receipt.completionUncertain;
+    evidence.verifiedTics = receipt.verifiedTics;
+    evidence.cumulativeTics = receipt.cumulativeTics;
+    evidence.completionUncertain = receipt.completionUncertain;
     if (receipt.responseMetadata && Object.values(receipt.responseMetadata.usage).some((n) => n !== null))
-      report.decisionsUsage = receipt.responseMetadata.usage;
+      evidence.usage = receipt.responseMetadata.usage;
+    if (receipt.observation) rememberObservation(receipt.observation);
+    mutationPending = false;
     return after;
   }
 
@@ -423,9 +538,10 @@ export async function supervise(
         final.revision === ready.revision &&
         same(final.configuration, ready.configuration),
     );
-    const { runId: _runId, ...counts } = runMatches(final.run, runId, true);
+    const { runId: _runId, ...counts } = runMatches(final.run, runId, limit, limit);
     report.accounting = counts;
-    report.guidance = 'lease-local-retained; exhausted run cannot restore through set-prompt';
+    report.guidance[report.guidance.length - 1] =
+      'lease-local-retained; exhausted run cannot restore through set-prompt';
   }
 
   async function reassessOriginalObjective(
@@ -437,7 +553,11 @@ export async function supervise(
     // Completion, cancellation, session and tool checks stay outside text validation.
     const reassessmentText = await checkpoint(
       advisory,
-      `${instructions}\nReassess the ORIGINAL objective from the prior turn against the new POST-ACTION image. No more gameplay will occur.\nShape=${JSON.stringify(reassessmentShape)}\nORIGINAL_OBJECTIVE=${JSON.stringify(report.proposal)}\nBEFORE=${JSON.stringify(initial.payload)}\nAFTER=${JSON.stringify(after.payload)}`,
+      `${instructions}\nReassess the ORIGINAL objective from the prior turn against the new POST-ACTION image. ${
+        limit === 2
+          ? 'One further browser decision is authorized only if you supply defensible nextGuidance. Continue/revise require target and nextExperiment. Achieved/uncertain require nextGuidance:null and end gameplay. Uncertain means no defensible next experiment can be offered.'
+          : 'No more gameplay will occur. Any nextGuidance is advisory only. Continue/revise require target and nextExperiment; achieved/uncertain require nextGuidance:null.'
+      }\nShape=${JSON.stringify(reassessmentShape)}\nORIGINAL_OBJECTIVE=${JSON.stringify(report.proposal)}\nBEFORE=${JSON.stringify(initial.payload)}\nAFTER=${JSON.stringify(after.payload)}`,
       after.image,
     );
     // Both checkpoints passed their before/after ID checks; not proof of
@@ -471,7 +591,10 @@ export async function supervise(
       throw error;
     }
     try {
-      report.reassessment = safeAdvisory(validated);
+      safeAdvisory(validated);
+      if (validated.nextGuidance)
+        composeGuidance('{{tics}}', { ...validated.nextGuidance, uncertainty: validated.uncertainty });
+      report.reassessment = validated;
     } catch (error) {
       if (error instanceof HostFailure && error.message === 'UNSAFE_ADVISORY_TEXT')
         rejectReassessment('UNSAFE_ADVISORY_TEXT', true);
@@ -559,10 +682,22 @@ export async function supervise(
           report.claim = 'unknown';
         }
         if (args[0] === 'decide') {
-          requireLive(report.decideCalls === 0);
-          report.decideCalls++;
-          report.decisionDelivery = 'unknown';
+          requireLive(report.decideCalls < limit && !decidedIds.has(args[4]));
+          decidedIds.add(args[4]);
+          report.decisions.push({
+            delivery: 'unknown',
+            outcome: null,
+            sdkInvoked: null,
+            action: null,
+            requestedTics: null,
+            reportedTics: null,
+            verifiedTics: null,
+            cumulativeTics: null,
+            completionUncertain: null,
+            usage: 'unavailable',
+          });
         }
+        if (['start-run', 'set-prompt', 'decide'].includes(args[0])) mutationPending = true;
         try {
           return await ports.cli(args, abort.signal);
         } catch (error) {
@@ -577,13 +712,18 @@ export async function supervise(
   }
 
   function initialReport() {
+    const decisions: DecisionEvidence[] = [];
     return {
-      outcome: 'failed' as 'completed' | 'failed' | 'uncertain' | 'stopped' | 'terminal',
+      mode: options.mode ?? 'one',
+      outcome: 'failed' as 'completed' | 'partial' | 'failed' | 'uncertain' | 'stopped' | 'terminal',
       stage: 'initialization',
       errorCategory: null as string | null,
       transportError: null as string | null,
       startRunCalls: 0,
-      decideCalls: 0,
+      get decideCalls() {
+        return decisions.length;
+      },
+      decisions,
       supervisorCalls: 0,
       providerCallStarts: 0,
       acpSessionStarts: 0,
@@ -591,27 +731,16 @@ export async function supervise(
       sameACPSession: false,
       claim: 'not-attempted' as 'not-attempted' | 'unknown' | 'acknowledged',
       attachment: 'unknown' as 'unknown' | 'acknowledged',
-      decisionDelivery: 'not-attempted' as 'not-attempted' | 'unknown' | 'validated-receipt',
-      domainOutcome: null as string | null,
-      decisionSdkInvoked: null as boolean | null,
       verifiedActions: 0,
-      verifiedTics: null as number | null,
-      cumulativeTics: null as number | null,
-      completionUncertain: null as boolean | null,
-      action: null as string | null,
-      requestedTics: null as number | null,
-      reportedTics: null as number | null,
+      interimAccounting: null as Omit<AgentRunState, 'runId'> | null,
       accounting: null as Omit<AgentRunState, 'runId'> | null,
-      decisionsUsage: 'unavailable' as
-        | 'unavailable'
-        | { input: number | null; output: number | null; total: number | null },
       supervisorUsage: [] as Usage[],
       totalCost: 'unavailable',
       proposal: null as DoomProposal | null,
       reassessment: null as DoomReassessment | null,
       reassessmentDiagnostic: null as ReturnType<typeof reassessmentDiagnostic> | null,
       achievement: 'advisory-only; never engine-verified',
-      guidance: 'not-applied',
+      guidance: [] as string[],
       cleanup: 'not-created',
       internalCodexTools: 'not-isolated-or-fully-observable',
       retryBoundary: 'host-and-ai-sdk-only; ACP lazy-auth can retry internally',
