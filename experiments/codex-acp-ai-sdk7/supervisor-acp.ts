@@ -9,7 +9,13 @@ export function createACPPort(cwd: string): SupervisorPorts['createACP'] {
     signal.throwIfAborted();
     const provider = createACPProvider({
       command: fileURLToPath(new URL('node_modules/.bin/codex-acp', import.meta.url)),
-      env: { INITIAL_AGENT_MODE: 'read-only' },
+      env: {
+        INITIAL_AGENT_MODE: 'read-only',
+        CODEX_CONFIG: JSON.stringify({
+          model: 'gpt-6-luna',
+          model_reasoning_effort: 'xhigh',
+        }),
+      },
       session: { cwd, mcpServers: [] },
       persistSession: true,
     });
