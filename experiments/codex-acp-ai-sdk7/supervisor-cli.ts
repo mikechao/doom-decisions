@@ -1,6 +1,5 @@
 import { open, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { runAgentCli } from '../../scripts/doom-agent.mjs';
 import { executeAgentOperation, type AgentClientOptions } from '../../scripts/doom-agent-client.ts';
 import { parseLease, record, requireLive } from './live-observation.ts';
 import type { SupervisorPorts } from './supervisor-workflow.ts';
@@ -8,7 +7,7 @@ import type { SupervisorPorts } from './supervisor-workflow.ts';
 // Invocation-local state only; constructing these ports performs no I/O.
 export function createCLIPorts(root: string): Pick<
   SupervisorPorts,
-  'attach' | 'observe' | 'cli' | 'readPng' | 'writeInstructions'
+  'attach' | 'observe' | 'setPrompt' | 'startRun' | 'decide' | 'getConfig' | 'readPng' | 'writeInstructions'
 > & {
   cleanup(): Promise<void>;
 } {
@@ -46,10 +45,17 @@ export function createCLIPorts(root: string): Pick<
     async observe(input, signal) {
       return receipt(await executeAgentOperation({ op: 'observe', ...input }, options(signal)), signal);
     },
-    async cli(args, signal) {
-      const result = await runAgentCli(args, options(signal));
-      if (args[0] === 'attach') leaseFile = parseLease(result).leaseFile;
-      return receipt(result, signal);
+    async setPrompt(input, signal) {
+      return receipt(await executeAgentOperation({ op: 'set-prompt', ...input }, options(signal)), signal);
+    },
+    async startRun(input, signal) {
+      return receipt(await executeAgentOperation({ op: 'start-run', ...input }, options(signal)), signal);
+    },
+    async decide(input, signal) {
+      return receipt(await executeAgentOperation({ op: 'decide', ...input }, options(signal)), signal);
+    },
+    async getConfig(input, signal) {
+      return receipt(await executeAgentOperation({ op: 'get-config', ...input }, options(signal)), signal);
     },
     readPng: (path, signal) => readFile(path, { signal }),
     async writeInstructions(text, signal) {

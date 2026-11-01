@@ -1,8 +1,15 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { ACPProvider } from '@mcpc-tech/acp-ai-provider';
 import type { generateText } from 'ai';
-import type { AttachedLease, MaterializedObserve } from '../../scripts/doom-agent-client.ts';
-import { agentCliError } from '../../scripts/doom-agent.mjs';
+import {
+  agentCliError,
+  type AgentOperation,
+  type AttachedLease,
+  type ConfigResult,
+  type MaterializedDecision,
+  type MaterializedObserve,
+  type PromptResult,
+} from '../../scripts/doom-agent-client.ts';
 import { maxAgentInstructions, type AgentRunState } from '../../app/src/agent-control.ts';
 import type { AgentObservation } from '../../app/src/agent-observation.ts';
 import {
@@ -29,10 +36,14 @@ type ModelInput = { text: string; image: Uint8Array; signal: AbortSignal; onCall
 export type SupervisorACP = Pick<ACPProvider, 'connect' | 'initSession' | 'getSessionId' | 'cleanup'> & {
   generate(input: ModelInput): Promise<Generation>;
 };
+type OperationInput<Op extends AgentOperation['op']> = Omit<Extract<AgentOperation, { op: Op }>, 'op'>;
 export type SupervisorPorts = {
   attach(signal: AbortSignal): Promise<AttachedLease>;
   observe(input: { leaseFile: string }, signal: AbortSignal): Promise<MaterializedObserve>;
-  cli(args: string[], signal: AbortSignal): Promise<unknown>;
+  setPrompt(input: OperationInput<'set-prompt'>, signal: AbortSignal): Promise<PromptResult>;
+  startRun(input: OperationInput<'start-run'>, signal: AbortSignal): Promise<ConfigResult>;
+  decide(input: Required<OperationInput<'decide'>>, signal: AbortSignal): Promise<MaterializedDecision>;
+  getConfig(input: OperationInput<'get-config' | 'get-prompt'>, signal: AbortSignal): Promise<ConfigResult>;
   readPng: ReadPng;
   writeInstructions(text: string, signal: AbortSignal): Promise<string>;
   createACP(signal: AbortSignal): Promise<SupervisorACP>;
@@ -328,7 +339,7 @@ export async function supervise(
     after: Awaited<ReturnType<typeof liveDecision>>,
   ) {
     requireLive(after.receipt.observation);
-    const raw = await readCommand('observe', () => ports.observe({ leaseFile: lease.leaseFile }, abort.signal));
+    const raw = await typedCommand('observe', () => ports.observe({ leaseFile: lease.leaseFile }, abort.signal));
     const { observation } = await bounded('interim-observation', () =>
       liveObserve(raw, lease, ports.readPng, abort.signal),
     );
@@ -342,9 +353,9 @@ export async function supervise(
 
   async function attachAndObserveInitial() {
     attached = true; // A lost attach response can still leave ownership behind.
-    const lease = parseLease(await readCommand('attach', () => ports.attach(abort.signal)));
+    const lease = parseLease(await typedCommand('attach', () => ports.attach(abort.signal)));
     report.attachment = 'acknowledged';
-    const initialRaw = await readCommand('observe', () => ports.observe({ leaseFile: lease.leaseFile }, abort.signal));
+    const initialRaw = await typedCommand('observe', () => ports.observe({ leaseFile: lease.leaseFile }, abort.signal));
     const initial = await bounded('initial-observation', () =>
       liveObserve(
         // Materialization is read separately so parsing never causes transport I/O.
@@ -411,17 +422,25 @@ export async function supervise(
     const configuration = before.configuration;
     open();
     const started = configResult(
-      await command([
+      await typedCommand(
         'start-run',
-        '--lease',
-        lease.leaseFile,
-        '--observation',
-        before.observationId,
-        '--session',
-        before.sessionId,
-        '--revision',
-        String(before.revision),
-      ]),
+        () =>
+          ports.startRun(
+            {
+              leaseFile: lease.leaseFile,
+              observationId: before.observationId,
+              sessionId: before.sessionId,
+              revision: before.revision,
+            },
+            abort.signal,
+          ),
+        () => {
+          requireLive(report.startRunCalls === 0);
+          report.startRunCalls++;
+          report.claim = 'unknown';
+          mutationPending = true;
+        },
+      ),
       lease,
     );
     if ('error' in started) fail(started.error === 'lease-revoked' ? 'LEASE_REVOKED' : 'CLAIM_REJECTED');
@@ -442,19 +461,23 @@ export async function supervise(
     requireLive(report.guidance.length < limit);
     report.guidance.push('application-unknown');
     const changed = promptResult(
-      await command([
+      await typedCommand(
         'set-prompt',
-        '--lease',
-        lease.leaseFile,
-        '--session',
-        before.sessionId,
-        '--run',
-        runId,
-        '--revision',
-        String(before.revision),
-        '--instructions-file',
-        file,
-      ]),
+        () =>
+          ports.setPrompt(
+            {
+              leaseFile: lease.leaseFile,
+              sessionId: before.sessionId,
+              runId,
+              revision: before.revision,
+              instructionsFile: file,
+            },
+            abort.signal,
+          ),
+        () => {
+          mutationPending = true;
+        },
+      ),
       lease,
     );
     if ('error' in changed) fail('GUIDANCE_REJECTED');
@@ -477,7 +500,7 @@ export async function supervise(
     changed: Awaited<ReturnType<typeof applyGuidanceCAS>>,
   ) {
     const configuration = before.configuration;
-    const freshRaw = await readCommand('observe', () => ports.observe({ leaseFile: lease.leaseFile }, abort.signal));
+    const freshRaw = await typedCommand('observe', () => ports.observe({ leaseFile: lease.leaseFile }, abort.signal));
     const fresh = await bounded('fresh-observation', () => liveObserve(freshRaw, lease, ports.readPng, abort.signal));
     const ready = fresh.observation;
     unchangedNative(ready, before);
@@ -494,19 +517,35 @@ export async function supervise(
 
   async function requestAndValidateDecision(lease: Lease, ready: Observation, runId: string) {
     open();
-    const decisionRaw = await command([
+    const decisionRaw = await typedCommand(
       'decide',
-      '--lease',
-      lease.leaseFile,
-      '--observation',
-      ready.observationId,
-      '--session',
-      ready.sessionId,
-      '--run',
-      runId,
-      '--revision',
-      String(ready.revision),
-    ]);
+      () =>
+        ports.decide(
+          {
+            leaseFile: lease.leaseFile,
+            observationId: ready.observationId,
+            scope: { sessionId: ready.sessionId, runId, revision: ready.revision },
+          },
+          abort.signal,
+        ),
+      () => {
+        requireLive(report.decideCalls < limit && !decidedIds.has(ready.observationId));
+        decidedIds.add(ready.observationId);
+        report.decisions.push({
+          delivery: 'unknown',
+          outcome: null,
+          sdkInvoked: null,
+          action: null,
+          requestedTics: null,
+          reportedTics: null,
+          verifiedTics: null,
+          cumulativeTics: null,
+          completionUncertain: null,
+          usage: 'unavailable',
+        });
+        mutationPending = true;
+      },
+    );
     const after = await bounded('decision-evidence', () =>
       liveDecision(decisionRaw, lease, ready, ports.readPng, abort.signal),
     );
@@ -532,7 +571,9 @@ export async function supervise(
 
   async function readExhaustedAccounting(lease: Lease, ready: Observation, runId: string) {
     const final = configResult(
-      await command(['get-config', '--lease', lease.leaseFile, '--session', ready.sessionId]),
+      await typedCommand('get-config', () =>
+        ports.getConfig({ leaseFile: lease.leaseFile, sessionId: ready.sessionId }, abort.signal),
+      ),
       lease,
     );
     if ('error' in final) fail('ACCOUNTING_UNAVAILABLE');
@@ -675,42 +716,6 @@ export async function supervise(
       abort.signal.removeEventListener('abort', onAbort);
     }
   }
-  async function command(args: string[]) {
-    return bounded(
-      args[0],
-      async () => {
-        if (args[0] === 'start-run') {
-          requireLive(report.startRunCalls === 0);
-          report.startRunCalls++;
-          report.claim = 'unknown';
-        }
-        if (args[0] === 'decide') {
-          requireLive(report.decideCalls < limit && !decidedIds.has(args[4]));
-          decidedIds.add(args[4]);
-          report.decisions.push({
-            delivery: 'unknown',
-            outcome: null,
-            sdkInvoked: null,
-            action: null,
-            requestedTics: null,
-            reportedTics: null,
-            verifiedTics: null,
-            cumulativeTics: null,
-            completionUncertain: null,
-            usage: 'unavailable',
-          });
-        }
-        if (['start-run', 'set-prompt', 'decide'].includes(args[0])) mutationPending = true;
-        try {
-          return await ports.cli(args, abort.signal);
-        } catch (error) {
-          commandFailed(error);
-        }
-      },
-      args[0] === 'decide' ? 35_000 : 15_000,
-    );
-  }
-
   function commandFailed(error: unknown): never {
     const sanitized = agentCliError(error).error;
     report.transportError = sanitized.startsWith('Usage:') ? 'Invalid command arguments.' : sanitized;
@@ -718,14 +723,25 @@ export async function supervise(
     fail('CLI_FAILED');
   }
 
-  function readCommand<T>(op: 'attach' | 'observe', operation: () => Promise<T>): Promise<T> {
-    return bounded(op, async () => {
-      try {
-        return await operation();
-      } catch (error) {
-        commandFailed(error);
-      }
-    });
+  function typedCommand<T>(
+    op: AgentOperation['op'],
+    operation: () => Promise<T>,
+    recordAttempt?: () => void,
+  ): Promise<T> {
+    return bounded(
+      op,
+      async () => {
+        // Account once inside the admission/deadline fence, before dispatch and
+        // outside transport-error handling (failed ledger guards are evidence errors).
+        recordAttempt?.();
+        try {
+          return await operation();
+        } catch (error) {
+          commandFailed(error);
+        }
+      },
+      op === 'decide' ? 35_000 : 15_000,
+    );
   }
 
   function initialReport() {

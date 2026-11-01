@@ -7,7 +7,6 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
-import { runAgentCli } from '../../scripts/doom-agent.mjs';
 import { executeAgentOperation, type AgentClientOptions } from '../../scripts/doom-agent-client.ts';
 import { validAgentCommand, type AgentConfiguration, type AgentRunState } from '../../app/src/agent-control.ts';
 import type { AgentDecisionResult, AgentObservation } from '../../app/src/agent-observation.ts';
@@ -354,7 +353,10 @@ async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
   const ports: SupervisorPorts = {
     attach: (signal) => executeAgentOperation({ op: 'attach' }, clientOptions(signal)),
     observe: (input, signal) => executeAgentOperation({ op: 'observe', ...input }, clientOptions(signal)),
-    cli: (args, signal) => runAgentCli(args, clientOptions(signal)),
+    setPrompt: (input, signal) => executeAgentOperation({ op: 'set-prompt', ...input }, clientOptions(signal)),
+    startRun: (input, signal) => executeAgentOperation({ op: 'start-run', ...input }, clientOptions(signal)),
+    decide: (input, signal) => executeAgentOperation({ op: 'decide', ...input }, clientOptions(signal)),
+    getConfig: (input, signal) => executeAgentOperation({ op: 'get-config', ...input }, clientOptions(signal)),
     readPng: (path, signal) => readFile(path, { signal }),
     async writeInstructions(text) {
       const path = join(root, `instructions-${commands.filter((call) => call.op === 'set-prompt').length + 1}.txt`);
@@ -580,7 +582,7 @@ function assertRedacted(report: Awaited<ReturnType<typeof supervise>>) {
   return diagnostic;
 }
 
-test('happy path uses real CLI with fake HTTP/controller and exactly one provider action', async () =>
+test('happy path uses typed executor with fake HTTP/controller and exactly one provider action', async () =>
   using(async (h) => {
     const report = await supervise(h.ports);
     assert.equal(report.outcome, 'completed');
@@ -651,19 +653,15 @@ test('happy path uses real CLI with fake HTTP/controller and exactly one provide
 
 test('old observation after set-prompt is rejected without another provider invocation', async () =>
   using(async (h) => {
-    const original = h.ports.cli;
-    h.ports.cli = async (args, signal) => {
-      if (args[0] === 'decide') {
-        // Separate fake-only stale admission probe before the healthy action.
-        // It reaches the in-memory controller while the allowance is active.
-        const stale = [...args];
-        stale[4] = h.preWriteObservation.observationId;
-        const denied = (await original(stale, signal)) as { reason: string; sdkInvoked: boolean };
-        assert.equal(denied.reason, 'stale-observation');
-        assert.equal(denied.sdkInvoked, false);
-        assert.equal(h.sdkCalls, 0);
-      }
-      return original(args, signal);
+    const original = h.ports.decide;
+    h.ports.decide = async (input, signal) => {
+      // Separate fake-only stale admission probe before the healthy action.
+      // It reaches the in-memory controller while the allowance is active.
+      const denied = await original({ ...input, observationId: h.preWriteObservation.observationId }, signal);
+      assert.equal(denied.reason, 'stale-observation');
+      assert.equal(denied.sdkInvoked, false);
+      assert.equal(h.sdkCalls, 0);
+      return original(input, signal);
     };
     const report = await supervise(h.ports);
     assert.equal(report.outcome, 'completed');
@@ -738,6 +736,36 @@ test('lost start-run or decide response is unknown and never retried', async () 
     );
 });
 
+test('typed mutations record attempts before dispatch failure or timeout and never replay', async () => {
+  const operations = { startRun: 'start-run', setPrompt: 'set-prompt', decide: 'decide' } as const;
+  for (const op of ['startRun', 'setPrompt', 'decide'] as const)
+    for (const failure of ['throw', 'timeout'])
+      await using(async (h) => {
+        let calls = 0;
+        h.ports[op] = () => {
+          calls++;
+          if (failure === 'throw') throw Error('private typed dispatch failure');
+          return new Promise<never>(() => {});
+        };
+        const report = await supervise(h.ports, { stageMs: 100 });
+        assert.equal(calls, 1);
+        assert.equal(h.commands.filter((command) => command.op === operations[op]).length, 0);
+        assert.equal(report.startRunCalls, 1);
+        assert.equal(report.claim, op === 'startRun' ? 'unknown' : 'acknowledged');
+        assert.equal(report.decideCalls, op === 'decide' ? 1 : 0);
+        if (op === 'setPrompt') assert.deepEqual(report.guidance, ['application-unknown']);
+        if (op === 'decide') assert.equal(report.decisions[0].delivery, 'unknown');
+        assert.equal(report.outcome, 'uncertain');
+        assert.equal(report.humanStopRequired, true);
+        assert.equal(report.accounting, null);
+        assert.equal(report.verifiedActions, 0);
+        assert.equal(report.errorCategory, failure === 'throw' ? 'CLI_FAILED' : 'HOST_DEADLINE');
+        assert.ok(!JSON.stringify(report).includes('private typed dispatch failure'));
+        assert.ok(!h.events.includes('get-config'));
+        assert.ok(!h.events.includes('ACP2'));
+      });
+});
+
 test('early Stop, model failure, malformed proposal, or changed ACP session prevents claim', async () => {
   for (const kind of ['stop', 'failure', 'invalid', 'session', 'tool', 'duplicate-call'])
     await using(async (h) => {
@@ -810,11 +838,16 @@ test('cancellation after claim and an unresolved decide leave no continuation or
   for (const kind of ['after-claim', 'during-decide'])
     await using(async (h) => {
       const abort = new AbortController();
-      const original = h.ports.cli;
-      h.ports.cli = async (args, signal) => {
-        const result = await original(args, signal);
-        if (kind === 'after-claim' && args[0] === 'set-prompt') abort.abort();
-        if (kind === 'during-decide' && args[0] === 'decide') return new Promise(() => {});
+      const setPrompt = h.ports.setPrompt;
+      h.ports.setPrompt = async (input, signal) => {
+        const result = await setPrompt(input, signal);
+        if (kind === 'after-claim') abort.abort();
+        return result;
+      };
+      const original = h.ports.decide;
+      h.ports.decide = async (input, signal) => {
+        const result = await original(input, signal);
+        if (kind === 'during-decide') return new Promise(() => {});
         return result;
       };
       const report = await supervise(h.ports, { signal: abort.signal, stageMs: 50 });
@@ -1109,10 +1142,10 @@ test('second checkpoint failures are never caught as reassessment JSON or shape 
     await using(async (h) => {
       const abort = new AbortController();
       if (kind === 'session-before') {
-        const original = h.ports.cli;
-        h.ports.cli = async (args, signal) => {
-          const result = await original(args, signal);
-          if (args[0] === 'get-config') h.changeACPSession();
+        const original = h.ports.getConfig;
+        h.ports.getConfig = async (input, signal) => {
+          const result = await original(input, signal);
+          h.changeACPSession();
           return result;
         };
       }
@@ -1235,8 +1268,8 @@ test('a retired decision preserves its verified native prefix without claiming c
 
 test('adapter rejects bad PNG/materialization/DTO before ACP', async () =>
   using(async (h) => {
-    const lease = parseLease(await h.ports.cli(['attach'], new AbortController().signal));
-    const raw = (await h.ports.cli(['observe', '--lease', lease.leaseFile], new AbortController().signal)) as Json;
+    const lease = parseLease(await h.ports.attach(new AbortController().signal));
+    const raw = await h.ports.observe({ leaseFile: lease.leaseFile }, new AbortController().signal);
     const signal = new AbortController().signal;
     const base = await liveObserve(raw, lease, h.ports.readPng, signal);
     for (const patch of [
@@ -1269,8 +1302,8 @@ test('adapter rejects bad PNG/materialization/DTO before ACP', async () =>
 
 test('adapter validates a post-decision DTO using its returned PNG without a new observe', async () =>
   using(async (h) => {
-    let captured: unknown;
-    const original = h.ports.cli;
+    let captured: Awaited<ReturnType<SupervisorPorts['decide']>> | undefined;
+    const original = h.ports.decide;
     let lease: ReturnType<typeof parseLease> | undefined;
     let before: Awaited<ReturnType<typeof liveObserve>> | undefined;
     const attach = h.ports.attach;
@@ -1285,14 +1318,14 @@ test('adapter validates a post-decision DTO using its returned PNG without a new
       before = await liveObserve(value, must(lease), h.ports.readPng, signal);
       return value;
     };
-    h.ports.cli = async (args, signal) => {
-      const value = await original(args, signal);
-      if (args[0] === 'decide') captured = value;
+    h.ports.decide = async (input, signal) => {
+      const value = await original(input, signal);
+      captured = value;
       return value;
     };
     assert.equal((await supervise(h.ports)).outcome, 'completed');
     const parsed = await liveDecision(
-      captured,
+      must(captured),
       must(lease),
       must(before).observation,
       h.ports.readPng,
@@ -1355,7 +1388,9 @@ test('no-live default/help/import reject network and ACP/process imports; malfor
     const acp = await import(${JSON.stringify(acpUrl)});
     const cliPorts = cli.createCLIPorts('/unused-offline-trial');
     const createACP = acp.createACPPort('/unused-offline-cwd');
-    if (typeof cliPorts.cli !== 'function' || typeof createACP !== 'function')
+    for (const method of ['attach', 'observe', 'startRun', 'setPrompt', 'decide', 'getConfig'])
+      if (typeof cliPorts[method] !== 'function') throw Error('Typed adapter factories failed');
+    if ('cli' in cliPorts || typeof createACP !== 'function')
       throw Error('Adapter factories failed');
     await cliPorts.cleanup();
     const workflow = await import(${JSON.stringify(workflowUrl)});
@@ -1582,26 +1617,23 @@ test('second CAS invalidates its prior observation; stale CAS never reaches the 
   for (const kind of ['cas', 'observation', 'reused-interim', 'reused-fresh'])
     await using(
       async (h) => {
-        const cli = h.ports.cli;
-        h.ports.cli = async (args, signal) => {
-          if (
-            kind === 'cas' &&
-            args[0] === 'set-prompt' &&
-            h.commands.filter((c) => c.op === 'set-prompt').length === 1
-          ) {
-            const stale = [...args];
-            stale[8] = '0';
-            return cli(stale, signal);
-          }
-          if (kind === 'observation' && args[0] === 'decide' && h.wires.length === 1) {
-            const stale = [...args];
-            stale[4] = h.observations[2].observationId;
-            const denied = (await cli(stale, signal)) as AgentDecisionResult;
+        const setPrompt = h.ports.setPrompt;
+        h.ports.setPrompt = (input, signal) =>
+          setPrompt(
+            kind === 'cas' && h.commands.filter((c) => c.op === 'set-prompt').length === 1
+              ? { ...input, revision: 0 }
+              : input,
+            signal,
+          );
+        const decide = h.ports.decide;
+        h.ports.decide = async (input, signal) => {
+          if (kind === 'observation' && h.wires.length === 1) {
+            const denied = await decide({ ...input, observationId: h.observations[2].observationId }, signal);
             assert.equal(denied.outcome, 'not-admitted');
             assert.equal(denied.sdkInvoked, false);
             return denied;
           }
-          return cli(args, signal);
+          return decide(input, signal);
         };
         const observe = h.ports.observe;
         h.ports.observe = async (input, signal) => {

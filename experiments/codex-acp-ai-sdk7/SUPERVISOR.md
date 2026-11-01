@@ -76,9 +76,10 @@ evidence/report ledger, checkpoint protocol, cancellation/deadlines and ACP clea
 `supervisor.ts` retains the gated CLI entry, `runLive`, port composition, trial files,
 signals and report publication, and re-exports the existing workflow APIs for
 compatibility. `supervise` requires injected ports; real I/O exists only behind
-`supervisorMain`'s explicit gate. `supervisor-cli.ts` uses typed attach/observe calls
-to `scripts/doom-agent-client.ts`; mutations still import `runAgentCli` in process.
-The CLI decodes arguments and delegates every operation to that same checked executor.
+`supervisorMain`'s explicit gate. `supervisor-cli.ts` uses operation-specific typed
+attach/observe/startRun/setPrompt/decide/getConfig ports to `scripts/doom-agent-client.ts`.
+There is no supervisor CLI argument-array port. The public CLI/MCP adapters still
+delegate to that same checked executor; no extra read/write operations are added.
 File-backed leases, receipts and independent PNG readback checks are unchanged.
 Node 22.20.0 runs the erasable TypeScript directly; no build output is needed.
 `supervisor-acp.ts` lazily initializes the provider
@@ -146,7 +147,7 @@ nor `achieved` verifies navigation success; human visual review is still needed.
 Limits are one `start-run` invocation, at most one or two distinct `decide`
 operations according to the explicit mode, two `generateText` invocations
 and one ACP session setup. AI SDK `maxRetries:0`; no host retries or fallbacks.
-Connect/session waits are 45 seconds, each checkpoint 120 seconds, CLI operations
+Connect/session waits are 45 seconds, each checkpoint 120 seconds, Doom operations
 15 seconds (decision 35), and the workflow deadline eight minutes. The existing
 broker can revoke sooner (10/30 seconds). SIGINT/SIGTERM abort host scheduling and
 owned HTTP transfers. Timeouts and late results cannot resume the workflow.
@@ -160,8 +161,10 @@ prefix evidence is retained, with no normal-exhaustion accounting/reassessment.
 A Stop occurring during ACP reasoning is learned only at a subsequent broker
 operation; the host has no independent browser Stop subscription.
 
-The report has a bounded `decisions` array (maximum two), with attempted commands
-recorded before transport. Each entry separates validated receipt delivery, SDK
+The report has a bounded `decisions` array (maximum two), with mutation attempts
+recorded inside the bounded scheduling fence before typed port dispatch. Ledger
+guards run outside transport-error handling; thrown/timeout dispatches retain
+unknown delivery and never retry. Each entry separates validated receipt delivery, SDK
 invocation, outcome, action, requested/reported/verified tics, cumulative tic,
 completion uncertainty and usage. `verifiedActions` counts fully verified completed
 actions only; terminal or uncertain prefixes stay in their entry. Missing evidence
@@ -221,13 +224,15 @@ pass `--indent-style=space --indent-width=2 --javascript-formatter-quote-style=s
 the imported `.mjs` argument adapter; the imported `.ts` executor implementation
 and supervisor read ports are checked by the no-emit command above.
 
-**33 top-level offline tests** cover the complete healthy sequence, real CLI over
+**34 top-level offline tests** cover the complete healthy sequence, shared typed executor over
 fake transport, stale checkpoint denial, wrong scope/revision/limit, Stop,
 unsettled/late ACP results, cancellation after claim, lost mutating replies without
 replay, corrupt/missing PNGs and strict DTOs, accounting, terminal precedence,
 advisory reassessment/unknown usage, rejection diagnostics and redaction,
 cleanup failure, compatibility exports, inert imports, and guarded standalone
 default/help/malformed-argument exit paths.
+Typed mutation ports are also failed synchronously or left pending until timeout,
+proving pre-dispatch attempt accounting and no replay without reaching transport.
 The two-decision cases capture both SDK-serialized Request bodies with fake fetch,
 through the real builder, OpenRouter provider and installed SDK 1.4.25. They assert
 GUIDANCE_ONE_ALPHA then GUIDANCE_TWO_BETA, original-base preservation, resolved 6-tic

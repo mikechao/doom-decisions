@@ -29,13 +29,13 @@ export type AttachedLease = LeaseIdentity & { leaseFile: string };
 type FileLease = { leaseFile: string };
 type Correlation = { pageId: string; epoch: string; commandId: string };
 export type MaterializedObserve = Correlation & Omit<AgentObserveResult, 'png'> & { pngPath: string };
-type MaterializedDecision = Correlation &
+export type MaterializedDecision = Correlation &
   Omit<AgentDecisionResult, 'observation'> & {
     pngPath: string | null;
     observation: Omit<AgentObservation, 'png'> | null;
   };
-type ConfigResult = Correlation & Exclude<AgentConfigResult, { error: string }>;
-type PromptResult = Correlation & Exclude<AgentPromptResult, { error: string }>;
+export type ConfigResult = Correlation & Exclude<AgentConfigResult, { error: string }>;
+export type PromptResult = Correlation & Exclude<AgentPromptResult, { error: string }>;
 
 export type AgentOperation =
   | { op: 'attach' }
