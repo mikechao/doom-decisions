@@ -8,19 +8,32 @@ most one Decisions action, with an initial ACP proposal and a final advisory
 reassessment in the same observed ACP session. The two-decision experiment is
 on hold.
 
-Active files:
+| File | Responsibility |
+| --- | --- |
+| `supervisor.ts` | Gated live entry, installed/lock version admission, exclusive trial setup, signals, port composition, report publication and cleanup scheduling; stable workflow re-exports. |
+| `supervisor-workflow.ts` | Injectable one-action policy, evidence/report ledger, ACP checkpoints, session checks, cancellation/deadlines and ACP cleanup ownership. |
+| `supervisor-cli.ts` | In-process Doom CLI calls, lease tracking, sanitized numbered receipts, PNG reads, temporary instruction-file creation and removal. |
+| `supervisor-acp.ts` | Lazy AI SDK/ACP imports, provider/model configuration and session/generation/cleanup methods. |
+| `live-observation.ts` | Strict live DTO, PNG and correlation validation. |
+| `doom-proposal.ts` | Strict advisory proposal/reassessment schemas and validators. |
+| `supervisor.test.ts` | Fake-only offline regressions, compatibility exports and guarded inert imports/entry paths. |
 
-- `supervisor.ts`: gated live entry, concrete adapters, trial/report lifecycle and
-  fail-closed installed/lock version checks (including nested AI SDK and Node 22).
-- `supervisor-workflow.ts`: injectable one-action workflow, evidence/report ledger,
-  ACP checkpoint protocol, cancellation/deadline guards and ACP cleanup ownership.
-- `live-observation.ts`: strict live DTO, PNG and correlation validation.
-- `doom-proposal.ts`: strict advisory proposal/reassessment schemas and validators.
-- `supervisor.test.ts`: fake-only offline regression coverage.
-- `package.json`, `package-lock.json`, `tsconfig.json`, `.gitignore`: pinned
-  dependencies, offline test script, typechecking and ignored local artifacts.
-- [SUPERVISOR.md](SUPERVISOR.md): live invocation, operational boundaries,
-  accounting, Stop, cleanup and evidence limits.
+The entrypoint composes CLI ports with the ACP factory's `createACP` port and
+passes them to `supervise()`. Adapters import only workflow types; the workflow
+does not import adapters. `supervisor-cli.ts` reuses `scripts/doom-agent.mjs` via
+`runAgentCli()` in the same Node process, without a CLI/MCP subprocess. The browser
+remains authoritative for gameplay; Codex ACP supplies advisory navigation guidance
+only. Both adapter factories are inert until their ports are invoked.
+
+The CLI adapter owns the temporary instruction-file path, recording it before the
+exclusive write so cleanup also covers partial write failure. The entrypoint calls
+its cleanup in `finally` after report publication (or failure), after removing signal
+listeners. Cleanup failures propagate as before; hard interruption may leave the
+file. The workflow separately owns ACP cleanup before returning its report.
+
+`package.json`, `package-lock.json`, `tsconfig.json` and `.gitignore` retain pinned
+dependencies, offline test/typecheck setup and ignored artifacts. See
+[SUPERVISOR.md](SUPERVISOR.md) for live invocation, accounting, Stop and evidence limits.
 
 From the repository root, with existing installed tools, safe offline checks are:
 

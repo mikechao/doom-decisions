@@ -1156,6 +1156,8 @@ test('no-live default/help/import reject network and ACP/process imports; malfor
   assert.deepEqual(launched, ['fake-only']);
   const moduleUrl = new URL('./supervisor.ts', import.meta.url).href;
   const workflowUrl = new URL('./supervisor-workflow.ts', import.meta.url).href;
+  const cliUrl = new URL('./supervisor-cli.ts', import.meta.url).href;
+  const acpUrl = new URL('./supervisor-acp.ts', import.meta.url).href;
   const guard = `
     import fs from 'node:fs/promises';
     import { registerHooks, syncBuiltinESMExports } from 'node:module';
@@ -1171,6 +1173,13 @@ test('no-live default/help/import reject network and ACP/process imports; malfor
     globalThis.fetch = forbidden;
   `;
   const source = `${guard}
+    const cli = await import(${JSON.stringify(cliUrl)});
+    const acp = await import(${JSON.stringify(acpUrl)});
+    const cliPorts = cli.createCLIPorts('/unused-offline-trial');
+    const createACP = acp.createACPPort('/unused-offline-cwd');
+    if (typeof cliPorts.cli !== 'function' || typeof createACP !== 'function')
+      throw Error('Adapter factories failed');
+    await cliPorts.cleanup();
     const workflow = await import(${JSON.stringify(workflowUrl)});
     const legacy = await import(${JSON.stringify(moduleUrl)});
     if (legacy.supervise !== workflow.supervise || legacy.composeGuidance !== workflow.composeGuidance)

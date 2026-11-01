@@ -56,11 +56,12 @@ Doom/ACP. Partial/extra opt-in arguments fail closed.
 
 `supervisor-workflow.ts` owns `supervise`, its injected port contracts, workflow
 evidence/report ledger, checkpoint protocol, cancellation/deadlines and ACP cleanup.
-`supervisor.ts` retains the gated CLI entry, `runLive`, concrete adapters, trial files,
+`supervisor.ts` retains the gated CLI entry, `runLive`, port composition, trial files,
 signals and report publication, and re-exports the existing workflow APIs for
 compatibility. `supervise` requires injected ports; real I/O exists only behind
-`supervisorMain`'s explicit gate. `runLive` imports the existing `runAgentCli`
-directly. The sequence is:
+`supervisorMain`'s explicit gate. `supervisor-cli.ts` imports the existing `runAgentCli`
+directly and reuses it in process; `supervisor-acp.ts` lazily initializes the provider
+and AI SDK. The sequence is:
 
 1. `attach`, then `observe`; validate the materialized DTO/lease/correlation,
    `run:null`, ready state, six tics, and a base template containing `{{tics}}`.
@@ -137,8 +138,10 @@ a prompt write reports its last acknowledgment or unknown application state.
 Each opt-in consumes a new ignored `.local/supervisor-<ID>/` directory exclusively
 before attachment. Never remove/reuse it to retry. It contains a started marker,
 fresh ACP cwd, private CLI lease/PNGs, numbered receipts with full instruction text
-removed, and a bounded sanitized `report.json`. The temporary instructions file is
-removed in `finally` when possible; hard interruption may leave it. Runtime files
+removed, and a bounded sanitized `report.json`. The CLI adapter owns the temporary
+instructions file; the entrypoint invokes its cleanup in `finally` after reporting
+or failure, preserving cleanup on partial write failure. Hard interruption may
+leave it. Runtime files
 are private local evidence, **never commit/upload them**, especially DOOM1 captures.
 Historical one-shot namespaces and evidence remain untouched. Another trial needs
 fresh human approval and an independently configured browser allowance/process.
@@ -152,7 +155,8 @@ node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/supervisor.
 node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7
 ```
 
-Biome lint and non-writing format checks also cover `supervisor.ts`, `supervisor-workflow.ts`,
+Biome lint and non-writing format checks also cover `supervisor.ts`, `supervisor-cli.ts`,
+`supervisor-acp.ts`, `supervisor-workflow.ts`,
 `live-observation.ts`, `supervisor.test.ts`, and `doom-proposal.ts`. For formatting,
 pass `--indent-style=space --indent-width=2 --javascript-formatter-quote-style=single
 --line-width=120` without `--write` to match the existing style. `allowJs` enables
