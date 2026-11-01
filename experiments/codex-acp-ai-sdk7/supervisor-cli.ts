@@ -1,37 +1,55 @@
 import { open, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { runAgentCli } from '../../scripts/doom-agent.mjs';
+import { executeAgentOperation, type AgentClientOptions } from '../../scripts/doom-agent-client.ts';
 import { parseLease, record, requireLive } from './live-observation.ts';
 import type { SupervisorPorts } from './supervisor-workflow.ts';
 
 // Invocation-local state only; constructing these ports performs no I/O.
-export function createCLIPorts(root: string): Pick<SupervisorPorts, 'cli' | 'readPng' | 'writeInstructions'> & {
+export function createCLIPorts(root: string): Pick<
+  SupervisorPorts,
+  'attach' | 'observe' | 'cli' | 'readPng' | 'writeInstructions'
+> & {
   cleanup(): Promise<void>;
 } {
   const promptFiles: string[] = [];
   let promptNumber = 0;
   let leaseFile: string | undefined;
   let receiptNumber = 0;
+  function options(signal: AbortSignal): AgentClientOptions {
+    return {
+      temporaryRoot: root,
+      transport: (url, init) => fetch(url, { ...init, signal: AbortSignal.any([signal, init?.signal ?? signal]) }),
+    };
+  }
+  async function receipt<T>(result: T, signal: AbortSignal): Promise<T> {
+    // Private local receipts retain correlation/native evidence, excluding
+    // full instructions. Neither these files nor their IDs enter ACP input.
+    const { configuration, instructions: _instructions, ...evidence } = record(result);
+    if (configuration) {
+      const { instructionTemplate: _template, ...settings } = record(configuration);
+      evidence.configuration = settings;
+    }
+    await writeFile(join(root, `receipt-${++receiptNumber}.json`), JSON.stringify(evidence), {
+      signal,
+      flag: 'wx',
+      mode: 0o600,
+    });
+    return result;
+  }
   return {
+    async attach(signal) {
+      const result = await executeAgentOperation({ op: 'attach' }, options(signal));
+      leaseFile = parseLease(result).leaseFile;
+      return receipt(result, signal);
+    },
+    async observe(input, signal) {
+      return receipt(await executeAgentOperation({ op: 'observe', ...input }, options(signal)), signal);
+    },
     async cli(args, signal) {
-      const result = await runAgentCli(args, {
-        temporaryRoot: root,
-        transport: (url, init) => fetch(url, { ...init, signal: AbortSignal.any([signal, init?.signal ?? signal]) }),
-      });
+      const result = await runAgentCli(args, options(signal));
       if (args[0] === 'attach') leaseFile = parseLease(result).leaseFile;
-      // Private local receipts retain correlation/native evidence, excluding
-      // full instructions. Neither these files nor their IDs enter ACP input.
-      const { configuration, instructions: _instructions, ...evidence } = record(result);
-      if (configuration) {
-        const { instructionTemplate: _template, ...settings } = record(configuration);
-        evidence.configuration = settings;
-      }
-      await writeFile(join(root, `receipt-${++receiptNumber}.json`), JSON.stringify(evidence), {
-        signal,
-        flag: 'wx',
-        mode: 0o600,
-      });
-      return result;
+      return receipt(result, signal);
     },
     readPng: (path, signal) => readFile(path, { signal }),
     async writeInstructions(text, signal) {

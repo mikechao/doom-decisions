@@ -14,7 +14,7 @@ checkpoint. Live execution still requires separate human approval.
 | --- | --- |
 | `supervisor.ts` | Gated live entry, installed/lock version admission, exclusive trial setup, signals, port composition, report publication and cleanup scheduling; stable workflow re-exports. |
 | `supervisor-workflow.ts` | Injectable fixed one/two-action policy, evidence/report ledger, ACP checkpoints, session checks, cancellation/deadlines and ACP cleanup ownership. |
-| `supervisor-cli.ts` | In-process Doom CLI calls, lease tracking, sanitized numbered receipts, PNG reads, temporary instruction-file creation and removal. |
+| `supervisor-cli.ts` | Typed Doom attach/observe and legacy in-process mutation CLI calls, lease tracking, sanitized numbered receipts, PNG reads, temporary instruction-file creation and removal. |
 | `supervisor-acp.ts` | Lazy AI SDK/ACP imports, provider/model configuration and session/generation/cleanup methods. |
 | `live-observation.ts` | Strict live DTO, PNG and correlation validation. |
 | `doom-proposal.ts` | Strict advisory proposal/reassessment schemas and validators. |
@@ -22,10 +22,21 @@ checkpoint. Live execution still requires separate human approval.
 
 The entrypoint composes CLI ports with the ACP factory's `createACP` port and
 passes them to `supervise()`. Adapters import only workflow types; the workflow
-does not import adapters. `supervisor-cli.ts` reuses `scripts/doom-agent.mjs` via
-`runAgentCli()` in the same Node process, without a CLI/MCP subprocess. The browser
+does not import adapters. `supervisor-cli.ts` calls the checked
+`scripts/doom-agent-client.ts` executor directly for attach and every standalone
+observe. Mutation calls still use `scripts/doom-agent.mjs` via `runAgentCli()`;
+that argument adapter delegates all operations to the same executor in process,
+without a CLI/MCP subprocess. The browser
 remains authoritative for gameplay; Codex ACP supplies advisory navigation guidance
 only. Both adapter factories are inert until their ports are invoked.
+
+Node 22.20.0 executes the executor's erasable TypeScript directly, as it already
+does for the CLI's app DTO imports. Plain `node scripts/doom-agent.mjs` and the
+configured `node app/agent-mcp.mjs` need no compilation or generated JavaScript.
+The experiment no-emit check follows the executor import and checks its implementation,
+typed inputs and materialized results. The executor owns file-backed lease/settings
+reads, transport, correlation, shared runtime parsers and exclusive PNG writes;
+`live-observation.ts` still independently checks the actual PNG bytes supplied to ACP.
 
 The CLI adapter exclusively creates at most two distinct 0600 instructions files.
 It registers ownership after creation and before writing, so partial-write cleanup

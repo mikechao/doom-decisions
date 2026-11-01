@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { ACPProvider } from '@mcpc-tech/acp-ai-provider';
 import type { generateText } from 'ai';
+import type { AttachedLease, MaterializedObserve } from '../../scripts/doom-agent-client.ts';
 import { agentCliError } from '../../scripts/doom-agent.mjs';
 import { maxAgentInstructions, type AgentRunState } from '../../app/src/agent-control.ts';
 import type { AgentObservation } from '../../app/src/agent-observation.ts';
@@ -29,6 +30,8 @@ export type SupervisorACP = Pick<ACPProvider, 'connect' | 'initSession' | 'getSe
   generate(input: ModelInput): Promise<Generation>;
 };
 export type SupervisorPorts = {
+  attach(signal: AbortSignal): Promise<AttachedLease>;
+  observe(input: { leaseFile: string }, signal: AbortSignal): Promise<MaterializedObserve>;
   cli(args: string[], signal: AbortSignal): Promise<unknown>;
   readPng: ReadPng;
   writeInstructions(text: string, signal: AbortSignal): Promise<string>;
@@ -325,7 +328,7 @@ export async function supervise(
     after: Awaited<ReturnType<typeof liveDecision>>,
   ) {
     requireLive(after.receipt.observation);
-    const raw = await command(['observe', '--lease', lease.leaseFile]);
+    const raw = await readCommand('observe', () => ports.observe({ leaseFile: lease.leaseFile }, abort.signal));
     const { observation } = await bounded('interim-observation', () =>
       liveObserve(raw, lease, ports.readPng, abort.signal),
     );
@@ -339,9 +342,9 @@ export async function supervise(
 
   async function attachAndObserveInitial() {
     attached = true; // A lost attach response can still leave ownership behind.
-    const lease = parseLease(await command(['attach']));
+    const lease = parseLease(await readCommand('attach', () => ports.attach(abort.signal)));
     report.attachment = 'acknowledged';
-    const initialRaw = await command(['observe', '--lease', lease.leaseFile]);
+    const initialRaw = await readCommand('observe', () => ports.observe({ leaseFile: lease.leaseFile }, abort.signal));
     const initial = await bounded('initial-observation', () =>
       liveObserve(
         // Materialization is read separately so parsing never causes transport I/O.
@@ -474,7 +477,7 @@ export async function supervise(
     changed: Awaited<ReturnType<typeof applyGuidanceCAS>>,
   ) {
     const configuration = before.configuration;
-    const freshRaw = await command(['observe', '--lease', lease.leaseFile]);
+    const freshRaw = await readCommand('observe', () => ports.observe({ leaseFile: lease.leaseFile }, abort.signal));
     const fresh = await bounded('fresh-observation', () => liveObserve(freshRaw, lease, ports.readPng, abort.signal));
     const ready = fresh.observation;
     unchangedNative(ready, before);
@@ -701,14 +704,28 @@ export async function supervise(
         try {
           return await ports.cli(args, abort.signal);
         } catch (error) {
-          const sanitized = agentCliError(error).error;
-          report.transportError = sanitized.startsWith('Usage:') ? 'Invalid command arguments.' : sanitized;
-          if (sanitized === 'agent-stopped') fail('AGENT_STOPPED');
-          fail('CLI_FAILED');
+          commandFailed(error);
         }
       },
       args[0] === 'decide' ? 35_000 : 15_000,
     );
+  }
+
+  function commandFailed(error: unknown): never {
+    const sanitized = agentCliError(error).error;
+    report.transportError = sanitized.startsWith('Usage:') ? 'Invalid command arguments.' : sanitized;
+    if (sanitized === 'agent-stopped') fail('AGENT_STOPPED');
+    fail('CLI_FAILED');
+  }
+
+  function readCommand<T>(op: 'attach' | 'observe', operation: () => Promise<T>): Promise<T> {
+    return bounded(op, async () => {
+      try {
+        return await operation();
+      } catch (error) {
+        commandFailed(error);
+      }
+    });
   }
 
   function initialReport() {

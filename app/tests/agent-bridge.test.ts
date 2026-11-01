@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,7 @@ import { createAgentBridge, createAgentAllowance, processAgentAllowance, agentBr
 import { startAgentObservationBridge } from '../src/agent-browser.ts';
 import { agentOrigin, agentPath, agentPngBytes, parseAgentObservation, parseAgentDecisionResult } from '../src/agent-observation.ts';
 import { agentCliError, runAgentCli } from '../../scripts/doom-agent.mjs';
+import { executeAgentOperation } from '../../scripts/doom-agent-client.ts';
 import { agentObservation, agentObserveResult, pngFor } from './fixtures/agent.ts';
 import { deferred, checkpoint, fixture } from './fixtures/session.ts';
 import { death, exit } from './fixtures/synthetic-doom.ts';
@@ -1268,12 +1269,14 @@ async function mcpSession(options) {
   return client;
 }
 const callMcp = (client, op, args) => client.callTool({ name: `doom_${op.replaceAll('-', '_')}`, arguments: args });
-function delivered(result, withImage = !!result.structuredContent?.pngPath) {
+function delivered(result, withImage = result.content.some(block => block.type === 'image')) {
   assert.equal(result.isError, false);
   assert.deepEqual(result.content.map(block => block.type), withImage ? ['text', 'image'] : ['text']);
-  assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
-  assert.equal(result.content[0].text, JSON.stringify(result.structuredContent));
-  return result.structuredContent;
+  const value = JSON.parse(result.content[0].text);
+  if (withImage) assert.equal('structuredContent' in result, false);
+  else assert.deepEqual(value, result.structuredContent);
+  assert.equal(result.content[0].text, JSON.stringify(value));
+  return value;
 }
 
 it('uses one combined MCP read at startup, after start/CAS and before a decision, retaining final accounting', async () => {
@@ -1408,38 +1411,58 @@ it.each([
   assert.equal(createHash('sha256').update(await readFile(result.pngPath)).digest('hex'), result.pngSha256);
 });
 
-it('MCP matches all eight CLI operations byte-for-byte using actual broker/controller replies, IDs and PNG paths', async () => {
+it('typed reads and MCP match CLI byte-for-byte using actual broker/controller replies, IDs and PNG paths', async () => {
   const game = fixture({ pngFor }); cleanups.push(() => game.dispose()); await game.prepare();
   const h = harness(createAgentAllowance('3'));
   const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
   await page.ready;
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-mcp-parity-'));
   cleanups.push(() => rm(temporaryRoot, { recursive: true, force: true }));
-  let recorded, replays = 0;
+  let recorded = null, replays = 0, typedReplays = 0;
   const cliTransport = async (url, options) => {
     const response = await h.transport(url, options);
     recorded = { url, options, text: await response.clone().text(), status: response.status };
     return response;
   };
-  const client = await mcpSession({ temporaryRoot, transport: async (url, options) => {
-    replays++;
+  async function replay(url, options) {
     assert.equal(url, recorded.url);
     for (const key of ['method', 'headers', 'body', 'redirect', 'credentials', 'cache'])
       assert.deepEqual(options[key], recorded.options[key]);
     assert.equal(options.signal.aborted, false);
     return new Response(recorded.text, { status: recorded.status });
+  }
+  const client = await mcpSession({ temporaryRoot, transport: (url, options) => {
+    replays++;
+    return replay(url, options);
   } });
   const seen = new Set();
   async function pair(op, input, args) {
     const expected = await runAgentCli(args, { temporaryRoot, transport: cliTransport });
     const command = JSON.parse(recorded.options.body);
-    let bytes;
-    if (expected.pngPath) { bytes = await readFile(expected.pngPath); await rm(expected.pngPath); }
-    if (op === 'attach') {
-      await rm(expected.leaseFile);
-      mkdtemp.mockResolvedValueOnce(dirname(expected.leaseFile));
+    const bytes = expected.pngPath ? await readFile(expected.pngPath) : null;
+    async function prepareReplay() {
+      if (expected.pngPath) await rm(expected.pngPath);
+      if (op === 'attach') {
+        await rm(expected.leaseFile);
+        mkdtemp.mockResolvedValueOnce(dirname(expected.leaseFile));
+      }
+      randomUUID.mockReturnValueOnce(command.commandId ?? command.ownerId);
     }
-    randomUUID.mockReturnValueOnce(command.commandId ?? command.ownerId);
+    if (op === 'attach' || op === 'observe') {
+      await prepareReplay();
+      const actual = await executeAgentOperation(op === 'attach' ? { op } : { op, leaseFile: input.leaseFile }, {
+        temporaryRoot,
+        transport: (url, options) => { typedReplays++; return replay(url, options); },
+      });
+      assert.deepEqual(actual, expected);
+      const file = op === 'attach' ? actual.leaseFile : actual.pngPath;
+      assert.equal((await stat(file)).mode & 0o777, 0o600);
+      if (bytes) {
+        assert.deepEqual(await readFile(actual.pngPath), bytes);
+        assert.equal(createHash('sha256').update(bytes).digest('hex'), actual.pngSha256);
+      }
+    }
+    await prepareReplay();
     const reply = await callMcp(client, op, input);
     const actual = delivered(reply, !!expected.pngPath);
     assert.deepEqual(actual, expected); // No normalization of IDs, hashes, counters or paths.
@@ -1494,7 +1517,7 @@ it('MCP matches all eight CLI operations byte-for-byte using actual broker/contr
   assert.notEqual(result.observation.pngSha256, before.pngSha256);
   assert.equal(game.inputs[0].questions[0].instructions, 'Offline route 11.');
   assert.deepEqual([result.requestedTics, result.reportedTics, result.verifiedTics], [11, 11, 11]);
-  assert.equal(game.sdkCalls, 1); assert.equal(replays, 9);
+  assert.equal(game.sdkCalls, 1); assert.equal(replays, 9); assert.equal(typedReplays, 3);
   assert.equal(seen.size, 8);
 });
 

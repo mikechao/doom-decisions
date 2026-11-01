@@ -8,6 +8,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { runAgentCli } from '../../scripts/doom-agent.mjs';
+import { executeAgentOperation, type AgentClientOptions } from '../../scripts/doom-agent-client.ts';
 import { validAgentCommand, type AgentConfiguration, type AgentRunState } from '../../app/src/agent-control.ts';
 import type { AgentDecisionResult, AgentObservation } from '../../app/src/agent-observation.ts';
 import { buildDefaultDecisionRequest } from '../../app/src/decision-request.ts';
@@ -341,15 +342,19 @@ async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
       ),
     );
   };
+  function clientOptions(signal: AbortSignal): AgentClientOptions {
+    return {
+      temporaryRoot: root,
+      transport: (url, init) => {
+        assert.equal(signal.aborted, false);
+        return transport(url, init);
+      },
+    };
+  }
   const ports: SupervisorPorts = {
-    cli: (args, signal) =>
-      runAgentCli(args, {
-        temporaryRoot: root,
-        transport: (url, init) => {
-          assert.equal(signal.aborted, false);
-          return transport(url, init);
-        },
-      }),
+    attach: (signal) => executeAgentOperation({ op: 'attach' }, clientOptions(signal)),
+    observe: (input, signal) => executeAgentOperation({ op: 'observe', ...input }, clientOptions(signal)),
+    cli: (args, signal) => runAgentCli(args, clientOptions(signal)),
     readPng: (path, signal) => readFile(path, { signal }),
     async writeInstructions(text) {
       const path = join(root, `instructions-${commands.filter((call) => call.op === 'set-prompt').length + 1}.txt`);
@@ -737,9 +742,8 @@ test('early Stop, model failure, malformed proposal, or changed ACP session prev
   for (const kind of ['stop', 'failure', 'invalid', 'session', 'tool', 'duplicate-call'])
     await using(async (h) => {
       if (kind === 'stop')
-        h.ports.cli = async (args) => {
-          if (args[0] === 'observe') throw new Error('agent-stopped');
-          return runAgentCli(args, { transport: h.transport, temporaryRoot: h.root });
+        h.ports.observe = async () => {
+          throw new Error('agent-stopped');
         };
       else
         h.setGeneration(async (input) => {
@@ -1269,10 +1273,20 @@ test('adapter validates a post-decision DTO using its returned PNG without a new
     const original = h.ports.cli;
     let lease: ReturnType<typeof parseLease> | undefined;
     let before: Awaited<ReturnType<typeof liveObserve>> | undefined;
+    const attach = h.ports.attach;
+    h.ports.attach = async (signal) => {
+      const value = await attach(signal);
+      lease = parseLease(value);
+      return value;
+    };
+    const observe = h.ports.observe;
+    h.ports.observe = async (input, signal) => {
+      const value = await observe(input, signal);
+      before = await liveObserve(value, must(lease), h.ports.readPng, signal);
+      return value;
+    };
     h.ports.cli = async (args, signal) => {
       const value = await original(args, signal);
-      if (args[0] === 'attach') lease = parseLease(value);
-      if (args[0] === 'observe') before = await liveObserve(value, must(lease), h.ports.readPng, signal);
       if (args[0] === 'decide') captured = value;
       return value;
     };
@@ -1587,13 +1601,16 @@ test('second CAS invalidates its prior observation; stale CAS never reaches the 
             assert.equal(denied.sdkInvoked, false);
             return denied;
           }
-          const result = await cli(args, signal);
+          return cli(args, signal);
+        };
+        const observe = h.ports.observe;
+        h.ports.observe = async (input, signal) => {
+          const result = await observe(input, signal);
           if (
-            args[0] === 'observe' &&
-            ((kind === 'reused-interim' && h.observations.length === 3) ||
-              (kind === 'reused-fresh' && h.observations.length === 4))
+            (kind === 'reused-interim' && h.observations.length === 3) ||
+            (kind === 'reused-fresh' && h.observations.length === 4)
           ) {
-            (result as AgentObservation).observationId = h.observations[1].observationId;
+            result.observationId = h.observations[1].observationId;
           }
           return result;
         };
@@ -1820,7 +1837,7 @@ test('instruction files are distinct, exclusive 0600 and cleaned only after owne
         return Response.json({ pageId: randomUUID(), epoch: randomUUID(), ownerId: body.ownerId });
       };
       const signal = new AbortController().signal;
-      const lease = parseLease(await files.cli(['attach'], signal));
+      const lease = parseLease(await files.attach(signal));
       const first = await files.writeInstructions('private synthetic first', signal);
       const secondPath = join(dirname(lease.leaseFile), 'supervisor-instructions-2.txt');
       assert.equal((await stat(first)).mode & 0o777, 0o600);

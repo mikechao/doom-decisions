@@ -76,8 +76,12 @@ evidence/report ledger, checkpoint protocol, cancellation/deadlines and ACP clea
 `supervisor.ts` retains the gated CLI entry, `runLive`, port composition, trial files,
 signals and report publication, and re-exports the existing workflow APIs for
 compatibility. `supervise` requires injected ports; real I/O exists only behind
-`supervisorMain`'s explicit gate. `supervisor-cli.ts` imports the existing `runAgentCli`
-directly and reuses it in process; `supervisor-acp.ts` lazily initializes the provider
+`supervisorMain`'s explicit gate. `supervisor-cli.ts` uses typed attach/observe calls
+to `scripts/doom-agent-client.ts`; mutations still import `runAgentCli` in process.
+The CLI decodes arguments and delegates every operation to that same checked executor.
+File-backed leases, receipts and independent PNG readback checks are unchanged.
+Node 22.20.0 runs the erasable TypeScript directly; no build output is needed.
+`supervisor-acp.ts` lazily initializes the provider
 and AI SDK. The preserved **one-action** sequence is:
 
 1. `attach`, then `observe`; validate the materialized DTO/lease/correlation,
@@ -213,8 +217,9 @@ Biome lint and non-writing format checks also cover `supervisor.ts`, `supervisor
 `supervisor-acp.ts`, `supervisor-workflow.ts`,
 `live-observation.ts`, `supervisor.test.ts`, and `doom-proposal.ts`. For formatting,
 pass `--indent-style=space --indent-width=2 --javascript-formatter-quote-style=single
---line-width=120` without `--write` to match the existing style. `allowJs` enables
-typing the existing imported `.mjs` transport without editing it.
+--line-width=120` without `--write` to match the existing style. `allowJs` retains
+the imported `.mjs` argument adapter; the imported `.ts` executor implementation
+and supervisor read ports are checked by the no-emit command above.
 
 **33 top-level offline tests** cover the complete healthy sequence, real CLI over
 fake transport, stale checkpoint denial, wrong scope/revision/limit, Stop,

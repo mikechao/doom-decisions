@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join } from 'node:path';
+import type { AttachedLease } from '../../scripts/doom-agent-client.ts';
 import {
   parseAgentConfigResult,
   parseAgentObserveResult,
@@ -16,7 +17,7 @@ export function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-export type Lease = { pageId: string; ownerId: string; epoch: string; leaseFile: string };
+export type Lease = AttachedLease;
 export function parseLease(value: unknown): Lease {
   const data = record(value);
   requireLive(Object.keys(data).sort().join(',') === 'epoch,leaseFile,ownerId,pageId');
@@ -25,7 +26,7 @@ export function parseLease(value: unknown): Lease {
   return data as Lease;
 }
 
-// runAgentCli already checks the HTTP command ID against its own request. These
+// The shared executor checks the HTTP command ID against its own request. These
 // checks preserve that envelope when adapting its materialized return value.
 function envelope(value: unknown, lease: Lease) {
   const { pageId, epoch, commandId, ...domain } = record(value);

@@ -78,7 +78,10 @@ again before returning detached combined values. Changes during capture or
 finalization reject publication. A valid snapshot never guarantees later admission;
 `doom_decide` retains independent freshness/revision/run and dispatch fences.
 
-The source of truth is [the shared CLI](../scripts/doom-agent.mjs),
+The CLI argument adapter delegates to the checked, directly executed
+[shared Node executor](../scripts/doom-agent-client.ts). No compile step or generated
+JavaScript is needed on Node 22.20.0. MCP retains the
+[CLI interface](../scripts/doom-agent.mjs),
 [observation/decision DTOs](../app/src/agent-observation.ts) and
 [configuration DTOs](../app/src/agent-control.ts).
 
