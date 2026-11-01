@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
+import type { ACPProvider } from '@mcpc-tech/acp-ai-provider';
+import type { generateText } from 'ai';
 import { agentCliError } from '../../scripts/doom-agent.mjs';
 import { maxAgentInstructions, type AgentRunState } from '../../app/src/agent-control.ts';
 import {
@@ -20,20 +22,10 @@ import {
   type ReadPng,
 } from './live-observation.ts';
 
-type Generation = {
-  text: string;
-  finishReason: string;
-  rawFinishReason?: string;
-  steps: { toolCalls: readonly unknown[] }[];
-  totalUsage: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
-};
+type Generation = Awaited<ReturnType<typeof generateText>>;
 type ModelInput = { text: string; image: Uint8Array; signal: AbortSignal; onCallStart(): void };
-export type SupervisorACP = {
-  connect(): Promise<unknown>;
-  initSession(): Promise<unknown>;
-  getSessionId(): string | null;
+export type SupervisorACP = Pick<ACPProvider, 'connect' | 'initSession' | 'getSessionId' | 'cleanup'> & {
   generate(input: ModelInput): Promise<Generation>;
-  cleanup(): void;
 };
 export type SupervisorPorts = {
   cli(args: string[], signal: AbortSignal): Promise<unknown>;
@@ -443,7 +435,7 @@ export async function supervise(
   ) {
     requireLive(after.image && after.payload);
     // Completion, cancellation, session and tool checks stay outside text validation.
-    const reassessmentText: unknown = await checkpoint(
+    const reassessmentText = await checkpoint(
       advisory,
       `${instructions}\nReassess the ORIGINAL objective from the prior turn against the new POST-ACTION image. No more gameplay will occur.\nShape=${JSON.stringify(reassessmentShape)}\nORIGINAL_OBJECTIVE=${JSON.stringify(report.proposal)}\nBEFORE=${JSON.stringify(initial.payload)}\nAFTER=${JSON.stringify(after.payload)}`,
       after.image,

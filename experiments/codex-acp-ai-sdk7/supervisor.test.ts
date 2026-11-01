@@ -242,13 +242,7 @@ async function fixture(fault?: Fault) {
   };
   let generation: SupervisorACP['generate'] = async (input) => {
     input.onCallStart();
-    return {
-      text: JSON.stringify(generationInputs.length === 1 ? proposal : reassessment),
-      finishReason: 'stop',
-      rawFinishReason: 'end_turn',
-      steps: [{ toolCalls: [] }],
-      totalUsage: {},
-    };
+    return modelResult(JSON.stringify(generationInputs.length === 1 ? proposal : reassessment));
   };
   const ports: SupervisorPorts = {
     cli: (args, signal) =>
@@ -275,6 +269,7 @@ async function fixture(fault?: Fault) {
         async initSession() {
           events.push('init');
           acpSession = 'private-acp-session';
+          return { sessionId: acpSession };
         },
         getSessionId: () => acpSession,
         async generate(input) {
@@ -334,15 +329,86 @@ async function using<T>(work: (h: Awaited<ReturnType<typeof fixture>>) => Promis
   }
 }
 
-function modelResult(text: unknown): Awaited<ReturnType<SupervisorACP['generate']>> {
-  // Deliberately allow runtime contract violations in the fake provider only.
-  return { text: text as string, finishReason: 'stop', rawFinishReason: 'end_turn', steps: [], totalUsage: {} };
+type Generation = Awaited<ReturnType<SupervisorACP['generate']>>;
+const unexpectedToolCall: Generation['dynamicToolCalls'][number] = {
+  type: 'tool-call',
+  toolCallId: 'fake-tool-call',
+  toolName: 'unexpected-tool',
+  input: {},
+  dynamic: true,
+};
+
+// A complete synthetic one-step SDK result. Missing usage stays unavailable;
+// placeholder IDs, timestamp and performance values are not live evidence.
+function modelResult(
+  text: string,
+  finishReason: Generation['finishReason'] = 'stop',
+  toolCalls: Generation['dynamicToolCalls'] = [],
+  rawFinishReason: Generation['rawFinishReason'] = 'end_turn',
+): Generation {
+  const usage: Generation['usage'] = {
+    inputTokens: undefined,
+    inputTokenDetails: { noCacheTokens: undefined, cacheReadTokens: undefined, cacheWriteTokens: undefined },
+    outputTokens: undefined,
+    outputTokenDetails: { textTokens: undefined, reasoningTokens: undefined },
+    totalTokens: undefined,
+  };
+  const step: Generation['steps'][number] = {
+    callId: 'fake-call',
+    stepNumber: 0,
+    model: { provider: 'acp', modelId: 'fake-model' },
+    toolsContext: {},
+    runtimeContext: {},
+    content: [{ type: 'text', text }, ...toolCalls],
+    text,
+    reasoning: [],
+    reasoningText: undefined,
+    files: [],
+    sources: [],
+    toolCalls,
+    staticToolCalls: [],
+    dynamicToolCalls: toolCalls,
+    toolResults: [],
+    staticToolResults: [],
+    dynamicToolResults: [],
+    finishReason,
+    rawFinishReason,
+    usage,
+    performance: {
+      effectiveOutputTokensPerSecond: 0,
+      outputTokensPerSecond: undefined,
+      inputTokensPerSecond: undefined,
+      effectiveTotalTokensPerSecond: 0,
+      stepTimeMs: 0,
+      responseTimeMs: 0,
+      toolExecutionMs: {},
+      timeToFirstOutputMs: undefined,
+    },
+    warnings: undefined,
+    request: {},
+    response: { id: 'fake-response', timestamp: new Date(0), modelId: 'fake-model', messages: [] },
+    providerMetadata: undefined,
+  };
+  return {
+    ...step,
+    // Aggregate reasoning uses SDK output types rather than step content-part types.
+    reasoning: [],
+    totalUsage: usage,
+    responseMessages: step.response.messages,
+    steps: [step],
+    finalStep: step,
+    output: text,
+  };
 }
 
 function setReassessmentText(h: Awaited<ReturnType<typeof fixture>>, text: unknown) {
   h.setGeneration(async (input) => {
     input.onCallStart();
-    return modelResult(h.generationInputs.length === 1 ? JSON.stringify(proposal) : text);
+    if (h.generationInputs.length === 1) return modelResult(JSON.stringify(proposal));
+    const result = modelResult(typeof text === 'string' ? text : '');
+    // Deliberately violate only the external text contract for malformed-output tests.
+    if (typeof text !== 'string') Object.defineProperty(result, 'text', { value: text });
+    return result;
   });
 }
 
@@ -577,13 +643,11 @@ test('early Stop, model failure, malformed proposal, or changed ACP session prev
           if (kind === 'failure') throw new Error('private provider failure');
           if (kind === 'session') h.changeACPSession();
           if (kind === 'duplicate-call') input.onCallStart();
-          return {
-            text: kind === 'invalid' ? '{}' : JSON.stringify(proposal),
-            finishReason: 'stop',
-            rawFinishReason: 'end_turn',
-            steps: [{ toolCalls: kind === 'tool' ? [{}] : [] }],
-            totalUsage: {},
-          };
+          return modelResult(
+            kind === 'invalid' ? '{}' : JSON.stringify(proposal),
+            'stop',
+            kind === 'tool' ? [unexpectedToolCall] : [],
+          );
         });
       const report = await supervise(h.ports);
       assert.notEqual(report.outcome, 'completed');
@@ -628,13 +692,7 @@ test('late ACP completion after deadline cannot continue the workflow', async ()
     });
     const report = await supervise(h.ports, { stageMs: 50 });
     assert.equal(report.errorCategory, 'HOST_DEADLINE');
-    must(release)({
-      text: JSON.stringify(proposal),
-      finishReason: 'stop',
-      rawFinishReason: 'end_turn',
-      steps: [],
-      totalUsage: {},
-    });
+    must(release)(modelResult(JSON.stringify(proposal)));
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(h.commands.filter((call) => call.op === 'start-run').length, 0);
     assert.equal(report.decideCalls, 0);
@@ -746,13 +804,7 @@ test('reassessment remains advisory; invalid status/evidence cannot become verif
     await using(async (h) => {
       h.setGeneration(async (input) => {
         input.onCallStart();
-        return {
-          text: JSON.stringify(h.generationInputs.length === 1 ? proposal : { ...reassessment, ...patch }),
-          finishReason: 'stop',
-          rawFinishReason: 'end_turn',
-          steps: [],
-          totalUsage: {},
-        };
+        return modelResult(JSON.stringify(h.generationInputs.length === 1 ? proposal : { ...reassessment, ...patch }));
       });
       const report = await supervise(h.ports);
       assert.equal(report.outcome, patch.status === 'achieved' ? 'completed' : 'failed');
@@ -937,6 +989,7 @@ test('second checkpoint failures are never caught as reassessment JSON or shape 
     'session-after',
     'tool',
     'finish',
+    'raw-finish',
     'duplicate-call',
     'cancel',
     'deadline',
@@ -960,10 +1013,13 @@ test('second checkpoint failures are never caught as reassessment JSON or shape 
         if (kind === 'duplicate-call') input.onCallStart();
         if (kind === 'cancel') abort.abort();
         if (kind === 'deadline' || kind === 'cancel') return new Promise(() => {});
-        const result = modelResult(`\`\`\`${privateText}`);
-        if (kind === 'tool') result.steps = [{ toolCalls: [{}] }];
-        if (kind === 'finish') result.finishReason = 'length';
-        return result;
+        // Vary each finish reason independently so neither guard can mask the other.
+        return modelResult(
+          `\`\`\`${privateText}`,
+          kind === 'finish' ? 'length' : 'stop',
+          kind === 'tool' ? [unexpectedToolCall] : [],
+          kind === 'raw-finish' ? 'max_tokens' : 'end_turn',
+        );
       });
       const report = await supervise(h.ports, { signal: abort.signal, stageMs: kind === 'deadline' ? 50 : 1000 });
       assertNoReplay(h, report);
