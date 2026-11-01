@@ -5,12 +5,16 @@ import { parseLease, record, requireLive } from './live-observation.ts';
 import type { SupervisorPorts } from './supervisor-workflow.ts';
 
 // Invocation-local state only; constructing these ports performs no I/O.
-export function createCLIPorts(root: string): Pick<
+export function createCLIPorts(
+  root: string,
+  authorizedDecisions: number,
+): Pick<
   SupervisorPorts,
   'attach' | 'observe' | 'setPrompt' | 'startRun' | 'decide' | 'getConfig' | 'readPng' | 'writeInstructions'
 > & {
   cleanup(): Promise<void>;
 } {
+  requireLive(Number.isSafeInteger(authorizedDecisions) && authorizedDecisions > 0);
   const promptFiles: string[] = [];
   let promptNumber = 0;
   let leaseFile: string | undefined;
@@ -60,7 +64,7 @@ export function createCLIPorts(root: string): Pick<
     readPng: (path, signal) => readFile(path, { signal }),
     async writeInstructions(text, signal) {
       requireLive(leaseFile);
-      requireLive(promptNumber < 2);
+      requireLive(promptNumber < authorizedDecisions);
       signal.throwIfAborted();
       const promptFile = join(dirname(leaseFile), `supervisor-instructions-${++promptNumber}.txt`);
       const handle = await open(promptFile, 'wx', 0o600);

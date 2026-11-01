@@ -3,17 +3,16 @@
 This directory contains one active prototype: Codex through ACP and Vercel AI
 SDK 7 proposes high-level navigation guidance over browser Doom. The existing
 Decisions API selects the low-level action; the application retains lease,
-budget, Stop and native/frame verification authority. Explicit one-action mode
-retains its initial proposal and final advisory reassessment. Milestone 1 adds a
-fixed two-decision mode: checkpoint 2 reassesses the first verified action and
-supplies replacement guidance before decision 2. Both modes use one persistent
-ACP session and at most two checkpoints; two-decision mode has no third/final
-checkpoint. Live execution still requires separate human approval.
+budget, Stop and native/frame verification authority. One bounded numeric loop
+handles explicitly authorized N decisions in one persistent ACP session, with N
+ACP turns and no final advisory-only turn. N=1 intentionally removes the historical
+post-decision reassessment. Live execution still requires separate human approval.
+Use `--live --authorize-decisions N --trial NEW_ID`; legacy one/two flags alias N=1/2.
 
 | File | Responsibility |
 | --- | --- |
 | `supervisor.ts` | Gated live entry, installed/lock version admission, exclusive trial setup, signals, port composition, report publication and cleanup scheduling; stable workflow re-exports. |
-| `supervisor-workflow.ts` | Injectable fixed one/two-action policy, evidence/report ledger, ACP checkpoints, session checks, cancellation/deadlines and ACP cleanup ownership. |
+| `supervisor-workflow.ts` | Injectable bounded N-decision loop, evidence/report ledger, ACP checkpoints, session checks, cancellation/deadlines and ACP cleanup ownership. |
 | `supervisor-cli.ts` | Typed Doom operation ports, lease tracking, sanitized numbered receipts, PNG reads, temporary instruction-file creation and removal. |
 | `supervisor-acp.ts` | Lazy AI SDK/ACP imports, provider/model configuration and session/generation/cleanup methods. |
 | `live-observation.ts` | Strict live DTO, PNG and correlation validation. |
@@ -44,7 +43,7 @@ before the typed port is invoked. Claim/decision attempt counters, unknown guida
 application and pending mutation state retain the existing no-retry behavior;
 only validated acknowledgments/results clear pending delivery uncertainty.
 
-The CLI adapter exclusively creates at most two distinct 0600 instructions files.
+The CLI adapter exclusively creates at most authorized N distinct 0600 instructions files.
 It registers ownership after creation and before writing, so partial-write cleanup
 cannot delete an existing file after EEXIST. The entrypoint calls
 its cleanup in `finally` after report publication (or failure), after removing signal
@@ -84,12 +83,20 @@ substantially accurate, with shallow telemetry grounding and no gameplay progres
 tested. Their superseded runners, replay-specific tests and tracked reports are
 available in Git history; they are no longer supported entry points here.
 
-The offline two-action proof captures two actual OpenRouter SDK-serialized HTTP
-Request bodies in scoped fake fetch, through the real request builder and provider.
-Synthetic GUIDANCE_ONE_ALPHA is replaced by GUIDANCE_TWO_BETA; both requests retain
-the original base and resolve the six-tic horizon. The controller/native and ACP
-are fake. Existing app tests cover controller CAS/admission; no new app runtime
-changes or fixture framework were needed.
+The owner also reports a live two-decision same-session reassessment cycle in the
+implementation task context. Generalized-N correctness is verified only offline.
+The N=1,2,3,5 regressions capture actual pinned OpenRouter SDK Request bodies through
+fake fetch, the real request builder and provider. Each step has distinct synthetic
+image/state/guidance; guidance replaces the prior advisory while preserving the
+original template and six-tic horizon. ACP, controller and native gameplay are fake.
+
+The browser allowance remains authoritative. Preclaim reads expose `run:null`, so
+its numeric limit is learned only after the single nonrefundable `startRun` claim.
+The validated claim/counters are recorded before requiring exact equality with N;
+both mismatch directions fail before prompt CAS or decide, without retry/refund.
+The report replaces string `mode` with `requestedDecisions` and adds
+`claimAccounting`; interim and final accounting remain separate. The host never
+reads the private env file. No bridge/controller/protocol change is included.
 
 This remains a prototype. Valid JSON and advisory status do not prove navigation
 success. Read-only mode and empty MCP configuration do not establish full Codex

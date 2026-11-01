@@ -1,248 +1,208 @@
 # Bounded Doom supervisor prototype
 
-One active prototype: Codex through ACP and AI SDK 7 supplies high-level navigation
-guidance; the existing browser Decisions API selects each low-level action.
-The owner reports a completed live cycle in Trial 002 (details below). Another
-trial requires fresh human approval; this document does not authorize an agent
-to launch a browser/server, attach, or run inference. Milestone 1 adds an offline-proved,
-explicitly gated two-decision path; no two-decision live result is claimed.
+Codex through ACP and AI SDK 7 supplies advisory high-level navigation guidance;
+the browser Decisions API selects each low-level action. One numeric loop handles
+explicitly authorized N decisions. N=3 and N=5 are offline regression cases, not
+separate modes. A live trial always requires fresh human approval; this document
+does not authorize browser/server launch, attachment or inference.
 
-## Owner-reported live outcomes
+## Evidence baseline
 
-Trial 001 executed `turn_right` with six verified tics, reaching cumulative tic 7.
-It failed only at final advisory reassessment validation, after the verified action.
-Trial 002 reported `outcome: completed`: two ACP checkpoints in the same observed
-session ID, one verified Decisions action, an accepted advisory reassessment and
-an exhausted limit of 1. These are owner-supplied live reports, not independent
-verification by this cleanup; neither trial was rerun or its private evidence read.
+The owner reported Trial 001 executing `turn_right` for six verified tics to
+cumulative tic 7, followed by a final advisory validation failure. Trial 002
+completed the historical one-action flow: two ACP checkpoints in the same observed
+session, one verified Decisions action, accepted advisory reassessment and exhausted
+limit 1. The owner also reports a live two-decision same-ACP-session reassessment
+cycle in the implementation task context. These are owner-supplied reports;
+private trial evidence was not read or rerun for this change.
 
-Reassessment rejection diagnostics now distinguish JSON parsing, strict shape
-validation and unsafe advisory text from checkpoint/session failures. Rejection
-metadata includes only allowlisted types, bounded byte counts, expected-key
-presence, unexpected-key counts and status/limit flags. It retains no raw model
-text, arbitrary key names/values or parser errors, and does not relax validation.
+The generalized loop is verified offline with synthetic N=1,2,3,5 cases. This is
+not generalized-N live browser, WASM, ACP or Decisions evidence. The historical
+34-supervisor/107-focused-test results predate this change and do not validate it.
 
 ## Human invocation, after separate approval
 
-Use Node 22.20.0 and the already installed pinned packages: AI SDK 7.0.159,
-ACP provider 0.3.9, codex-acp 2.5.0 (nested AI SDK 6.0.320). No installation,
-upgrade, global configuration change, build, or authentication repair is included.
-Existing Codex authentication/configuration is inherited; do not log it.
-Nonempty `DEBUG` or `ACP_AI_PROVIDER_DEBUG` is rejected before attachment to avoid
-the provider's debug/transcript logging.
+Use Node 22.20.0 and existing pinned packages: AI SDK 7.0.159, ACP provider 0.3.9,
+codex-acp 2.5.0 (nested AI SDK 6.0.320). No installation, upgrade, authentication
+repair or global configuration change is included. Existing Codex authentication
+is inherited; nonempty `DEBUG` or `ACP_AI_PROVIDER_DEBUG` fails before attachment
+to avoid provider transcript/debug logging.
 
-For one-action mode the human configures **`AGENT_DECISION_BUDGET=1` in
-`app/.env.agent.local`**, starts
-`npm --prefix app run dev:agent`, manually opens exactly one visible page at
-`http://127.0.0.1:5174/`, supplies the existing browser Decisions credentials as
-needed, and waits for verified preparation. Keep **Stop Agent** visible and
-available. Reuse that server; neither this program nor its tests open the browser
-or prepare a game. The host never reads the private agent environment file or
-takes ownership of Decisions credentials/provider selection.
+For a separately approved trial the human configures `AGENT_DECISION_BUDGET=N` in
+`app/.env.agent.local` and fully stops/relaunches `npm --prefix app run dev:agent`:
+the allowance is process-owned. The human manually opens exactly one visible
+Agent Mode page at `http://127.0.0.1:5174/`, provides browser credentials as needed,
+waits for verified preparation, and keeps **Stop Agent** available. Reuse that
+server. The supervisor never reads the private agent env file, opens the browser,
+prepares a game or owns Decisions credentials/provider selection.
 
-From this experiment directory, the human may then run **once**, using a new ID:
+From this experiment directory, invoke once with a new trial ID:
 
 ```sh
 node --experimental-strip-types supervisor.ts \
-  --live --authorize-one-decision --trial NEW_ID 2>/dev/null
+  --live --authorize-decisions N --trial NEW_ID 2>/dev/null
 ```
 
-This can incur **two Codex supervisor calls plus one browser Decisions request**.
+N must be a positive decimal JavaScript safe integer. Zero, signs, fractions,
+exponents, overflow, missing arguments and mixed authorizations fail closed.
+`--authorize-one-decision` and `--authorize-two-decisions` remain aliases for N=1
+and N=2; there is no three-decision flag or default live execution. No arguments
+or `--help` performs no Doom/ACP I/O. Stderr suppression follows the existing
+experiment pattern because the provider forwards arbitrary adapter stderr.
 
-For a separately approved **two-decision** trial, the human sets
-**`AGENT_DECISION_BUDGET=2`**, fully stops and restarts the dev:agent server (the
-allowance is process-owned), prepares exactly one visible Agent Mode page, and
-keeps **Stop Agent** available. Use a fresh trial ID and invoke once:
+Healthy completion uses **N ACP turns and N browser Decisions invocations** in
+one persistent ACP session. **N=1 now has one initial proposal and one decision,
+with no final advisory-only reassessment.** This intentionally changes the
+historical one-decision behavior, including through its legacy flag.
 
-```sh
-node --experimental-strip-types supervisor.ts \
-  --live --authorize-two-decisions --trial NEW_ID 2>/dev/null
-```
-
-This admits at most **two Codex checkpoints and two Decisions invocations**. There
-is no third final Codex call. The old one-decision flag always requires allowance 1
-and cannot admit two actions; mismatched allowances fail after the nonrefundable
-claim. Neither command above is authorization to run it.
-
-The stderr redirect follows the existing experiment pattern: the provider forwards
-arbitrary adapter stderr. Do not collect raw stderr or private transcripts.
-With no arguments or `--help`, the command prints help and performs no I/O to
-Doom/ACP. Partial/extra opt-in arguments fail closed.
+Preclaim `observe`/`get-config` expose `run:null`, not the numeric allowance.
+`start-run` claims the entire configured allowance atomically and nonrefundably;
+it accepts no requested limit. Immediately after validating its acknowledgement,
+the supervisor records actual `claimAccounting`, then requires **claimed limit=N**.
+Both smaller and larger allowances produce `ALLOWANCE_MISMATCH`, an acknowledged
+claim and failed outcome before any prompt CAS or decision. Initial ACP inference
+has already occurred and can incur charges. No clamp, refund, second claim or
+retry follows; use browser Stop Agent. Preclaim mismatch rejection would require
+a protocol change and is not provided here. A live N>2 trial separately requires
+human approval for configuration/restart, gameplay and metered calls.
 
 ## Boundary and sequence
 
-`supervisor-workflow.ts` owns `supervise`, its injected port contracts, workflow
-evidence/report ledger, checkpoint protocol, cancellation/deadlines and ACP cleanup.
-`supervisor.ts` retains the gated CLI entry, `runLive`, port composition, trial files,
-signals and report publication, and re-exports the existing workflow APIs for
-compatibility. `supervise` requires injected ports; real I/O exists only behind
-`supervisorMain`'s explicit gate. `supervisor-cli.ts` uses operation-specific typed
-attach/observe/startRun/setPrompt/decide/getConfig ports to `scripts/doom-agent-client.ts`.
-There is no supervisor CLI argument-array port. The public CLI/MCP adapters still
-delegate to that same checked executor; no extra read/write operations are added.
-File-backed leases, receipts and independent PNG readback checks are unchanged.
-Node 22.20.0 runs the erasable TypeScript directly; no build output is needed.
-`supervisor-acp.ts` lazily initializes the provider
-and AI SDK. The preserved **one-action** sequence is:
+`supervisor-workflow.ts` owns the loop, injected typed ports, evidence ledger,
+checkpoint/session checks, deadlines and ACP cleanup. `supervisor.ts` owns the
+gated live entry, version admission, trial files, signals, composition and report.
+`supervisor-cli.ts` implements attach/observe/startRun/setPrompt/decide/getConfig
+through the shared checked `scripts/doom-agent-client.ts` executor. No argument-array
+port, new RPC operation or controller/bridge/provider change is introduced.
+`supervisor-acp.ts` retains lazy startup, GPT-6 Luna, xhigh, read-only ACP,
+`persistSession:true`, empty MCP servers and AI SDK `maxRetries:0`.
 
-1. `attach`, then `observe`; validate the materialized DTO/lease/correlation,
-   `run:null`, ready state, six tics, and a base template containing `{{tics}}`.
-2. One ACP provider/model with `persistSession:true`, `INITIAL_AGENT_MODE=read-only`,
-   a fresh empty cwd and `mcpServers:[]`; `connect`, `initSession`, then checkpoint 1.
-3. Validate the existing five-field advisory proposal. Preserve the complete base
-   template and flags; append only objective/question/uncertainty. Prepare a private
-   instructions file. `start-run` must acknowledge **limit 1**, zero counters and
-   the same session/revision/configuration; an incorrect allowance is not refunded.
-4. CAS `set-prompt`, preserving other settings, followed by a **new standalone
-   `observe`**. Require incremented revision, changed observation ID, unchanged
-   native frame/state and the acknowledged run/configuration.
-5. Exactly one scoped `decide`. No action field is supplied. Existing browser
-   `agentNext` → `runOneDecision` → provider request → native verification remains
-   authoritative. The host accepts only a correlated, fully verified completion
-   at requested/reported/verified **6/6/6** for the healthy path.
-6. Reuse the decision's resulting observation/PNG; no redundant capture. Read
-   `get-config` once and require the original run/session, expected revision,
-   `limit=reserved=sdkInvoked=1`, `remaining=0`, `active=false`.
-7. Checkpoint 2 uses the **same ACP session ID**, original objective, before/after
-   allowlisted state and the post-action PNG. Validate advisory
-   `continue|revise|achieved|uncertain`, visual/telemetry evidence, uncertainty and
-   required nullable `nextGuidance`. Continue/revise require bounded target/question;
-   achieved/uncertain require null. In one-action mode this remains advisory.
-   There is no second decision or retry path. Cleanup and report.
+1. Attach and independently observe. Validate lease/correlation, PNG bytes,
+   `run:null`, ready state, six tics and the original template's `{{tics}}`.
+2. Create/connect/init exactly one ACP session. The initial proposal uses the
+   initial image and allowlisted state; validate the existing advisory schema.
+3. Iterate at most N times. First guidance uses that proposal; later guidance
+   uses a validated reassessment of the preceding decision's receipt image and
+   its preceding **BEFORE/AFTER** state. Retain the original objective throughout.
+4. Compose each replacement from the **original template**, never the prior
+   appended guidance. Reject identical consecutive guidance. Write a distinct
+   exclusive 0600 instruction file. Only on the first iteration, claim the run
+   after complete guidance exists and enforce the exact-match rule above.
+5. Apply scoped prompt CAS. Independently observe the incremented revision,
+   unchanged native state, fresh unique observation ID, exact configuration and
+   expected run/reserved/SDK/remaining counters.
+6. Issue exactly one scoped `decide`, without an action or duration override.
+   Validate correlation, receipt, returned PNG and fully verified healthy
+   requested/reported/verified **6/6/6** completion. Browser admission and native
+   verification remain authoritative.
+7. If verified actions equal N, read final `get-config` and require the original
+   session/run, current revision/configuration and **N/N/N/0 inactive** accounting.
+   Exit without an interim observation or another ACP turn.
+8. Otherwise perform the existing interim independent observation: match the
+   receipt's native frame/state and unchanged revision/configuration; require
+   limit N, reserved=SDK=completed, remaining=N-completed and active=true. Then
+   reassess in the same ACP session on the next iteration. Continue/revise require
+   defensible `nextGuidance`; achieved/uncertain require null and stop early.
 
-The fixed **two-decision** sequence changes only the feedback boundary:
+The interim image is not substituted for the decision receipt's visual evidence.
+The receipt already supplies the next ACP image; the interim observation checks
+current run/configuration/native continuity, and the post-CAS observation remains
+mandatory. No additional image round-trip is added just to feed ACP.
 
-1. Initial O0/r0 + PNG, checkpoint 1, proposal, one claim with limit 2.
-2. Compose guidance #1 from O0 original template, CAS r0→r1, independent O1/r1.
-3. Decision #1 must complete at requested/reported/verified 6/6/6.
-4. Independent O2/r1 must match R1 session/map/native frame/state and unchanged
-   configuration, with limit/reserved/sdkInvoked/remaining **2/1/1/1 active**.
-5. Checkpoint 2 in the same ACP session uses ORIGINAL objective, actual before/after
-   state and R1 PNG. Continue/revise require a defensible next observable objective
-   and question. Uncertain means none can be offered; achieved/uncertain end early.
-6. Compose guidance #2 from **O0 original template**, never the appended #1 template.
-   Reject byte-identical composition. CAS using O2/r1→r2, then independent O3/r2
-   proving unchanged native state and matching new configuration.
-7. Decision #2 must complete at 6/6/6; final get-config must prove **2/2/2/0 inactive**.
-   Report and cleanup, with no third checkpoint.
+All standalone and receipt observation IDs are checked for reuse; decide IDs are
+reserved before dispatch. Guidance validation rejects explicit action/duration
+language, unsafe references, malformed schemas, session changes and model tool
+calls. These conservative text guards can reject benign wording and do not
+provide semantic isolation. Valid advice or `achieved` never proves navigation
+success.
 
-Both boundaries reject stale revisions, reused observations, conflicting state,
-unsafe/malformed guidance, changed ACP session and model tool use without retry.
-Guidance-bearing text conservatively rejects explicit action identifiers and
-duration language. This can reject benign wording and cannot guarantee semantic
-isolation of arbitrary natural language. Provider action selection and browser
-duration authority are unchanged.
-
-`live-observation.ts` reconstructs inline PNG only in memory through the existing
-strict DTO parsers. It rereads/hashes the actual file bytes sent to ACP. PNG byte
-hashes are distinct from native/Canvas RGBA hashes. The host trusts the existing
-browser's verification; it does not independently execute/recertify native capture
-or fully decode PNGs. Model input excludes paths, lease/session/correlation IDs,
-instructions, frame hashes, WAD data, transcripts and arbitrary previous-action
-text. Raw pose/probe values are not decoded map knowledge. Neither schema validity
-nor `achieved` verifies navigation success; human visual review is still needed.
+`live-observation.ts` rereads/hashes the actual PNG bytes supplied to ACP and
+reuses strict DTO parsers. PNG byte hashes differ from native/Canvas RGBA hashes;
+the host trusts the browser's native/Canvas proof and does not independently
+recertify capture or fully decode PNGs. ACP input excludes paths, lease/session
+IDs, instructions, frame hashes, WAD data and arbitrary previous-action text.
 
 ## Failure, Stop, accounting and cleanup
 
-Limits are one `start-run` invocation, at most one or two distinct `decide`
-operations according to the explicit mode, two `generateText` invocations
-and one ACP session setup. AI SDK `maxRetries:0`; no host retries or fallbacks.
-Connect/session waits are 45 seconds, each checkpoint 120 seconds, Doom operations
-15 seconds (decision 35), and the workflow deadline eight minutes. The existing
-broker can revoke sooner (10/30 seconds). SIGINT/SIGTERM abort host scheduling and
-owned HTTP transfers. Timeouts and late results cannot resume the workflow.
+Limits are one run-claim attempt, at most N decide attempts, at most N ACP turns
+and one ACP session setup. There are no host retries/fallbacks. Existing operation
+bounds remain: connect/session 45 seconds, ACP turn 120 seconds, Doom operations
+15 seconds (decide 35), overall workflow eight minutes. The broker can revoke
+sooner (10/30 seconds). Large N can hit the unchanged deadline before exhaustion;
+N authorizes a maximum, not guaranteed completion.
 
-**There is no CLI Stop.** On failure/unknown consumption use browser **Stop Agent**;
-Ctrl+C/host exit is not lease revocation. Pending HTTP cancellation normally
-revokes through the existing broker, but delivery/native consumption can remain
-unknown. A dispatched action must finish its existing verification. The host makes
-no further broker/model calls after known Stop or a terminal receipt. Terminal
-prefix evidence is retained, with no normal-exhaustion accounting/reassessment.
-A Stop occurring during ACP reasoning is learned only at a subsequent broker
-operation; the host has no independent browser Stop subscription.
+SIGINT/SIGTERM abort scheduling and owned HTTP transfers. Late results cannot
+resume the loop. Known Stop, terminal, noncompleted/partial receipts, bad/stale
+evidence, CAS rejection, cancellation/deadline or invalid advice prevent dependent
+iterations. Terminal/uncertain native prefixes stay in their receipt ledger entry
+without becoming completed actions. A Stop during ACP reasoning is learned at a
+subsequent bridge operation: the host has no Stop subscription, and an in-flight
+advisory may finish. Existing bridge/controller fences still own admission and
+native dispatch.
 
-The report has a bounded `decisions` array (maximum two), with mutation attempts
-recorded inside the bounded scheduling fence before typed port dispatch. Ledger
-guards run outside transport-error handling; thrown/timeout dispatches retain
-unknown delivery and never retry. Each entry separates validated receipt delivery, SDK
+There is no CLI Stop. Host exit/Ctrl+C does not revoke the lease or prove remote
+cancellation. Use browser **Stop Agent** after failure or unused authorization;
+a dispatched action must drain its existing verification. Early achieved/uncertain
+reports `partial`, retains active unused authority and requires human Stop. No
+replay, automatic revocation, restoration or rearm is attempted.
+
+The report replaces string `mode` with numeric `requestedDecisions`.
+`claimAccounting` records validated initial allowance/counters even on mismatch;
+`interimAccounting` is the latest validated continuation checkpoint; `accounting`
+is final exhausted-run evidence only. Earlier counts cannot resolve a later lost
+mutation. `reassessment` retains the latest validated advisory; rejection diagnostics
+contain only allowlisted bounded metadata, never raw output or parser errors.
+`sameACPSession` indicates checked continuity across ACP turns; it is false for
+N=1 because no second turn occurs, not because another session was created.
+
+Mutation attempts are recorded inside the scheduling/deadline fence before typed
+port dispatch. Thrown, timed-out or lost dispatches retain unknown delivery until
+validated acknowledgement/receipt and are never retried. `decisions` is bounded
+by N; `decideCalls` derives from it. Each entry distinguishes delivery, SDK
 invocation, outcome, action, requested/reported/verified tics, cumulative tic,
-completion uncertainty and usage. `verifiedActions` counts fully verified completed
-actions only; terminal or uncertain prefixes stay in their entry. Missing evidence
-is null, not zero. `decideCalls` is derived from the array. `interimAccounting`
-and final `accounting` are separate; earlier counts never resolve a later lost
-CAS/decision response. Guidance application states are bounded per write, without
-full templates, paths or HTTP bodies. Reassessment is final advisory in one mode
-and interim feedback in two mode; no final reassessment is requested in two mode.
-Unavailable usage/cost stays unavailable; hooks do not measure remote billing.
-Internal lazy-auth retry can still occur below AI SDK's retry setting.
+completion uncertainty and usage. `verifiedActions` counts healthy completed
+actions only. Missing receipt data stays null; unavailable usage/cost stays
+unavailable, not zero. AI SDK zero retries does not prevent the ACP provider's
+internal lazy-auth retry behavior.
 
-Achieved/uncertain in two mode reports **partial**, never completed/exhausted.
-Malformed, unsafe or unchanged guidance also cannot complete the trial. After
-interim accounting, one allowance may remain **unreserved and active**. All such
-paths set **humanStopRequired** and the entrypoint explicitly instructs browser
-**Stop Agent**. A lost second CAS/decision reply reports uncertain even when
-interim counts were valid. There is no replay or automatic revocation/rearm.
+Successful exhaustion retains lease-local guidance: inactive runs cannot restore
+it through prompt CAS. Human preferences remain unchanged. Browser Stop clears
+lease settings; refresh creates a new game session and clears in-memory credentials.
+Read-only ACP and empty MCP servers do not fully isolate internal Codex tools.
+Public ACP cleanup clears its session and requests child termination without a
+descendant-exit receipt or proof of remote cancellation/billing cessation.
 
-Read-only mode, empty MCP servers and absent SDK tools **do not isolate all internal
-Codex tools/permissions**. Public cleanup requests direct-child termination and
-clears the local session, without a descendant-exit receipt. It is not awaited
-indefinitely; the standalone entry exits after reporting. Remote cancellation and
-billing cessation are unverified.
+Each opt-in exclusively creates a new ignored `.local/supervisor-ID/` namespace
+before attachment; never remove/reuse one to retry. Private runtime lease/PNGs,
+numbered receipts and sanitized report are not for upload/commit. Instruction-file
+capacity equals authorized N. Ownership is registered after exclusive creation
+and before writing, so cleanup handles partial writes without deleting preexisting
+files after EEXIST. The entrypoint cleans owned instructions in `finally` after
+report publication/failure; hard interruption may leave them. Historical private
+artifacts remain untouched.
 
-Successful exhaustion leaves the acknowledged **lease-local guidance in effect**;
-saved human preferences remain unchanged. `set-prompt` requires an active run, so
-the exhausted run cannot safely restore it. No restoration/rearm is attempted.
-After reviewing results, use browser Stop Agent to clear the lease-owned settings;
-refresh creates a new game session and clears in-memory credentials. Failure after
-a prompt write reports its last acknowledgment or unknown application state.
+## Offline verification
 
-Each opt-in consumes a new ignored `.local/supervisor-<ID>/` directory exclusively
-before attachment. Never remove/reuse it to retry. It contains a started marker,
-fresh ACP cwd, private CLI lease/PNGs, numbered receipts with full instruction text
-removed, and a bounded sanitized `report.json`. The CLI adapter owns only successfully
-created temporary instructions files; the entrypoint invokes cleanup in `finally`
-after reporting or failure, preserving cleanup on partial write failure. Hard
-interruption may leave files. Runtime files are private local evidence,
-**never commit/upload them**, especially DOOM1 captures.
-Historical one-shot namespaces and evidence remain untouched. Another trial needs
-fresh human approval and an independently configured browser allowance/process.
-
-## Offline checks performed
-
-From the repository root, using already installed local tools:
+From the repository root with installed tools:
 
 ```sh
 node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/supervisor.test.ts
 node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7
+npm --prefix app test -- tests/agent-bridge.test.ts tests/agent-mcp.test.ts tests/agent-decision.test.ts
 ```
 
-Biome lint and non-writing format checks also cover `supervisor.ts`, `supervisor-cli.ts`,
-`supervisor-acp.ts`, `supervisor-workflow.ts`,
-`live-observation.ts`, `supervisor.test.ts`, and `doom-proposal.ts`. For formatting,
-pass `--indent-style=space --indent-width=2 --javascript-formatter-quote-style=single
---line-width=120` without `--write` to match the existing style. `allowJs` retains
-the imported `.mjs` argument adapter; the imported `.ts` executor implementation
-and supervisor read ports are checked by the no-emit command above.
+The supervisor suite has **40 top-level tests**, including parameterized healthy
+N=1,2,3,5, exact-match failures, authorization aliases/denials, third-iteration
+Stop/terminal/partial/advice/evidence/CAS failures, lost/thrown/timed-out mutations,
+and instruction capacity/ownership/cleanup beyond two files. Distinct synthetic
+step images/state/guidance prove preceding receipt evidence, replacement rather
+than accumulation, fresh IDs/revisions and exact counts with no post-bound ACP.
+Every fixture captures actual pinned OpenRouter SDK Request serialization through
+fake fetch; the broker/controller/native and ACP are fake. Existing diagnostic,
+redaction, cancellation/deadline, inert import and default/help guards remain.
 
-**34 top-level offline tests** cover the complete healthy sequence, shared typed executor over
-fake transport, stale checkpoint denial, wrong scope/revision/limit, Stop,
-unsettled/late ACP results, cancellation after claim, lost mutating replies without
-replay, corrupt/missing PNGs and strict DTOs, accounting, terminal precedence,
-advisory reassessment/unknown usage, rejection diagnostics and redaction,
-cleanup failure, compatibility exports, inert imports, and guarded standalone
-default/help/malformed-argument exit paths.
-Typed mutation ports are also failed synchronously or left pending until timeout,
-proving pre-dispatch attempt accounting and no replay without reaching transport.
-The two-decision cases capture both SDK-serialized Request bodies with fake fetch,
-through the real builder, OpenRouter provider and installed SDK 1.4.25. They assert
-GUIDANCE_ONE_ALPHA then GUIDANCE_TWO_BETA, original-base preservation, resolved 6-tic
-text, no retained first block, criteria/state/PNG and snake-case serialization.
-Additional cases cover interim/native/CAS freshness, strict guidance, early exits,
-unknown second mutations, exclusive file ownership/partial writes and both gates.
-Existing app controller/provider tests cover bounded CAS/admission; no additional
-controller companion or production app change was needed.
-The fake controller is deliberately small; it is not live browser/WASM evidence.
-Tests use temporary synthetic flat-color PNGs and fake model/provider responses;
-no real broker, network, Codex, Decisions API, WAD, private capture or consumed
-one-shot marker is needed. These checks do not independently verify the
-owner-reported live outcomes or broader live correctness.
+Focused Biome lint and non-writing format checks use space indentation, width 2,
+single quotes and line width 120. Tests use synthetic PNGs, fake responses and
+temporary directories, without network, WAD, browser or real inference. These
+checks do not independently verify owner-reported live outcomes or generalized-N
+live correctness.

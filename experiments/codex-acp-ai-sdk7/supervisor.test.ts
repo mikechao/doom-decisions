@@ -13,14 +13,8 @@ import type { AgentDecisionResult, AgentObservation } from '../../app/src/agent-
 import { buildDefaultDecisionRequest } from '../../app/src/decision-request.ts';
 import type { DecisionDiagnostics, DecisionLifecycle } from '../../app/src/decision-provider.ts';
 import { createCLIPorts } from './supervisor-cli.ts';
-import { liveDecision, liveObserve, parseLease } from './live-observation.ts';
-import {
-  composeGuidance,
-  supervise,
-  type SupervisorACP,
-  type SupervisorMode,
-  type SupervisorPorts,
-} from './supervisor-workflow.ts';
+import { liveDecision, liveObserve, modelState, parseLease } from './live-observation.ts';
+import { composeGuidance, supervise, type SupervisorACP, type SupervisorPorts } from './supervisor-workflow.ts';
 import { supervisorMain } from './supervisor.ts';
 
 function must<T>(value: T | null | undefined): T {
@@ -95,10 +89,29 @@ function syntheticPng(color: number) {
 }
 const firstPng = syntheticPng(1);
 const lastPng = syntheticPng(2);
+const pngs = new Map([
+  [1, firstPng],
+  [7, lastPng],
+]);
+function pngAt(tic: number) {
+  if (!pngs.has(tic)) pngs.set(tic, syntheticPng(1 + (tic - 1) / 6));
+  return must(pngs.get(tic));
+}
+function reassessmentAt(turn: number) {
+  return turn === 2
+    ? nextReassessment
+    : {
+        ...nextReassessment,
+        nextGuidance: {
+          target: `Inspect visible edge number ${turn}`,
+          nextExperiment: `Is edge number ${turn} connected?`,
+        },
+      };
+}
 
 type Json = Record<string, unknown>;
 type Fault = (op: string, data: Json, reply: Json, index: number) => void;
-async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
+async function fixture(fault?: Fault, limit = 1) {
   const root = await mkdtemp(join(tmpdir(), 'doom-supervisor-test-'));
   const pageId = randomUUID(),
     epoch = randomUUID(),
@@ -109,28 +122,24 @@ async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
   const generationInputs: Parameters<SupervisorACP['generate']>[0][] = [];
   const wires: Wire[] = [];
   const observations: AgentObservation[] = [];
+  const decisionReceipts: AgentDecisionResult[] = [];
   const originalFetch = globalThis.fetch;
-  // Only the two-action fixture invokes the real provider/SDK. No fallback transport.
-  if (mode === 'two') {
-    globalThis.fetch = async (input) => {
-      assert.ok(input instanceof Request);
-      assert.equal(input.url, 'https://openrouter.ai/api/alpha/decisions');
-      assert.equal(input.method, 'POST');
-      assert.equal(input.headers.get('authorization'), 'Bearer offline-supervisor-dummy');
-      wires.push(JSON.parse(await input.text()) as Wire);
-      return Response.json({
-        model: 'openai/gpt-6-luna-decisions',
-        answers: { next_action: { type: 'choice', choice: 'turn_right' } },
-        usage: { input_tokens: 123, output_tokens: 0 },
-      });
-    };
-  }
-  const provider =
-    mode === 'two'
-      ? (await import('../../app/src/openrouter-decision-provider.ts')).openRouterDecisionProviderFactory.create(
-          'offline-supervisor-dummy',
-        )
-      : null;
+  // Every fixture invokes the real provider/SDK through fake fetch only.
+  globalThis.fetch = async (input) => {
+    assert.ok(input instanceof Request);
+    assert.equal(input.url, 'https://openrouter.ai/api/alpha/decisions');
+    assert.equal(input.method, 'POST');
+    assert.equal(input.headers.get('authorization'), 'Bearer offline-supervisor-dummy');
+    wires.push(JSON.parse(await input.text()) as Wire);
+    return Response.json({
+      model: 'openai/gpt-6-luna-decisions',
+      answers: { next_action: { type: 'choice', choice: 'turn_right' } },
+      usage: { input_tokens: 123, output_tokens: 0 },
+    });
+  };
+  const provider = (
+    await import('../../app/src/openrouter-decision-provider.ts')
+  ).openRouterDecisionProviderFactory.create('offline-supervisor-dummy');
   let ownerId: unknown,
     run: AgentRunState | null = null,
     revision = 0,
@@ -155,7 +164,7 @@ async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
     includePreviousAction: true,
   };
   function observation(): AgentObservation {
-    const png = tic === 1 ? firstPng : lastPng;
+    const png = pngAt(tic);
     const digest = hash(png.rgba);
     return {
       observationId: randomUUID(),
@@ -185,7 +194,7 @@ async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
           cells: { current: 0, max: 300 },
           rockets: { current: 0, max: 50 },
         },
-        x: 0,
+        x: (tic - 1) / 6,
         y: 0,
         angle: tic === 1 ? 0 : 123,
       },
@@ -218,12 +227,11 @@ async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
         assert.equal(run, null);
         assert.equal(data.observationId, must(lastObservation).observationId);
         assert.equal(data.revision, revision);
-        const limit = mode === 'two' ? 2 : 1;
         run = { runId: randomUUID(), active: true, limit, reserved: 0, sdkInvoked: 0, remaining: limit };
         reply = { ...correlation, config: snapshotConfig() };
       } else if (op === 'set-prompt') {
         assert.equal(data.runId, must(run).runId);
-        assert.equal(data.revision, revision);
+        if (data.revision !== revision) return Response.json({ error: 'revision-conflict' }, { status: 409 });
         preWriteObservation = lastObservation;
         configuration.instructionTemplate = String(data.instructions);
         revision++;
@@ -277,31 +285,25 @@ async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
         bounded.reserved++;
         bounded.remaining = bounded.limit - bounded.reserved;
         lastObservation = undefined;
-        if (provider) {
-          const lifecycle: DecisionLifecycle = {};
-          const diagnostics: DecisionDiagnostics = { requestId: null, http: null, latencyMs: null };
-          const result = await provider.request(
-            request,
-            lifecycle,
-            diagnostics,
-            {
-              assertFresh() {},
-              beforeCreate() {
-                sdkCalls++;
-                bounded.sdkInvoked++;
-              },
-              onReadStateChange() {},
+        const lifecycle: DecisionLifecycle = {};
+        const diagnostics: DecisionDiagnostics = { requestId: null, http: null, latencyMs: null };
+        const result = await provider.request(
+          request,
+          lifecycle,
+          diagnostics,
+          {
+            assertFresh() {},
+            beforeCreate() {
+              sdkCalls++;
+              bounded.sdkInvoked++;
             },
-            performance.now(),
-          );
-          await lifecycle.sdkRead;
-          assert.ok(result.kind === 'choice');
-          assert.equal(result.action, 'turn_right');
-        } else {
-          // Legacy one-action fake: this count is not SDK serialization evidence.
-          sdkCalls++;
-          bounded.sdkInvoked++;
-        }
+            onReadStateChange() {},
+          },
+          performance.now(),
+        );
+        await lifecycle.sdkRead;
+        assert.ok(result.kind === 'choice');
+        assert.equal(result.action, 'turn_right');
         actionSelections++;
         bounded.active = bounded.remaining > 0;
         tic += 6;
@@ -320,6 +322,7 @@ async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
           responseMetadata: null,
           observation: observation(),
         };
+        decisionReceipts.push(decision);
         reply = { ...correlation, decision };
       } else if (op === 'get-config') reply = { ...correlation, config: snapshotConfig() };
       else assert.fail(`Unexpected operation ${op}`);
@@ -332,12 +335,10 @@ async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
     return modelResult(
       JSON.stringify(
         generationInputs.length === 1
-          ? mode === 'two'
-            ? firstGuidance
-            : proposal
-          : mode === 'two'
-            ? nextReassessment
-            : reassessment,
+          ? limit === 1
+            ? proposal
+            : firstGuidance
+          : reassessmentAt(generationInputs.length),
       ),
     );
   };
@@ -396,6 +397,7 @@ async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
     generationInputs,
     wires,
     observations,
+    decisionReceipts,
     transport,
     configuration,
     baseInstructions,
@@ -421,18 +423,14 @@ async function fixture(fault?: Fault, mode: SupervisorMode = 'one') {
       return must(preWriteObservation);
     },
     async dispose() {
-      if (mode === 'two') globalThis.fetch = originalFetch;
+      globalThis.fetch = originalFetch;
       await rm(root, { recursive: true, force: true });
     },
   };
 }
 
-async function using<T>(
-  work: (h: Awaited<ReturnType<typeof fixture>>) => Promise<T>,
-  fault?: Fault,
-  mode: SupervisorMode = 'one',
-) {
-  const h = await fixture(fault, mode);
+async function using<T>(work: (h: Awaited<ReturnType<typeof fixture>>) => Promise<T>, fault?: Fault, limit = 1) {
+  const h = await fixture(fault, limit);
   try {
     return await work(h);
   } finally {
@@ -533,9 +531,10 @@ function assertNoReplay(h: Awaited<ReturnType<typeof fixture>>, report: Awaited<
   assert.equal(h.actionSelections, 1);
   assert.deepEqual(
     h.commands.map((call) => call.op),
-    ['attach', 'observe', 'start-run', 'set-prompt', 'observe', 'decide', 'get-config'],
+    ['attach', 'observe', 'start-run', 'set-prompt', 'observe', 'decide', 'observe'],
   );
-  assert.deepEqual(report.accounting, { active: false, limit: 1, reserved: 1, sdkInvoked: 1, remaining: 0 });
+  assert.equal(report.accounting, null);
+  assert.deepEqual(report.interimAccounting, { active: true, limit: 2, reserved: 1, sdkInvoked: 1, remaining: 1 });
   assert.equal(report.noFurtherGameplayScheduled, true);
   assert.equal(report.humanStopRequired, true);
   assert.equal(h.events.at(-1), 'cleanup');
@@ -598,18 +597,17 @@ test('happy path uses typed executor with fake HTTP/controller and exactly one p
       'observe',
       'decide',
       'get-config',
-      'ACP2',
       'cleanup',
     ]);
     assert.equal(h.creates, 1);
     assert.equal(report.acpSessions, 1);
-    assert.equal(report.sameACPSession, true);
-    assert.deepEqual(report.reassessment, reassessment);
+    assert.equal(report.sameACPSession, false);
+    assert.deepEqual(report.reassessment, null);
     assert.equal(report.reassessmentDiagnostic, null);
     assert.equal(report.errorCategory, null);
     assert.equal(report.startRunCalls, 1);
     assert.equal(report.decideCalls, 1);
-    assert.equal(report.supervisorCalls, 2);
+    assert.equal(report.supervisorCalls, 1);
     assert.equal(h.sdkCalls, 1);
     assert.equal(h.actionSelections, 1);
     assert.equal(report.decisions[0].action, 'turn_right');
@@ -617,7 +615,7 @@ test('happy path uses typed executor with fake HTTP/controller and exactly one p
     assert.equal(report.decisions[0].verifiedTics, 6);
     assert.equal(report.decisions[0].cumulativeTics, 7);
     assert.deepEqual(report.accounting, { active: false, limit: 1, reserved: 1, sdkInvoked: 1, remaining: 0 });
-    assert.deepEqual(report.supervisorUsage, ['unavailable', 'unavailable']);
+    assert.deepEqual(report.supervisorUsage, ['unavailable']);
     assert.equal(report.decisions[0].usage, 'unavailable');
     assert.equal(report.totalCost, 'unavailable');
     assert.equal(report.achievement, 'advisory-only; never engine-verified');
@@ -632,10 +630,7 @@ test('happy path uses typed executor with fake HTTP/controller and exactly one p
     assert.equal(decide.revision, 1);
     assert.notEqual(decide.observationId, h.preWriteObservation.observationId);
     assert.equal(Object.hasOwn(decide, 'action'), false);
-    assert.ok(h.generationInputs[1].image instanceof Uint8Array);
-    assert.deepEqual(h.generationInputs[1].image, lastPng.image);
-    assert.match(h.generationInputs[1].text, /ORIGINAL_OBJECTIVE=/);
-    assert.ok(h.generationInputs[1].text.includes(proposal.target));
+    assert.equal(h.generationInputs.length, 1);
     for (const input of h.generationInputs) {
       for (const secret of [
         'PRIVATE_BASE_DO_NOT_SEND',
@@ -893,7 +888,7 @@ test('cleanup failure cannot claim successful session cleanup or cause a second 
     assert.equal(report.outcome, 'uncertain');
     assert.match(report.cleanup, /cleanup-failed/);
     assert.equal(report.decideCalls, 1);
-    assert.equal(report.supervisorCalls, 2);
+    assert.equal(report.supervisorCalls, 1);
     assert.equal(h.sdkCalls, 1);
     assert.ok(!JSON.stringify(report).includes('private cleanup failure'));
   }));
@@ -909,6 +904,7 @@ test('bad decision, terminal outcome or accounting forbids reassessment and any 
         assert.equal(h.sdkCalls, 1);
         assert.equal(h.events.filter((event) => event === 'decide').length, 1);
         if (kind === 'terminal' || kind === 'stop') assert.ok(!h.events.includes('get-config'));
+        if (kind === 'accounting') assert.equal(report.outcome, 'uncertain');
       },
       (op, _data, reply) => {
         if (op === 'decide') {
@@ -944,21 +940,27 @@ test('reassessment remains advisory; invalid status/evidence cannot become verif
     { telemetryEvidence: [''] },
     { extra: true },
   ])
-    await using(async (h) => {
-      h.setGeneration(async (input) => {
-        input.onCallStart();
-        return modelResult(JSON.stringify(h.generationInputs.length === 1 ? proposal : { ...reassessment, ...patch }));
-      });
-      const report = await supervise(h.ports);
-      const accepted = typeof patch.status === 'string' && ['achieved', 'continue', 'revise'].includes(patch.status);
-      assert.equal(report.outcome, accepted ? 'completed' : 'failed');
-      assert.equal(report.achievement, 'advisory-only; never engine-verified');
-      assert.equal(report.decideCalls, 1);
-      assert.equal(report.supervisorCalls, 2);
-      assert.equal(h.sdkCalls, 1);
-      assert.deepEqual(report.supervisorUsage, ['unavailable', 'unavailable']);
-      assert.equal(report.reassessment?.status ?? null, accepted ? patch.status : null);
-    });
+    await using(
+      async (h) => {
+        h.setGeneration(async (input) => {
+          input.onCallStart();
+          return modelResult(
+            JSON.stringify(h.generationInputs.length === 1 ? proposal : { ...reassessment, ...patch }),
+          );
+        });
+        const report = await supervise(h.ports, { decisions: 2 });
+        const accepted = typeof patch.status === 'string' && ['achieved', 'continue', 'revise'].includes(patch.status);
+        assert.equal(report.outcome, accepted ? (patch.status === 'achieved' ? 'partial' : 'completed') : 'failed');
+        assert.equal(report.achievement, 'advisory-only; never engine-verified');
+        assert.equal(report.decideCalls, accepted && patch.status !== 'achieved' ? 2 : 1);
+        assert.equal(report.supervisorCalls, 2);
+        assert.equal(h.sdkCalls, accepted && patch.status !== 'achieved' ? 2 : 1);
+        assert.deepEqual(report.supervisorUsage, ['unavailable', 'unavailable']);
+        assert.equal(report.reassessment?.status ?? null, accepted ? patch.status : null);
+      },
+      undefined,
+      2,
+    );
 });
 
 test('fenced and malformed second responses have JSON-only rejection metadata', async () => {
@@ -968,23 +970,27 @@ test('fenced and malformed second responses have JSON-only rejection metadata', 
     `{ ${JSON.stringify(privateText)}: }`,
     `${privateText}${'x'.repeat(9000)}`,
   ])
-    await using(async (h) => {
-      setReassessmentText(h, text);
-      const report = await supervise(h.ports);
-      assertNoReplay(h, report);
-      assert.equal(report.errorCategory, 'INVALID_REASSESSMENT_JSON');
-      assert.equal(report.sameACPSession, true);
-      assert.equal(report.supervisorCalls, 2);
-      assert.equal(report.supervisorUsage.length, 2);
-      const diagnostic = assertRedacted(report);
-      assert.equal(diagnostic.inputIsString, true);
-      assert.equal(diagnostic.jsonParsed, false);
-      assert.equal(diagnostic.rootType, null);
-      assert.equal(diagnostic.utf8BytesUpTo8193, Math.min(Buffer.byteLength(text), 8193));
-      assert.equal(diagnostic.byteLimitExceeded, Buffer.byteLength(text) > 8192);
-      assert.equal(diagnostic.hasFenceMarker, text.includes('```') || text.includes('~~~'));
-      assert.equal(diagnostic.unexpectedKeyCount, null);
-    });
+    await using(
+      async (h) => {
+        setReassessmentText(h, text);
+        const report = await supervise(h.ports, { decisions: 2 });
+        assertNoReplay(h, report);
+        assert.equal(report.errorCategory, 'INVALID_REASSESSMENT_JSON');
+        assert.equal(report.sameACPSession, true);
+        assert.equal(report.supervisorCalls, 2);
+        assert.equal(report.supervisorUsage.length, 2);
+        const diagnostic = assertRedacted(report);
+        assert.equal(diagnostic.inputIsString, true);
+        assert.equal(diagnostic.jsonParsed, false);
+        assert.equal(diagnostic.rootType, null);
+        assert.equal(diagnostic.utf8BytesUpTo8193, Math.min(Buffer.byteLength(text), 8193));
+        assert.equal(diagnostic.byteLimitExceeded, Buffer.byteLength(text) > 8192);
+        assert.equal(diagnostic.hasFenceMarker, text.includes('```') || text.includes('~~~'));
+        assert.equal(diagnostic.unexpectedKeyCount, null);
+      },
+      undefined,
+      2,
+    );
 });
 
 test('existing strict reassessment and delegated proposal rules keep shape rejections distinct', async () => {
@@ -1027,31 +1033,35 @@ test('existing strict reassessment and delegated proposal rules keep shape rejec
     ...[null, [], privateText, true, 17].map((value) => ({ value })),
   ];
   for (const { value, missing, extra, textOver, countOver, byteOver } of cases)
-    await using(async (h) => {
-      setReassessmentText(h, JSON.stringify(value));
-      const report = await supervise(h.ports);
-      assertNoReplay(h, report);
-      assert.equal(report.errorCategory, 'INVALID_REASSESSMENT_SHAPE');
-      assert.equal(report.sameACPSession, true);
-      assert.equal(report.supervisorCalls, 2);
-      const diagnostic = assertRedacted(report);
-      assert.equal(diagnostic.jsonParsed, true);
-      assert.equal(diagnostic.rootType, value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value);
-      assert.equal(diagnostic.byteLimitExceeded, byteOver ?? false);
-      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-        assert.deepEqual(diagnostic.keysPresent, {
-          status: missing !== 'status',
-          visualEvidence: missing !== 'visualEvidence',
-          telemetryEvidence: missing !== 'telemetryEvidence',
-          uncertainty: missing !== 'uncertainty',
-          nextGuidance: missing !== 'nextGuidance',
-        });
-        assert.equal(diagnostic.unexpectedKeyCount, extra ?? 0);
-        assert.equal(diagnostic.fieldTextOverLimit, textOver ?? false);
-        assert.equal(diagnostic.evidenceCountOverLimit, countOver ?? false);
-        assert.equal(diagnostic.statusValid, (value as Json).status === 'uncertain');
-      }
-    });
+    await using(
+      async (h) => {
+        setReassessmentText(h, JSON.stringify(value));
+        const report = await supervise(h.ports, { decisions: 2 });
+        assertNoReplay(h, report);
+        assert.equal(report.errorCategory, 'INVALID_REASSESSMENT_SHAPE');
+        assert.equal(report.sameACPSession, true);
+        assert.equal(report.supervisorCalls, 2);
+        const diagnostic = assertRedacted(report);
+        assert.equal(diagnostic.jsonParsed, true);
+        assert.equal(diagnostic.rootType, value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value);
+        assert.equal(diagnostic.byteLimitExceeded, byteOver ?? false);
+        if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+          assert.deepEqual(diagnostic.keysPresent, {
+            status: missing !== 'status',
+            visualEvidence: missing !== 'visualEvidence',
+            telemetryEvidence: missing !== 'telemetryEvidence',
+            uncertainty: missing !== 'uncertainty',
+            nextGuidance: missing !== 'nextGuidance',
+          });
+          assert.equal(diagnostic.unexpectedKeyCount, extra ?? 0);
+          assert.equal(diagnostic.fieldTextOverLimit, textOver ?? false);
+          assert.equal(diagnostic.evidenceCountOverLimit, countOver ?? false);
+          assert.equal(diagnostic.statusValid, (value as Json).status === 'uncertain');
+        }
+      },
+      undefined,
+      2,
+    );
 });
 
 test('byte cap measures UTF-8; padding and delegated serialized-size rejection remain strict', async () => {
@@ -1071,33 +1081,41 @@ test('byte cap measures UTF-8; padding and delegated serialized-size rejection r
   assert.ok(Buffer.byteLength(JSON.stringify(nearLimit)) <= 8192);
   assert.ok(Buffer.byteLength(JSON.stringify(delegated)) > 8192);
   for (const text of [JSON.stringify(nearLimit), ' '.repeat(8193) + JSON.stringify(reassessment)])
-    await using(async (h) => {
-      setReassessmentText(h, text);
-      const report = await supervise(h.ports);
-      assertNoReplay(h, report);
-      assert.equal(report.errorCategory, 'INVALID_REASSESSMENT_SHAPE');
-      const diagnostic = assertRedacted(report);
-      assert.equal(diagnostic.jsonParsed, true);
-      assert.equal(diagnostic.fieldTextOverLimit, false);
-      assert.equal(diagnostic.byteLimitExceeded, Buffer.byteLength(text) > 8192);
-      assert.equal(diagnostic.delegatedByteLimitExceeded, text === JSON.stringify(nearLimit));
-      assert.equal(diagnostic.utf8BytesUpTo8193, Math.min(Buffer.byteLength(text), 8193));
-    });
+    await using(
+      async (h) => {
+        setReassessmentText(h, text);
+        const report = await supervise(h.ports, { decisions: 2 });
+        assertNoReplay(h, report);
+        assert.equal(report.errorCategory, 'INVALID_REASSESSMENT_SHAPE');
+        const diagnostic = assertRedacted(report);
+        assert.equal(diagnostic.jsonParsed, true);
+        assert.equal(diagnostic.fieldTextOverLimit, false);
+        assert.equal(diagnostic.byteLimitExceeded, Buffer.byteLength(text) > 8192);
+        assert.equal(diagnostic.delegatedByteLimitExceeded, text === JSON.stringify(nearLimit));
+        assert.equal(diagnostic.utf8BytesUpTo8193, Math.min(Buffer.byteLength(text), 8193));
+      },
+      undefined,
+      2,
+    );
 });
 
 test('unsafe second-turn advisory text retains its separate category without retaining content', async () =>
-  using(async (h) => {
-    setReassessmentText(h, JSON.stringify({ ...reassessment, uncertainty: privateText }));
-    const report = await supervise(h.ports);
-    assertNoReplay(h, report);
-    assert.equal(report.errorCategory, 'UNSAFE_ADVISORY_TEXT');
-    assert.equal(report.sameACPSession, true);
-    const diagnostic = assertRedacted(report);
-    assert.equal(diagnostic.jsonParsed, true);
-    assert.equal(diagnostic.rootType, 'object');
-    assert.equal(diagnostic.unexpectedKeyCount, 0);
-    assert.equal(diagnostic.statusValid, true);
-  }));
+  using(
+    async (h) => {
+      setReassessmentText(h, JSON.stringify({ ...reassessment, uncertainty: privateText }));
+      const report = await supervise(h.ports, { decisions: 2 });
+      assertNoReplay(h, report);
+      assert.equal(report.errorCategory, 'UNSAFE_ADVISORY_TEXT');
+      assert.equal(report.sameACPSession, true);
+      const diagnostic = assertRedacted(report);
+      assert.equal(diagnostic.jsonParsed, true);
+      assert.equal(diagnostic.rootType, 'object');
+      assert.equal(diagnostic.unexpectedKeyCount, 0);
+      assert.equal(diagnostic.statusValid, true);
+    },
+    undefined,
+    2,
+  ));
 
 test('non-string second-turn output is rejected without coercion or inspecting arbitrary objects', async () => {
   for (const value of [
@@ -1112,18 +1130,22 @@ test('non-string second-turn output is rejected without coercion or inspecting a
       },
     },
   ])
-    await using(async (h) => {
-      setReassessmentText(h, value);
-      const report = await supervise(h.ports);
-      assertNoReplay(h, report);
-      assert.equal(report.errorCategory, 'INVALID_REASSESSMENT_SHAPE');
-      assert.equal(report.sameACPSession, true);
-      const diagnostic = assertRedacted(report);
-      assert.equal(diagnostic.inputIsString, false);
-      assert.equal(diagnostic.utf8BytesUpTo8193, null);
-      assert.equal(diagnostic.jsonParsed, false);
-      assert.equal(diagnostic.rootType, null);
-    });
+    await using(
+      async (h) => {
+        setReassessmentText(h, value);
+        const report = await supervise(h.ports, { decisions: 2 });
+        assertNoReplay(h, report);
+        assert.equal(report.errorCategory, 'INVALID_REASSESSMENT_SHAPE');
+        assert.equal(report.sameACPSession, true);
+        const diagnostic = assertRedacted(report);
+        assert.equal(diagnostic.inputIsString, false);
+        assert.equal(diagnostic.utf8BytesUpTo8193, null);
+        assert.equal(diagnostic.jsonParsed, false);
+        assert.equal(diagnostic.rootType, null);
+      },
+      undefined,
+      2,
+    );
 });
 
 test('second checkpoint failures are never caught as reassessment JSON or shape failures', async () => {
@@ -1139,103 +1161,120 @@ test('second checkpoint failures are never caught as reassessment JSON or shape 
     'cancel',
     'deadline',
   ])
-    await using(async (h) => {
-      const abort = new AbortController();
-      if (kind === 'session-before') {
-        const original = h.ports.getConfig;
-        h.ports.getConfig = async (input, signal) => {
-          const result = await original(input, signal);
-          h.changeACPSession();
-          return result;
-        };
-      }
-      h.setGeneration(async (input) => {
-        input.onCallStart();
-        if (h.generationInputs.length === 1) return modelResult(JSON.stringify(proposal));
-        if (kind === 'provider-json') throw new SyntaxError(privateText);
-        if (kind === 'provider-shape') throw new Error('INVALID_REASSESSMENT');
-        if (kind === 'session-after') h.changeACPSession();
-        if (kind === 'duplicate-call') input.onCallStart();
-        if (kind === 'cancel') abort.abort();
-        if (kind === 'deadline' || kind === 'cancel') return new Promise(() => {});
-        // Vary each finish reason independently so neither guard can mask the other.
-        return modelResult(
-          `\`\`\`${privateText}`,
-          kind === 'finish' ? 'length' : 'stop',
-          kind === 'tool' ? [unexpectedToolCall] : [],
-          kind === 'raw-finish' ? 'max_tokens' : 'end_turn',
+    await using(
+      async (h) => {
+        const abort = new AbortController();
+        if (kind === 'session-before') {
+          const original = h.ports.observe;
+          h.ports.observe = async (input, signal) => {
+            const result = await original(input, signal);
+            if (h.observations.length === 3) h.changeACPSession();
+            return result;
+          };
+        }
+        h.setGeneration(async (input) => {
+          input.onCallStart();
+          if (h.generationInputs.length === 1) return modelResult(JSON.stringify(proposal));
+          if (kind === 'provider-json') throw new SyntaxError(privateText);
+          if (kind === 'provider-shape') throw new Error('INVALID_REASSESSMENT');
+          if (kind === 'session-after') h.changeACPSession();
+          if (kind === 'duplicate-call') input.onCallStart();
+          if (kind === 'cancel') abort.abort();
+          if (kind === 'deadline' || kind === 'cancel') return new Promise(() => {});
+          // Vary each finish reason independently so neither guard can mask the other.
+          return modelResult(
+            `\`\`\`${privateText}`,
+            kind === 'finish' ? 'length' : 'stop',
+            kind === 'tool' ? [unexpectedToolCall] : [],
+            kind === 'raw-finish' ? 'max_tokens' : 'end_turn',
+          );
+        });
+        const report = await supervise(h.ports, {
+          decisions: 2,
+          signal: abort.signal,
+          stageMs: kind === 'deadline' ? 50 : 1000,
+        });
+        assertNoReplay(h, report);
+        assert.equal(
+          report.errorCategory,
+          kind === 'cancel'
+            ? 'HOST_CANCELLED'
+            : kind === 'deadline'
+              ? 'HOST_DEADLINE'
+              : 'INVALID_EVIDENCE_OR_MODEL_RESULT',
         );
-      });
-      const report = await supervise(h.ports, { signal: abort.signal, stageMs: kind === 'deadline' ? 50 : 1000 });
-      assertNoReplay(h, report);
-      assert.equal(
-        report.errorCategory,
-        kind === 'cancel'
-          ? 'HOST_CANCELLED'
-          : kind === 'deadline'
-            ? 'HOST_DEADLINE'
-            : 'INVALID_EVIDENCE_OR_MODEL_RESULT',
-      );
-      assert.equal(report.sameACPSession, false);
-      assert.equal(report.reassessmentDiagnostic, null);
-      assert.equal(report.supervisorCalls, kind === 'session-before' ? 1 : 2);
-      assert.equal(report.supervisorUsage.length, 1);
-      for (const canary of canaries) assert.ok(!JSON.stringify(report).includes(canary));
-    });
+        assert.equal(report.sameACPSession, false);
+        assert.equal(report.reassessmentDiagnostic, null);
+        assert.equal(report.supervisorCalls, kind === 'session-before' ? 1 : 2);
+        assert.equal(report.supervisorUsage.length, 1);
+        for (const canary of canaries) assert.ok(!JSON.stringify(report).includes(canary));
+      },
+      undefined,
+      2,
+    );
 });
 
 test('unexpected validator programming exceptions retain the generic category', async () => {
   for (const error of [new Error(privateText), new TypeError('INVALID_REASSESSMENT')])
-    await using(async (h) => {
-      const text = JSON.stringify(reassessment);
-      setReassessmentText(h, text);
-      const parse = JSON.parse;
-      let reads = 0;
-      JSON.parse = (...args: Parameters<typeof JSON.parse>) => {
-        if (args[0] === text && ++reads === 2) throw error;
-        return parse(...args);
-      };
-      let report: Awaited<ReturnType<typeof supervise>>;
-      try {
-        report = await supervise(h.ports);
-      } finally {
-        JSON.parse = parse;
-      }
-      assertNoReplay(h, report);
-      assert.equal(report.errorCategory, 'INVALID_EVIDENCE_OR_MODEL_RESULT');
-      assert.equal(report.sameACPSession, true);
-      assert.equal(report.reassessmentDiagnostic, null);
-      for (const canary of canaries) assert.ok(!JSON.stringify(report).includes(canary));
-    });
+    await using(
+      async (h) => {
+        const text = JSON.stringify(reassessment);
+        setReassessmentText(h, text);
+        const parse = JSON.parse;
+        let reads = 0;
+        JSON.parse = (...args: Parameters<typeof JSON.parse>) => {
+          if (args[0] === text && ++reads === 2) throw error;
+          return parse(...args);
+        };
+        let report: Awaited<ReturnType<typeof supervise>>;
+        try {
+          report = await supervise(h.ports, { decisions: 2 });
+        } finally {
+          JSON.parse = parse;
+        }
+        assertNoReplay(h, report);
+        assert.equal(report.errorCategory, 'INVALID_EVIDENCE_OR_MODEL_RESULT');
+        assert.equal(report.sameACPSession, true);
+        assert.equal(report.reassessmentDiagnostic, null);
+        for (const canary of canaries) assert.ok(!JSON.stringify(report).includes(canary));
+      },
+      undefined,
+      2,
+    );
 });
 
 test('the final session guard is preserved independently of passed checkpoint boundary checks', async () =>
-  using(async (h) => {
-    const create = h.ports.createACP;
-    h.ports.createACP = async (signal) => {
-      const acp = await create(signal);
-      let reads = 0;
-      return {
-        ...acp,
-        getSessionId() {
-          // Initial ID, two before/after checkpoint pairs, then final guard.
-          if (++reads === 6) h.changeACPSession();
-          return acp.getSessionId();
-        },
+  using(
+    async (h) => {
+      setReassessmentText(h, JSON.stringify(reassessment));
+      const create = h.ports.createACP;
+      h.ports.createACP = async (signal) => {
+        const acp = await create(signal);
+        let reads = 0;
+        return {
+          ...acp,
+          getSessionId() {
+            // Initial ID, two before/after checkpoint pairs, then final guard.
+            if (++reads === 6) h.changeACPSession();
+            return acp.getSessionId();
+          },
+        };
       };
-    };
-    const report = await supervise(h.ports);
-    assert.equal(report.outcome, 'failed');
-    assert.equal(report.errorCategory, 'INVALID_EVIDENCE_OR_MODEL_RESULT');
-    assert.equal(report.sameACPSession, true);
-    assert.deepEqual(report.reassessment, reassessment);
-    assert.equal(report.reassessmentDiagnostic, null);
-    assert.equal(report.decideCalls, 1);
-    assert.equal(report.supervisorCalls, 2);
-    assert.equal(h.sdkCalls, 1);
-    assert.equal(report.noFurtherGameplayScheduled, true);
-    assert.equal(h.events.at(-1), 'cleanup');
-  }));
+      const report = await supervise(h.ports, { decisions: 2 });
+      assert.equal(report.outcome, 'failed');
+      assert.equal(report.errorCategory, 'INVALID_EVIDENCE_OR_MODEL_RESULT');
+      assert.equal(report.sameACPSession, true);
+      assert.deepEqual(report.reassessment, reassessment);
+      assert.equal(report.reassessmentDiagnostic, null);
+      assert.equal(report.decideCalls, 1);
+      assert.equal(report.supervisorCalls, 2);
+      assert.equal(h.sdkCalls, 1);
+      assert.equal(report.noFurtherGameplayScheduled, true);
+      assert.equal(h.events.at(-1), 'cleanup');
+    },
+    undefined,
+    2,
+  ));
 
 test('a retired decision preserves its verified native prefix without claiming completed action or recovery', async () =>
   using(
@@ -1386,7 +1425,7 @@ test('no-live default/help/import reject network and ACP/process imports; malfor
   const source = `${guard}
     const cli = await import(${JSON.stringify(cliUrl)});
     const acp = await import(${JSON.stringify(acpUrl)});
-    const cliPorts = cli.createCLIPorts('/unused-offline-trial');
+    const cliPorts = cli.createCLIPorts('/unused-offline-trial', 1);
     const createACP = acp.createACPPort('/unused-offline-cwd');
     for (const method of ['attach', 'observe', 'startRun', 'setPrompt', 'decide', 'getConfig'])
       if (typeof cliPorts[method] !== 'function') throw Error('Typed adapter factories failed');
@@ -1431,139 +1470,177 @@ test('no-live default/help/import reject network and ACP/process imports; malfor
 
 // New-boundary cases retain the real CLI, request builder, OpenRouter provider
 // and installed SDK. Only broker/controller/native and ACP are synthetic.
-test('two-action feedback reaches two SDK-serialized HTTP bodies with replacement guidance', async () =>
-  using(
-    async (h) => {
-      const report = await supervise(h.ports, { mode: 'two' });
-      assert.equal(
-        report.outcome,
-        'completed',
-        JSON.stringify({
-          stage: report.stage,
-          error: report.errorCategory,
-          transport: report.transportError,
-          events: h.events,
-          wires: h.wires.length,
-        }),
-      );
-      assert.deepEqual(h.events, [
-        'attach',
-        'observe',
-        'create',
-        'connect',
-        'init',
-        'ACP1',
-        'start-run',
-        'set-prompt',
-        'observe',
-        'decide',
-        'observe',
-        'ACP2',
-        'set-prompt',
-        'observe',
-        'decide',
-        'get-config',
-        'cleanup',
-      ]);
-      assert.equal(report.startRunCalls, 1);
-      assert.equal(report.decideCalls, 2);
-      assert.equal(report.supervisorCalls, 2);
-      assert.equal(report.providerCallStarts, 2);
-      assert.equal(report.acpSessionStarts, 1);
-      assert.equal(report.sameACPSession, true);
-      assert.equal(h.creates, 1);
-      assert.equal(h.sdkCalls, 2);
-      assert.equal(report.verifiedActions, 2);
-      assert.deepEqual(report.interimAccounting, { active: true, limit: 2, reserved: 1, sdkInvoked: 1, remaining: 1 });
-      assert.deepEqual(report.accounting, { active: false, limit: 2, reserved: 2, sdkInvoked: 2, remaining: 0 });
-      assert.deepEqual(
-        report.decisions.map((d) => [
-          d.delivery,
-          d.outcome,
-          d.sdkInvoked,
-          d.requestedTics,
-          d.reportedTics,
-          d.verifiedTics,
-          d.cumulativeTics,
-        ]),
-        [
-          ['validated-receipt', 'completed', true, 6, 6, 6, 7],
-          ['validated-receipt', 'completed', true, 6, 6, 6, 13],
-        ],
-      );
-      const writes = h.commands.filter((c) => c.op === 'set-prompt');
-      const decisions = h.commands.filter((c) => c.op === 'decide');
-      assert.deepEqual(
-        writes.map((c) => c.data.revision),
-        [0, 1],
-      );
-      assert.deepEqual(
-        decisions.map((c) => c.data.revision),
-        [1, 2],
-      );
-      assert.equal(new Set(writes.concat(decisions).map((c) => c.data.runId)).size, 1);
-      assert.equal(new Set(h.observations.map((o) => o.observationId)).size, 4);
-      assert.deepEqual(
-        decisions.map((c) => c.data.observationId),
-        [h.observations[1].observationId, h.observations[3].observationId],
-      );
-      assert.ok(decisions.every((c) => !Object.hasOwn(c.data, 'action') && !Object.hasOwn(c.data, 'tics')));
-      assert.match(h.generationInputs[1].text, /ORIGINAL_OBJECTIVE=.*GUIDANCE_ONE_ALPHA/);
-      assert.match(h.generationInputs[1].text, /BEFORE=.*"tic":1/);
-      assert.match(h.generationInputs[1].text, /AFTER=.*"tic":7/);
-      assert.deepEqual(h.generationInputs[1].image, lastPng.image);
-      assert.equal(h.wires.length, 2, 'Two actual Request bodies emitted by the pinned SDK');
-      const expectedFirst = composeGuidance(h.baseInstructions, firstGuidance).replaceAll('{{tics}}', '6');
-      const expectedSecond = composeGuidance(h.baseInstructions, {
-        ...nextReassessment.nextGuidance,
-        uncertainty: nextReassessment.uncertainty,
-      }).replaceAll('{{tics}}', '6');
-      assert.equal(h.wires[0].questions.next_action.instructions, expectedFirst);
-      assert.equal(h.wires[1].questions.next_action.instructions, expectedSecond);
-      const firstBlock = expectedFirst.slice(h.baseInstructions.replaceAll('{{tics}}', '6').length);
-      assert.ok(!h.wires[1].questions.next_action.instructions.includes(firstBlock));
-      assert.ok(!h.wires[1].questions.next_action.instructions.includes('GUIDANCE_ONE_ALPHA'));
-      for (const [index, wire] of h.wires.entries()) {
-        assert.equal(wire.model, 'openai/gpt-6-luna-decisions');
-        assert.deepEqual(wire.provider, { allow_fallbacks: false }, 'SDK snake-case serialization');
-        assert.equal(wire.questions.next_action.type, 'choice');
-        assert.deepEqual(wire.questions.next_action.criteria, {
-          neutral: null,
-          forward: null,
-          turn_right: null,
-          backward: null,
-          turn_left: null,
-          fire: null,
-          use: null,
-        });
-        assert.ok(wire.questions.next_action.instructions.startsWith(h.baseInstructions.replaceAll('{{tics}}', '6')));
-        assert.ok(!wire.questions.next_action.instructions.includes('{{tics}}'));
-        const state = String(wire.state[0]);
-        assert.ok(state.startsWith(`Current rendered Doom frame at verified tic ${index === 0 ? 1 : 7}.`));
-        assert.match(state, /Ready weapon: pistol/);
-        assert.match(state, /Health: 100/);
-        assert.ok(!state.includes('Ammo:'));
-        assert.equal(state.includes('Mock controller verified a turn.'), index === 1);
-        assert.deepEqual(wire.state[1], {
-          type: 'image_url',
-          image_url: { url: h.observations[index === 0 ? 1 : 3].png },
-        });
-      }
-      const published = JSON.stringify(report);
-      for (const secret of [
-        h.root,
-        h.baseInstructions,
-        expectedFirst,
-        expectedSecond,
-        'offline-supervisor-dummy',
-        'private-acp-session',
-      ])
-        assert.ok(!published.includes(secret));
-      assert.equal(report.humanStopRequired, false);
-    },
-    undefined,
-    'two',
-  ));
+for (const limit of [1, 2, 3, 5])
+  test(`N=${limit} uses one loop/session/claim and exactly N SDK requests with fresh replacement guidance`, async () =>
+    using(
+      async (h) => {
+        const report = await supervise(h.ports, { decisions: limit });
+        assert.equal(report.outcome, 'completed', JSON.stringify(report));
+        assert.equal(report.requestedDecisions, limit);
+        assert.equal(report.startRunCalls, 1);
+        assert.equal(report.acpSessionStarts, 1);
+        assert.equal(report.acpSessions, 1);
+        assert.equal(h.creates, 1);
+        assert.equal(report.sameACPSession, limit > 1);
+        for (const count of [
+          report.decideCalls,
+          report.supervisorCalls,
+          report.providerCallStarts,
+          report.verifiedActions,
+          h.sdkCalls,
+          h.actionSelections,
+          h.wires.length,
+          h.decisionReceipts.length,
+          h.generationInputs.length,
+        ])
+          assert.equal(count, limit);
+        assert.deepEqual(report.claimAccounting, { active: true, limit, reserved: 0, sdkInvoked: 0, remaining: limit });
+        assert.deepEqual(report.accounting, { active: false, limit, reserved: limit, sdkInvoked: limit, remaining: 0 });
+        assert.deepEqual(
+          report.interimAccounting,
+          limit === 1
+            ? null
+            : {
+                active: true,
+                limit,
+                reserved: limit - 1,
+                sdkInvoked: limit - 1,
+                remaining: 1,
+              },
+        );
+        const expectedEvents = ['attach', 'observe', 'create', 'connect', 'init', 'ACP1', 'start-run'];
+        for (let i = 0; i < limit; i++) {
+          if (i > 0) expectedEvents.push('observe', `ACP${i + 1}`);
+          expectedEvents.push('set-prompt', 'observe', 'decide');
+        }
+        expectedEvents.push('get-config', 'cleanup');
+        assert.deepEqual(h.events, expectedEvents);
+        const writes = h.commands.filter((c) => c.op === 'set-prompt');
+        const decisions = h.commands.filter((c) => c.op === 'decide');
+        const ids = [...h.observations, ...h.decisionReceipts.map((r) => must(r.observation))].map(
+          (o) => o.observationId,
+        );
+        assert.equal(ids.length, 3 * limit);
+        assert.equal(new Set(ids).size, ids.length);
+        assert.equal(new Set(writes.concat(decisions).map((c) => c.data.runId)).size, 1);
+        assert.equal(new Set(h.generationInputs.map((input) => hash(input.image))).size, limit);
+        for (let i = 0; i < limit; i++) {
+          const ready = h.observations[2 * i + 1];
+          const evidence = report.decisions[i];
+          assert.deepEqual(
+            [
+              evidence.delivery,
+              evidence.outcome,
+              evidence.sdkInvoked,
+              evidence.requestedTics,
+              evidence.reportedTics,
+              evidence.verifiedTics,
+              evidence.cumulativeTics,
+              evidence.completionUncertain,
+            ],
+            ['validated-receipt', 'completed', true, 6, 6, 6, 1 + 6 * (i + 1), false],
+          );
+          assert.equal(evidence.usage, 'unavailable');
+          assert.equal(writes[i].data.revision, i);
+          assert.equal(decisions[i].data.revision, i + 1);
+          assert.equal(decisions[i].data.observationId, ready.observationId);
+          assert.ok(!Object.hasOwn(decisions[i].data, 'action') && !Object.hasOwn(decisions[i].data, 'tics'));
+          const advice =
+            i === 0
+              ? limit === 1
+                ? proposal
+                : firstGuidance
+              : {
+                  ...must(reassessmentAt(i + 1).nextGuidance),
+                  uncertainty: nextReassessment.uncertainty,
+                };
+          const expected = composeGuidance(h.baseInstructions, advice).replaceAll('{{tics}}', '6');
+          const wire = h.wires[i];
+          assert.equal(wire.questions.next_action.instructions, expected);
+          assert.equal((expected.match(/Advisory navigation interpretation/g) ?? []).length, 1);
+          if (i > 0) {
+            const prior = h.decisionReceipts[i - 1];
+            const input = h.generationInputs[i];
+            assert.deepEqual(input.image, pngAt(must(prior.observation).tic).image);
+            assert.deepEqual(
+              JSON.parse(must(input.text.match(/BEFORE=([^\n]*)/))[1]),
+              modelState(h.observations[2 * i - 1]),
+            );
+            assert.deepEqual(
+              JSON.parse(must(input.text.match(/AFTER=([^\n]*)/))[1]),
+              modelState(must(prior.observation)),
+            );
+            assert.match(input.text, /ORIGINAL_OBJECTIVE=.*GUIDANCE_ONE_ALPHA/);
+            const previousTarget = i === 1 ? firstGuidance.target : must(reassessmentAt(i).nextGuidance).target;
+            assert.ok(!expected.includes(previousTarget));
+          } else assert.deepEqual(h.generationInputs[0].image, firstPng.image);
+          assert.equal(wire.model, 'openai/gpt-6-luna-decisions');
+          assert.deepEqual(wire.provider, { allow_fallbacks: false });
+          assert.equal(wire.questions.next_action.type, 'choice');
+          assert.deepEqual(wire.questions.next_action.criteria, {
+            neutral: null,
+            forward: null,
+            turn_right: null,
+            backward: null,
+            turn_left: null,
+            fire: null,
+            use: null,
+          });
+          assert.ok(!expected.includes('{{tics}}'));
+          const state = String(wire.state[0]);
+          assert.ok(state.startsWith(`Current rendered Doom frame at verified tic ${1 + 6 * i}.`));
+          assert.match(state, /Ready weapon: pistol/);
+          assert.match(state, /Health: 100/);
+          assert.ok(!state.includes('Ammo:'));
+          assert.equal(state.includes('Mock controller verified a turn.'), i > 0);
+          assert.deepEqual(wire.state[1], { type: 'image_url', image_url: { url: ready.png } });
+        }
+        const published = JSON.stringify(report);
+        for (const secret of [h.root, h.baseInstructions, 'offline-supervisor-dummy', 'private-acp-session'])
+          assert.ok(!published.includes(secret));
+        assert.equal(report.totalCost, 'unavailable');
+        assert.equal(report.humanStopRequired, false);
+      },
+      undefined,
+      limit,
+    ));
+
+test('invalid workflow N fails before attachment; both allowance mismatches retain known nonrefundable claim', async () => {
+  for (const decisions of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])
+    await using(async (h) => {
+      const report = await supervise(h.ports, { decisions });
+      assert.equal(report.errorCategory, 'INVALID_DECISION_COUNT');
+      assert.equal(report.outcome, 'failed');
+      assert.equal(h.commands.length, 0);
+      assert.equal(h.creates, 0);
+    });
+  for (const decisions of [1, 3])
+    await using(
+      async (h) => {
+        const report = await supervise(h.ports, { decisions });
+        assert.equal(report.outcome, 'failed');
+        assert.equal(report.errorCategory, 'ALLOWANCE_MISMATCH');
+        assert.equal(report.claim, 'acknowledged');
+        assert.equal(report.requestedDecisions, decisions);
+        assert.deepEqual(report.claimAccounting, { active: true, limit: 2, reserved: 0, sdkInvoked: 0, remaining: 2 });
+        assert.equal(report.accounting, null);
+        assert.equal(report.interimAccounting, null);
+        assert.equal(report.startRunCalls, 1);
+        assert.equal(report.supervisorCalls, 1);
+        assert.equal(report.decideCalls, 0);
+        assert.equal(report.verifiedActions, 0);
+        assert.equal(h.sdkCalls, 0);
+        assert.equal(report.totalCost, 'unavailable');
+        assert.equal(report.humanStopRequired, true);
+        assert.deepEqual(
+          h.commands.map((c) => c.op),
+          ['attach', 'observe', 'start-run'],
+        );
+      },
+      undefined,
+      2,
+    );
+});
 
 test('two-action mode rejects incorrect allowance and interim/native/post-CAS evidence before second SDK call', async () => {
   const faults: Fault[] = [
@@ -1600,7 +1677,7 @@ test('two-action mode rejects incorrect allowance and interim/native/post-CAS ev
   for (const [index, fault] of faults.entries())
     await using(
       async (h) => {
-        const report = await supervise(h.ports, { mode: 'two' });
+        const report = await supervise(h.ports, { decisions: 2 });
         assert.notEqual(report.outcome, 'completed');
         assert.equal(report.startRunCalls, 1);
         assert.equal(report.decideCalls, index === 0 ? 0 : 1);
@@ -1609,7 +1686,7 @@ test('two-action mode rejects incorrect allowance and interim/native/post-CAS ev
         assert.equal(report.humanStopRequired, true);
       },
       fault,
-      'two',
+      2,
     );
 });
 
@@ -1646,7 +1723,7 @@ test('second CAS invalidates its prior observation; stale CAS never reaches the 
           }
           return result;
         };
-        const report = await supervise(h.ports, { mode: 'two' });
+        const report = await supervise(h.ports, { decisions: 2 });
         assert.notEqual(report.outcome, 'completed');
         assert.equal(h.wires.length, 1);
         assert.equal(report.verifiedActions, 1);
@@ -1659,7 +1736,7 @@ test('second CAS invalidates its prior observation; stale CAS never reaches the 
         }
       },
       undefined,
-      'two',
+      2,
     );
 });
 
@@ -1707,7 +1784,7 @@ test('interim guidance must be strict, safe, different and from the same tool-fr
           }
           return modelResult(JSON.stringify(value), 'stop', kind === 'tool' ? [unexpectedToolCall] : []);
         });
-        const report = await supervise(h.ports, { mode: 'two' });
+        const report = await supervise(h.ports, { decisions: 2 });
         assert.equal(report.supervisorCalls, 2);
         assert.equal(report.acpSessionStarts, 1);
         assert.equal(report.startRunCalls, 1);
@@ -1725,7 +1802,7 @@ test('interim guidance must be strict, safe, different and from the same tool-fr
         if (kind === 'unsafe') assert.ok(!JSON.stringify(report).includes('https://canary.invalid'));
       },
       undefined,
-      'two',
+      2,
     );
   }
 });
@@ -1740,7 +1817,7 @@ test('achieved/uncertain early exits retain active unused authority and require 
             JSON.stringify(h.generationInputs.length === 1 ? firstGuidance : { ...reassessment, status }),
           );
         });
-        const report = await supervise(h.ports, { mode: 'two' });
+        const report = await supervise(h.ports, { decisions: 2 });
         assert.equal(report.outcome, 'partial');
         assert.equal(report.stage, 'early-advisory-end');
         assert.equal(report.humanStopRequired, true);
@@ -1759,7 +1836,7 @@ test('achieved/uncertain early exits retain active unused authority and require 
         assert.equal(h.commands.filter((c) => c.op === 'set-prompt').length, 1);
       },
       undefined,
-      'two',
+      2,
     );
 });
 
@@ -1767,7 +1844,7 @@ test('Stop, terminal, partial or lost first mutation never schedules interim ACP
   for (const kind of ['stop', 'terminal', 'partial', 'lost-start', 'lost-prompt', 'lost-decide'])
     await using(
       async (h) => {
-        const report = await supervise(h.ports, { mode: 'two' });
+        const report = await supervise(h.ports, { decisions: 2 });
         assert.notEqual(report.outcome, 'completed');
         const beforeDecision = kind === 'lost-start' || kind === 'lost-prompt';
         assert.equal(report.decideCalls, beforeDecision ? 0 : 1);
@@ -1826,7 +1903,7 @@ test('Stop, terminal, partial or lost first mutation never schedules interim ACP
             observation: null,
           });
       },
-      'two',
+      2,
     );
 });
 
@@ -1834,7 +1911,7 @@ test('lost second CAS/decision responses remain uncertain despite valid interim 
   for (const lost of ['set-prompt', 'decide'])
     await using(
       async (h) => {
-        const report = await supervise(h.ports, { mode: 'two' });
+        const report = await supervise(h.ports, { decisions: 2 });
         assert.equal(report.outcome, 'uncertain');
         assert.equal(report.humanStopRequired, true);
         assert.equal(report.interimAccounting?.remaining, 1);
@@ -1854,15 +1931,179 @@ test('lost second CAS/decision responses remain uncertain despite valid interim 
       (op, _data, _reply, index) => {
         if (op === lost && index === 2) throw Error('lost reply');
       },
-      'two',
+      2,
     );
+});
+
+test('iteration three failures retain the verified prefix and prevent every dependent iteration', async () => {
+  for (const kind of [
+    'stop',
+    'terminal',
+    'partial',
+    'api-failure',
+    'malformed',
+    'unsafe',
+    'session',
+    'tool',
+    'no-guidance',
+    'duplicate-id',
+    'stale-revision',
+    'cas',
+    'missing-image',
+    'invalid-image',
+  ]) {
+    let duplicateId = '';
+    await using(
+      async (h) => {
+        h.setGeneration(async (input) => {
+          input.onCallStart();
+          const turn = h.generationInputs.length;
+          if (turn === 1) return modelResult(JSON.stringify(firstGuidance));
+          if (turn === 3) {
+            if (kind === 'session') h.changeACPSession();
+            if (kind === 'malformed') return modelResult('{}');
+            if (kind === 'unsafe')
+              return modelResult(JSON.stringify({ ...nextReassessment, uncertainty: privateText }));
+            if (kind === 'no-guidance') return modelResult(JSON.stringify(reassessment));
+          }
+          return modelResult(
+            JSON.stringify(reassessmentAt(turn)),
+            'stop',
+            kind === 'tool' && turn === 3 ? [unexpectedToolCall] : [],
+          );
+        });
+        if (kind === 'cas') {
+          const setPrompt = h.ports.setPrompt;
+          h.ports.setPrompt = (input, signal) =>
+            setPrompt({ ...input, revision: h.wires.length === 2 ? 0 : input.revision }, signal);
+        }
+        if (kind === 'missing-image' || kind === 'invalid-image') {
+          const read = h.ports.readPng;
+          h.ports.readPng = (path, signal) => {
+            if (h.commands.filter((c) => c.op === 'decide').length === 3) {
+              if (kind === 'missing-image') throw Error('synthetic missing file');
+              return Promise.resolve(Buffer.from('invalid PNG'));
+            }
+            return read(path, signal);
+          };
+        }
+        const report = await supervise(h.ports, { decisions: 5 });
+        assert.notEqual(report.outcome, 'completed', kind);
+        assert.equal(report.startRunCalls, 1, kind);
+        assert.equal(report.acpSessionStarts, 1, kind);
+        assert.equal(report.verifiedActions, 2, kind);
+        assert.equal(report.accounting, null, kind);
+        assert.equal(report.supervisorCalls, ['stop', 'duplicate-id'].includes(kind) ? 2 : 3, kind);
+        assert.ok(report.decideCalls <= 3, kind);
+        assert.ok(!h.events.includes('ACP4'), kind);
+        assert.equal(h.commands.filter((c) => c.op === 'set-prompt').length <= 3, true, kind);
+        assert.ok(
+          report.decisions.slice(0, 2).every((d) => d.delivery === 'validated-receipt' && d.verifiedTics === 6),
+        );
+        const dispatched = ['terminal', 'partial', 'api-failure', 'missing-image', 'invalid-image'].includes(kind);
+        assert.equal(h.wires.length, dispatched ? 3 : 2, kind);
+        if (kind === 'stop') assert.equal(report.outcome, 'stopped');
+        else if (kind === 'terminal') assert.equal(report.outcome, 'terminal');
+        else assert.equal(report.humanStopRequired, true, kind);
+        if (kind === 'partial' || kind === 'terminal') {
+          assert.equal(report.decisions[2].verifiedTics, 2);
+          assert.equal(report.decisions[2].cumulativeTics, 15);
+        }
+        if (kind === 'partial' || kind === 'missing-image' || kind === 'invalid-image')
+          assert.equal(report.outcome, 'uncertain');
+        if (kind === 'cas') assert.equal(report.transportError, 'revision-conflict');
+        if (kind === 'no-guidance') assert.equal(report.outcome, 'partial');
+      },
+      (op, _data, reply, index) => {
+        if (op === 'observe' && index === 5 && kind === 'stop') throw Error('agent-stopped');
+        // The first post-CAS ID is remembered; reuse it without changing the fresh telemetry.
+        if (op === 'observe') {
+          if (index === 2) duplicateId = (reply.observation as AgentObservation).observationId;
+          if (kind === 'duplicate-id' && index === 5)
+            (reply.observation as AgentObservation).observationId = duplicateId;
+          if (kind === 'stale-revision' && index === 6) (reply.observation as Json).revision = 2;
+        }
+        if (op !== 'decide' || index !== 3) return;
+        const result = reply.decision as AgentDecisionResult;
+        if (kind === 'terminal') {
+          result.outcome = 'terminal';
+          result.reportedTics = result.verifiedTics = 2;
+          result.cumulativeTics = 15;
+          const observation = must(result.observation);
+          observation.phase = 'terminal';
+          observation.tic = observation.frame.tic = observation.counters.gametic = observation.counters.leveltime = 15;
+          observation.previousAction = null;
+          observation.telemetry.health = 0;
+        }
+        if (kind === 'partial' || kind === 'api-failure')
+          Object.assign(result, {
+            outcome: kind === 'partial' ? 'retired' : 'api-failure',
+            reportedTics: kind === 'partial' ? 3 : null,
+            verifiedTics: kind === 'partial' ? 2 : null,
+            cumulativeTics: kind === 'partial' ? 15 : null,
+            completionUncertain: kind === 'partial',
+            observation: null,
+          });
+      },
+      5,
+    );
+  }
+});
+
+test('iteration three thrown, timed-out and lost mutations never replay despite valid prefix accounting', async () => {
+  for (const op of ['setPrompt', 'decide'] as const)
+    for (const failure of ['throw', 'timeout', 'lost'])
+      await using(
+        async (h) => {
+          let attempts = 0;
+          function failThird<Args extends unknown[], Result>(original: (...args: Args) => Promise<Result>) {
+            return async (...args: Args): Promise<Result> => {
+              attempts++;
+              if (attempts !== 3) return original(...args);
+              if (failure === 'throw') throw Error('synthetic dispatch failure');
+              if (failure === 'timeout') return new Promise<never>(() => {});
+              await original(...args);
+              throw Error('synthetic lost reply');
+            };
+          }
+          if (op === 'setPrompt') h.ports.setPrompt = failThird(h.ports.setPrompt);
+          else h.ports.decide = failThird(h.ports.decide);
+          const report = await supervise(h.ports, { decisions: 5, stageMs: 100 });
+          assert.equal(report.outcome, 'uncertain', `${op}/${failure}`);
+          assert.equal(report.startRunCalls, 1);
+          assert.equal(report.verifiedActions, 2);
+          assert.equal(report.supervisorCalls, 3);
+          assert.equal(attempts, 3);
+          assert.deepEqual(report.interimAccounting, {
+            active: true,
+            limit: 5,
+            reserved: 2,
+            sdkInvoked: 2,
+            remaining: 3,
+          });
+          assert.equal(report.accounting, null);
+          assert.equal(report.humanStopRequired, true);
+          assert.equal(h.wires.length, op === 'decide' && failure === 'lost' ? 3 : 2);
+          if (op === 'decide') {
+            assert.equal(report.decideCalls, 3);
+            assert.equal(report.decisions[2].delivery, 'unknown');
+            assert.equal(report.decisions[2].sdkInvoked, null);
+            assert.equal(report.decisions[2].verifiedTics, null);
+          } else {
+            assert.equal(report.decideCalls, 2);
+            assert.equal(report.guidance[2], 'application-unknown');
+          }
+        },
+        undefined,
+        5,
+      );
 });
 
 test('instruction files are distinct, exclusive 0600 and cleaned only after owned creation', async () => {
   for (const failure of ['none', 'exists', 'partial']) {
     const root = await mkdtemp(join(tmpdir(), 'doom-instructions-test-'));
     const originalFetch = globalThis.fetch;
-    const files = createCLIPorts(root);
+    const files = createCLIPorts(root, 5);
     try {
       globalThis.fetch = async (_url, init) => {
         const body = JSON.parse(String(init?.body));
@@ -1871,7 +2112,8 @@ test('instruction files are distinct, exclusive 0600 and cleaned only after owne
       const signal = new AbortController().signal;
       const lease = parseLease(await files.attach(signal));
       const first = await files.writeInstructions('private synthetic first', signal);
-      const secondPath = join(dirname(lease.leaseFile), 'supervisor-instructions-2.txt');
+      const second = await files.writeInstructions('private synthetic second', signal);
+      const secondPath = join(dirname(lease.leaseFile), 'supervisor-instructions-3.txt');
       assert.equal((await stat(first)).mode & 0o777, 0o600);
       if (failure === 'exists') {
         await writeFile(secondPath, 'preexisting owner evidence', { flag: 'wx' });
@@ -1899,13 +2141,19 @@ test('instruction files are distinct, exclusive 0600 and cleaned only after owne
         }
         assert.equal(await readFile(secondPath, 'utf8'), 'partial private prefix');
       } else {
-        const second = await files.writeInstructions('private synthetic second', signal);
-        assert.notEqual(second, first);
-        assert.equal((await stat(second)).mode & 0o777, 0o600);
-        await assert.rejects(files.writeInstructions('third forbidden', signal));
+        for (let i = 3; i <= 5; i++) {
+          const next = await files.writeInstructions(`private synthetic ${i}`, signal);
+          assert.equal((await stat(next)).mode & 0o777, 0o600);
+        }
+        await assert.rejects(files.writeInstructions('sixth forbidden', signal));
       }
       await files.cleanup();
       await assert.rejects(readFile(first), { code: 'ENOENT' });
+      await assert.rejects(readFile(second), { code: 'ENOENT' });
+      for (let i = 4; i <= 5; i++)
+        await assert.rejects(readFile(join(dirname(lease.leaseFile), `supervisor-instructions-${i}.txt`)), {
+          code: 'ENOENT',
+        });
       if (failure === 'exists') assert.equal(await readFile(secondPath, 'utf8'), 'preexisting owner evidence');
       else await assert.rejects(readFile(secondPath), { code: 'ENOENT' });
       assert.equal(JSON.parse(await readFile(join(dirname(lease.leaseFile), 'lease.json'), 'utf8')).epoch, lease.epoch);
@@ -1918,25 +2166,37 @@ test('instruction files are distinct, exclusive 0600 and cleaned only after owne
   }
 });
 
-test('live gates bind one/two independently and reject mixed or arbitrary authorization without launch', async () => {
-  const launched: { id: string; mode: SupervisorMode }[] = [];
-  const launch = async (id: string, mode: SupervisorMode) => {
-    launched.push({ id, mode });
+test('numeric live authorization and legacy aliases reject incomplete, conflicting or invalid bounds', async () => {
+  const launched: { id: string; decisions: number }[] = [];
+  const launch = async (id: string, decisions: number) => {
+    launched.push({ id, decisions });
     return 0 as const;
   };
-  for (const [flag, mode] of [
-    ['--authorize-one-decision', 'one'],
-    ['--authorize-two-decisions', 'two'],
+  for (const [flag, decisions] of [
+    ['--authorize-one-decision', 1],
+    ['--authorize-two-decisions', 2],
   ] as const) {
     assert.equal(await supervisorMain(['--live', flag, '--trial', 'fake-only'], launch), 0);
-    assert.deepEqual(launched.at(-1), { id: 'fake-only', mode });
+    assert.deepEqual(launched.at(-1), { id: 'fake-only', decisions });
   }
+  for (const decisions of [1, 2, 3, 5, Number.MAX_SAFE_INTEGER]) {
+    assert.equal(
+      await supervisorMain(['--live', '--authorize-decisions', String(decisions), '--trial', 'fake-only'], launch),
+      0,
+    );
+    assert.deepEqual(launched.at(-1), { id: 'fake-only', decisions });
+  }
+  const invalid = ['0', '-1', '1.5', '9007199254740992', '', 'NaN', 'Infinity', '1e2', '+2', '02', ' 2'];
   for (const args of [
-    ['--live', '--authorize-two-decisions'],
-    ['--live', '--authorize-two-decisions', '--trial', '../bad'],
+    ...invalid.map((n) => ['--live', '--authorize-decisions', n, '--trial', 'fake-only']),
+    ['--live', '--authorize-decisions'],
+    ['--live', '--authorize-decisions', '--trial', 'fake-only'],
+    ['--authorize-decisions', '3', '--trial', 'fake-only'],
+    ['--live', '--authorize-decisions', '3', '--trial', '../bad'],
+    ['--live', '--authorize-decisions', '3', '--authorize-one-decision', '--trial', 'fake-only'],
     ['--live', '--authorize-one-decision', '--authorize-two-decisions', '--trial', 'fake-only'],
     ['--live', '--authorize-three-decisions', '--trial', 'fake-only'],
   ])
     assert.equal(await supervisorMain(args, launch, () => {}), 2);
-  assert.equal(launched.length, 2);
+  assert.equal(launched.length, 7);
 });
