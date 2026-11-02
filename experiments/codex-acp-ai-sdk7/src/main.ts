@@ -11,7 +11,7 @@ import {
 import { cleanupDoomProviders, fenceDoomInitialization, type DoomInitialization } from './agent-lifecycle.ts';
 import { consumeDoomStream, DoomStreamError, envelopeMatches } from './agent-stream.ts';
 import {
-  createConsultLandmarks, createDoomPlayAgent, rebuildParentTools, validateParentOutput, validateDecisionOutput, maxDecisionOutputCharacters, type ConsultReceipt,
+  createConsultLandmarks, createDoomPlayAgent, rebuildParentTools, validateParentOutput, validateDecisionOutput, maxDecisionOutputCharacters, ParentOutputError, type ConsultReceipt,
 } from './doom-play-agent.ts';
 import { rebuildSmokeTools } from './find-landmarks-acp-smoke.ts';
 import { createLandmarksAgent } from './landmarks-tool-loop-agent.ts';
@@ -20,6 +20,7 @@ import {
 } from './landmarks-tool.ts';
 import { createGuardedDecision, decisionLedger, type DecisionPorts } from './guarded-decision.ts';
 import { liveObserve, parseLease, requireLive, type ReadPng } from './live-observation.ts';
+import { createOperatorConsole } from './operator-console.ts';
 
 type Provider = Pick<ReturnType<typeof createACPProvider>, 'cleanup' | 'getSessionId'> & {
   languageModel(): LanguageModel;
@@ -36,11 +37,25 @@ export type MainPorts = {
   removeDirectory(path: string): void;
   lookup: typeof lookupLandmarks;
   decision?: DecisionPorts;
+  logger?: ReturnType<typeof createOperatorConsole>;
 };
 
 const operatorInstruction = 'Browser ownership is not released by ACP cleanup or process exit. Press Stop Agent in the browser before another attach, including after failed or uncertain attachment. Do not automatically retry.';
 
+type FailureDiagnostic = {
+  stage: 'setup' | 'attach' | 'initial_observation' | 'provider_initialization' | 'parent_stream' |
+    'callback_correlation' | 'completion_await' | 'completion_validation' | 'session_invariants' |
+    'final_validation' | ParentOutputError['stage'] | 'cleanup' | 'unknown';
+  code: ParentOutputError['code'] | 'COMPLETION_METADATA_INVALID' | 'SESSION_INVARIANTS_INVALID' |
+    'STREAM_REJECTED' | 'CANCELLED' | 'CLEANUP_UNVERIFIED' | 'INSTRUCTIONS_CLEANUP_FAILED' | 'unknown';
+};
+
 export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs = 120_000, authorizeOneDecision = false) {
+  const logger = ports.logger ?? createOperatorConsole();
+  const doomLog = logger.withTag('doom'), agentLog = logger.withTag('agent');
+  const cleanupLog = logger.withTag('cleanup'), runLog = logger.withTag('run');
+  let stage: FailureDiagnostic['stage'] = 'setup';
+  let failureCode: FailureDiagnostic['code'] = 'unknown';
   const abort = new AbortController();
   const interrupt = () => abort.abort(signal.reason);
   signal.addEventListener('abort', interrupt, { once: true });
@@ -54,6 +69,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
   let guardedDecision: ReturnType<typeof createGuardedDecision> | undefined;
   const report = {
     outcome: 'failed', error: null as string | null,
+    failureDiagnostic: null as FailureDiagnostic | null,
     lease: { state: 'not-attempted' as 'not-attempted' | 'possibly-held' | 'held', leaseFile: null as string | null },
     operatorInstruction,
     source: null as { observationId: string; sessionId: string; tic: number; mapKey: string; pngSha256: string; imageBytes: number } | null,
@@ -85,11 +101,15 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     });
     const work = async () => {
       abort.signal.throwIfAborted();
+      stage = 'attach';
+      doomLog.info('Attaching to browser');
       report.lease.state = 'possibly-held'; // Set before dispatch, including lost attach acknowledgments.
       const attached = await ports.attach(abort.signal);
       abort.signal.throwIfAborted();
       const lease = parseLease(attached);
       report.lease = { state: 'held', leaseFile: lease.leaseFile };
+      doomLog.info('Browser lease acknowledged');
+      stage = 'initial_observation';
       const value = await ports.observe(lease.leaseFile, abort.signal);
       abort.signal.throwIfAborted();
       const { observation, image, payload } = await liveObserve(value, lease, ports.readPng, abort.signal);
@@ -97,6 +117,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
       // The typed client correlates the request; the controller independently
       // allocates observationId for this capture. No pre-existing run is resumed.
       requireLive(observation.run === null);
+      doomLog.info(`Initial observation verified: ${observation.mapIdentity.mapSlot}, tic ${observation.tic}`);
       const context: SavedContext = {
         observationId: observation.observationId, sessionId: observation.sessionId, tic: observation.tic,
         mapIdentity: structuredClone(observation.mapIdentity),
@@ -109,17 +130,20 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
       const count = (role: 'parent' | 'child') => () => {
         abort.signal.throwIfAborted();
         if (++report.sdkRequests[role] > (authorizeOneDecision && role === 'parent' ? 3 : 1)) throw new Error('REPEATED_SDK_REQUEST');
+        if (role === 'parent') agentLog.info('DoomPlayAgent request started (initial image supplied)');
       };
       const childTools = acpTools({ findLandmarks: createLandmarksTool(context, landmarks, abort, undefined, ports.lookup) });
       const child = createLandmarksAgent(childModel, rebuildSmokeTools(childTools), count('child'));
       requireLive(!authorizeOneDecision || ports.decision);
       if (authorizeOneDecision && ports.decision)
-        guardedDecision = createGuardedDecision(true, lease, observation, ports.decision, report.decision, abort.signal);
+        guardedDecision = createGuardedDecision(true, lease, observation, ports.decision, report.decision, abort.signal, logger.withTag('decision'));
       const parentTools = acpTools({
-        consultLandmarks: createConsultLandmarks(context, child, landmarks, consults, abort),
+        consultLandmarks: createConsultLandmarks(context, child, landmarks, consults, abort, logger.withTag('landmarks')),
         ...(guardedDecision ? { executeGuardedDecision: guardedDecision } : {}),
       });
       const parent = createDoomPlayAgent(parentModel, rebuildParentTools(parentTools), count('parent'), 'live', authorizeOneDecision);
+      stage = 'provider_initialization';
+      agentLog.info('Initializing separate parent and landmark ACP sessions');
       for (const [owner, initialize] of [
         [childProvider, () => childProvider.initSession(childTools)],
         [parentProvider, () => parentProvider.initSession(parentTools)],
@@ -132,6 +156,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
       }
       const ids = providers.map(provider => provider.getSessionId());
       requireLive(ids[0] && ids[1] && ids[0] !== ids[1]);
+      stage = 'parent_stream';
       const stream = await parent.stream({
         messages: [{ role: 'user', content: [
           { type: 'text', text: `${authorizeOneDecision ? 'Request the single authorized guarded decision, then report its actual result in this same run.' : 'Propose one navigation question.'} Reason from this fresh verified observation and its attached PNG. Historical memory is advisory. State=${JSON.stringify(payload)}` },
@@ -149,21 +174,34 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
         // allowance for tool/lifecycle events and empty chunks; floods stay finite.
         authorizeOneDecision ? maxDecisionOutputCharacters + 2000 : undefined);
       report.parentStream = consumed;
+      stage = 'callback_correlation';
       requireLive((consumed.tools.consultLandmarks?.calls ?? 0) === consults.length &&
         (consumed.tools.executeGuardedDecision?.calls ?? 0) === report.decision.attempted);
+      agentLog.info('Parent stream drained; tool calls/results and callback counts matched');
+      stage = 'completion_await';
+      agentLog.info('Awaiting parent completion metadata and final output');
       const [text, steps, finish, rawFinish] = await Promise.all([
         stream.text, stream.steps, stream.finishReason, stream.rawFinishReason,
       ]);
       abort.signal.throwIfAborted();
-      requireLive(finish === 'stop' && rawFinish === 'end_turn' && steps.length === consumed.steps &&
-        providers.every((provider, index) => provider.getSessionId() === ids[index]) &&
+      stage = 'completion_validation';
+      if (!(finish === 'stop' && rawFinish === 'end_turn' && steps.length === consumed.steps)) {
+        failureCode = 'COMPLETION_METADATA_INVALID'; requireLive(false);
+      }
+      stage = 'session_invariants';
+      if (!(providers.every((provider, index) => provider.getSessionId() === ids[index]) &&
         report.sdkRequests.parent >= 1 && report.sdkRequests.parent <= (authorizeOneDecision ? 3 : 1) &&
-        report.sdkRequests.child === consults.length);
+        report.sdkRequests.child === consults.length)) {
+        failureCode = 'SESSION_INVARIANTS_INVALID'; requireLive(false);
+      }
+      failureCode = 'unknown'; stage = 'final_validation';
+      agentLog.info('Parent completion metadata and session invariants verified; validating final JSON and grounding');
       const result = authorizeOneDecision
         ? validateDecisionOutput(text, report.decision, consults, landmarks, abort.signal)
         : validateParentOutput(text, consults, landmarks, abort.signal);
       report.result = result;
       report.receiptAwareSummary = authorizeOneDecision;
+      agentLog.info('Parent final output accepted; schema and grounding verified');
       report.outcome = authorizeOneDecision
         ? report.decision.receipt && report.decision.calls[0]?.feedback.error === null ? report.decision.receipt.outcome : 'failed'
         : consults[0].result?.selection.status === 'empty' ? 'empty' : 'completed';
@@ -171,7 +209,13 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     await Promise.race([work(), cancelled]);
   } catch (error) {
     if (error instanceof DoomStreamError) report.parentStream = error.receipt;
-    report.error = error instanceof DoomStreamError ? error.message : abort.signal.aborted ? 'CANCELLED_OR_FAILED_CONSULT' : 'MAIN_FAILED';
+    const streamCode = error instanceof DoomStreamError && ['AFTER_FINISH', 'DUPLICATE_TOOL_CALL', 'TOOL_CALL_MISMATCH',
+      'DUPLICATE_TOOL_RESULT', 'TOOL_RESULT_MISMATCH', 'TOOL_ENVELOPE_MISMATCH', 'INCOMPLETE_STREAM'].includes(error.message) ? error.message : null;
+    report.error = streamCode ?? (abort.signal.aborted ? 'CANCELLED_OR_FAILED_CONSULT' : 'MAIN_FAILED');
+    report.failureDiagnostic = error instanceof ParentOutputError ? { stage: error.stage, code: error.code } : {
+      stage, code: abort.signal.aborted ? 'CANCELLED' : error instanceof DoomStreamError ? 'STREAM_REJECTED' : failureCode,
+    };
+    runLog.warn(`Run failed: ${report.error}; stage=${report.failureDiagnostic.stage}, code=${report.failureDiagnostic.code}`);
     report.result = null;
     report.outcome = 'failed';
   } finally {
@@ -179,6 +223,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     signal.removeEventListener('abort', interrupt);
     abort.abort();
     abort.signal.removeEventListener('abort', onAbort);
+    cleanupLog.info('Cleanup started');
     await guardedDecision?.settleFileCleanup();
     report.cleanup = cleanupDoomProviders(providers, startups);
     for (const directory of directories) {
@@ -188,12 +233,25 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     if (report.cleanup.some(value => value !== 'returned-session-cleared; child-exit-unverified') ||
         report.directoryCleanup.some(value => value !== 'empty-directory-removed')) {
       report.outcome = 'failed'; report.result = null; report.error ??= 'CLEANUP_UNVERIFIED';
+      report.failureDiagnostic ??= { stage: 'cleanup', code: 'CLEANUP_UNVERIFIED' };
+      cleanupLog.warn('ACP or temporary-directory cleanup unverified');
     }
-    if (report.decision.fileCleanup === 'failed') { report.outcome = 'failed'; report.error ??= 'INSTRUCTIONS_CLEANUP_FAILED'; }
+    if (report.decision.fileCleanup === 'failed') {
+      report.outcome = 'failed'; report.error ??= 'INSTRUCTIONS_CLEANUP_FAILED';
+      report.failureDiagnostic ??= { stage: 'cleanup', code: 'INSTRUCTIONS_CLEANUP_FAILED' };
+      cleanupLog.warn('Instructions file cleanup failed');
+    }
     report.callbacks = { consult: consults.length, find: landmarks.length };
     report.childStream = consults[0]?.childStream ? { ...consults[0].childStream } : null;
+    cleanupLog.info('ACP cleanup attempts finished; child-process exits unverified');
+    if (report.lease.state !== 'not-attempted') cleanupLog.warn(operatorInstruction);
+    runLog.info(`Final report ready: ${report.outcome}`);
   }
   return structuredClone(report); // Late settlements cannot rewrite returned evidence.
+}
+
+export function writeMainReport(report: Awaited<ReturnType<typeof runMain>>, print = (value: string) => { writeSync(1, value); }) {
+  print(`${JSON.stringify(report, null, 2)}\n`);
 }
 
 export function reportExitCode(report: Awaited<ReturnType<typeof runMain>>, authorizeOneDecision: boolean) {
@@ -253,7 +311,7 @@ async function launch(authorizeOneDecision = false) {
         },
       } satisfies DecisionPorts } : {}),
     }, abort.signal, 120_000, authorizeOneDecision);
-    writeSync(1, `${JSON.stringify(report, null, 2)}\n`);
+    writeMainReport(report);
     return reportExitCode(report, authorizeOneDecision);
   } finally {
     process.removeListener('SIGINT', interrupt);
@@ -271,6 +329,10 @@ export async function main(args: string[], run: (authorizeOneDecision?: boolean)
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   let code = 1;
   try { code = await main(process.argv.slice(2)); }
-  catch { writeSync(1, `${JSON.stringify({ outcome: 'failed', error: 'PREFLIGHT_FAILED', lease: 'unknown', operatorInstruction })}\n`); }
+  catch {
+    createOperatorConsole().withTag('run').warn('Preflight/launch failed; no automatic retry');
+    writeSync(1, `${JSON.stringify({ outcome: 'failed', error: 'PREFLIGHT_FAILED', failureDiagnostic: { stage: 'setup', code: 'unknown' }, lease: 'unknown', operatorInstruction })}\n`);
+  }
+  await new Promise<void>(resolve => process.stderr.write('', () => resolve()));
   process.exit(code); // Public ACP cleanup cannot prove subprocess exit; browser lease is retained.
 }

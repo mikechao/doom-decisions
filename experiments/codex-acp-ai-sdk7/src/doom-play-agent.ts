@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { acpTools, ACP_PROVIDER_AGENT_DYNAMIC_TOOL_NAME } from '@mcpc-tech/acp-ai-provider';
 import { ToolLoopAgent, isStepCount, jsonSchema, type LanguageModel, type ToolSet } from 'ai';
 import { z } from 'zod';
+import type { ConsolaInstance } from 'consola/basic';
 import { decisionGuidance, type createGuardedDecision, type DecisionLedger } from './guarded-decision.ts';
 import type { createLandmarksAgent } from './landmarks-tool-loop-agent.ts';
 import { inspectLandmarksCompletion } from './landmarks-tool-loop-agent-smoke.ts';
@@ -25,6 +26,7 @@ export function createConsultLandmarks(
   landmarks: LandmarkReceipt[],
   receipts: ConsultReceipt[],
   abort: AbortController,
+  log?: ConsolaInstance,
 ) {
   const fixed = structuredClone(context);
   return {
@@ -38,6 +40,7 @@ export function createConsultLandmarks(
         abort.signal.throwIfAborted();
         if (receipts.length !== 1) throw new Error('REPEATED_CONSULT');
         if (!z.strictObject({}).safeParse(input).success) throw new Error('INVALID_CONSULT_INPUT');
+        log?.info('Consultation started');
         const stream = await child.stream({
           prompt: 'Retrieve and select one historical Doom landmark using findLandmarks.',
           abortSignal: abort.signal,
@@ -58,6 +61,7 @@ export function createConsultLandmarks(
         receipt.result = structuredClone(result);
         const envelope: Envelope = { content: [{ type: 'text', text: JSON.stringify(result) }] };
         receipt.envelope = structuredClone(envelope);
+        log?.info(`Consultation complete: ${landmarks[0].result!.candidates.length} candidates, ${result.selection.status === 'selected' ? 1 : 0} selected (historical, unverified)`);
         return envelope;
       } catch (error) {
         if (error instanceof DoomStreamError) receipt.childStream = error.receipt;
@@ -108,6 +112,24 @@ const parentOutput = z.strictObject({
   memoryInfluence: z.strictObject({ noteId: z.string().uuid().nullable(), explanation: text(320) }),
 });
 
+// Typed attribution carries only fixed host codes, never rejected model text or
+// Zod messages/unknown keys. Keep the existing Error messages for callers.
+export class ParentOutputError extends Error {
+  readonly stage: 'final_json' | 'final_schema' | 'final_grounding';
+  readonly code: 'OUTPUT_LIMIT' | 'JSON_PARSE_INVALID' | 'SCHEMA_INVALID' | 'INVALID_CONSULT_RECEIPT' |
+    'INVALID_CHILD_RECEIPT' | 'ATTRIBUTION_MISMATCH' | 'RECEIPT_GROUNDING_MISMATCH' | 'OBJECTIVE_MISMATCH';
+  constructor(stage: ParentOutputError['stage'], code: ParentOutputError['code']) {
+    super(['OUTPUT_LIMIT', 'JSON_PARSE_INVALID', 'SCHEMA_INVALID'].includes(code) ? 'INVALID_PARENT_OUTPUT' : code);
+    this.stage = stage;
+    this.code = code;
+  }
+}
+
+function parseParentJson(raw: string, max: number): unknown {
+  if (raw.length > max) throw new ParentOutputError('final_json', 'OUTPUT_LIMIT');
+  try { return JSON.parse(raw); } catch { throw new ParentOutputError('final_json', 'JSON_PARSE_INVALID'); }
+}
+
 // JSON can use six characters per UTF-16 code unit (including lone surrogates).
 // Cover all four bounded text fields, plus JSON syntax and a 36-character noteId.
 const maxDecisionAdvisoryCharacters = 6 * (600 * 3 + 320) + 256;
@@ -116,28 +138,26 @@ export const maxDecisionOutputCharacters = maxDecisionAdvisoryCharacters + 8192;
 
 export function validateParentOutput(raw: string, consults: ConsultReceipt[], landmarks: LandmarkReceipt[], signal: AbortSignal, optionalConsult = false, maxCharacters = 4096) {
   signal.throwIfAborted();
-  if (raw.length > maxCharacters) throw new Error('INVALID_PARENT_OUTPUT');
-  let value: unknown;
-  try { value = JSON.parse(raw); } catch { throw new Error('INVALID_PARENT_OUTPUT'); }
+  const value = parseParentJson(raw, maxCharacters);
   const parsed = parentOutput.safeParse(value);
-  if (!parsed.success) throw new Error('INVALID_PARENT_OUTPUT');
+  if (!parsed.success) throw new ParentOutputError('final_schema', 'SCHEMA_INVALID');
   if (optionalConsult && consults.length === 0) {
-    if (landmarks.length !== 0 || parsed.data.memoryInfluence.noteId !== null) throw new Error('ATTRIBUTION_MISMATCH');
+    if (landmarks.length !== 0 || parsed.data.memoryInfluence.noteId !== null) throw new ParentOutputError('final_grounding', 'ATTRIBUTION_MISMATCH');
     return { interpretation: parsed.data, historicalMemory: null };
   }
   const consult = consults[0];
   if (consults.length !== 1 || !consult?.result || consult.error || !consult.childStream?.drained ||
       !envelopeMatches(consult.envelope, { content: [{ type: 'text', text: JSON.stringify(consult.result) }] }))
-    throw new Error('INVALID_CONSULT_RECEIPT');
+    throw new ParentOutputError('final_grounding', 'INVALID_CONSULT_RECEIPT');
   const checked = validateSelection(JSON.stringify(consult.result.selection), landmarks);
   if (!checked.ok || !isDeepStrictEqual(landmarks[0].result?.context, consult.result.context))
-    throw new Error('INVALID_CHILD_RECEIPT');
+    throw new ParentOutputError('final_grounding', 'INVALID_CHILD_RECEIPT');
   const noteId = parsed.data.memoryInfluence.noteId;
   if (noteId !== null && (checked.selection.status !== 'selected' || noteId !== checked.selection.noteId))
-    throw new Error('ATTRIBUTION_MISMATCH');
+    throw new ParentOutputError('final_grounding', 'ATTRIBUTION_MISMATCH');
   // Resolve provenance from the actual callback candidate, never parent restatements.
   const candidate = noteId === null ? null : landmarks[0].result?.candidates.find(note => note.noteId === noteId);
-  if (noteId !== null && !candidate) throw new Error('ATTRIBUTION_MISMATCH');
+  if (noteId !== null && !candidate) throw new ParentOutputError('final_grounding', 'ATTRIBUTION_MISMATCH');
   return { interpretation: parsed.data, historicalMemory: candidate ? {
     noteId: candidate.noteId, mapNamespace: candidate.mapNamespace, source: candidate.source,
     summary: candidate.summary, advisoryStatus: 'unverified' as const,
@@ -147,12 +167,11 @@ export function validateParentOutput(raw: string, consults: ConsultReceipt[], la
 // Receipt grounding is checked against callback evidence, not parent claims.
 export function validateDecisionOutput(raw: string, ledger: DecisionLedger, consults: ConsultReceipt[], landmarks: LandmarkReceipt[], signal: AbortSignal) {
   signal.throwIfAborted();
-  if (raw.length > maxDecisionOutputCharacters) throw new Error('INVALID_PARENT_OUTPUT');
-  const value: unknown = JSON.parse(raw);
-  if (!value || typeof value !== 'object' || Array.isArray(value) || !('decision' in value)) throw new Error('INVALID_PARENT_OUTPUT');
+  const value = parseParentJson(raw, maxDecisionOutputCharacters);
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !('decision' in value)) throw new ParentOutputError('final_schema', 'SCHEMA_INVALID');
   const { decision, ...advisory } = value;
-  if (ledger.calls.length !== 1 || !isDeepStrictEqual(decision, ledger.calls[0].feedback)) throw new Error('RECEIPT_GROUNDING_MISMATCH');
+  if (ledger.calls.length !== 1 || !isDeepStrictEqual(decision, ledger.calls[0].feedback)) throw new ParentOutputError('final_grounding', 'RECEIPT_GROUNDING_MISMATCH');
   const checked = validateParentOutput(JSON.stringify(advisory), consults, landmarks, signal, true, maxDecisionAdvisoryCharacters);
-  if (ledger.guidance && checked.interpretation.objective !== ledger.guidance.objective) throw new Error('OBJECTIVE_MISMATCH');
+  if (ledger.guidance && checked.interpretation.objective !== ledger.guidance.objective) throw new ParentOutputError('final_grounding', 'OBJECTIVE_MISMATCH');
   return { ...checked, decision: ledger.calls[0].feedback };
 }

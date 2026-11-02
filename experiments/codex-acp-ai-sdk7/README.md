@@ -57,6 +57,73 @@ semantic truth of every sentence of model prose. A malformed/ungrounded final
 response, accounting failure or cleanup failure cannot erase the report's
 independently verified action. Nothing is replayed to obtain nicer prose.
 
+### CLI output and diagnostics
+
+An authorized `main.ts` invocation writes exactly one final JSON report to
+**stdout**, including on failure; redirect stdout to retain machine evidence.
+The existing inert default/help/invalid-argument paths print usage text instead.
+Consola 3.4.2's BasicReporter has both output streams explicitly bound to
+**stderr**. Info milestones, warnings and short diagnostics are enabled by default
+at fixed level 3, with no colors, spinner, token/event logging or throttling.
+`CONSOLA_LEVEL` does not override this console; existing provider debug flags
+remain forbidden. The installed ACP provider also forwards child stderr; these
+host milestones do not filter that pre-existing third-party stream.
+
+Only validated scoped `objective` and `uncertainty` fields are displayed as
+guidance, never the entire instruction template, private notes or transcript.
+The objective becomes known at guarded invocation. Guidance is **proposed** until
+exact prompt CAS acknowledgement; **applied** displays that admitted advisory
+block. Display replaces control/format characters and newlines with spaces,
+strips terminal escape sequences, redacts recognizable credential/location/ID
+patterns, indents text and caps each field at 480 characters with `[truncated]`.
+This display filtering does not rewrite admitted guidance or receipt evidence.
+It is not a general detector of secrets embedded in natural-language advice.
+
+Illustrative one-decision excerpt (not live acceptance evidence; milestones
+appear only when reached, consultation is optional, values come from receipts):
+
+```text
+[info] [doom] Browser lease acknowledged
+[info] [doom] Initial observation verified: E1M1, tic 1
+[info] [agent] DoomPlayAgent request started (initial image supplied)
+[info] [landmarks] Consultation complete: 2 candidates, 1 selected (historical, unverified)
+[info] [decision] Current navigation objective:
+    Can the opening ahead be reached?
+[info] [decision] Proposed gameplay guidance (advisory):
+  Objective:
+    Can the opening ahead be reached?
+  Uncertainty:
+    Make a brief straight-ahead probe; passability remains unverified.
+[info] [decision] Decision 1 of 1; run allowance acknowledged
+[info] [decision] Applied gameplay guidance (CAS revision 2; scoped advisory only):
+  Objective:
+    Can the opening ahead be reached?
+  Uncertainty:
+    Make a brief straight-ahead probe; passability remains unverified.
+[info] [decision] Fresh observation verified after guidance CAS
+[info] [decision] Submitting guarded controller decision request; provider dispatch not yet known
+[info] [decision] Controller receipt validated: completed; SDK invoked: true
+[info] [decision] Verified action: forward, 6 tics (tic 1 → 7)
+[info] [decision] Budget verified: 1 SDK attempt used / 1 total; reserved=1, remaining=0
+[warn] [run] Run failed: MAIN_FAILED; stage=final_json, code=JSON_PARSE_INVALID
+[info] [cleanup] ACP cleanup attempts finished; child-process exits unverified
+```
+
+`failureDiagnostic` is null on success, otherwise `{stage, code}`. Stages locate
+setup, attach, initial observation, provider initialization, parent stream,
+callback correlation, completion awaiting/checks, session invariants, final
+JSON/schema/grounding or cleanup. Fixed codes distinguish `JSON_PARSE_INVALID`,
+`OUTPUT_LIMIT`, `SCHEMA_INVALID`, `COMPLETION_METADATA_INVALID`,
+`SESSION_INVARIANTS_INVALID`, `OBJECTIVE_MISMATCH`,
+`RECEIPT_GROUNDING_MISMATCH`, `ATTRIBUTION_MISMATCH`, invalid consult/child
+receipts, stream rejection, cancellation and cleanup failure. Other causes remain
+`unknown`; no exception messages, rejected model text, schema messages or unknown
+field names enter the diagnostic. Parent-finalization failure retains
+`MAIN_FAILED`, nonzero exit, the independently verified controller receipt and
+final accounting. These diagnostics do not establish the earlier live failure's
+root cause. ACP cleanup still does not release the lease: press **Stop Agent**
+in the browser before another attach. No retry or extra decision is added.
+
 Both agents retain separate ACP model/provider/session owners and the pinned
 SDK 6/7 structural bridge, without new casts or dependency changes. The installed
 AI SDK 7.0.159 `ToolLoopAgent` supports `stopWhen: isStepCount(3)` for optional
@@ -122,13 +189,14 @@ Offline verification (synthetic PNGs, fake typed HTTP transport without servers,
 in-memory landmark data and deterministic provider streams; no historical DBs):
 
 ```bash
-node --experimental-strip-types --test --test-skip-pattern='local snapshot integration|fixed fixture:|invalid selection keeps settled' experiments/codex-acp-ai-sdk7/tests/main.test.ts experiments/codex-acp-ai-sdk7/tests/doom-play-agent.test.ts experiments/codex-acp-ai-sdk7/tests/landmarks-tool-loop-agent.test.ts experiments/codex-acp-ai-sdk7/tests/find-landmarks-acp-smoke.test.ts
+node --experimental-strip-types --test --test-skip-pattern='local snapshot integration' experiments/codex-acp-ai-sdk7/tests/*.test.ts
 node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7 --noEmit
 git diff --check
 ```
 
-The skip pattern excludes historical-snapshot integration and existing throwaway
-SQLite tests. New success fixtures emit `parent-decision-1` for the registered
+The skip pattern excludes historical-snapshot integration. Synthetic throwaway
+SQLite fixtures remain included; no historical database is read or mutated.
+Success fixtures emit `parent-decision-1` for the registered
 `executeGuardedDecision`, execute the real typed-client/receipt validators, and
 feed the returned MCP block into the same fake ACP session's continuation before
 it emits final JSON. They use real SDK agents, not live ACP/Decisions inference.

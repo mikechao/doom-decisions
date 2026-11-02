@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmdirSync, writeFileSync, unlinkSync } from 
 import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { runInNewContext } from 'node:vm';
 import { deflateSync } from 'node:zlib';
 import test from 'node:test';
@@ -18,7 +19,8 @@ import { createGuardedDecision, decisionLedger, type DecisionPorts } from '../sr
 import { consumeDoomStream, envelopeMatches, maxDecisionOutputCharacters, validateDecisionOutput, validateParentOutput } from '../src/doom-play-agent.ts';
 import { liveObserve } from '../src/live-observation.ts';
 import { createAgentMapIdentity } from '../../../app/src/agent-observation.ts';
-import { main, reportExitCode, runMain, type MainPorts } from '../src/main.ts';
+import { main, reportExitCode, runMain, writeMainReport, type MainPorts } from '../src/main.ts';
+import { createOperatorConsole, displayGuidance } from '../src/operator-console.ts';
 import { createLandmarksTool, type LandmarkResult, type SavedContext } from '../src/landmarks-tool.ts';
 
 const hash = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
@@ -91,6 +93,9 @@ function fakeModel(name: 'findLandmarks' | 'consultLandmarks', options: {
 }
 
 function fixture(attributed = false) {
+  const stderr = new PassThrough();
+  let progress = '';
+  stderr.on('data', chunk => { progress += chunk.toString(); });
   const root = mkdtempSync(join(tmpdir(), 'doom-main-test-'));
   const ids = { pageId: randomUUID(), epoch: randomUUID(), sessionId: randomUUID(), observationId: randomUUID() };
   const operations: string[] = [], contexts: SavedContext[] = [], directories: string[] = [], removed: string[] = [];
@@ -122,6 +127,7 @@ function fixture(attributed = false) {
   const models = [fakeModel('consultLandmarks', { attributed }), fakeModel('findLandmarks')];
   const owners: { id: string | null; cleanups: number; inits: number }[] = [];
   const ports: MainPorts = {
+    logger: createOperatorConsole(stderr as unknown as NodeJS.WriteStream),
     attach: () => executeAgentOperation({ op: 'attach' }, { transport, temporaryRoot: root }),
     observe: leaseFile => executeAgentOperation({ op: 'observe', leaseFile }, { transport }),
     readPng: (path, signal) => readFile(path, { signal }),
@@ -148,6 +154,7 @@ function fixture(attributed = false) {
     },
   };
   return { root, ids, ports, abort, observation, operations, contexts, owners, models, directories, removed,
+    progress: () => progress,
     staleCommand: () => { staleCommand = true; }, destroy: () => rm(root, { recursive: true, force: true }) };
 }
 
@@ -219,6 +226,7 @@ test('invalid/missing image, stale receipt and foreign ownership fail before ACP
       }
       const report = await runMain(f.ports, f.abort.signal);
       assert.equal(report.outcome, 'failed'); assert.equal(report.result, null);
+      assert.doesNotMatch(f.progress(), /Initial observation verified|request started|Verified action/);
       assert.equal(report.lease.state, 'held');
       assert.deepEqual(report.sdkRequests, { parent: 0, child: 0 });
       assert.ok(f.owners.every(owner => owner.inits === 0 && owner.cleanups === 1));
@@ -333,13 +341,25 @@ syncBuiltinESMExports();`;
       new URL('../src/main.ts', import.meta.url).pathname, ...args], { encoding: 'utf8', timeout: 10_000 });
     assert.equal(process.status, 0); assert.match(process.stdout, /Inert: no attach, SQLite open or ACP startup/);
     assert.match(process.stdout, /Press Stop Agent/);
+    assert.doesNotMatch(process.stderr, /\[doom\]|\[agent\]|\[decision\]/);
   }
+  const preflight = spawnSync(process.execPath, ['--experimental-strip-types', '--import',
+    `data:text/javascript,${encodeURIComponent(guard)}`, new URL('../src/main.ts', import.meta.url).pathname,
+    '--authorize-live-observation-acp', '--authorize-agent-one-decision'], {
+    encoding: 'utf8', timeout: 10_000, env: { ...process.env, DEBUG: 'PRIVATE_PREFLIGHT_VALUE' },
+  });
+  assert.equal(preflight.status, 1);
+  assert.equal(JSON.parse(preflight.stdout).error, 'PREFLIGHT_FAILED');
+  assert.deepEqual(JSON.parse(preflight.stdout).failureDiagnostic, { stage: 'setup', code: 'unknown' });
+  assert.doesNotMatch(preflight.stdout + preflight.stderr, /PRIVATE_PREFLIGHT_VALUE|FORBIDDEN_SIDE_EFFECT/);
+  assert.doesNotMatch(preflight.stderr, /\[doom\]|\[agent\]|\[decision\]/);
 });
 
 
 const guidance = { objective: 'Does another perspective clarify the visible boundary?', uncertainty: 'Visibility alone cannot establish passability.' };
 function decisionFixture(options: { fault?: string; consult?: boolean; twice?: boolean; input?: unknown; advisory?: typeof guidance;
-  reflection?: { recordedEvidence: string; explanation: string }; chunkSize?: number; final?: string; after?: () => Promise<void> } = {}) {
+  reflection?: { recordedEvidence: string; explanation: string }; chunkSize?: number; final?: string;
+  renderFinal?: (value: Record<string, unknown>) => string; rawFinish?: string; after?: () => Promise<void> } = {}) {
   const f = fixture();
   const submitted = options.advisory ?? guidance;
   const advisory = { objective: submitted.objective.trim(), uncertainty: submitted.uncertainty.trim() };
@@ -463,15 +483,16 @@ function decisionFixture(options: { fault?: string; consult?: boolean; twice?: b
         continuations.push(structuredClone(result));
         if (options.twice) await invoke('executeGuardedDecision', guidance, 'parent-decision-2');
         await options.after?.();
-        const text = options.final ?? JSON.stringify({ ...advisory,
+        const output = { ...advisory,
           recordedEvidence: options.reflection?.recordedEvidence ?? 'The structured host receipt supplies the outcome; the initial image cannot prove progress.',
-          memoryInfluence: { noteId: null, explanation: options.reflection?.explanation ?? 'No historical note materially influenced the objective.' }, decision: result });
+          memoryInfluence: { noteId: null, explanation: options.reflection?.explanation ?? 'No historical note materially influenced the objective.' }, decision: result };
+        const text = options.final ?? (options.renderFinal ?? JSON.stringify)(output);
         controller.enqueue({ type: 'text-start', id: 'final' });
         const chunkSize = options.chunkSize ?? Math.max(1, text.length);
         for (let offset = 0; offset < text.length; offset += chunkSize)
           controller.enqueue({ type: 'text-delta', id: 'final', delta: text.slice(offset, offset + chunkSize) });
         controller.enqueue({ type: 'text-end', id: 'final' });
-        controller.enqueue({ type: 'finish', finishReason: { unified: 'stop', raw: 'end_turn' }, usage: {
+        controller.enqueue({ type: 'finish', finishReason: { unified: 'stop', raw: options.rawFinish ?? 'end_turn' }, usage: {
           inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 0, text: 0, reasoning: 0 } } });
         controller.close();
       } catch (error) { controller.error(error); }
@@ -510,6 +531,200 @@ test('agent event → guarded typed controller action → same-session receipt-a
       assert.equal(report.lease.state, 'held');
     } finally { await f.destroy(); }
   }
+});
+
+test('Consola milestones follow the owning verified boundaries and show only scoped guidance', async () => {
+  const advisory = { objective: 'Can the opening be reached?\nMake a short probe.', uncertainty: 'Passability remains unverified.' };
+  const f = decisionFixture({ consult: true, advisory });
+  try {
+    const report = await f.run();
+    assert.equal(reportExitCode(report, true), 0);
+    const progress = f.progress();
+    const ordered = [
+      '[doom] Attaching', '[doom] Browser lease acknowledged', '[doom] Initial observation verified: E1M1, tic 43',
+      '[agent] DoomPlayAgent request started', '[landmarks] Consultation started',
+      '[landmarks] Consultation complete: 0 candidates, 0 selected', '[decision] Guarded invocation admitted',
+      'Current navigation objective:', 'Proposed gameplay guidance', 'Decision 1 of 1',
+      'Applied gameplay guidance (CAS revision 1', 'Fresh observation verified after guidance CAS',
+      'Submitting guarded controller decision request', 'Controller receipt validated: completed; SDK invoked: true',
+      'Verified action: turn_left, 6 tics (tic 43 → 49)', 'Budget verified: 1 SDK attempt used / 1 total; reserved=1, remaining=0',
+      'Parent stream drained', 'Awaiting parent completion', 'Parent completion metadata and session invariants verified',
+      'Parent final output accepted', '[cleanup] Cleanup started', 'child-process exits unverified', 'Press Stop Agent',
+      '[run] Final report ready: completed',
+    ];
+    let previous = -1;
+    for (const milestone of ordered) {
+      const index = progress.indexOf(milestone);
+      assert.ok(index > previous, `${milestone} missing or out of order`);
+      previous = index;
+    }
+    assert.equal(progress.match(/Decision 1 of 1/g)?.length, 1);
+    assert.match(progress, /Current navigation objective:\n    Can the opening be reached\? Make a short probe\./);
+    assert.match(progress, /Applied gameplay guidance[^\n]*\n  Objective:\n    Can the opening be reached\? Make a short probe\.\n  Uncertainty:\n    Passability remains unverified\./);
+    assert.deepEqual(report.decision.guidance, advisory);
+    for (const privateValue of [f.root, f.ids.sessionId, report.lease.leaseFile!, 'Human settings', 'recordedEvidence', 'data:image/png'])
+      assert.ok(!progress.includes(privateValue));
+    const selected = fixture(true);
+    try {
+      const passive = await runMain(selected.ports, selected.abort.signal);
+      assert.equal(passive.outcome, 'completed');
+      assert.match(selected.progress(), /Consultation complete: 1 candidates, 1 selected/);
+      assert.ok(!selected.progress().includes('A historical question.'));
+      assert.ok(!selected.progress().includes('Host historical attribution'));
+      assert.doesNotMatch(selected.progress(), /Decision 1|Applied gameplay guidance|Verified action/);
+    } finally { await selected.destroy(); }
+  } finally { await f.destroy(); }
+});
+
+test('post-receipt failures identify only safe validation causes without changing controller evidence', async t => {
+  const privateText = 'PRIVATE_MODEL_TEXT sk-private /tmp/private\u001b[31m';
+  const variants = [
+    { options: { final: `{${privateText}` }, stage: 'final_json', code: 'JSON_PARSE_INVALID' },
+    { options: { renderFinal: (value: Record<string, unknown>) => JSON.stringify({ ...value, recordedEvidence: false, [privateText]: privateText }) }, stage: 'final_schema', code: 'SCHEMA_INVALID' },
+    { options: { renderFinal: (value: Record<string, unknown>) => JSON.stringify({ ...value, decision: {} }) }, stage: 'final_grounding', code: 'RECEIPT_GROUNDING_MISMATCH' },
+    { options: { renderFinal: (value: Record<string, unknown>) => JSON.stringify({ ...value, objective: 'A different objective.' }) }, stage: 'final_grounding', code: 'OBJECTIVE_MISMATCH' },
+    { options: { renderFinal: (value: Record<string, unknown>) => JSON.stringify({ ...value, memoryInfluence: { noteId, explanation: 'Invented attribution.' } }) }, stage: 'final_grounding', code: 'ATTRIBUTION_MISMATCH' },
+    { options: { rawFinish: privateText }, stage: 'completion_validation', code: 'COMPLETION_METADATA_INVALID' },
+  ];
+  for (const { options, stage, code } of variants) await t.test(code, async () => {
+    const f = decisionFixture(options);
+    try {
+      const report = await f.run();
+      assert.equal(report.outcome, 'failed'); assert.equal(report.error, 'MAIN_FAILED');
+      assert.equal(reportExitCode(report, true), 1);
+      assert.deepEqual(report.failureDiagnostic, { stage, code });
+      assert.equal(report.result, null); assert.equal(report.receiptAwareSummary, false);
+      assert.equal(report.parentStream?.drained, true);
+      assert.equal(report.decision.receipt?.outcome, 'completed');
+      assert.equal(report.decision.receipt?.action, 'turn_left');
+      assert.equal(report.decision.receipt?.verifiedTics, 6);
+      assert.equal(report.decision.dispatch, 'validated-receipt');
+      assert.equal(report.decision.accounting, 'exhausted');
+      assert.deepEqual(report.decision.finalRun, { runId: report.decision.allowance!.runId, active: false, limit: 1, reserved: 1, sdkInvoked: 1, remaining: 0 });
+      assert.equal(f.deliveries.filter(op => op === 'decide').length, 1);
+      assert.match(f.progress(), new RegExp(`stage=${stage}, code=${code}`));
+      assert.ok(f.progress().indexOf('Budget verified') < f.progress().indexOf(`stage=${stage}`));
+      for (const value of ['PRIVATE_MODEL_TEXT', 'sk-private', '/tmp/private', '\u001b']) {
+        assert.ok(!f.progress().includes(value));
+        assert.ok(!JSON.stringify(report).includes(value));
+      }
+      assert.doesNotMatch(f.progress(), /Parent final output accepted/);
+    } finally { await f.destroy(); }
+  });
+  const f = decisionFixture({ after: async () => { f.owners[0].id = 'changed'; } });
+  try {
+    const report = await f.run();
+    assert.deepEqual(report.failureDiagnostic, { stage: 'session_invariants', code: 'SESSION_INVARIANTS_INVALID' });
+    assert.equal(report.decision.receipt?.verifiedTics, 6);
+  } finally { await f.destroy(); }
+});
+
+test('success and post-receipt failure publish exactly one JSON document; real Consola defaults use stderr at every level', async () => {
+  for (const final of [undefined, '{PRIVATE_REJECTED_MODEL_TEXT']) {
+    const f = decisionFixture({ final });
+    try {
+      const report = await f.run();
+      let stdout = '', writes = 0;
+      const code = await main(['--authorize-live-observation-acp', '--authorize-agent-one-decision'], async () => {
+        writeMainReport(report, value => { stdout += value; writes++; });
+        return reportExitCode(report, true);
+      });
+      assert.equal(writes, 1);
+      assert.deepEqual(JSON.parse(stdout), report);
+      assert.equal(code, final ? 1 : 0);
+      // Exercise the same final printer with its actual fd=1 default and all
+      // BasicReporter severity routes with their actual fd=2 defaults in a child.
+      // The input and agent/controller work are entirely the offline fixture above.
+      const script = `import { readFileSync } from 'node:fs';
+import { writeMainReport, reportExitCode } from './experiments/codex-acp-ai-sdk7/src/main.ts';
+import { createOperatorConsole } from './experiments/codex-acp-ai-sdk7/src/operator-console.ts';
+const input = JSON.parse(readFileSync(0, 'utf8'));
+const log = createOperatorConsole().withTag('run');
+log.info('info stream check'); log.warn('warn stream check'); log.error('error stream check');
+process.stderr.write(input.progress);
+writeMainReport(input.report);
+await new Promise(resolve => process.stderr.write('', resolve));
+process.exit(reportExitCode(input.report, true));`;
+      const child = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], {
+        cwd: new URL('../../../', import.meta.url), encoding: 'utf8', timeout: 10_000,
+        input: JSON.stringify({ report, progress: f.progress() }), env: { ...process.env, CONSOLA_LEVEL: '0' },
+      });
+      assert.equal(child.status, code, child.stderr);
+      assert.deepEqual(JSON.parse(child.stdout), report);
+      for (const level of ['info', 'warn', 'error']) assert.match(child.stderr, new RegExp(`${level} stream check`));
+      assert.match(child.stderr, /Applied gameplay guidance[^\n]*\n  Objective:\n    Does another perspective/);
+      assert.doesNotMatch(child.stderr, /PRIVATE_REJECTED_MODEL_TEXT|"receiptAwareSummary"/);
+    } finally { await f.destroy(); }
+  }
+});
+
+test('an unexpected post-receipt exception keeps an unknown cause and never echoes its message', async () => {
+  let failSessionRead = false;
+  const f = decisionFixture({ after: async () => { failSessionRead = true; } });
+  const create = f.ports.createProvider;
+  f.ports.createProvider = cwd => {
+    const provider = create(cwd), getSessionId = provider.getSessionId;
+    provider.getSessionId = () => {
+      if (failSessionRead) throw new Error('PRIVATE_ERROR sk-private /tmp/private\u001b[31m');
+      return getSessionId();
+    };
+    return provider;
+  };
+  try {
+    const report = await f.run();
+    assert.equal(report.error, 'MAIN_FAILED');
+    assert.deepEqual(report.failureDiagnostic, { stage: 'session_invariants', code: 'unknown' });
+    assert.equal(report.decision.receipt?.verifiedTics, 6);
+    assert.equal(report.decision.accounting, 'exhausted');
+    assert.doesNotMatch(f.progress() + JSON.stringify(report), /PRIVATE_ERROR|sk-private|\/tmp\/private|\u001b/);
+    assert.match(f.progress(), /ACP or temporary-directory cleanup unverified/);
+    assert.doesNotMatch(f.progress(), /cleanup APIs returned/);
+  } finally { await f.destroy(); }
+});
+
+test('rejected CAS, uncertain mutations, cancellation and passive failures never log an applied or verified action prematurely', async () => {
+  for (const fault of ['cas', 'stale', 'lost-decide', 'receipt', 'retired', 'stopped', 'api-failure', 'not-admitted', 'allowance']) {
+    const f = decisionFixture({ fault });
+    try {
+      await f.run();
+      assert.doesNotMatch(f.progress(), /Verified action:|Budget verified:/, fault);
+      if (fault === 'cas' || fault === 'allowance') assert.doesNotMatch(f.progress(), /Applied gameplay guidance|Fresh observation verified after guidance CAS/);
+      if (fault === 'cas') assert.match(f.progress(), /Proposed gameplay guidance/);
+      assert.ok(f.deliveries.filter(op => op === 'decide').length <= 1);
+    } finally { await f.destroy(); }
+  }
+  const f = decisionFixture({ twice: true });
+  try {
+    await f.run();
+    assert.equal(f.progress().match(/Decision 1 of 1/g)?.length, 1);
+    assert.equal(f.progress().match(/Verified action:/g)?.length, 1);
+    assert.doesNotMatch(f.progress(), /Decision 2/);
+  } finally { await f.destroy(); }
+  const cancelled = fixture();
+  try {
+    cancelled.abort.abort();
+    await runMain(cancelled.ports, cancelled.abort.signal);
+    assert.doesNotMatch(cancelled.progress(), /observation verified|Verified action|Applied gameplay guidance|request started/);
+  } finally { await cancelled.destroy(); }
+});
+
+test('guidance display bounds terminal controls, redacts locations/IDs/credential patterns and labels truncation', async () => {
+  const hostile = '\u001b[31mForward\u001b[0m\r\n[decision] Forged\u0007\u009b31m\u202e\u2028 /tmp/private https://private.invalid sk-private Bearer secret 33333333-3333-4333-8333-333333333333';
+  const displayed = displayGuidance(hostile);
+  assert.ok(displayed.startsWith('\n    Forward'));
+  assert.equal(displayed.split('\n').length, 2);
+  assert.doesNotMatch(displayed, /[\x00-\x09\x0b-\x1f\x7f-\x9f\u202e\u2028]|private|secret|33333333/);
+  assert.equal(displayGuidance('a'.repeat(600)), `\n    ${'a'.repeat(480)} [truncated]`);
+  const advisory = { objective: 'a'.repeat(600), uncertainty: hostile };
+  const f = decisionFixture({ advisory });
+  try {
+    const report = await f.run();
+    assert.equal(report.outcome, 'completed');
+    assert.deepEqual(report.decision.guidance, advisory, 'Display sanitization never rewrites admitted prompt data');
+    assert.match(f.progress(), /\[truncated\]/);
+    assert.doesNotMatch(f.progress(), /\u001b|sk-private|https:\/\/private|\/tmp\/private|33333333/);
+    assert.equal(f.progress().match(/^\[info\] \[decision\] Applied gameplay guidance/gm)?.length, 1);
+  } finally { await f.destroy(); }
 });
 
 test('advisory words, explicit directives and formatting reach prompt CAS without action or tic authority', async () => {
@@ -794,6 +1009,7 @@ test('cancellation fences late claim/CAS/decide settlements and parent continuat
     try {
       const work = f.run(); await started; f.abort.abort();
       const report = await work, snapshot = JSON.stringify(report), dispatched = [...f.deliveries];
+      if (stage !== 'parent') assert.doesNotMatch(f.progress(), /Verified action:/);
       if (stage === 'startRun') assert.equal(report.decision.claim, 'unknown');
       if (stage === 'setPrompt') assert.equal(report.decision.promptCAS, 'unknown');
       if (stage === 'decide') assert.equal(report.decision.dispatch, 'unknown');

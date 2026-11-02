@@ -1,10 +1,12 @@
 import { isDeepStrictEqual as same } from 'node:util';
 import { z } from 'zod';
+import type { ConsolaInstance } from 'consola/basic';
 import type { AgentOperation, ConfigResult, MaterializedDecision, MaterializedObserve, PromptResult } from '../../../scripts/doom-agent-client.ts';
 import { maxAgentInstructions, parseAgentObserveResult, type AgentObserveResult, type AgentRunState } from '../../../app/src/agent-control.ts';
 import type { AgentDecisionResult } from '../../../app/src/agent-observation.ts';
 import type { Envelope } from './agent-stream.ts';
 import { configResult, liveDecision, liveObserve, parseLease, promptResult, requireLive, type Lease, type ReadPng } from './live-observation.ts';
+import { displayGuidance } from './operator-console.ts';
 
 type Input<Op extends AgentOperation['op']> = Omit<Extract<AgentOperation, { op: Op }>, 'op'>;
 export type DecisionPorts = {
@@ -63,7 +65,7 @@ function unused(run: AgentRunState | null, runId?: string): asserts run is Agent
 
 // Only this callback dispatches gameplay protocol operations. No supervisor workflow.
 export function createGuardedDecision(authorized: boolean, leaseInput: Lease, initial: AgentObserveResult,
-  ports: DecisionPorts, ledger: DecisionLedger, signal: AbortSignal) {
+  ports: DecisionPorts, ledger: DecisionLedger, signal: AbortSignal, log?: ConsolaInstance) {
   const lease = structuredClone(leaseInput), before = structuredClone(initial);
   // Private closure latches cannot be reset by mutable reporting data or SDK steps.
   let consumed = false, dispatched = false;
@@ -103,6 +105,9 @@ export function createGuardedDecision(authorized: boolean, leaseInput: Lease, in
         consumed = true; ledger.consumed = true; ledger.accepted++;
         fileCleanupSettled = new Promise<void>(resolve => { finishFileCleanup = resolve; });
         ledger.guidance = decisionGuidance.parse(input);
+        log?.info('Guarded invocation admitted; navigation text validated');
+        log?.info(`Current navigation objective:${displayGuidance(ledger.guidance.objective)}`);
+        log?.info(`Proposed gameplay guidance (advisory):\n  Objective:${displayGuidance(ledger.guidance.objective)}\n  Uncertainty:${displayGuidance(ledger.guidance.uncertainty)}`);
         stage = 'CLAIM_UNVERIFIED';
         file = ports.instructions(guidance);
         ledger.fileCleanup = 'pending';
@@ -115,6 +120,7 @@ export function createGuardedDecision(authorized: boolean, leaseInput: Lease, in
         ledger.allowance = structuredClone(started.run);
         ledger.claim = 'acknowledged';
         unused(started.run);
+        log?.info(`Decision ${started.run.reserved + 1} of ${started.run.limit}; run allowance acknowledged`);
         const runId = started.run.runId;
         stage = 'CAS_UNVERIFIED';
         ledger.promptCAS = 'unknown';
@@ -124,6 +130,7 @@ export function createGuardedDecision(authorized: boolean, leaseInput: Lease, in
         requireLive(changed.sessionId === before.sessionId && changed.revision === before.revision + 1 && changed.instructions === guidance);
         unused(changed.run, runId);
         ledger.promptCAS = 'acknowledged';
+        log?.info(`Applied gameplay guidance (CAS revision ${changed.revision}; scoped advisory only):\n  Objective:${displayGuidance(ledger.guidance.objective)}\n  Uncertainty:${displayGuidance(ledger.guidance.uncertainty)}`);
         stage = 'OBSERVATION_UNVERIFIED';
         const raw = await fenced(() => ports.observe(lease.leaseFile, signal));
         const { observation: ready } = await fenced(() => liveObserve(raw, lease, ports.readPng, signal));
@@ -136,10 +143,12 @@ export function createGuardedDecision(authorized: boolean, leaseInput: Lease, in
         ledger.observation = ready.observationId;
         const scope = { sessionId: ready.sessionId, runId, revision: ready.revision };
         ledger.scope = scope;
+        log?.info('Fresh observation verified after guidance CAS');
         stage = 'DECISION_UNVERIFIED';
         signal.throwIfAborted();
         requireLive(!dispatched);
         dispatched = true; ledger.dispatchConsumed = true; ledger.dispatch = 'unknown';
+        log?.info('Submitting guarded controller decision request; provider dispatch not yet known');
         const decision = await fenced(() => ports.decide({ leaseFile: lease.leaseFile, observationId: ready.observationId, scope }, signal));
         const { receipt } = await fenced(() => liveDecision(decision, lease, ready, ports.readPng, signal));
         // Receipt has no run/revision properties: correlate scope via the sent
@@ -154,6 +163,11 @@ export function createGuardedDecision(authorized: boolean, leaseInput: Lease, in
         ledger.receipt = { ...facts, before: { observationId: ready.observationId, sessionId: ready.sessionId, mapKey: ready.mapIdentity.mapKey, tic: ready.tic }, after: after ? { observationId: after.observationId, sessionId: after.sessionId,
           mapKey: after.mapIdentity.mapKey, tic: after.tic, phase: after.phase } : null };
         ledger.dispatch = 'validated-receipt';
+        log?.info(`Controller receipt validated: ${receipt.outcome}; SDK invoked: ${receipt.sdkInvoked}`);
+        if ((receipt.outcome === 'completed' || receipt.outcome === 'terminal') && !receipt.completionUncertain &&
+            receipt.action !== null && receipt.verifiedTics !== null && after)
+          log?.info(`Verified action: ${receipt.action}, ${receipt.verifiedTics} tics (tic ${ready.tic} → ${after.tic})`);
+        else log?.warn('No fully verified action completion; inspect receipt outcome and uncertainty');
         ledger.accounting = 'unavailable';
         if (receipt.outcome === 'completed') {
           stage = 'ACCOUNTING_UNAVAILABLE';
@@ -161,16 +175,18 @@ export function createGuardedDecision(authorized: boolean, leaseInput: Lease, in
           stage = 'ACCOUNTING_MISMATCH'; ledger.accounting = 'mismatch';
           requireLive(!('error' in final));
           ledger.finalRun = structuredClone(final.run);
-          requireLive(final.sessionId === ready.sessionId && final.revision === ready.revision && same(final.configuration, ready.configuration) &&
+          requireLive(final.run && final.sessionId === ready.sessionId && final.revision === ready.revision && same(final.configuration, ready.configuration) &&
             same(final.run, { runId, active: false, limit: 1, reserved: 1, sdkInvoked: 1, remaining: 0 }));
           ledger.accounting = 'exhausted';
-        }
+          log?.info(`Budget verified: ${final.run.sdkInvoked} SDK attempt used / ${final.run.limit} total; reserved=${final.run.reserved}, remaining=${final.run.remaining}`);
+        } else log?.warn('Final budget accounting unavailable for this receipt outcome');
         feedback = { status: 'receipt', error: null, consumed, receipt: ledger.receipt, accounting: ledger.accounting };
       } catch {
         if (!consumed || stage === 'ALREADY_CONSUMED') ledger.rejected++;
         feedback = { status: stage === 'ALREADY_CONSUMED' ? 'rejected' : ledger.receipt ? 'receipt' : consumed ? 'uncertain' : 'rejected',
           error: signal.aborted ? 'CANCELLED' : !authorized ? 'UNAUTHORIZED' : stage,
           consumed, receipt: ledger.receipt, accounting: ledger.accounting };
+        log?.warn(`Guarded decision feedback: ${feedback.status}; ${feedback.error}`);
       } finally {
         if (file) { try { file.remove(); ledger.fileCleanup = 'removed'; } catch { ledger.fileCleanup = 'failed'; } }
         finishFileCleanup();
