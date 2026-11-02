@@ -61,8 +61,11 @@ node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/supervisor.
 node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7
 ```
 
-`npm test` from this directory runs the same fake-only suite. It requires no
-ignored real-Doom fixture, broker, browser, WAD, network or model inference.
+`npm test` from this directory discovers all `*.test.ts` files: the fake-only
+supervisor and bridge suites plus the read-only landmark tests below. Only the
+landmark integration test uses optional ignored snapshot/observation files;
+missing files skip that test explicitly. No test uses a broker, browser, WAD,
+network or model inference.
 `node --experimental-strip-types supervisor.ts --help` is inert. There is no
 npm live-run script; use only the explicit gated invocation in
 [SUPERVISOR.md](SUPERVISOR.md#human-invocation-after-separate-approval), with fresh
@@ -145,3 +148,85 @@ then exits. A timeout or failed run must not be automatically retried.
 The offline tests exercise registration, descriptor guards, synthetic callbacks,
 echo validation and the authorization gate locally. They do not launch ACP, bind
 a listener, establish real tool-result consumption or demonstrate bridge success.
+
+## Read-only historical landmark experiment
+
+`landmarks-tool-loop-agent.ts` exposes `LandmarksToolLoopAgent`, independently of
+the supervisor and typed Doom client. Its sole host callback accepts `{}` and
+delegates retrieval to the existing `findMemory(input)` in
+[`app/doom-memory.mjs`](../../app/doom-memory.mjs). That JavaScript function has no
+TypeScript declaration; its input is validated by `memoryFindSchema`. Importing
+it starts no MCP server, gameplay or database connection. Lookup opens SQLite
+with `readOnly: true`, checks application ID/schema v2, uses a read transaction,
+and closes the handle. Only `recordMemory` initializes schemas or writes notes;
+the experiment never calls it. Tests use it solely to initialize throwaway fixtures.
+
+The fixed snapshot is resolved from the module URL to the worktree's ignored
+`.local/doom-memory.sqlite`, never the source worktree database. Missing storage,
+failed integrity/schema checks, or `DOOM_MEMORY_DB` pointing elsewhere fail
+closed; there is no database creation, copying, fallback, migration or journal-mode
+change. The snapshot was already present, so no backup was needed for this task.
+The existing lookup preserves its 100ms busy timeout and foreign-key setting.
+
+`landmarks-tool.ts` loads the existing ignored
+`.local/real-doom/observation.{json,png}` relative to this experiment. It validates
+the saved observation with the shared parser (including canonical IWAD digest,
+E1M1 map key and native/Canvas frame receipt agreement) and checks the saved PNG
+SHA-256. This validates archived capture evidence, not the current browser or a
+new native execution. Source prose inside notes does not verify map identity.
+The current saved observation is `d4ba38e3-6e53-474e-b77d-0053a43e0dd8`, tic 1,
+with namespace
+`doom-map:v1:iwad-sha256:1d7d43be501e67d927e415e0b8f3e29c3bf33075e859721816f652a526cac771:E1M1`.
+Native 16.16 coordinates and binary angle convert to `(1056, -3616)`, heading 90°.
+The fixed nearby query uses radius 1024 (the existing maximum) and limit 3;
+`findMemory` ranks by distance, circular heading difference, then ID. Landmark
+filtering happens after that cap, so this is not an exhaustive map search.
+
+The tool retains real IDs, namespace, anchor, spatial deltas, revision, flags,
+source, creation time and `unverified` status. It caps the hypothesis summary at
+400 characters, question at 200, and latest assessment at 400; earlier assessment
+history stays out of the tool response. Its JSON is bounded to 12,000 characters
+and travels in the explicit MCP `content: [{type: 'text', text: JSON.stringify(result)}]`
+envelope. All note text remains untrusted advisory data. The model chooses one
+candidate and explains why; strict validation requires its ID and evidence ID,
+namespace, advisory status, source and summary to match a callback candidate.
+It distinguishes invalid JSON, invalid selection shape, callback failure and
+evidence mismatch. Empty retrieval has a separate validated JSON result.
+Only a selected landmark yields `outcome: "passed"` and exit 0; valid empty
+retrieval yields `outcome: "empty"` and exit 1 because it proves no selection.
+An explanation's factual correctness is not machine-proven by these checks.
+
+Unmetered checks from the repository root (dependencies already installed):
+
+```sh
+node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/find-landmarks-acp-smoke.test.ts experiments/codex-acp-ai-sdk7/landmarks-tool-loop-agent.test.ts
+node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7
+git diff --check
+```
+
+The isolated schema-derived fixtures prove lookup/ranking, namespace isolation,
+empty results, read-only behavior, MCP schema/JSON round-trip, candidate selection
+and rejection cases. The separate optional snapshot integration checks the real
+saved pose, both historical note IDs, MCP evidence preservation, and unchanged
+snapshot bytes, mtime and directory entries. It explicitly skips if the local
+snapshot or saved capture files are missing. This is offline retrieval proof;
+it does not prove ACP consumed or selected a historical landmark.
+
+Only after separate explicit approval, the one optional metered ACP command is:
+
+```sh
+node --experimental-strip-types experiments/codex-acp-ai-sdk7/landmarks-tool-loop-agent.ts --authorize-acp 2>/dev/null
+```
+
+This command has **not been run as part of implementation**. Without the exact
+flag (including on `--help`) no ACP process starts. It reuses the smoke runner's
+host registration and two-entry SDK 6/7 tool-map reconstruction, GPT-6 Luna/xhigh,
+read-only ACP mode, temporary empty cwd, one SDK request, at most two SDK steps,
+one callback, no SDK retries and 120-second deadline. It does not read/change
+credentials or fetch model packages. Callback receipts, SDK tool notifications,
+selection validation, session continuity and public cleanup are reported as JSON
+to stdout, with no report/transcript files. Existing smoke caveats about internal
+tools, lazy-auth retry, generated MCP listener, subprocess exit, cancellation,
+billing and cleanup still apply. Pending setup can outlive deadline reporting
+and leave an empty temporary directory. No gameplay/agent MCP server is registered or
+contacted, and no browser session is observed or advanced.
