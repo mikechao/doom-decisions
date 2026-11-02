@@ -103,3 +103,45 @@ success. Read-only mode and empty MCP configuration do not establish full Codex
 internal-tool isolation. Public cleanup does not guarantee descendant termination
 or remote cancellation/billing cessation; missing usage is unavailable, not zero.
 Offline tests do not independently establish live browser/WASM correctness.
+
+## Isolated host-tool bridge smoke
+
+`find-landmarks-acp-smoke.ts` is a separate, synthetic bridge experiment. It does
+not import the supervisor, access Doom or SQLite, or assess navigation. Importing
+it, running without arguments, or using `--help` starts no ACP process. The pinned
+two-entry tool map keeps the registered callback and reconstructs the generated
+dynamic descriptor for SDK 7; its runtime ACP/MCP path remains unproven.
+
+Offline checks from the repository root:
+
+```sh
+node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7
+node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/find-landmarks-acp-smoke.test.ts
+```
+
+Only after separate explicit approval for a metered ACP run, subprocesses and
+the generated MCP loopback listener, run once from the repository root:
+
+```sh
+node --experimental-strip-types experiments/codex-acp-ai-sdk7/find-landmarks-acp-smoke.ts --authorize-acp 2>/dev/null
+```
+
+The runner uses GPT-6 Luna/xhigh, read-only mode, one SDK request, at most two SDK
+steps, no SDK retries and a 120-second deadline. It registers tools before session
+creation. The MCP proxy adds an effective server despite configured `mcpServers: []`.
+Neither SDK bounds nor read-only mode isolate all internal Codex tools/work;
+provider lazy authentication may retry internally. Existing sign-in is required;
+this runner does not configure credentials. Debug flags must be disabled.
+
+Success requires exactly one completed host callback and an exact final JSON echo
+of the ID/marker generated only inside that callback. Repeated/invalid callbacks
+are recorded and abort the run. SDK tool events are notifications, not callback
+receipts. The JSON report goes to stdout; no transcript/report files are created.
+Only a fresh temporary cwd is created, and only an empty cwd is removed. Cleanup
+requests cancellation and calls public provider cleanup; cleared session state is
+not proof of child/descendant exit or stopped remote processing/billing. The CLI
+then exits. A timeout or failed run must not be automatically retried.
+
+The offline tests exercise registration, descriptor guards, synthetic callbacks,
+echo validation and the authorization gate locally. They do not launch ACP, bind
+a listener, establish real tool-result consumption or demonstrate bridge success.
