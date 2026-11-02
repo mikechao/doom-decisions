@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmdirSync, writeSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmdirSync, writeSync, writeFileSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,13 +11,14 @@ import {
 import { cleanupDoomProviders, fenceDoomInitialization, type DoomInitialization } from './agent-lifecycle.ts';
 import { consumeDoomStream, DoomStreamError, envelopeMatches } from './agent-stream.ts';
 import {
-  createConsultLandmarks, createDoomPlayAgent, rebuildParentTools, validateParentOutput, type ConsultReceipt,
+  createConsultLandmarks, createDoomPlayAgent, rebuildParentTools, validateParentOutput, validateDecisionOutput, maxDecisionOutputCharacters, type ConsultReceipt,
 } from './doom-play-agent.ts';
 import { rebuildSmokeTools } from './find-landmarks-acp-smoke.ts';
 import { createLandmarksAgent } from './landmarks-tool-loop-agent.ts';
 import {
   createLandmarksTool, lookupLandmarks, type LandmarkReceipt, type SavedContext,
 } from './landmarks-tool.ts';
+import { createGuardedDecision, decisionLedger, type DecisionPorts } from './guarded-decision.ts';
 import { liveObserve, parseLease, requireLive, type ReadPng } from './live-observation.ts';
 
 type Provider = Pick<ReturnType<typeof createACPProvider>, 'cleanup' | 'getSessionId'> & {
@@ -25,7 +26,7 @@ type Provider = Pick<ReturnType<typeof createACPProvider>, 'cleanup' | 'getSessi
   initSession: (...args: Parameters<ReturnType<typeof createACPProvider>['initSession']>) => Promise<unknown>;
 };
 
-// Only passive typed-client operations are exposed. Construction/import is inert.
+// Construction/import is inert. Mutating ports are wired only behind explicit authorization.
 export type MainPorts = {
   attach(signal: AbortSignal): Promise<AttachedLease>;
   observe(leaseFile: string, signal: AbortSignal): Promise<MaterializedObserve>;
@@ -34,11 +35,12 @@ export type MainPorts = {
   makeDirectory(): string;
   removeDirectory(path: string): void;
   lookup: typeof lookupLandmarks;
+  decision?: DecisionPorts;
 };
 
 const operatorInstruction = 'Browser ownership is not released by ACP cleanup or process exit. Press Stop Agent in the browser before another attach, including after failed or uncertain attachment. Do not automatically retry.';
 
-export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs = 120_000) {
+export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs = 120_000, authorizeOneDecision = false) {
   const abort = new AbortController();
   const interrupt = () => abort.abort(signal.reason);
   signal.addEventListener('abort', interrupt, { once: true });
@@ -49,6 +51,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
   const directories: string[] = [];
   const landmarks: LandmarkReceipt[] = [];
   const consults: ConsultReceipt[] = [];
+  let guardedDecision: ReturnType<typeof createGuardedDecision> | undefined;
   const report = {
     outcome: 'failed', error: null as string | null,
     lease: { state: 'not-attempted' as 'not-attempted' | 'possibly-held' | 'held', leaseFile: null as string | null },
@@ -57,9 +60,11 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     sdkRequests: { parent: 0, child: 0 }, callbacks: { consult: 0, find: 0 },
     parentStream: null as Awaited<ReturnType<typeof consumeDoomStream>> | null,
     childStream: null as ConsultReceipt['childStream'],
-    result: null as ReturnType<typeof validateParentOutput> | null,
+    result: null as ReturnType<typeof validateParentOutput> | ReturnType<typeof validateDecisionOutput> | null,
+    decision: decisionLedger(),
+    receiptAwareSummary: false,
     cleanup: [] as string[], directoryCleanup: [] as string[],
-    evidenceLimits: 'One fresh passive observation; PNG bytes supplied as image input, not proof of model understanding. Advisory output only; no gameplay. Public ACP cleanup does not prove child-process exit or complete tool isolation.',
+    evidenceLimits: 'Initial PNG input only; structured decision feedback is not a second agent-visible image. Offline tests do not prove live inference or model understanding. Public ACP cleanup does not prove child-process exit or complete tool isolation.',
   };
   let onAbort = () => {};
   try {
@@ -103,12 +108,18 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
         mapKey: context.mapIdentity.mapKey, pngSha256: observation.pngSha256, imageBytes: image.length };
       const count = (role: 'parent' | 'child') => () => {
         abort.signal.throwIfAborted();
-        if (++report.sdkRequests[role] !== 1) throw new Error('REPEATED_SDK_REQUEST');
+        if (++report.sdkRequests[role] > (authorizeOneDecision && role === 'parent' ? 3 : 1)) throw new Error('REPEATED_SDK_REQUEST');
       };
       const childTools = acpTools({ findLandmarks: createLandmarksTool(context, landmarks, abort, undefined, ports.lookup) });
       const child = createLandmarksAgent(childModel, rebuildSmokeTools(childTools), count('child'));
-      const parentTools = acpTools({ consultLandmarks: createConsultLandmarks(context, child, landmarks, consults, abort) });
-      const parent = createDoomPlayAgent(parentModel, rebuildParentTools(parentTools), count('parent'), 'live');
+      requireLive(!authorizeOneDecision || ports.decision);
+      if (authorizeOneDecision && ports.decision)
+        guardedDecision = createGuardedDecision(true, lease, observation, ports.decision, report.decision, abort.signal);
+      const parentTools = acpTools({
+        consultLandmarks: createConsultLandmarks(context, child, landmarks, consults, abort),
+        ...(guardedDecision ? { executeGuardedDecision: guardedDecision } : {}),
+      });
+      const parent = createDoomPlayAgent(parentModel, rebuildParentTools(parentTools), count('parent'), 'live', authorizeOneDecision);
       for (const [owner, initialize] of [
         [childProvider, () => childProvider.initSession(childTools)],
         [parentProvider, () => parentProvider.initSession(parentTools)],
@@ -123,25 +134,39 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
       requireLive(ids[0] && ids[1] && ids[0] !== ids[1]);
       const stream = await parent.stream({
         messages: [{ role: 'user', content: [
-          { type: 'text', text: `Propose one navigation question from this fresh verified observation and its attached PNG. Historical memory is advisory. State=${JSON.stringify(payload)}` },
+          { type: 'text', text: `${authorizeOneDecision ? 'Request the single authorized guarded decision, then report its actual result in this same run.' : 'Propose one navigation question.'} Reason from this fresh verified observation and its attached PNG. Historical memory is advisory. State=${JSON.stringify(payload)}` },
           { type: 'file', data: image, mediaType: 'image/png' },
         ] }],
         abortSignal: abort.signal,
       });
       abort.signal.throwIfAborted();
       const consumed = await consumeDoomStream(stream, abort.signal,
-        output => envelopeMatches(output, consults.length === 1 ? consults[0].envelope : null), 'consultLandmarks');
+        (output, name, ordinal) => envelopeMatches(output, name === 'executeGuardedDecision'
+          ? report.decision.calls[ordinal]?.envelope ?? null : consults[ordinal]?.envelope ?? null),
+        authorizeOneDecision ? ['consultLandmarks', 'executeGuardedDecision'] : 'consultLandmarks',
+        authorizeOneDecision ? maxDecisionOutputCharacters : undefined,
+        // Allow one event per text character plus the existing 2000-event
+        // allowance for tool/lifecycle events and empty chunks; floods stay finite.
+        authorizeOneDecision ? maxDecisionOutputCharacters + 2000 : undefined);
+      report.parentStream = consumed;
+      requireLive((consumed.tools.consultLandmarks?.calls ?? 0) === consults.length &&
+        (consumed.tools.executeGuardedDecision?.calls ?? 0) === report.decision.attempted);
       const [text, steps, finish, rawFinish] = await Promise.all([
         stream.text, stream.steps, stream.finishReason, stream.rawFinishReason,
       ]);
       abort.signal.throwIfAborted();
       requireLive(finish === 'stop' && rawFinish === 'end_turn' && steps.length === consumed.steps &&
         providers.every((provider, index) => provider.getSessionId() === ids[index]) &&
-        report.sdkRequests.parent === 1 && report.sdkRequests.child === 1);
-      const result = validateParentOutput(text, consults, landmarks, abort.signal);
-      report.parentStream = consumed;
+        report.sdkRequests.parent >= 1 && report.sdkRequests.parent <= (authorizeOneDecision ? 3 : 1) &&
+        report.sdkRequests.child === consults.length);
+      const result = authorizeOneDecision
+        ? validateDecisionOutput(text, report.decision, consults, landmarks, abort.signal)
+        : validateParentOutput(text, consults, landmarks, abort.signal);
       report.result = result;
-      report.outcome = consults[0].result?.selection.status === 'empty' ? 'empty' : 'completed';
+      report.receiptAwareSummary = authorizeOneDecision;
+      report.outcome = authorizeOneDecision
+        ? report.decision.receipt && report.decision.calls[0]?.feedback.error === null ? report.decision.receipt.outcome : 'failed'
+        : consults[0].result?.selection.status === 'empty' ? 'empty' : 'completed';
     };
     await Promise.race([work(), cancelled]);
   } catch (error) {
@@ -154,6 +179,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     signal.removeEventListener('abort', interrupt);
     abort.abort();
     abort.signal.removeEventListener('abort', onAbort);
+    await guardedDecision?.settleFileCleanup();
     report.cleanup = cleanupDoomProviders(providers, startups);
     for (const directory of directories) {
       try { ports.removeDirectory(directory); report.directoryCleanup.push('empty-directory-removed'); }
@@ -163,13 +189,23 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
         report.directoryCleanup.some(value => value !== 'empty-directory-removed')) {
       report.outcome = 'failed'; report.result = null; report.error ??= 'CLEANUP_UNVERIFIED';
     }
+    if (report.decision.fileCleanup === 'failed') { report.outcome = 'failed'; report.error ??= 'INSTRUCTIONS_CLEANUP_FAILED'; }
     report.callbacks = { consult: consults.length, find: landmarks.length };
     report.childStream = consults[0]?.childStream ? { ...consults[0].childStream } : null;
   }
-  return report;
+  return structuredClone(report); // Late settlements cannot rewrite returned evidence.
 }
 
-async function launch() {
+export function reportExitCode(report: Awaited<ReturnType<typeof runMain>>, authorizeOneDecision: boolean) {
+  if (report.error !== null || report.result === null) return 1;
+  if (!authorizeOneDecision) return ['completed', 'empty'].includes(report.outcome) ? 0 : 1;
+  const receipt = report.decision.receipt;
+  return ['completed', 'terminal'].includes(report.outcome) &&
+    report.receiptAwareSummary && report.decision.dispatch === 'validated-receipt' &&
+    receipt?.outcome === report.outcome && receipt.completionUncertain === false ? 0 : 1;
+}
+
+async function launch(authorizeOneDecision = false) {
   for (const [name, expected] of Object.entries({ ai: '7.0.159', '@mcpc-tech/acp-ai-provider': '0.3.9',
     '@mcpc-tech/acp-ai-provider/node_modules/ai': '6.0.320', '@agentclientprotocol/codex-acp': '2.5.0',
     '@openai/codex': '0.165.0' })) {
@@ -201,18 +237,34 @@ async function launch() {
         session: { cwd, mcpServers: [] }, persistSession: true,
       }),
       lookup: lookupLandmarks,
-    }, abort.signal);
+      ...(authorizeOneDecision ? { decision: {
+        startRun: (input, signal) => executeAgentOperation({ op: 'start-run', ...input }, options(signal)),
+        setPrompt: (input, signal) => executeAgentOperation({ op: 'set-prompt', ...input }, options(signal)),
+        observe: (leaseFile, signal) => executeAgentOperation({ op: 'observe', leaseFile }, options(signal)),
+        decide: (input, signal) => executeAgentOperation({ op: 'decide', ...input }, options(signal)),
+        getConfig: (input, signal) => executeAgentOperation({ op: 'get-config', ...input }, options(signal)),
+        readPng: (path, signal) => readFile(path, { signal }),
+        instructions: text => {
+          const directory = mkdtempSync(join(tmpdir(), 'doom-guarded-instructions-'));
+          const path = join(directory, 'instructions.txt');
+          try { writeFileSync(path, text, { mode: 0o600, flag: 'wx' }); }
+          catch (error) { rmSync(directory, { recursive: true, force: true }); throw error; }
+          return { path, remove: () => rmSync(directory, { recursive: true, force: true }) };
+        },
+      } satisfies DecisionPorts } : {}),
+    }, abort.signal, 120_000, authorizeOneDecision);
     writeSync(1, `${JSON.stringify(report, null, 2)}\n`);
-    return report.outcome === 'failed' ? 1 : 0;
+    return reportExitCode(report, authorizeOneDecision);
   } finally {
     process.removeListener('SIGINT', interrupt);
     process.removeListener('SIGTERM', interrupt);
   }
 }
 
-export async function main(args: string[], run: () => Promise<number> = launch, print = (value: string) => { writeSync(1, value); }) {
-  if (args.length === 1 && args[0] === '--authorize-live-observation-acp') return run();
-  print('Inert: no attach, SQLite open or ACP startup. After separate live authorization only:\nnode --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-acp\n' + operatorInstruction + '\n');
+export async function main(args: string[], run: (authorizeOneDecision?: boolean) => Promise<number> = launch, print = (value: string) => { writeSync(1, value); }) {
+  if (args.length === 1 && args[0] === '--authorize-live-observation-acp') return run(false);
+  if (args.length === 2 && new Set(args).size === 2 && args.includes('--authorize-live-observation-acp') && args.includes('--authorize-agent-one-decision')) return run(true);
+  print('Inert: no attach, SQLite open or ACP startup. After separate live authorization only:\nnode --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-acp\n' + 'One decision additionally requires --authorize-agent-one-decision and a restarted broker with AGENT_DECISION_BUDGET=1.\n' + operatorInstruction + '\n');
   return args.length === 0 || (args.length === 1 && args[0] === '--help') ? 0 : 2;
 }
 

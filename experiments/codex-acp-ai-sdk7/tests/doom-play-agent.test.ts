@@ -355,3 +355,20 @@ test('CLI is inert without exact opt-in; fake launch only and cleanup does not s
   ]), ['cleanup-failed; child-exit-unverified', 'returned-session-cleared; child-exit-unverified']);
   assert.equal(second, 1);
 });
+
+
+test('multi-tool stream correlates each accepted call and rejects duplicates/orphans/name swaps', async () => {
+  const signal = new AbortController().signal;
+  const call = (id: string, name: string) => ({ type: 'tool-call', toolCallId: id, toolName: dynamicName,
+    input: { toolCallId: id, toolName: `mcp.acp-ai-sdk-tools.${name}`, args: {} } });
+  const result = (id: string, output: string) => ({ type: 'tool-result', toolCallId: id, toolName: dynamicName, output });
+  const first = call('c1', 'consultLandmarks'), second = call('c2', 'executeGuardedDecision');
+  const a = result('c1', 'consultLandmarks'), b = result('c2', 'executeGuardedDecision');
+  const consume = (events: ReturnType<typeof call | typeof result>[]) => consumeDoomStream({ fullStream: (async function* () {
+    yield* events; yield { type: 'finish-step' }; yield { type: 'finish' };
+  })() }, signal, (output, name, ordinal) => output === name && ordinal === 0, ['consultLandmarks', 'executeGuardedDecision']);
+  assert.equal((await consume([first, a, second, b])).drained, true);
+  for (const events of [[first, a, second, b, b], [first, a, second, result('orphan', 'executeGuardedDecision')],
+    [first, a, second, result('c2', 'consultLandmarks')], [first, a, first], [first, a, call('c2', 'doom_decide')]])
+    await assert.rejects(consume(events), error => error instanceof DoomStreamError);
+});

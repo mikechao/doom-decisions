@@ -1,66 +1,141 @@
 # DoomPlayAgent and bounded Doom supervisor
 
-`src/main.ts` is the intended primary DoomPlayAgent entry point. Its current
-milestone is one passive live observation and one parent invocation, delegating
-to LandmarksToolLoopAgent once. It does not start a browser/server, claim a run,
-call Decisions, change settings, or advance Doom. The separate bounded supervisor
-and archived delegation smoke below remain independent experiment entry points.
+`src/main.ts` is the primary composition root. Its original
+`--authorize-live-observation-acp` mode remains passive: attach, one verified PNG,
+parent/child advisory tools, final validation, cleanup and retained browser lease.
+It cannot claim a run or dispatch gameplay. Default/help are inert: no attach,
+SQLite open, ACP process or inference.
 
-Default and `--help` invocations are inert: no attachment, SQLite open, ACP process
-or inference. From the repository root, after **separate live authorization only**:
+The separate **`--authorize-agent-one-decision`** flag enables a small agent-driven
+experiment. It also requires `--authorize-live-observation-acp`. Only the parent
+DoomPlayAgent receives `executeGuardedDecision({ objective, uncertainty })`.
+The parent may consult the existing read-only LandmarksToolLoopAgent once, invokes
+the guarded tool itself, receives an explicit MCP text envelope, and continues
+reasoning in the same parent run. `main.ts` never continues into a post-agent
+`decide`. The independent supervisor below is reference material, not imported
+or used by this path.
+
+The host callback in `src/guarded-decision.ts` rejects malformed, oversized,
+control-like or unsafe advisory input before claiming anything. The two text
+fields are advisory only; there is no action, button, mask, duration, run ID,
+raw template or arbitrary control field. Conservative text rejection is **not**
+semantic isolation of natural language. Host-held original settings are preserved,
+including include flags, six tics and `{{tics}}`. Historical notes remain unverified;
+final attribution is resolved from the existing validated consultation receipts,
+never parent-restated provenance. Without consultation, attribution must be null.
+
+A private invocation latch is consumed before the first mutating transport call.
+A second independent latch guards decision dispatch. Neither can be reset by
+model retries, SDK steps, failed transport, final-output repair or lost responses.
+The typed callback sequence is exactly:
+
+1. `start-run` with the initial observation/session/revision; require the same
+   configuration and acknowledged `active=true, limit=1, reserved=0,
+   sdkInvoked=0, remaining=1`. A larger allowance is refused, never repaired.
+2. `set-prompt` with an owned private instructions file and scoped CAS; require
+   the exact guidance and revision +1, same run and unused counters.
+3. `observe` followed by `liveObserve`: different observation ID, correct
+   lease/epoch/session/map, unchanged tic/native hashes/telemetry/probe/previous
+   action and gameplay counters, new configuration/revision and unused run.
+   Incidental render/frame counters may change. PNG bytes and hashes are validated.
+4. `decide` with only lease, fresh observation ID and session/run/revision scope.
+   Decisions selects the action; the controller applies and verifies actual tics.
+   `liveDecision` checks the actual typed receipt and frame. No invented receipt
+   run/revision fields are used.
+5. For healthy completion only, one read-only `get-config` corroborates the same
+   run/config/revision and `active=false, limit=1, reserved=1, sdkInvoked=1,
+   remaining=0`. Terminal/retired accounting is marked unavailable; verified
+   native prefixes remain distinct from a fully completed action.
+
+The MCP result contains compact host receipt facts, including outcome, reason,
+uncertainty, action, requested/reported/verified/cumulative tics, SDK invocation,
+provider/model metadata and before/after identities. It contains no PNG, file
+paths, private memory text or unrestricted error details. The authorized final
+JSON extends the passive schema with `decision`, which must exactly match the
+host-captured structured result. This proves structured receipt grounding, not
+semantic truth of every sentence of model prose. A malformed/ungrounded final
+response, accounting failure or cleanup failure cannot erase the report's
+independently verified action. Nothing is replayed to obtain nicer prose.
+
+Both agents retain separate ACP model/provider/session owners and the pinned
+SDK 6/7 structural bridge, without new casts or dependency changes. The installed
+AI SDK 7.0.159 `ToolLoopAgent` supports `stopWhen: isStepCount(3)` for optional
+consultation, decision, final response; `maxRetries: 0` remains. ACP's own tool
+loop can deliver consultation, decision and final text within **one** SDK request
+and step. The SDK step bound does not bound ACP-internal work. Streams must fully
+finish, retain stable session identities, and correlate every accepted tool call
+ID/name/result; duplicate, orphan, foreign and mismatched results fail closed.
+Reports separate parent/child SDK requests, steps and tool counts from host tool
+attempts/rejections/consumption, claim, allowance, CAS, fresh observation,
+dispatch delivery, reservation/accounting and actual provider SDK invocation.
+
+The initial PNG is still the only image delivered to the parent. The internal
+post-CAS `observe` is a host protocol step. Structured resulting-state feedback
+does not demonstrate agent-controlled observation cadence or supply a second
+image. An agent-visible `observeDoom` is deferred until its own image seam can be
+proven. No generalized executor, continuous loop, automatic retry or reattach is
+introduced.
+
+Future **operator-run examples only**, requiring separate live authorization;
+these commands have not been executed for this implementation:
 
 ```bash
+# First fully stop any prior dev:agent process. Configure its ignored local file
+# with AGENT_DECISION_BUDGET=1, then start a NEW broker/dev process:
+npm --prefix app run dev:agent
+
+# After browser preparation and credentials/readiness, in another terminal:
+node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-acp --authorize-agent-one-decision
+
+# Observation-only mode (no gameplay allowance consumed):
 node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-acp
 ```
 
-Manual prerequisites: the operator starts `npm --prefix app run dev:agent`, opens
-exactly one `http://127.0.0.1:5174/` page, waits for verified game readiness, and
-ensures no existing CLI owner/run. This entry does not require or consume a
-Decisions allowance. The existing local read-only landmark snapshot must be present
-and valid; a namespace with no matching landmarks legitimately returns empty.
-Missing/invalid storage fails closed, with no fallback to archived observation
-coordinates or a different IWAD namespace. Do not enable provider debug logging.
-The image/context and advisory historical data reach Codex ACP; this is metered
-inference even though no Decisions request occurs.
+The operator prepares exactly one `http://127.0.0.1:5174/` dev:agent browser,
+ensures no previous owner or active run, and presses **Stop Agent** to reset any
+previous ownership before retrying. `AGENT_DECISION_BUDGET` is read from ignored
+`app/.env.agent.local` and process-cached by the broker: editing it or changing an
+environment variable without fully restarting the broker is insufficient. This
+entry cannot supply/replenish the allowance. Budget is SDK attempts, not dollars.
+Browser preparation may use local game assets and live requests can incur charges.
+The browser needs usable provider credentials; Codex ACP needs its own credentials.
+Do not enable provider debug logging. Optional historical consultation also needs
+the existing valid read-only landmark snapshot; missing storage fails closed.
 
-The typed client owns attach/request correlation and PNG materialization;
-`liveObserve()` revalidates the lease envelope, PNG bytes/hash, and strict DTO.
-The browser/controller owns freshness and native/Canvas verification. This one-shot
-path requests exactly one new capture; it makes no claim of a wall-clock freshness
-TTL or continued ownership during subsequent inference. The capture's map key and
-converted native pose fix the nearby query (radius 128, limit 3). Actual PNG bytes
-enter the parent's multimodal stream; a path/hash alone is never image input.
-The parent and child use distinct provider/model/session owners and the existing
-SDK 6/7 tool bridge. Both streams must finish and contain exactly one correlated
-tool call/result. Reports include validated advisory output, host-resolved memory
-attribution, source identity and bounded counts, excluding raw transcripts.
+OpenRouter is the browser default; agent `AGENT_MODEL=gpt6` chooses
+`openai/gpt-6-luna-decisions` **through OpenRouter**, while the default `jev`
+chooses `typesafe/jev-1.14`. This does not select the experimental direct OpenAI
+endpoint (`VITE_DECISION_PROVIDER=openai`). The ACP reasoning model is separate
+from the browser Decisions model. No credential/model/provider files were changed.
 
-ACP cleanup and empty temporary-directory removal run on success, failure and
-cancellation. Pending initialization gets the existing late-settlement cleanup
-fence and remains `cleanup-unverified` in the report; public cleanup never proves
-subprocess exit. The entry has a 120-second cooperative deadline and SIGINT/SIGTERM
-cancellation. These do not bound internal Codex work or prove billing stopped.
+**The browser lease is retained.** Successful attach reports `held`; lost/uncertain
+attach reports `possibly-held`. ACP cleanup, process exit and deleting lease files
+do not revoke browser ownership. Press **Stop Agent** before every retry. No
+revoke/detach is implemented. Owned instructions files are removed; typed-client
+lease/PNG files remain in their separate private directory. Reports preserve
+unknown outbound delivery before claim/CAS/decide transport. Cancellation or the
+120-second cooperative deadline fences all further mutations and late results;
+neither proves remote processing or billing stopped. Public ACP cleanup never
+proves subprocess exit, full tool isolation or successful network cancellation.
 
-**The browser lease is retained.** Successful attach reports `held` (last confirmed
-ownership; it can later be revoked externally). Lost/uncertain attach reports
-`possibly-held`; no release, revoke, Stop, retry or reattach is attempted. Press
-**Stop Agent** in the browser after every attempted run before another attach,
-including failed attempts that may have attached. Follow the existing dev:agent
-restart/readiness procedure for another session. CLI lease/PNG receipts remain in
-the client's private temporary directory, identified by `lease.leaseFile` when
-acknowledged; deletion is not ownership release. ACP directories are separate.
-
-Offline verification for this milestone (no SQLite writes, including fixture DBs):
+Offline verification (synthetic PNGs, fake typed HTTP transport without servers,
+in-memory landmark data and deterministic provider streams; no historical DBs):
 
 ```bash
-node --experimental-strip-types --test --test-skip-pattern='local snapshot integration|fixed fixture:|invalid selection keeps settled' experiments/codex-acp-ai-sdk7/tests/*.test.ts
+node --experimental-strip-types --test --test-skip-pattern='local snapshot integration|fixed fixture:|invalid selection keeps settled' experiments/codex-acp-ai-sdk7/tests/main.test.ts experiments/codex-acp-ai-sdk7/tests/doom-play-agent.test.ts experiments/codex-acp-ai-sdk7/tests/landmarks-tool-loop-agent.test.ts experiments/codex-acp-ai-sdk7/tests/find-landmarks-acp-smoke.test.ts
 node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7 --noEmit
+git diff --check
 ```
 
-The skip pattern excludes the archived-snapshot test and four existing tests that
-create/write throwaway SQLite fixtures. New main tests use synthetic PNGs, fake
-typed transport and in-memory landmark data, with real SDK agents and validators.
-They do not establish live browser capture, model image understanding or ACP exit.
+The skip pattern excludes historical-snapshot integration and existing throwaway
+SQLite tests. New success fixtures emit `parent-decision-1` for the registered
+`executeGuardedDecision`, execute the real typed-client/receipt validators, and
+feed the returned MCP block into the same fake ACP session's continuation before
+it emits final JSON. They use real SDK agents, not live ACP/Decisions inference.
+They establish wiring, guards and receipt grounding, not model understanding,
+native gameplay correctness, deployed usability, accounting availability or
+subprocess exit. Builds, live main/supervisor, browser, broker, game assets,
+authenticated APIs and historical SQLite were not run/read for this milestone.
 
 ## Existing bounded supervisor
 
@@ -75,7 +150,8 @@ Use `--live --authorize-decisions N --trial NEW_ID`; legacy one/two flags alias 
 
 | File | Responsibility |
 | --- | --- |
-| `src/main.ts` | Primary one-observation DoomPlayAgent composition root; passive typed operations, real PNG input, nested advisory agents, retained lease reporting and ACP cleanup. |
+| `src/main.ts` | DoomPlayAgent composition root; passive bootstrap, optional explicitly authorized one-shot host tool, stream/report validation and ACP cleanup. |
+| `src/guarded-decision.ts` | Advisory input boundary, one-shot typed controller callback, CAS/freshness/receipt guards and action evidence. |
 | `src/agent-stream.ts` | Shared bounded stream consumption and exact tool call/result/envelope correlation. |
 | `src/agent-lifecycle.ts` | Existing provider initialization fence and truthful cleanup reporting, shared with the archived smoke. |
 | `src/supervisor.ts` | Gated live entry, installed/lock version admission, exclusive trial setup, signals, port composition, report publication and cleanup scheduling; stable workflow re-exports. |
