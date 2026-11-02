@@ -1,6 +1,6 @@
 import { open, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { executeAgentOperation, type AgentClientOptions } from '../../scripts/doom-agent-client.ts';
+import { executeAgentOperation, type AgentClientOptions } from '../../../scripts/doom-agent-client.ts';
 import { parseLease, record, requireLive } from './live-observation.ts';
 import type { SupervisorPorts } from './supervisor-workflow.ts';
 

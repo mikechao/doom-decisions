@@ -11,17 +11,17 @@ Use `--live --authorize-decisions N --trial NEW_ID`; legacy one/two flags alias 
 
 | File | Responsibility |
 | --- | --- |
-| `supervisor.ts` | Gated live entry, installed/lock version admission, exclusive trial setup, signals, port composition, report publication and cleanup scheduling; stable workflow re-exports. |
-| `supervisor-workflow.ts` | Injectable bounded N-decision loop, evidence/report ledger, ACP checkpoints, session checks, cancellation/deadlines and ACP cleanup ownership. |
-| `supervisor-cli.ts` | Typed Doom operation ports, lease tracking, sanitized numbered receipts, PNG reads, temporary instruction-file creation and removal. |
-| `supervisor-acp.ts` | Lazy AI SDK/ACP imports, provider/model configuration and session/generation/cleanup methods. |
-| `live-observation.ts` | Strict live DTO, PNG and correlation validation. |
-| `doom-proposal.ts` | Strict advisory proposal/reassessment schemas and validators. |
-| `supervisor.test.ts` | Fake-only offline regressions, compatibility exports and guarded inert imports/entry paths. |
+| `src/supervisor.ts` | Gated live entry, installed/lock version admission, exclusive trial setup, signals, port composition, report publication and cleanup scheduling; stable workflow re-exports. |
+| `src/supervisor-workflow.ts` | Injectable bounded N-decision loop, evidence/report ledger, ACP checkpoints, session checks, cancellation/deadlines and ACP cleanup ownership. |
+| `src/supervisor-cli.ts` | Typed Doom operation ports, lease tracking, sanitized numbered receipts, PNG reads, temporary instruction-file creation and removal. |
+| `src/supervisor-acp.ts` | Lazy AI SDK/ACP imports, provider/model configuration and session/generation/cleanup methods. |
+| `src/live-observation.ts` | Strict live DTO, PNG and correlation validation. |
+| `src/doom-proposal.ts` | Strict advisory proposal/reassessment schemas and validators. |
+| `tests/supervisor.test.ts` | Fake-only offline regressions, compatibility exports and guarded inert imports/entry paths. |
 
 The entrypoint composes typed Doom ports with the ACP factory's `createACP` port and
 passes them to `supervise()`. Adapters import only workflow types; the workflow
-does not import adapters. `supervisor-cli.ts` calls the checked
+does not import adapters. `src/supervisor-cli.ts` calls the checked
 `scripts/doom-agent-client.ts` executor directly for attach, observe, startRun,
 setPrompt, decide and getConfig. The supervisor has no CLI argument-array port;
 it adds no unused getPrompt/setConfig ports. The public CLI and MCP still use
@@ -36,7 +36,7 @@ configured `node app/agent-mcp.mjs` need no compilation or generated JavaScript.
 The experiment no-emit check follows the executor import and checks its implementation,
 typed inputs and materialized results. The executor owns file-backed lease/settings
 reads, transport, correlation, shared runtime parsers and exclusive PNG writes;
-`live-observation.ts` still independently checks the actual PNG bytes supplied to ACP.
+`src/live-observation.ts` still independently checks the actual PNG bytes supplied to ACP.
 
 Mutation attempts are recorded once inside the bounded scheduling/deadline fence,
 before the typed port is invoked. Claim/decision attempt counters, unknown guidance
@@ -57,16 +57,16 @@ dependencies, offline test/typecheck setup and ignored artifacts. See
 From the repository root, with existing installed tools, safe offline checks are:
 
 ```sh
-node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/supervisor.test.ts
+node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/tests/supervisor.test.ts
 node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7
 ```
 
-`npm test` from this directory discovers all `*.test.ts` files: the fake-only
+`npm test` from this directory discovers `tests/*.test.ts`: the fake-only
 supervisor and bridge suites plus the read-only landmark tests below. Only the
 landmark integration test uses optional ignored snapshot/observation files;
 missing files skip that test explicitly. No test uses a broker, browser, WAD,
 network or model inference.
-`node --experimental-strip-types supervisor.ts --help` is inert. There is no
+`node --experimental-strip-types src/supervisor.ts --help` is inert. There is no
 npm live-run script; use only the explicit gated invocation in
 [SUPERVISOR.md](SUPERVISOR.md#human-invocation-after-separate-approval), with fresh
 human approval, a new trial ID and stderr suppressed as documented.
@@ -109,7 +109,7 @@ Offline tests do not independently establish live browser/WASM correctness.
 
 ## Isolated host-tool bridge smoke
 
-`find-landmarks-acp-smoke.ts` is a separate, synthetic bridge experiment. It does
+`src/find-landmarks-acp-smoke.ts` is a separate, synthetic bridge experiment. It does
 not import the supervisor, access Doom or SQLite, or assess navigation. Importing
 it, running without arguments, or using `--help` starts no ACP process. The pinned
 two-entry tool map keeps the registered callback and reconstructs the generated
@@ -119,14 +119,14 @@ Offline checks from the repository root:
 
 ```sh
 node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7
-node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/find-landmarks-acp-smoke.test.ts
+node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/tests/find-landmarks-acp-smoke.test.ts
 ```
 
 Only after separate explicit approval for a metered ACP run, subprocesses and
 the generated MCP loopback listener, run once from the repository root:
 
 ```sh
-node --experimental-strip-types experiments/codex-acp-ai-sdk7/find-landmarks-acp-smoke.ts --authorize-acp 2>/dev/null
+node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/find-landmarks-acp-smoke.ts --authorize-acp 2>/dev/null
 ```
 
 The runner uses GPT-6 Luna/xhigh, read-only mode, one SDK request, at most two SDK
@@ -151,14 +151,14 @@ a listener, establish real tool-result consumption or demonstrate bridge success
 
 ## Read-only historical landmark experiment
 
-`landmarks-tool-loop-agent.ts` is the side-effect-free agent definition:
+`src/landmarks-tool-loop-agent.ts` is the side-effect-free agent definition:
 `createLandmarksAgent(model, tools, onLanguageModelCallStart)` shows the model,
 landmark-advisor instructions, supplied `findLandmarks` tool map, and unchanged
 SDK limits. It imports no runtime runner, provider, filesystem or SQLite module.
 
-`landmarks-tool-loop-agent-smoke.ts` owns the guarded CLI, ACP provider/session
+`src/landmarks-tool-loop-agent-smoke.ts` owns the guarded CLI, ACP provider/session
 setup, host callback registration, SDK 6/7 tool-map reconstruction, timeout,
-receipts/events, validation, reporting and cleanup. `landmarks-tool.ts` retains
+receipts/events, validation, reporting and cleanup. `src/landmarks-tool.ts` retains
 read-only retrieval and attribution validation. The advisor text is unchanged and
 now supplied through the agent's `instructions`; the runner supplies only the
 request to retrieve and select one landmark. These files are independent of the
@@ -191,7 +191,7 @@ closed; there is no database creation, copying, fallback, migration or journal-m
 change. The snapshot was already present, so no backup was needed for this task.
 The existing lookup preserves its 100ms busy timeout and foreign-key setting.
 
-`landmarks-tool.ts` loads the existing ignored
+`src/landmarks-tool.ts` loads the existing ignored
 `.local/real-doom/observation.{json,png}` relative to this experiment. It validates
 the saved observation with the shared parser (including canonical IWAD digest,
 E1M1 map key and native/Canvas frame receipt agreement) and checks the saved PNG
@@ -222,7 +222,7 @@ An explanation's factual correctness is not machine-proven by these checks.
 Unmetered checks from the repository root (dependencies already installed):
 
 ```sh
-node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/find-landmarks-acp-smoke.test.ts experiments/codex-acp-ai-sdk7/landmarks-tool-loop-agent.test.ts
+node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/tests/find-landmarks-acp-smoke.test.ts experiments/codex-acp-ai-sdk7/tests/landmarks-tool-loop-agent.test.ts
 node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7
 git diff --check
 ```
@@ -241,7 +241,7 @@ selection. No metered inference was run during the refactor.
 Only after separate explicit approval, the one optional metered ACP command is:
 
 ```sh
-node --experimental-strip-types experiments/codex-acp-ai-sdk7/landmarks-tool-loop-agent-smoke.ts --authorize-acp 2>/dev/null
+node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/landmarks-tool-loop-agent-smoke.ts --authorize-acp 2>/dev/null
 ```
 
 This moved command has **not been run as part of this refactor**. Without the exact

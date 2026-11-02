@@ -39,8 +39,7 @@ prepares a game or owns Decisions credentials/provider selection.
 From this experiment directory, invoke once with a new trial ID:
 
 ```sh
-node --experimental-strip-types supervisor.ts \
-  --live --authorize-decisions N --trial NEW_ID 2>/dev/null
+node --experimental-strip-types src/supervisor.ts --live --authorize-decisions N --trial NEW_ID 2>/dev/null
 ```
 
 N must be a positive decimal JavaScript safe integer. Zero, signs, fractions,
@@ -68,13 +67,13 @@ human approval for configuration/restart, gameplay and metered calls.
 
 ## Boundary and sequence
 
-`supervisor-workflow.ts` owns the loop, injected typed ports, evidence ledger,
-checkpoint/session checks, deadlines and ACP cleanup. `supervisor.ts` owns the
+`src/supervisor-workflow.ts` owns the loop, injected typed ports, evidence ledger,
+checkpoint/session checks, deadlines and ACP cleanup. `src/supervisor.ts` owns the
 gated live entry, version admission, trial files, signals, composition and report.
-`supervisor-cli.ts` implements attach/observe/startRun/setPrompt/decide/getConfig
+`src/supervisor-cli.ts` implements attach/observe/startRun/setPrompt/decide/getConfig
 through the shared checked `scripts/doom-agent-client.ts` executor. No argument-array
 port, new RPC operation or controller/bridge/provider change is introduced.
-`supervisor-acp.ts` retains lazy startup, GPT-6 Luna, xhigh, read-only ACP,
+`src/supervisor-acp.ts` retains lazy startup, GPT-6 Luna, xhigh, read-only ACP,
 `persistSession:true`, empty MCP servers and AI SDK `maxRetries:0`.
 
 1. Attach and independently observe. Validate lease/correlation, PNG bytes,
@@ -116,7 +115,7 @@ calls. These conservative text guards can reject benign wording and do not
 provide semantic isolation. Valid advice or `achieved` never proves navigation
 success.
 
-`live-observation.ts` rereads/hashes the actual PNG bytes supplied to ACP and
+`src/live-observation.ts` rereads/hashes the actual PNG bytes supplied to ACP and
 reuses strict DTO parsers. PNG byte hashes differ from native/Canvas RGBA hashes;
 the host trusts the browser's native/Canvas proof and does not independently
 recertify capture or fully decode PNGs. ACP input excludes paths, lease/session
@@ -186,7 +185,7 @@ artifacts remain untouched.
 From the repository root with installed tools:
 
 ```sh
-node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/supervisor.test.ts
+node --experimental-strip-types --test experiments/codex-acp-ai-sdk7/tests/supervisor.test.ts
 node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7
 npm --prefix app test -- tests/agent-bridge.test.ts tests/agent-mcp.test.ts tests/agent-decision.test.ts
 ```

@@ -7,15 +7,15 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
-import { executeAgentOperation, type AgentClientOptions } from '../../scripts/doom-agent-client.ts';
-import { validAgentCommand, type AgentConfiguration, type AgentRunState } from '../../app/src/agent-control.ts';
-import type { AgentDecisionResult, AgentObservation } from '../../app/src/agent-observation.ts';
-import { buildDefaultDecisionRequest } from '../../app/src/decision-request.ts';
-import type { DecisionDiagnostics, DecisionLifecycle } from '../../app/src/decision-provider.ts';
-import { createCLIPorts } from './supervisor-cli.ts';
-import { liveDecision, liveObserve, modelState, parseLease } from './live-observation.ts';
-import { composeGuidance, supervise, type SupervisorACP, type SupervisorPorts } from './supervisor-workflow.ts';
-import { supervisorMain } from './supervisor.ts';
+import { executeAgentOperation, type AgentClientOptions } from '../../../scripts/doom-agent-client.ts';
+import { validAgentCommand, type AgentConfiguration, type AgentRunState } from '../../../app/src/agent-control.ts';
+import type { AgentDecisionResult, AgentObservation } from '../../../app/src/agent-observation.ts';
+import { buildDefaultDecisionRequest } from '../../../app/src/decision-request.ts';
+import type { DecisionDiagnostics, DecisionLifecycle } from '../../../app/src/decision-provider.ts';
+import { createCLIPorts } from '../src/supervisor-cli.ts';
+import { liveDecision, liveObserve, modelState, parseLease } from '../src/live-observation.ts';
+import { composeGuidance, supervise, type SupervisorACP, type SupervisorPorts } from '../src/supervisor-workflow.ts';
+import { supervisorMain } from '../src/supervisor.ts';
 
 function must<T>(value: T | null | undefined): T {
   assert.ok(value !== null && value !== undefined);
@@ -138,7 +138,7 @@ async function fixture(fault?: Fault, limit = 1) {
     });
   };
   const provider = (
-    await import('../../app/src/openrouter-decision-provider.ts')
+    await import('../../../app/src/openrouter-decision-provider.ts')
   ).openRouterDecisionProviderFactory.create('offline-supervisor-dummy');
   let ownerId: unknown,
     run: AgentRunState | null = null,
@@ -1404,10 +1404,10 @@ test('no-live default/help/import reject network and ACP/process imports; malfor
     return 0;
   });
   assert.deepEqual(launched, ['fake-only']);
-  const moduleUrl = new URL('./supervisor.ts', import.meta.url).href;
-  const workflowUrl = new URL('./supervisor-workflow.ts', import.meta.url).href;
-  const cliUrl = new URL('./supervisor-cli.ts', import.meta.url).href;
-  const acpUrl = new URL('./supervisor-acp.ts', import.meta.url).href;
+  const moduleUrl = new URL('../src/supervisor.ts', import.meta.url).href;
+  const workflowUrl = new URL('../src/supervisor-workflow.ts', import.meta.url).href;
+  const cliUrl = new URL('../src/supervisor-cli.ts', import.meta.url).href;
+  const acpUrl = new URL('../src/supervisor-acp.ts', import.meta.url).href;
   const guard = `
     import fs from 'node:fs/promises';
     import { registerHooks, syncBuiltinESMExports } from 'node:module';

@@ -138,10 +138,10 @@ function installedVersions() {
     '@agentclientprotocol/codex-acp': '2.5.0', '@openai/codex': '0.165.0',
   };
   for (const [name, expected] of Object.entries(pins)) {
-    const installed = JSON.parse(readFileSync(new URL(`node_modules/${name}/package.json`, import.meta.url), 'utf8'));
+    const installed = JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8'));
     if (installed.version !== expected) throw new Error('VERSION_MISMATCH');
   }
-  const typescript = JSON.parse(readFileSync(new URL('../../app/node_modules/typescript/package.json', import.meta.url), 'utf8')).version;
+  const typescript = JSON.parse(readFileSync(new URL('../../../app/node_modules/typescript/package.json', import.meta.url), 'utf8')).version;
   if (typescript !== '7.0.2') throw new Error('VERSION_MISMATCH');
   if (process.versions.node !== '22.20.0') throw new Error('NODE_VERSION_MISMATCH');
   return { ...pins, typescript, node: process.version };
@@ -179,7 +179,7 @@ async function runAuthorized() {
       const registered = acpTools({ findLandmarks: createSyntheticTool(receipts, abort) });
       const tools = rebuildSmokeTools(registered);
       provider = createACPProvider({
-        command: fileURLToPath(new URL('node_modules/.bin/codex-acp', import.meta.url)),
+        command: fileURLToPath(new URL('../node_modules/.bin/codex-acp', import.meta.url)),
         env: { INITIAL_AGENT_MODE: 'read-only', CODEX_CONFIG: JSON.stringify({ model: 'gpt-6-luna', model_reasoning_effort: 'xhigh' }) },
         session: { cwd, mcpServers: [] }, persistSession: true,
       });
@@ -250,7 +250,7 @@ async function runAuthorized() {
 
 export async function smokeMain(args: string[], launch: () => Promise<number> = runAuthorized, print = (text: string) => { writeSync(1, text); }) {
   if (args.length === 1 && args[0] === '--authorize-acp') return launch();
-  print('No ACP started. After separate approval only: node --experimental-strip-types experiments/codex-acp-ai-sdk7/find-landmarks-acp-smoke.ts --authorize-acp\n');
+  print('No ACP started. After separate approval only: node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/find-landmarks-acp-smoke.ts --authorize-acp\n');
   return args.length === 0 || (args.length === 1 && args[0] === '--help') ? 0 : 2;
 }
 

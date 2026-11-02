@@ -4,7 +4,7 @@ import { acpTools, ACP_PROVIDER_AGENT_DYNAMIC_TOOL_NAME, getExecuteByName } from
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import {
   createSyntheticTool, jsonParseOk, matchesReceipt, rebuildSmokeTools, smokeMain, smokePrompt, summarizeToolResult, type CallbackReceipt,
-} from './find-landmarks-acp-smoke.ts';
+} from '../src/find-landmarks-acp-smoke.ts';
 
 function fixture() {
   const receipts: CallbackReceipt[] = [];

@@ -9,9 +9,9 @@ import {
   type MaterializedDecision,
   type MaterializedObserve,
   type PromptResult,
-} from '../../scripts/doom-agent-client.ts';
-import { maxAgentInstructions, type AgentRunState } from '../../app/src/agent-control.ts';
-import type { AgentObservation } from '../../app/src/agent-observation.ts';
+} from '../../../scripts/doom-agent-client.ts';
+import { maxAgentInstructions, type AgentRunState } from '../../../app/src/agent-control.ts';
+import type { AgentObservation } from '../../../app/src/agent-observation.ts';
 import {
   proposalShape,
   reassessmentShape,

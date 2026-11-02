@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join } from 'node:path';
-import type { AttachedLease } from '../../scripts/doom-agent-client.ts';
+import type { AttachedLease } from '../../../scripts/doom-agent-client.ts';
 import {
   parseAgentConfigResult,
   parseAgentObserveResult,
   parseAgentPromptResult,
-} from '../../app/src/agent-control.ts';
-import { isAgentId, parseAgentDecisionResult, type AgentObservation } from '../../app/src/agent-observation.ts';
+} from '../../../app/src/agent-control.ts';
+import { isAgentId, parseAgentDecisionResult, type AgentObservation } from '../../../app/src/agent-observation.ts';
 
 export function requireLive(ok: unknown): asserts ok {
   if (!ok) throw new Error('INVALID_LIVE_EVIDENCE');

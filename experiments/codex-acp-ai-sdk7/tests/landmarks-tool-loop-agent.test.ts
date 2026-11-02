@@ -11,16 +11,16 @@ import { acpTools, getExecuteByName } from '@mcpc-tech/acp-ai-provider';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { MockLanguageModelV4 } from 'ai/test';
 import { ToolLoopAgent, isStepCount } from 'ai';
-import { findMemory, recordMemory } from '../../app/doom-memory.mjs';
-import { createAgentMapIdentity } from '../../app/src/agent-observation.ts';
-import { rebuildSmokeTools } from './find-landmarks-acp-smoke.ts';
-import { createLandmarksAgent, landmarksInstructions } from './landmarks-tool-loop-agent.ts';
-import { inspectLandmarksCompletion, landmarksMain, summarizeLandmarkReceipts } from './landmarks-tool-loop-agent-smoke.ts';
+import { findMemory, recordMemory } from '../../../app/doom-memory.mjs';
+import { createAgentMapIdentity } from '../../../app/src/agent-observation.ts';
+import { rebuildSmokeTools } from '../src/find-landmarks-acp-smoke.ts';
+import { createLandmarksAgent, landmarksInstructions } from '../src/landmarks-tool-loop-agent.ts';
+import { inspectLandmarksCompletion, landmarksMain, summarizeLandmarkReceipts } from '../src/landmarks-tool-loop-agent-smoke.ts';
 import {
   createLandmarksTool, loadSavedContext, lookupLandmarks, savedObservationPath, snapshotPath,
   summarizeLandmarkEvent, validateSelection, verifySnapshot,
   type LandmarkReceipt, type LandmarkResult, type SavedContext,
-} from './landmarks-tool.ts';
+} from '../src/landmarks-tool.ts';
 
 // Synthetic fixed fixture only: production identity/pose come from saved receipts.
 const identity = createAgentMapIdentity('a'.repeat(64), 1, 1);
@@ -216,7 +216,7 @@ test('installed ACP text conversion distinguishes baseline user prompt from refa
   ]);
   // Execute only the installed private, pure converter, not the ACP client or
   // subprocess code. Explicit markers bound this pinned-version extraction.
-  const source = readFileSync(new URL('node_modules/@mcpc-tech/acp-ai-provider/index.mjs', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../node_modules/@mcpc-tech/acp-ai-provider/index.mjs', import.meta.url), 'utf8');
   const start = source.indexOf('var ROLE_PREFIXES =');
   const end = source.indexOf('function extractACPTools(', start);
   assert.ok(start > 0 && end > start && end - start < 6000);
@@ -280,7 +280,7 @@ test('invalid selection keeps settled SDK metadata and bounded schema diagnostic
 });
 
 test('local snapshot integration: real saved observation → findMemory → MCP envelope → validated selection', async t => {
-  const png = new URL('.local/real-doom/observation.png', import.meta.url);
+  const png = new URL('../.local/real-doom/observation.png', import.meta.url);
   if (!existsSync(snapshotPath) || !existsSync(savedObservationPath) || !existsSync(png)) {
     t.skip('Local snapshot integration requires ignored .local/doom-memory.sqlite and experiment .local/real-doom/observation.{json,png}; fixed-fixture tests still run.');
     return;

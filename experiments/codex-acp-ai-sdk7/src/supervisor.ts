@@ -10,7 +10,7 @@ import { supervise, type SupervisorPorts } from './supervisor-workflow.ts';
 export { composeGuidance, supervise, type SupervisorACP, type SupervisorPorts } from './supervisor-workflow.ts';
 
 function installedVersions() {
-  const local = (path: string) => new URL(path, import.meta.url);
+  const local = (path: string) => new URL(`../${path}`, import.meta.url);
   const pins = {
     ai: '7.0.159',
     '@mcpc-tech/acp-ai-provider': '0.3.9',
@@ -29,7 +29,7 @@ function installedVersions() {
 }
 
 const help =
-  'Offline by default. After separate human approval only: node --experimental-strip-types supervisor.ts --live --authorize-decisions N --trial NEW_ID 2>/dev/null\nN must be a positive decimal safe integer. Legacy --authorize-one-decision / --authorize-two-decisions mean N=1 / N=2.\nRequires one visible prepared dev:agent page, matching AGENT_DECISION_BUDGET=N (restart server after configuration), and browser Stop Agent available. Allowance mismatch is detected AFTER the nonrefundable claim, before prompt CAS or decisions.\n';
+  'Offline by default. After separate human approval only: node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/supervisor.ts --live --authorize-decisions N --trial NEW_ID 2>/dev/null\nN must be a positive decimal safe integer. Legacy --authorize-one-decision / --authorize-two-decisions mean N=1 / N=2.\nRequires one visible prepared dev:agent page, matching AGENT_DECISION_BUDGET=N (restart server after configuration), and browser Stop Agent available. Allowance mismatch is detected AFTER the nonrefundable claim, before prompt CAS or decisions.\n';
 
 // Entry and optional runtime are separate from the injectable offline workflow.
 // Existing historical markers/runners are never invoked.
@@ -73,7 +73,7 @@ async function runLive(trial: string, decisions: number) {
   const versions = installedVersions();
   // The provider can otherwise write raw transcript/debug artifacts on import.
   requireLive(!process.env.DEBUG?.trim() && !process.env.ACP_AI_PROVIDER_DEBUG?.trim());
-  const local = new URL('.local/', import.meta.url);
+  const local = new URL('../.local/', import.meta.url);
   await mkdir(local, { recursive: true, mode: 0o700 });
   const root = fileURLToPath(new URL(`supervisor-${trial}/`, local));
   // Exclusive new namespace BEFORE attach/startup. Never removed or reused.

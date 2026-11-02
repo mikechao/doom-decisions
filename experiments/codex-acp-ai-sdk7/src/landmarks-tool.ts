@@ -3,13 +3,13 @@ import { readFileSync, statSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { findMemory, memoryDatabasePath, memoryFindSchema } from '../../app/doom-memory.mjs';
-import { parseAgentObserveResult } from '../../app/src/agent-control.ts';
-import { isAgentId } from '../../app/src/agent-observation.ts';
+import { findMemory, memoryDatabasePath, memoryFindSchema } from '../../../app/doom-memory.mjs';
+import { parseAgentObserveResult } from '../../../app/src/agent-control.ts';
+import { isAgentId } from '../../../app/src/agent-observation.ts';
 
-export const snapshotPath = fileURLToPath(new URL('../../.local/doom-memory.sqlite', import.meta.url));
-export const savedObservationPath = fileURLToPath(new URL('.local/real-doom/observation.json', import.meta.url));
-const savedPngPath = fileURLToPath(new URL('.local/real-doom/observation.png', import.meta.url));
+export const snapshotPath = fileURLToPath(new URL('../../../.local/doom-memory.sqlite', import.meta.url));
+export const savedObservationPath = fileURLToPath(new URL('../.local/real-doom/observation.json', import.meta.url));
+const savedPngPath = fileURLToPath(new URL('../.local/real-doom/observation.png', import.meta.url));
 
 // These are archived capture receipts, not observations of the current browser.
 export function loadSavedContext() {

@@ -8,7 +8,7 @@ export function createACPPort(cwd: string): SupervisorPorts['createACP'] {
     const { generateText } = await import('ai');
     signal.throwIfAborted();
     const provider = createACPProvider({
-      command: fileURLToPath(new URL('node_modules/.bin/codex-acp', import.meta.url)),
+      command: fileURLToPath(new URL('../node_modules/.bin/codex-acp', import.meta.url)),
       env: {
         INITIAL_AGENT_MODE: 'read-only',
         CODEX_CONFIG: JSON.stringify({
