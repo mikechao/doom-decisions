@@ -1,6 +1,70 @@
-# Bounded Doom supervisor
+# DoomPlayAgent and bounded Doom supervisor
 
-This directory contains one active prototype: Codex through ACP and Vercel AI
+`src/main.ts` is the intended primary DoomPlayAgent entry point. Its current
+milestone is one passive live observation and one parent invocation, delegating
+to LandmarksToolLoopAgent once. It does not start a browser/server, claim a run,
+call Decisions, change settings, or advance Doom. The separate bounded supervisor
+and archived delegation smoke below remain independent experiment entry points.
+
+Default and `--help` invocations are inert: no attachment, SQLite open, ACP process
+or inference. From the repository root, after **separate live authorization only**:
+
+```bash
+node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-acp
+```
+
+Manual prerequisites: the operator starts `npm --prefix app run dev:agent`, opens
+exactly one `http://127.0.0.1:5174/` page, waits for verified game readiness, and
+ensures no existing CLI owner/run. This entry does not require or consume a
+Decisions allowance. The existing local read-only landmark snapshot must be present
+and valid; a namespace with no matching landmarks legitimately returns empty.
+Missing/invalid storage fails closed, with no fallback to archived observation
+coordinates or a different IWAD namespace. Do not enable provider debug logging.
+The image/context and advisory historical data reach Codex ACP; this is metered
+inference even though no Decisions request occurs.
+
+The typed client owns attach/request correlation and PNG materialization;
+`liveObserve()` revalidates the lease envelope, PNG bytes/hash, and strict DTO.
+The browser/controller owns freshness and native/Canvas verification. This one-shot
+path requests exactly one new capture; it makes no claim of a wall-clock freshness
+TTL or continued ownership during subsequent inference. The capture's map key and
+converted native pose fix the nearby query (radius 128, limit 3). Actual PNG bytes
+enter the parent's multimodal stream; a path/hash alone is never image input.
+The parent and child use distinct provider/model/session owners and the existing
+SDK 6/7 tool bridge. Both streams must finish and contain exactly one correlated
+tool call/result. Reports include validated advisory output, host-resolved memory
+attribution, source identity and bounded counts, excluding raw transcripts.
+
+ACP cleanup and empty temporary-directory removal run on success, failure and
+cancellation. Pending initialization gets the existing late-settlement cleanup
+fence and remains `cleanup-unverified` in the report; public cleanup never proves
+subprocess exit. The entry has a 120-second cooperative deadline and SIGINT/SIGTERM
+cancellation. These do not bound internal Codex work or prove billing stopped.
+
+**The browser lease is retained.** Successful attach reports `held` (last confirmed
+ownership; it can later be revoked externally). Lost/uncertain attach reports
+`possibly-held`; no release, revoke, Stop, retry or reattach is attempted. Press
+**Stop Agent** in the browser after every attempted run before another attach,
+including failed attempts that may have attached. Follow the existing dev:agent
+restart/readiness procedure for another session. CLI lease/PNG receipts remain in
+the client's private temporary directory, identified by `lease.leaseFile` when
+acknowledged; deletion is not ownership release. ACP directories are separate.
+
+Offline verification for this milestone (no SQLite writes, including fixture DBs):
+
+```bash
+node --experimental-strip-types --test --test-skip-pattern='local snapshot integration|fixed fixture:|invalid selection keeps settled' experiments/codex-acp-ai-sdk7/tests/*.test.ts
+node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7 --noEmit
+```
+
+The skip pattern excludes the archived-snapshot test and four existing tests that
+create/write throwaway SQLite fixtures. New main tests use synthetic PNGs, fake
+typed transport and in-memory landmark data, with real SDK agents and validators.
+They do not establish live browser capture, model image understanding or ACP exit.
+
+## Existing bounded supervisor
+
+This separate prototype uses Codex through ACP and Vercel AI
 SDK 7 proposes high-level navigation guidance over browser Doom. The existing
 Decisions API selects the low-level action; the application retains lease,
 budget, Stop and native/frame verification authority. One bounded numeric loop
@@ -11,6 +75,9 @@ Use `--live --authorize-decisions N --trial NEW_ID`; legacy one/two flags alias 
 
 | File | Responsibility |
 | --- | --- |
+| `src/main.ts` | Primary one-observation DoomPlayAgent composition root; passive typed operations, real PNG input, nested advisory agents, retained lease reporting and ACP cleanup. |
+| `src/agent-stream.ts` | Shared bounded stream consumption and exact tool call/result/envelope correlation. |
+| `src/agent-lifecycle.ts` | Existing provider initialization fence and truthful cleanup reporting, shared with the archived smoke. |
 | `src/supervisor.ts` | Gated live entry, installed/lock version admission, exclusive trial setup, signals, port composition, report publication and cleanup scheduling; stable workflow re-exports. |
 | `src/supervisor-workflow.ts` | Injectable bounded N-decision loop, evidence/report ledger, ACP checkpoints, session checks, cancellation/deadlines and ACP cleanup ownership. |
 | `src/supervisor-cli.ts` | Typed Doom operation ports, lease tracking, sanitized numbered receipts, PNG reads, temporary instruction-file creation and removal. |

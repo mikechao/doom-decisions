@@ -30,6 +30,7 @@ export function loadSavedContext() {
     mapIdentity: observation.mapIdentity, query,
   };
 }
+// Structurally shared with fresh live observations; this type performs no archive reads.
 export type SavedContext = ReturnType<typeof loadSavedContext>;
 
 export function verifySnapshot(path = snapshotPath) {
@@ -96,7 +97,7 @@ export type LandmarkReceipt = {
   result: LandmarkResult | null; returnedEnvelope: TextEnvelope | null; error: string | null;
 };
 const empty = z.strictObject({});
-export function createLandmarksTool(context: SavedContext, receipts: LandmarkReceipt[], abort: AbortController, path = snapshotPath) {
+export function createLandmarksTool(context: SavedContext, receipts: LandmarkReceipt[], abort: AbortController, path = snapshotPath, lookup = lookupLandmarks) {
   // Detach the fixed host-owned query from callers. The model accepts no inputs.
   const fixed = structuredClone(context);
   return {
@@ -109,7 +110,10 @@ export function createLandmarksTool(context: SavedContext, receipts: LandmarkRec
         if (receipt.ordinal !== 1) throw new Error('REPEATED_CALLBACK');
         abort.signal.throwIfAborted();
         receipt.arguments = empty.parse(input);
-        const result = await lookupLandmarks(fixed, path);
+        const result = await lookup(fixed, path);
+        if (result.context.mapIdentity.mapKey !== fixed.mapIdentity.mapKey ||
+            result.candidates.some(note => note.mapNamespace !== fixed.mapIdentity.mapKey))
+          throw new Error('MAP_NAMESPACE_MISMATCH');
         abort.signal.throwIfAborted();
         receipt.result = structuredClone(result);
         const envelope: TextEnvelope = { content: [{ type: 'text', text: JSON.stringify(result) }] };
