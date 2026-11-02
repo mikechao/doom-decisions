@@ -5,13 +5,17 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 import { acpTools, getExecuteByName } from '@mcpc-tech/acp-ai-provider';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { MockLanguageModelV4 } from 'ai/test';
+import { ToolLoopAgent, isStepCount } from 'ai';
 import { findMemory, recordMemory } from '../../app/doom-memory.mjs';
 import { createAgentMapIdentity } from '../../app/src/agent-observation.ts';
 import { rebuildSmokeTools } from './find-landmarks-acp-smoke.ts';
-import { LandmarksToolLoopAgent, landmarksMain } from './landmarks-tool-loop-agent.ts';
+import { createLandmarksAgent, landmarksInstructions } from './landmarks-tool-loop-agent.ts';
+import { inspectLandmarksCompletion, landmarksMain, summarizeLandmarkReceipts } from './landmarks-tool-loop-agent-smoke.ts';
 import {
   createLandmarksTool, loadSavedContext, lookupLandmarks, savedObservationPath, snapshotPath,
   summarizeLandmarkEvent, validateSelection, verifySnapshot,
@@ -113,7 +117,7 @@ test('fixed fixture: MCP callback retains evidence and validates selection of ei
     assert.equal(summarizeLandmarkEvent({ content: [] }, receipts).envelopeMatches, false);
     assert.equal(summarizeLandmarkEvent({ ...envelope, isError: true }, receipts).envelopeMatches, false);
     assert.deepEqual(validateSelection('prefix {}', receipts), { ok: false, error: 'INVALID_JSON' });
-    assert.deepEqual(validateSelection('{}', receipts), { ok: false, error: 'INVALID_SELECTION' });
+    assert.equal(validateSelection('{}', receipts).error, 'INVALID_SELECTION');
     for (const change of [
       { noteId: '33333333-3333-4333-8333-333333333333' }, { evidenceNoteIds: ['33333333-3333-4333-8333-333333333333'] },
       { mapNamespace: foreignIdentity.mapKey }, { source: 'fabricated' }, { summary: 'fabricated' },
@@ -151,8 +155,42 @@ test('fixed fixture: explicit empty result, repeated/invalid callback and path f
   });
 });
 
-test('entry is inert without exact opt-in; no ACP is launched by imports or tests', async () => {
-  assert.equal(typeof LandmarksToolLoopAgent, 'function');
+function fakeTextModel(text: string) {
+  return new MockLanguageModelV4({
+    doStream: async () => ({
+      stream: new ReadableStream({ start(controller) {
+        controller.enqueue({ type: 'text-start', id: 'offline' });
+        controller.enqueue({ type: 'text-delta', id: 'offline', delta: text });
+        controller.enqueue({ type: 'text-end', id: 'offline' });
+        controller.enqueue({ type: 'finish', finishReason: { unified: 'stop', raw: 'end_turn' }, usage: {
+          inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 0, text: 0, reasoning: 0 },
+        } });
+        controller.close();
+      } }),
+    }),
+  });
+}
+
+test('agent factory preserves instructions, prepared tools and request notification without inference on construction', async () => {
+  const model = fakeTextModel('{}');
+  const receipts: LandmarkReceipt[] = [];
+  const registered = acpTools({ findLandmarks: createLandmarksTool(context, receipts, new AbortController()) });
+  const tools = rebuildSmokeTools(registered);
+  let requests = 0;
+  const agent = createLandmarksAgent(model, tools, () => { requests++; });
+  assert.equal(agent.tools, tools, 'Keep the host callback and provider-executed descriptor intact');
+  assert.equal(requests, 0);
+  assert.equal(model.doStreamCalls.length, 0);
+  const result = await agent.stream({ prompt: 'Retrieve and select one historical Doom landmark using findLandmarks.' });
+  assert.equal(await result.text, '{}');
+  assert.equal(requests, 1);
+  assert.equal(model.doStreamCalls.length, 1);
+  assert.deepEqual(model.doStreamCalls[0].prompt[0], { role: 'system', content: landmarksInstructions });
+  assert.equal(receipts.length, 0, 'The fake model never invokes SQLite or the callback');
+});
+
+test('runner is inert without exact opt-in; no ACP is launched by imports or tests', async () => {
   let launches = 0;
   const launch = async () => { launches++; return 7; };
   for (const args of [[], ['--help'], ['--authorize-acp', 'extra'], ['--live'], ['--authorize-acp=true']])
@@ -160,6 +198,85 @@ test('entry is inert without exact opt-in; no ACP is launched by imports or test
   assert.equal(launches, 0);
   assert.equal(await landmarksMain(['--authorize-acp'], launch, () => {}), 7);
   assert.equal(launches, 1, 'Only the injected fake launch was invoked');
+});
+
+test('installed ACP text conversion distinguishes baseline user prompt from refactored instructions', async () => {
+  const receipts: LandmarkReceipt[] = [];
+  const tools = rebuildSmokeTools(acpTools({ findLandmarks: createLandmarksTool(context, receipts, new AbortController()) }));
+  const before = fakeTextModel('{}');
+  const after = fakeTextModel('{}');
+  const baseline = new ToolLoopAgent({ model: before, tools, maxRetries: 0, stopWhen: isStepCount(2) });
+  await (await baseline.stream({ prompt: landmarksInstructions })).text;
+  const current = createLandmarksAgent(after, tools, () => {});
+  const task = 'Retrieve and select one historical Doom landmark using findLandmarks.';
+  await (await current.stream({ prompt: task })).text;
+  assert.deepEqual(before.doStreamCalls[0].prompt, [{ role: 'user', content: [{ type: 'text', text: landmarksInstructions }], providerOptions: undefined }]);
+  assert.deepEqual(after.doStreamCalls[0].prompt, [
+    { role: 'system', content: landmarksInstructions }, { role: 'user', content: [{ type: 'text', text: task }], providerOptions: undefined },
+  ]);
+  // Execute only the installed private, pure converter, not the ACP client or
+  // subprocess code. Explicit markers bound this pinned-version extraction.
+  const source = readFileSync(new URL('node_modules/@mcpc-tech/acp-ai-provider/index.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('var ROLE_PREFIXES =');
+  const end = source.indexOf('function extractACPTools(', start);
+  assert.ok(start > 0 && end > start && end - start < 6000);
+  const convert = runInNewContext(`${source.slice(start, end)}\nconvertAiSdkMessagesToAcp`);
+  const oldBlocks = structuredClone(convert({ prompt: before.doStreamCalls[0].prompt }, true));
+  const newBlocks = structuredClone(convert({ prompt: after.doStreamCalls[0].prompt }, true));
+  assert.deepEqual(oldBlocks, [{ type: 'text', text: landmarksInstructions }]);
+  assert.deepEqual(newBlocks, [{ type: 'text', text: `System: ${landmarksInstructions} ` }, { type: 'text', text: task }]);
+  assert.deepEqual(structuredClone(convert({ prompt: after.doStreamCalls[0].prompt }, false)), [{ type: 'text', text: task }]);
+  assert.equal(receipts.length, 0);
+});
+
+test('invalid selection keeps settled SDK metadata and bounded schema diagnostics without raw content', async () => {
+  await withFixture(async path => {
+    const receipts: LandmarkReceipt[] = [];
+    const tools = rebuildSmokeTools(acpTools({ findLandmarks: createLandmarksTool(context, receipts, new AbortController(), path) }));
+    await tools.findLandmarks.execute({});
+    const found = receipts[0].result;
+    assert.ok(found);
+    const secret = 'PRIVATE_TEXT_MUST_NOT_APPEAR';
+    const invalid = { ...selection(found), advisoryStatus: secret, [secret]: secret };
+    const cases = [
+      { text: JSON.stringify(invalid), error: 'INVALID_SELECTION' },
+      { text: 'null', error: 'INVALID_SELECTION' },
+      { text: '{', error: 'INVALID_JSON' },
+      { text: '', error: 'INVALID_JSON' },
+      { text: JSON.stringify({ ...selection(found), source: secret }), error: 'EVIDENCE_MISMATCH' },
+      { text: JSON.stringify(selection(found)), error: null },
+    ];
+    for (const example of cases) {
+      const result = await createLandmarksAgent(fakeTextModel(example.text), tools, () => {}).stream({ prompt: 'Offline response fixture' });
+      const events = [];
+      for await (const event of result.fullStream) events.push(event.type);
+      const completion = await inspectLandmarksCompletion(result, receipts);
+      assert.equal(completion.error, example.error);
+      assert.equal(completion.output.nonempty, example.text.length > 0);
+      assert.equal(completion.output.characters, example.text.length);
+      assert.equal(completion.sdkSteps, 1);
+      assert.equal(completion.finishReason, 'stop');
+      assert.equal(completion.rawFinishReason, 'end_turn');
+      assert.deepEqual(completion.metadataUnavailable, []);
+      assert.ok(events.includes('finish') && !events.includes('error') && !events.includes('abort'));
+      if (example.error) assert.equal(completion.modelFinalJSON, null);
+      assert.equal(JSON.stringify(completion).includes(secret), false);
+      if (example.text === cases[0].text) {
+        assert.ok(completion.validation && !completion.validation.ok && 'issues' in completion.validation);
+        const issues = completion.validation.issues;
+        assert.ok(issues);
+        assert.ok(issues.some(issue => issue.branch === 'selected' && issue.path[0] === 'advisoryStatus'));
+        assert.ok(issues.some(issue => issue.code === 'unrecognized_keys'));
+        assert.ok(issues.length <= 16);
+      }
+    }
+    const safeReceipts = summarizeLandmarkReceipts(receipts);
+    assert.equal(safeReceipts[0].returnedEnvelope?.matchesReceipt, true);
+    const serialized = JSON.stringify(safeReceipts);
+    assert.equal(serialized.includes(found.candidates[0].summary), false);
+    assert.equal(serialized.includes(found.candidates[0].source), false);
+    assert.equal(serialized.includes('latestAssessment'), false);
+  });
 });
 
 test('local snapshot integration: real saved observation → findMemory → MCP envelope → validated selection', async t => {

@@ -151,8 +151,18 @@ a listener, establish real tool-result consumption or demonstrate bridge success
 
 ## Read-only historical landmark experiment
 
-`landmarks-tool-loop-agent.ts` exposes `LandmarksToolLoopAgent`, independently of
-the supervisor and typed Doom client. Its sole host callback accepts `{}` and
+`landmarks-tool-loop-agent.ts` is the side-effect-free agent definition:
+`createLandmarksAgent(model, tools, onLanguageModelCallStart)` shows the model,
+landmark-advisor instructions, supplied `findLandmarks` tool map, and unchanged
+SDK limits. It imports no runtime runner, provider, filesystem or SQLite module.
+
+`landmarks-tool-loop-agent-smoke.ts` owns the guarded CLI, ACP provider/session
+setup, host callback registration, SDK 6/7 tool-map reconstruction, timeout,
+receipts/events, validation, reporting and cleanup. `landmarks-tool.ts` retains
+read-only retrieval and attribution validation. The advisor text is unchanged and
+now supplied through the agent's `instructions`; the runner supplies only the
+request to retrieve and select one landmark. These files are independent of the
+supervisor and typed Doom client. The sole host callback accepts `{}` and
 delegates retrieval to the existing `findMemory(input)` in
 [`app/doom-memory.mjs`](../../app/doom-memory.mjs). That JavaScript function has no
 TypeScript declaration; its input is validated by `memoryFindSchema`. Importing
@@ -160,6 +170,19 @@ it starts no MCP server, gameplay or database connection. Lookup opens SQLite
 with `readOnly: true`, checks application ID/schema v2, uses a read transaction,
 and closes the handle. Only `recordMemory` initializes schemas or writes notes;
 the experiment never calls it. Tests use it solely to initialize throwaway fixtures.
+
+Prompt placement is behavioral: SDK 7 supplies `instructions` as a system
+message, while the old runner sent the complete contract as one user message.
+The pinned ACP provider turns the system message into a `System: ` text block
+for a fresh session; codex-acp forwards those blocks as turn input, not native
+developer instructions. Subsequent provider turns send only the latest user
+message. The owner reports a post-refactor `INVALID_SELECTION` after successful
+retrieval/envelope delivery. Without the rejected output's schema diagnostics,
+the offending field and prompt-placement causality remain unresolved. Offline
+message tests prove different serialization, not model behavior or live parity.
+The current instruction/prompt split remains unchanged pending evidence. The
+smallest baseline-restoration trial would omit agent `instructions` and pass the
+unchanged full contract as the invocation `prompt`, retaining the small factory.
 
 The fixed snapshot is resolved from the module URL to the worktree's ignored
 `.local/doom-memory.sqlite`, never the source worktree database. Missing storage,
@@ -210,22 +233,31 @@ and rejection cases. The separate optional snapshot integration checks the real
 saved pose, both historical note IDs, MCP evidence preservation, and unchanged
 snapshot bytes, mtime and directory entries. It explicitly skips if the local
 snapshot or saved capture files are missing. This is offline retrieval proof;
-it does not prove ACP consumed or selected a historical landmark.
+these tests alone do not prove ACP consumed or selected a historical landmark.
+The owner reports a successful real ACP run before this organization-only
+refactor: one callback, two historical E1M1 notes, MCP text delivery and validated
+selection. No metered inference was run during the refactor.
 
 Only after separate explicit approval, the one optional metered ACP command is:
 
 ```sh
-node --experimental-strip-types experiments/codex-acp-ai-sdk7/landmarks-tool-loop-agent.ts --authorize-acp 2>/dev/null
+node --experimental-strip-types experiments/codex-acp-ai-sdk7/landmarks-tool-loop-agent-smoke.ts --authorize-acp 2>/dev/null
 ```
 
-This command has **not been run as part of implementation**. Without the exact
+This moved command has **not been run as part of this refactor**. Without the exact
 flag (including on `--help`) no ACP process starts. It reuses the smoke runner's
 host registration and two-entry SDK 6/7 tool-map reconstruction, GPT-6 Luna/xhigh,
 read-only ACP mode, temporary empty cwd, one SDK request, at most two SDK steps,
 one callback, no SDK retries and 120-second deadline. It does not read/change
 credentials or fetch model packages. Callback receipts, SDK tool notifications,
 selection validation, session continuity and public cleanup are reported as JSON
-to stdout, with no report/transcript files. Existing smoke caveats about internal
+to stdout, with no report/transcript files. Failed selections retain bounded
+schema branch/path/code diagnostics, output presence/character count, settled SDK
+step/finish metadata, and stream completion/error/abort/tool-error counts. No raw
+rejected text, Zod messages, unknown key names or provider errors are printed.
+Callback receipts in stdout contain only IDs/status/revision and envelope
+metadata; full results/envelopes remain internal to validation. Only validated
+final selections retain the existing attributed JSON output. Existing smoke caveats about internal
 tools, lazy-auth retry, generated MCP listener, subprocess exit, cancellation,
 billing and cleanup still apply. Pending setup can outlive deadline reporting
 and leave an empty temporary directory. No gameplay/agent MCP server is registered or

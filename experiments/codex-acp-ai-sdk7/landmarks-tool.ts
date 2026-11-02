@@ -147,7 +147,22 @@ export function validateSelection(text: string, receipts: LandmarkReceipt[]) {
   if (!result || JSON.stringify(receipt.returnedEnvelope) !== JSON.stringify({ content: [{ type: 'text', text: JSON.stringify(result) }] }))
     return { ok: false, error: 'EVIDENCE_MISMATCH' } as const;
   const parsed = z.union([selected, noResult]).safeParse(value);
-  if (!parsed.success) return { ok: false, error: 'INVALID_SELECTION' } as const;
+  if (!parsed.success) {
+    // Never log Zod messages, input values, or unrecognized key names. Inspect
+    // each strict branch so a root invalid_union does not hide the failing field.
+    const fields = new Set(Object.keys(selected.shape));
+    const issues = [];
+    for (const [branch, schema] of [['selected', selected], ['empty', noResult]] as const) {
+      const checked = schema.safeParse(value);
+      if (!checked.success) for (const issue of checked.error.issues.slice(0, 8)) {
+        issues.push({ branch, code: issue.code,
+          path: issue.path.slice(0, 3).map(part => typeof part === 'number' ? part :
+            typeof part === 'string' && fields.has(part) ? part : '[unknown]'),
+        });
+      }
+    }
+    return { ok: false, error: 'INVALID_SELECTION', issues } as const;
+  }
   const output = parsed.data;
   if (output.mapNamespace !== result.context.mapIdentity.mapKey) return { ok: false, error: 'EVIDENCE_MISMATCH' } as const;
   if (output.status === 'empty') return result.candidates.length === 0
