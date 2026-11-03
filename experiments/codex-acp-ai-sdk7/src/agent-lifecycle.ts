@@ -1,3 +1,5 @@
+import type { CliProvider } from './cli-provider.ts';
+
 type DoomOwner = { cleanup(): void; getSessionId(): string | null };
 export type DoomInitialization = {
   owner: DoomOwner; pending: boolean; cleanupRequested: boolean;
@@ -31,4 +33,32 @@ export function cleanupDoomProviders(owners: DoomOwner[], startups: DoomInitiali
       return owner.getSessionId() === null ? 'returned-session-cleared; child-exit-unverified' : 'session-not-cleared';
     } catch { return 'cleanup-failed; child-exit-unverified'; }
   });
+}
+
+// Native stateless providers own a process/client, not one persistent ACP session.
+export type CliInitialization = { owner: CliProvider; pending: boolean; cleanupRequested: boolean; settled: Promise<unknown> };
+export function fenceCliInitialization(owner: CliProvider, signal: AbortSignal): CliInitialization {
+  const startup: CliInitialization = { owner, pending: true, cleanupRequested: false, settled: Promise.resolve() };
+  startup.settled = Promise.resolve().then(() => {
+    signal.throwIfAborted();
+    return owner.initialize();
+  }).finally(async () => {
+    startup.pending = false;
+    if (startup.cleanupRequested) await closeCliProviders([owner]);
+  }).then(value => { signal.throwIfAborted(); return value; });
+  return startup;
+}
+
+export async function closeCliProviders(owners: CliProvider[], startups: CliInitialization[] = []) {
+  const results: string[] = [];
+  for (const owner of owners) {
+    const startup = startups.find(value => value.owner === owner);
+    if (startup) startup.cleanupRequested = true;
+    try {
+      await owner.close();
+      results.push(startup?.pending ? 'initialization-pending; cleanup-unverified; child-exit-unverified' :
+        `close-returned; ${owner.childExitObserved() ? 'child-exit-observed' : 'child-exit-unverified'}`);
+    } catch { results.push('cleanup-failed; child-exit-unverified'); }
+  }
+  return results;
 }

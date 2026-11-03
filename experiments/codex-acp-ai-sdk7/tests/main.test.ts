@@ -6,17 +6,19 @@ import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { runInNewContext } from 'node:vm';
 import { deflateSync } from 'node:zlib';
 import test from 'node:test';
-import { getExecuteByName, ACP_PROVIDER_AGENT_DYNAMIC_TOOL_NAME as dynamicName } from '@mcpc-tech/acp-ai-provider';
-import { MockLanguageModelV3 } from 'ai/test';
+import { fixtureStream, cliFixtureStream, textParts, lastToolResult } from './native-fixture.ts';
+import { MockLanguageModelV4 } from 'ai/test';
+import { wrapLanguageModel } from 'ai';
+import { hermesToolMiddleware } from '@ai-sdk-tool/parser';
+import { cliSafetyMiddleware, rejectCliWarning, rejectCliProvider } from '../src/cli-provider.ts';
+import { domainResultMatches } from '../src/native-tools.ts';
 import { executeAgentOperation } from '../../../scripts/doom-agent-client.ts';
-import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { buildDefaultDecisionRequest, resolveDecisionInstructions } from '../../../app/src/decision-request.ts';
 import type { AgentObserveResult } from '../../../app/src/agent-control.ts';
 import { createGuardedDecision, decisionLedger, type DecisionPorts } from '../src/guarded-decision.ts';
-import { consumeDoomStream, envelopeMatches, maxDecisionOutputCharacters, validateDecisionOutput, validateParentOutput } from '../src/doom-play-agent.ts';
+import { consumeDoomStream, maxDecisionOutputCharacters, validateDecisionOutput, validateParentOutput } from '../src/doom-play-agent.ts';
 import { liveObserve } from '../src/live-observation.ts';
 import { createAgentMapIdentity } from '../../../app/src/agent-observation.ts';
 import { main, reportExitCode, runMain, writeMainReport, type MainPorts } from '../src/main.ts';
@@ -53,14 +55,11 @@ const noteId = '33333333-3333-4333-8333-333333333333';
 function fakeModel(name: 'findLandmarks' | 'consultLandmarks', options: {
   input?: (prompt: unknown) => void; after?: () => Promise<void>; attributed?: boolean;
 } = {}) {
-  return new MockLanguageModelV3({ doStream: async input => {
+  return new MockLanguageModelV4({ doStream: async input => {
     options.input?.(input.prompt);
-    const execute = getExecuteByName(name);
-    assert.ok(execute);
-    const envelope = CallToolResultSchema.parse(JSON.parse(JSON.stringify(await execute({}))));
-    const block = envelope.content[0];
-    assert.ok(block.type === 'text');
-    const result = JSON.parse(block.text);
+    if (!input.prompt.some(message => message.role === 'tool'))
+      return fixtureStream([{ type: 'tool-call', toolCallId: name, toolName: name, input: '{}' }]);
+    const result: any = lastToolResult(input.prompt, name);
     const text = JSON.stringify(name === 'findLandmarks' ? result.candidates.length ? {
       status: 'selected', noteId, mapNamespace: result.context.mapIdentity.mapKey, advisoryStatus: 'unverified',
       evidenceNoteIds: [noteId], source: result.candidates[0].source, summary: result.candidates[0].summary,
@@ -76,19 +75,7 @@ function fakeModel(name: 'findLandmarks' | 'consultLandmarks', options: {
         explanation: options.attributed ? 'The historical question influenced this objective.' : 'No applicable historical memory influenced the objective.' },
     });
     await options.after?.();
-    return { stream: new ReadableStream({ start(controller) {
-      controller.enqueue({ type: 'tool-call', toolCallId: name, toolName: dynamicName,
-        input: JSON.stringify({ toolCallId: name, toolName: `mcp.acp-ai-sdk-tools.${name}`, args: {} }), providerExecuted: true });
-      controller.enqueue({ type: 'tool-result', toolCallId: name, toolName: dynamicName, result: JSON.parse(JSON.stringify(envelope)) });
-      controller.enqueue({ type: 'text-start', id: name });
-      controller.enqueue({ type: 'text-delta', id: name, delta: text });
-      controller.enqueue({ type: 'text-end', id: name });
-      controller.enqueue({ type: 'finish', finishReason: { unified: 'stop', raw: 'end_turn' }, usage: {
-        inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
-        outputTokens: { total: 0, text: 0, reasoning: 0 },
-      } });
-      controller.close();
-    } }) };
+    return fixtureStream(textParts(text));
   } });
 }
 
@@ -136,9 +123,10 @@ function fixture(attributed = false) {
     createProvider() {
       const model = models[owners.length];
       const owner = { id: null as string | null, cleanups: 0, inits: 0 }; owners.push(owner);
-      return { languageModel: () => model, getSessionId: () => owner.id,
-        initSession: async () => { owner.inits++; owner.id = `fake-session-${owners.indexOf(owner)}`; },
-        cleanup: () => { owner.cleanups++; owner.id = null; } };
+      return { languageModel: () => model,
+        initialize: async () => { owner.inits++; owner.id = `fake-owner-${owners.indexOf(owner)}`; },
+        assertHealthy: () => { if (owner.id !== `fake-owner-${owners.indexOf(owner)}`) throw new Error('UNHEALTHY_OWNER'); },
+        close: async () => { owner.cleanups++; owner.id = null; }, childExitObserved: () => false };
     },
     lookup: async context => {
       contexts.push(structuredClone(context));
@@ -169,7 +157,7 @@ test('live main: typed attach → one verified PNG → real SDK nested agents �
       assert.ok(report.lease.leaseFile);
       await readFile(report.lease.leaseFile); // Process cleanup deliberately retains the lease receipt.
       assert.match(report.operatorInstruction, /Press Stop Agent.*before another attach/);
-      assert.deepEqual(report.sdkRequests, { parent: 1, child: 1 });
+      assert.deepEqual(report.sdkRequests, { parent: 2, child: 2 });
       assert.deepEqual(report.callbacks, { consult: 1, find: 1 });
       assert.equal(report.parentStream?.drained, true); assert.equal(report.childStream?.drained, true);
       assert.ok(report.result?.interpretation.objective);
@@ -186,27 +174,17 @@ test('live main: typed attach → one verified PNG → real SDK nested agents �
       assert.ok(user && user.role === 'user');
       const file = user.content.find(part => part.type === 'file');
       assert.ok(file && file.type === 'file');
-      assert.equal(file.mediaType, 'image/png'); assert.ok(file.data instanceof Uint8Array); assert.equal(hash(file.data), hash(image));
+      assert.equal(file.mediaType, 'image/png'); assert.equal(file.data.type, 'data');
+      assert.ok(file.data.type === 'data' && file.data.data instanceof Uint8Array);
+      assert.equal(hash(file.data.data), hash(image));
       assert.ok(JSON.stringify(prompt).includes('fresh browser-verified'));
-      // The installed provider's pure conversion emits the exact inline bytes as
-      // an ACP image block. No private process/client code is executed.
-      const source = readFileSync(new URL('../node_modules/@mcpc-tech/acp-ai-provider/index.mjs', import.meta.url), 'utf8');
-      const start = source.indexOf('var ROLE_PREFIXES ='), end = source.indexOf('function extractACPTools(', start);
-      assert.ok(start > 0 && end > start && end - start < 6000);
-      const convert = runInNewContext(`${source.slice(start, end)}\nconvertAiSdkMessagesToAcp`, {
-        Uint8Array, extractBase64Data: (value: string) => value.includes(',') ? value.split(',')[1] : value,
-        convertUint8ArrayToBase64: (value: Uint8Array) => Buffer.from(value).toString('base64'),
-      });
-      for (const fresh of [true, false]) {
-        const blocks = structuredClone(convert({ prompt }, fresh));
-        assert.deepEqual(blocks.find((block: { type: string }) => block.type === 'image'),
-          { type: 'image', mimeType: 'image/png', data: image.toString('base64') });
-      }
+      // The native provider's warning/write boundary is covered separately;
+      // this fixture proves exact verified bytes enter the SDK conversation.
     } finally { await f.destroy(); }
   }
 });
 
-test('invalid/missing image, stale receipt and foreign ownership fail before ACP startup; lease retained', async () => {
+test('invalid/missing image, stale receipt and foreign ownership fail before CLI startup; lease retained', async () => {
   for (const fault of ['hash', 'missing', 'frame', 'epoch', 'stale-command', 'active-run', 'map'] as const) {
     const f = fixture();
     try {
@@ -268,11 +246,11 @@ test('pending initialization gets immediate and post-settlement cleanup with no 
   const waiting = new Promise<void>(resolve => { release = resolve; });
   const started = new Promise<void>(resolve => { entered = resolve; });
   const create = f.ports.createProvider;
-  f.ports.createProvider = cwd => {
-    const provider = create(cwd);
+  f.ports.createProvider = (cwd, abort) => {
+    const provider = create(cwd, abort);
     if (f.owners.length === 2) {
-      const initialize = provider.initSession;
-      provider.initSession = async (...args) => { entered(); await waiting; return initialize(...args); };
+      const initialize = provider.initialize;
+      provider.initialize = async (...args) => { entered(); await waiting; return initialize(...args); };
     }
     return provider;
   };
@@ -323,10 +301,10 @@ test('host landmark callback rejects cross-IWAD candidates even with a matching 
 test('main CLI default/help/malformed flags are inert; exact opt-in uses injected fake launch only', async () => {
   let calls = 0;
   const launch = async () => { calls++; return 7; };
-  for (const args of [[], ['--help'], ['--live'], ['--authorize-live-observation-acp', 'extra']])
+  for (const args of [[], ['--help'], ['--live'], ['--authorize-live-observation-cli', 'extra']])
     assert.equal(await main(args, launch, () => {}), args.length === 0 || args[0] === '--help' ? 0 : 2);
   assert.equal(calls, 0);
-  assert.equal(await main(['--authorize-live-observation-acp'], launch, () => {}), 7);
+  assert.equal(await main(['--authorize-live-observation-cli'], launch, () => {}), 7);
   const guard = `import childProcess from 'node:child_process';
 import sqlite from 'node:sqlite';
 import { syncBuiltinESMExports } from 'node:module';
@@ -339,13 +317,13 @@ syncBuiltinESMExports();`;
     const process = spawnSync(globalThis.process.execPath, ['--experimental-strip-types', '--import',
       `data:text/javascript,${encodeURIComponent(guard)}`,
       new URL('../src/main.ts', import.meta.url).pathname, ...args], { encoding: 'utf8', timeout: 10_000 });
-    assert.equal(process.status, 0); assert.match(process.stdout, /Inert: no attach, SQLite open or ACP startup/);
+    assert.equal(process.status, 0); assert.match(process.stdout, /Inert: no attach, SQLite open or CLI startup/);
     assert.match(process.stdout, /Press Stop Agent/);
     assert.doesNotMatch(process.stderr, /\[doom\]|\[agent\]|\[decision\]/);
   }
   const preflight = spawnSync(process.execPath, ['--experimental-strip-types', '--import',
     `data:text/javascript,${encodeURIComponent(guard)}`, new URL('../src/main.ts', import.meta.url).pathname,
-    '--authorize-live-observation-acp', '--authorize-agent-one-decision'], {
+    '--authorize-live-observation-cli', '--authorize-agent-one-decision'], {
     encoding: 'utf8', timeout: 10_000, env: { ...process.env, DEBUG: 'PRIVATE_PREFLIGHT_VALUE' },
   });
   assert.equal(preflight.status, 1);
@@ -460,49 +438,36 @@ function decisionFixture(options: { fault?: string; consult?: boolean; twice?: b
     instructions(text) { instructionPath = join(f.root, 'owned-instructions'); writeFileSync(instructionPath, text, { mode: 0o600, flag: 'wx' });
       return { path: instructionPath, remove: () => unlinkSync(instructionPath) }; },
   };
-  f.models[0] = new MockLanguageModelV3({ doStream: async input => {
-    assert.ok(input.tools?.some(tool => tool.type === 'function' && tool.name === 'executeGuardedDecision'));
-    assert.deepEqual(input.tools?.filter(tool => tool.type === 'function').map(tool => tool.name).sort(), ['consultLandmarks', 'executeGuardedDecision']);
-    const session = f.owners[0].id;
-    return { stream: new ReadableStream({ async start(controller) {
-      async function invoke(name: string, args: unknown, id: string) {
-        controller.enqueue({ type: 'tool-call', toolCallId: id, toolName: dynamicName,
-          input: JSON.stringify({ toolCallId: id, toolName: `mcp.acp-ai-sdk-tools.${name}`, args }), providerExecuted: true });
-        const execute = getExecuteByName(name); assert.ok(execute);
-        const output = CallToolResultSchema.parse(JSON.parse(JSON.stringify(await execute(args))));
-        controller.enqueue({ type: 'tool-result', toolCallId: id, toolName: dynamicName, result: JSON.parse(JSON.stringify(output)) });
-        const block = output.content[0]; assert.ok(block.type === 'text');
-        return JSON.parse(block.text);
-      }
-      try {
-        if (options.consult) await invoke('consultLandmarks', {}, 'parent-consult');
-        const result = await invoke('executeGuardedDecision', options.input ?? submitted, 'parent-decision-1');
-        // ACP continuation in the SAME provider request/session reads the actual
-        // returned MCP block. No completion text exists before the tool result.
-        assert.equal(f.owners[0].id, session);
-        continuations.push(structuredClone(result));
-        if (options.twice) await invoke('executeGuardedDecision', guidance, 'parent-decision-2');
-        await options.after?.();
-        const output = { ...advisory,
-          recordedEvidence: options.reflection?.recordedEvidence ?? 'The structured host receipt supplies the outcome; the initial image cannot prove progress.',
-          memoryInfluence: { noteId: null, explanation: options.reflection?.explanation ?? 'No historical note materially influenced the objective.' }, decision: result };
-        const text = options.final ?? (options.renderFinal ?? JSON.stringify)(output);
-        controller.enqueue({ type: 'text-start', id: 'final' });
-        const chunkSize = options.chunkSize ?? Math.max(1, text.length);
-        for (let offset = 0; offset < text.length; offset += chunkSize)
-          controller.enqueue({ type: 'text-delta', id: 'final', delta: text.slice(offset, offset + chunkSize) });
-        controller.enqueue({ type: 'text-end', id: 'final' });
-        controller.enqueue({ type: 'finish', finishReason: { unified: 'stop', raw: options.rawFinish ?? 'end_turn' }, usage: {
-          inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 0, text: 0, reasoning: 0 } } });
-        controller.close();
-      } catch (error) { controller.error(error); }
-    } }) };
+  let modelStep = 0;
+  f.models[0] = new MockLanguageModelV4({ doStream: async input => {
+    const step = modelStep++;
+    if (options.consult && step === 0) {
+      assert.ok(input.tools?.some(tool => tool.type === 'function' && tool.name === 'consultLandmarks'));
+      return fixtureStream([{ type: 'tool-call', toolCallId: 'parent-consult', toolName: 'consultLandmarks', input: '{}' }]);
+    }
+    if (step === (options.consult ? 1 : 0)) {
+      assert.ok(input.tools?.some(tool => tool.type === 'function' && tool.name === 'executeGuardedDecision'));
+      if (options.consult) assert.ok(lastToolResult(input.prompt, 'consultLandmarks'));
+      return fixtureStream([{ type: 'tool-call', toolCallId: 'parent-decision-1', toolName: 'executeGuardedDecision', input: JSON.stringify(options.input ?? submitted) }]);
+    }
+    // This result exists only after the real SDK executes the guarded callback.
+    const result: any = lastToolResult(input.prompt, 'executeGuardedDecision');
+    continuations.push(structuredClone(result));
+    assert.equal(input.toolChoice?.type, 'none');
+    assert.equal(input.tools?.length ?? 0, 0);
+    if (options.twice) return fixtureStream([{ type: 'tool-call', toolCallId: 'parent-decision-2', toolName: 'executeGuardedDecision', input: JSON.stringify(guidance) }]);
+    await options.after?.();
+    const output = { ...advisory,
+      recordedEvidence: options.reflection?.recordedEvidence ?? 'The structured host receipt supplies the outcome; the initial image cannot prove progress.',
+      memoryInfluence: { noteId: null, explanation: options.reflection?.explanation ?? 'No historical note materially influenced the objective.' }, decision: result };
+    const text = options.final ?? (options.renderFinal ?? JSON.stringify)(output);
+    return fixtureStream(textParts(text, options.chunkSize), options.rawFinish ?? 'completed');
   } });
   return { ...f, deliveries, continuations, providerInstructions, lease: () => ({ pageId: f.ids.pageId, ownerId: '11111111-1111-4111-8111-111111111111', epoch: f.ids.epoch, leaseFile }),
     run: () => runMain(f.ports, f.abort.signal, 2000, true) };
 }
 
-test('agent event → guarded typed controller action → same-session receipt-aware continuation (optional child)', async () => {
+test('agent event → guarded typed controller action → SDK-owned receipt-aware continuation (optional child)', async () => {
   for (const consult of [false, true]) {
     const f = decisionFixture({ consult });
     try {
@@ -526,7 +491,7 @@ test('agent event → guarded typed controller action → same-session receipt-a
       }
       assert.equal(report.parentStream?.toolCalls, consult ? 2 : 1);
       assert.equal(report.parentStream?.drained, true);
-      assert.deepEqual(report.sdkRequests, { parent: 1, child: consult ? 1 : 0 });
+      assert.deepEqual(report.sdkRequests, { parent: consult ? 3 : 2, child: consult ? 2 : 0 });
       if (consult) assert.ok(!f.models[1].doStreamCalls[0].tools?.some(tool => tool.type === 'function' && tool.name === 'executeGuardedDecision'));
       assert.equal(report.lease.state, 'held');
     } finally { await f.destroy(); }
@@ -548,8 +513,8 @@ test('Consola milestones follow the owning verified boundaries and show only sco
       'Applied gameplay guidance (CAS revision 1', 'Fresh observation verified after guidance CAS',
       'Submitting guarded controller decision request', 'Controller receipt validated: completed; SDK invoked: true',
       'Verified action: turn_left, 6 tics (tic 43 → 49)', 'Budget verified: 1 SDK attempt used / 1 total; reserved=1, remaining=0',
-      'Parent stream drained', 'Awaiting parent completion', 'Parent completion metadata and session invariants verified',
-      'Parent final output accepted', '[cleanup] Cleanup started', 'child-process exits unverified', 'Press Stop Agent',
+      'Parent stream drained', 'Awaiting parent completion', 'Parent completion metadata and provider invariants verified',
+      'Parent final output accepted', '[cleanup] Cleanup started', 'child exit evidence is reported per owner', 'Press Stop Agent',
       '[run] Final report ready: completed',
     ];
     let previous = -1;
@@ -614,7 +579,7 @@ test('post-receipt failures identify only safe validation causes without changin
   const f = decisionFixture({ after: async () => { f.owners[0].id = 'changed'; } });
   try {
     const report = await f.run();
-    assert.deepEqual(report.failureDiagnostic, { stage: 'session_invariants', code: 'SESSION_INVARIANTS_INVALID' });
+    assert.deepEqual(report.failureDiagnostic, { stage: 'provider_invariants', code: 'unknown' });
     assert.equal(report.decision.receipt?.verifiedTics, 6);
   } finally { await f.destroy(); }
 });
@@ -625,7 +590,7 @@ test('success and post-receipt failure publish exactly one JSON document; real C
     try {
       const report = await f.run();
       let stdout = '', writes = 0;
-      const code = await main(['--authorize-live-observation-acp', '--authorize-agent-one-decision'], async () => {
+      const code = await main(['--authorize-live-observation-cli', '--authorize-agent-one-decision'], async () => {
         writeMainReport(report, value => { stdout += value; writes++; });
         return reportExitCode(report, true);
       });
@@ -662,22 +627,22 @@ test('an unexpected post-receipt exception keeps an unknown cause and never echo
   let failSessionRead = false;
   const f = decisionFixture({ after: async () => { failSessionRead = true; } });
   const create = f.ports.createProvider;
-  f.ports.createProvider = cwd => {
-    const provider = create(cwd), getSessionId = provider.getSessionId;
-    provider.getSessionId = () => {
+  f.ports.createProvider = (cwd, abort) => {
+    const provider = create(cwd, abort), assertHealthy = provider.assertHealthy;
+    provider.assertHealthy = () => {
       if (failSessionRead) throw new Error('PRIVATE_ERROR sk-private /tmp/private\u001b[31m');
-      return getSessionId();
+      return assertHealthy();
     };
     return provider;
   };
   try {
     const report = await f.run();
     assert.equal(report.error, 'MAIN_FAILED');
-    assert.deepEqual(report.failureDiagnostic, { stage: 'session_invariants', code: 'unknown' });
+    assert.deepEqual(report.failureDiagnostic, { stage: 'provider_invariants', code: 'unknown' });
     assert.equal(report.decision.receipt?.verifiedTics, 6);
     assert.equal(report.decision.accounting, 'exhausted');
     assert.doesNotMatch(f.progress() + JSON.stringify(report), /PRIVATE_ERROR|sk-private|\/tmp\/private|\u001b/);
-    assert.match(f.progress(), /ACP or temporary-directory cleanup unverified/);
+    assert.ok(report.cleanup.every(value => value === 'close-returned; child-exit-unverified'));
     assert.doesNotMatch(f.progress(), /cleanup APIs returned/);
   } finally { await f.destroy(); }
 });
@@ -823,9 +788,9 @@ test('receipt-aware event budget admits identical grounded output in one, six-ch
     assert.deepEqual(validateDecisionOutput(raw, report.decision, [], [], f.abort.signal).decision, feedback);
     let emitted = 0, delivered = '';
     const stream = (chunkSize: number) => ({ fullStream: (async function* () {
-      emitted++; yield { type: 'tool-call', toolCallId: 'receipt', toolName: dynamicName,
-        input: { toolCallId: 'receipt', toolName: 'executeGuardedDecision', args: advisory } };
-      emitted++; yield { type: 'tool-result', toolCallId: 'receipt', toolName: dynamicName, output: report.decision.calls[0].envelope };
+      emitted++; yield { type: 'tool-call', toolCallId: 'receipt', toolName: 'executeGuardedDecision',
+        input: advisory };
+      emitted++; yield { type: 'tool-result', toolCallId: 'receipt', toolName: 'executeGuardedDecision', output: report.decision.calls[0].feedback };
       for (let offset = 0; offset < raw.length; offset += chunkSize) {
         const text = raw.slice(offset, offset + chunkSize);
         delivered += text;
@@ -834,7 +799,7 @@ test('receipt-aware event budget admits identical grounded output in one, six-ch
       emitted++; yield { type: 'finish-step' };
       emitted++; yield { type: 'finish' };
     })() });
-    const matches = (output: unknown) => envelopeMatches(output, report.decision.calls[0].envelope);
+    const matches = (output: unknown) => domainResultMatches(output, report.decision.calls[0].envelope);
     for (const chunkSize of [raw.length, 6, 1]) {
       emitted = 0; delivered = '';
       const consumed = await consumeDoomStream(stream(chunkSize), f.abort.signal, matches, ['executeGuardedDecision'],
@@ -944,7 +909,7 @@ test('second agent tool call cannot repeat a verified action; bad final prose/cl
     }
     if (options.fault === 'provider-cleanup') {
       const create = f.ports.createProvider;
-      f.ports.createProvider = cwd => { const provider = create(cwd); provider.cleanup = () => { throw new Error('cleanup'); }; return provider; };
+      f.ports.createProvider = (cwd, abort) => { const provider = create(cwd, abort); provider.close = async () => { throw new Error('cleanup'); }; return provider; };
     }
     if (options.fault === 'cleanup') f.ports.removeDirectory = () => { throw new Error('cleanup'); };
     try {
@@ -955,7 +920,7 @@ test('second agent tool call cannot repeat a verified action; bad final prose/cl
       assert.equal(report.decision.receipt?.verifiedTics, 6);
       assert.equal(f.deliveries.filter(op => op === 'decide').length, 1);
       assert.equal(f.deliveries.filter(op => op === 'start-run').length, 1);
-      if (options.twice) assert.equal(report.decision.calls[1].feedback.error, 'ALREADY_CONSUMED');
+      if (options.twice) assert.equal(report.decision.calls.length, 1, 'SDK suppression rejects redelivery before the guarded callback');
     } finally { await f.destroy(); }
   }
 });
@@ -979,8 +944,8 @@ test('explicit authorization required by CLI and callback, independently of agen
   const launch = async (enabled = false) => { modes.push(enabled); return 0; };
   await main(['--authorize-agent-one-decision'], launch, () => {});
   assert.deepEqual(modes, []);
-  await main(['--authorize-live-observation-acp'], launch, () => {});
-  await main(['--authorize-live-observation-acp', '--authorize-agent-one-decision'], launch, () => {});
+  await main(['--authorize-live-observation-cli'], launch, () => {});
+  await main(['--authorize-live-observation-cli', '--authorize-agent-one-decision'], launch, () => {});
   assert.deepEqual(modes, [false, true]);
   const f = decisionFixture();
   try {
@@ -1048,6 +1013,7 @@ test('deadline during outbound mutation leaves unknown delivery and cannot dispa
   try {
     const report = await runMain(f.ports, f.abort.signal, 50, true);
     assert.equal(report.decision.claim, 'unknown'); assert.equal(report.decision.receipt, null);
+    assert.deepEqual(report.failureDiagnostic, { stage: 'parent_stream', code: 'DEADLINE' });
     release(); await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(f.deliveries, ['start-run']);
   } finally { release(); await f.destroy(); }
@@ -1056,7 +1022,7 @@ test('deadline during outbound mutation leaves unknown delivery and cannot dispa
 test('passive composition never registers gameplay even when host mutation ports exist', async () => {
   const f = decisionFixture();
   const passive = fakeModel('consultLandmarks');
-  f.models[0] = new MockLanguageModelV3({ doStream: input => {
+  f.models[0] = new MockLanguageModelV4({ doStream: input => {
     assert.ok(!input.tools?.some(tool => tool.type === 'function' && tool.name === 'executeGuardedDecision'));
     return passive.doStream(input);
   } });
@@ -1074,7 +1040,7 @@ test('CLI exit whitelist preserves controller outcomes and successful decision/p
     const f = decisionFixture({ fault });
     if (fault === 'provider-cleanup') {
       const create = f.ports.createProvider;
-      f.ports.createProvider = cwd => { const provider = create(cwd); provider.cleanup = () => { throw new Error('cleanup'); }; return provider; };
+      f.ports.createProvider = (cwd, abort) => { const provider = create(cwd, abort); provider.close = async () => { throw new Error('cleanup'); }; return provider; };
     }
     try {
       const report = await f.run();
@@ -1087,7 +1053,7 @@ test('CLI exit whitelist preserves controller outcomes and successful decision/p
         assert.equal(report.decision.receipt.verifiedTics, 2);
       }
       const snapshot = JSON.stringify(report);
-      const code = await main(['--authorize-live-observation-acp', '--authorize-agent-one-decision'],
+      const code = await main(['--authorize-live-observation-cli', '--authorize-agent-one-decision'],
         async authorized => { assert.equal(authorized, true); return reportExitCode(report, authorized); });
       assert.equal(code, fault === undefined || fault === 'terminal' ? 0 : 1, String(fault));
       assert.equal(JSON.stringify(report), snapshot);
@@ -1106,7 +1072,7 @@ test('CLI exit whitelist preserves controller outcomes and successful decision/p
     try {
       const report = await runMain(f.ports, f.abort.signal);
       assert.equal(report.outcome, attributed ? 'completed' : 'empty');
-      assert.equal(await main(['--authorize-live-observation-acp'], async authorized => {
+      assert.equal(await main(['--authorize-live-observation-cli'], async authorized => {
         assert.equal(authorized, false); return reportExitCode(report, authorized);
       }), 0);
       assert.equal(reportExitCode(report, true), 1, 'passive success cannot stand in for a decision receipt');
@@ -1158,5 +1124,165 @@ test('cancellation settles owned-file cleanup before publishing, without awaitin
       assert.deepEqual(f.deliveries, ['start-run']);
       assert.equal(JSON.stringify(report), snapshot);
     } finally { release(); await f.destroy(); }
+  }
+});
+
+
+function hermesResult(prompt: readonly { role: string; content: unknown }[], name: string): any {
+  const history = prompt.flatMap(message => Array.isArray(message.content)
+    ? message.content.flatMap(part => part.type === 'text' ? [part.text] : []) : []).join('\n');
+  const responses = [...history.matchAll(/<tool_response>(.*?)<\/tool_response>/gs)]
+    .map(match => JSON.parse(match[1]));
+  const response = responses.findLast(result => result.name === name);
+  assert.ok(response, 'Next stateless model step must receive the real SDK callback result');
+  assert.ok(!('content' in response.content), 'MCP presentation envelope must not be nested in SDK results');
+  return response.content;
+}
+
+test('Hermes text → SDK-owned nested callbacks → guarded synthetic action → grounded final JSON, with step instruction replacement', async () => {
+  for (const malformed of [false, true]) {
+    const f = decisionFixture({ consult: true });
+    const order: string[] = [];
+    const policies: { choice: string | null; tools: number }[][] = [[], []];
+    let parentStep = 0, childStep = 0;
+    f.models[0] = new MockLanguageModelV4({ doStream: async input => {
+      assert.equal(input.tools, undefined, 'Omit Hermes empty tools before the provider warning mapper');
+      const instructions = input.prompt.filter(message => message.role === 'system').map(message => message.content).join('\n');
+      const step = parentStep++;
+      order.push(`parent-${step}`);
+      if (step === 0) return cliFixtureStream(input, textParts('<tool_call>{"name":"consultLandmarks","arguments":{}}</tool_call>'));
+      if (step === 1) {
+        assert.ok(hermesResult(input.prompt, 'consultLandmarks').selection);
+        assert.equal(policies[0].at(-1)?.choice, 'auto', 'consultation must not suppress the guarded action');
+        assert.equal(policies[0].at(-1)?.tools, 1);
+        assert.ok(instructions.includes('Consultation has finished. Request executeGuardedDecision once'));
+        assert.ok(!instructions.includes('Call consultLandmarks exactly once'));
+        return cliFixtureStream(input, textParts(`<tool_call>${JSON.stringify({ name: 'executeGuardedDecision', arguments: guidance })}</tool_call>`));
+      }
+      const decision = hermesResult(input.prompt, 'executeGuardedDecision');
+      assert.equal(decision.receipt.verifiedTics, 6);
+      assert.equal(policies[0].at(-1)?.choice, 'none');
+      assert.equal(policies[0].at(-1)?.tools, 0);
+      assert.ok(instructions.includes('Completion step:'));
+      assert.ok(!instructions.includes('Request exactly one executeGuardedDecision'));
+      assert.ok(!instructions.includes('Request executeGuardedDecision once'));
+      const output = { objective: guidance.objective, uncertainty: guidance.uncertainty,
+        recordedEvidence: 'The exact host callback receipt reports six verified synthetic tics.',
+        memoryInfluence: { noteId: null, explanation: 'The synthetic consultation returned no historical candidates.' }, decision };
+      return cliFixtureStream(input, textParts(malformed ? '<tool_call>leaked markup</tool_call>' : JSON.stringify(output)));
+    } });
+    f.models[1] = new MockLanguageModelV4({ doStream: async input => {
+      const step = childStep++;
+      order.push(`child-${step}`);
+      if (step === 0) return cliFixtureStream(input, textParts('<tool_call>{"name":"findLandmarks","arguments":{}}</tool_call>'));
+      const result = hermesResult(input.prompt, 'findLandmarks');
+      const instructions = input.prompt.filter(message => message.role === 'system').map(message => message.content).join('\n');
+      assert.ok(!instructions.includes('Call findLandmarks exactly once'));
+      assert.equal(policies[1].at(-1)?.choice, 'none');
+      assert.equal(policies[1].at(-1)?.tools, 0);
+      return cliFixtureStream(input, textParts(JSON.stringify({ status: 'empty', mapNamespace: result.context.mapIdentity.mapKey,
+        advisoryStatus: 'unverified', evidenceNoteIds: [], explanation: 'No nearby landmark candidates returned.' })));
+    } });
+    const create = f.ports.createProvider;
+    f.ports.createProvider = (cwd, abort) => {
+      const owner = create(cwd, abort);
+      const role = f.owners.length - 1;
+      const model = wrapLanguageModel({ model: owner.languageModel(), middleware: [{
+        specificationVersion: 'v4',
+        transformParams: async ({ params }) => {
+          policies[role].push({ choice: params.toolChoice?.type ?? null, tools: params.tools?.length ?? 0 });
+          return params;
+        },
+      }, hermesToolMiddleware,
+        cliSafetyMiddleware(abort, () => false, async () => {})] });
+      return { ...owner, languageModel: () => model };
+    };
+    try {
+      const report = await f.run();
+      assert.equal(report.outcome, malformed ? 'failed' : 'completed', JSON.stringify(report.failureDiagnostic));
+      assert.deepEqual(order, ['parent-0', 'child-0', 'child-1', 'parent-1', 'parent-2']);
+      assert.deepEqual(report.sdkRequests, { parent: 3, child: 2 });
+      assert.deepEqual(report.callbacks, { consult: 1, find: 1 });
+      assert.equal(report.parentStream?.toolCalls, 2); assert.equal(report.parentStream?.toolResults, 2);
+      assert.equal(report.decision.receipt?.verifiedTics, 6);
+      assert.equal(f.deliveries.filter(op => op === 'decide').length, 1);
+      if (malformed) {
+        assert.equal(report.result, null);
+        assert.deepEqual(report.failureDiagnostic, { stage: 'final_json', code: 'JSON_PARSE_INVALID' });
+      } else assert.equal(report.receiptAwareSummary, true);
+    } finally { await f.destroy(); }
+  }
+});
+
+test('SDK Zod validation rejects malformed parent and child arguments before callbacks or mutation', async () => {
+  for (const name of ['consultLandmarks', 'findLandmarks', 'executeGuardedDecision'] as const) {
+    const f = decisionFixture({ consult: true });
+    const role = name === 'findLandmarks' ? 1 : 0;
+    f.models[role] = new MockLanguageModelV4({ doStream: async () => fixtureStream([
+      { type: 'tool-call', toolCallId: 'invalid-schema', toolName: name,
+        input: JSON.stringify(name === 'executeGuardedDecision' ? { ...guidance, tics: 35 } : { sql: 'forbidden' }) },
+    ]) });
+    try {
+      const report = await f.run();
+      assert.equal(report.outcome, 'failed');
+      assert.equal(report.decision.attempted, 0);
+      assert.deepEqual(f.deliveries, []);
+      assert.equal(report.callbacks.find, 0);
+      if (role === 0) assert.equal(report.callbacks.consult, 0);
+    } finally { await f.destroy(); }
+  }
+});
+
+test('CLI startup failure cannot admit callbacks; non-completed final reasons cannot conceal a verified action', async () => {
+  const startup = fixture();
+  const create = startup.ports.createProvider;
+  startup.ports.createProvider = (cwd, abort) => ({ ...create(cwd, abort), initialize: async () => { throw new Error('PRIVATE_STARTUP_FAILURE'); } });
+  try {
+    const report = await runMain(startup.ports, startup.abort.signal);
+    assert.equal(report.outcome, 'failed'); assert.equal(report.result, null);
+    assert.deepEqual(report.callbacks, { consult: 0, find: 0 });
+    assert.deepEqual(report.sdkRequests, { parent: 0, child: 0 });
+    assert.equal(report.lease.state, 'held');
+    assert.deepEqual(startup.owners.map(owner => owner.cleanups), [1, 1]);
+  } finally { await startup.destroy(); }
+  for (const rawFinish of ['end_turn', 'cancelled', 'interrupted', 'failed']) {
+    const f = decisionFixture({ rawFinish });
+    try {
+      const report = await f.run();
+      assert.equal(report.outcome, 'failed'); assert.equal(report.result, null);
+      assert.deepEqual(report.failureDiagnostic, { stage: 'completion_validation', code: 'COMPLETION_METADATA_INVALID' });
+      assert.equal(report.decision.receipt?.verifiedTics, 6);
+      assert.equal(reportExitCode(report, true), 1);
+    } finally { await f.destroy(); }
+  }
+});
+
+
+test('provider abort reports its fixed cause instead of generic cancellation and never dispatches', async () => {
+  for (const reason of ['warning', 'image', 'native'] as const) {
+    const f = decisionFixture();
+    const create = f.ports.createProvider;
+    f.ports.createProvider = (cwd, abort) => {
+      const owner = create(cwd, abort);
+      const raw = new MockLanguageModelV4({ doStream: async () => {
+        if (reason === 'native') rejectCliProvider(abort, 'CLI_NATIVE_TOOL_EVENT');
+        return rejectCliWarning(abort, reason === 'image'
+          ? '[codex-app-server] Failed to write image to temp file: PRIVATE_CAUSE sk-private /tmp/private'
+          : 'PRIVATE_WARNING sk-private /tmp/private');
+      } });
+      return { ...owner, languageModel: () => raw };
+    };
+    try {
+      const report = await f.run();
+      const code = reason === 'image' ? 'CLI_IMAGE_WRITE_FAILED' : reason === 'native' ? 'CLI_NATIVE_TOOL_EVENT' : 'CLI_PROVIDER_WARNING';
+      assert.equal(report.outcome, 'failed');
+      assert.equal(report.error, code);
+      assert.deepEqual(report.failureDiagnostic, { stage: 'parent_stream', code });
+      assert.deepEqual(report.callbacks, { consult: 0, find: 0 });
+      assert.equal(report.decision.attempted, 0);
+      assert.deepEqual(f.deliveries, []);
+      assert.equal(report.lease.state, 'held');
+      assert.doesNotMatch(JSON.stringify(report) + f.progress(), /PRIVATE_CAUSE|PRIVATE_WARNING|sk-private|\/tmp\/private/);
+    } finally { await f.destroy(); }
   }
 });

@@ -14,6 +14,7 @@ import { ToolLoopAgent, isStepCount } from 'ai';
 import { findMemory, recordMemory } from '../../../app/doom-memory.mjs';
 import { createAgentMapIdentity } from '../../../app/src/agent-observation.ts';
 import { rebuildSmokeTools } from '../src/find-landmarks-acp-smoke.ts';
+import { nativeTool, type HostCall } from '../src/native-tools.ts';
 import { createLandmarksAgent, landmarksInstructions } from '../src/landmarks-tool-loop-agent.ts';
 import { inspectLandmarksCompletion, landmarksMain, summarizeLandmarkReceipts } from '../src/landmarks-tool-loop-agent-smoke.ts';
 import {
@@ -175,11 +176,11 @@ function fakeTextModel(text: string) {
 test('agent factory preserves instructions, prepared tools and request notification without inference on construction', async () => {
   const model = fakeTextModel('{}');
   const receipts: LandmarkReceipt[] = [];
-  const registered = acpTools({ findLandmarks: createLandmarksTool(context, receipts, new AbortController()) });
-  const tools = rebuildSmokeTools(registered);
+  const abort = new AbortController();
+  const tools = { findLandmarks: nativeTool('findLandmarks', createLandmarksTool(context, receipts, abort), [], abort.signal) };
   let requests = 0;
-  const agent = createLandmarksAgent(model, tools, () => { requests++; });
-  assert.equal(agent.tools, tools, 'Keep the host callback and provider-executed descriptor intact');
+  const agent = createLandmarksAgent(model, tools, () => { requests++; }, []);
+  assert.equal(agent.tools, tools, 'Keep only the native SDK host callback');
   assert.equal(requests, 0);
   assert.equal(model.doStreamCalls.length, 0);
   const result = await agent.stream({ prompt: 'Retrieve and select one historical Doom landmark using findLandmarks.' });
@@ -193,10 +194,10 @@ test('agent factory preserves instructions, prepared tools and request notificat
 test('runner is inert without exact opt-in; no ACP is launched by imports or tests', async () => {
   let launches = 0;
   const launch = async () => { launches++; return 7; };
-  for (const args of [[], ['--help'], ['--authorize-acp', 'extra'], ['--live'], ['--authorize-acp=true']])
+  for (const args of [[], ['--help'], ['--authorize-cli', 'extra'], ['--live'], ['--authorize-cli=true']])
     assert.equal(await landmarksMain(args, launch, () => {}), args.length === 0 || args[0] === '--help' ? 0 : 2);
   assert.equal(launches, 0);
-  assert.equal(await landmarksMain(['--authorize-acp'], launch, () => {}), 7);
+  assert.equal(await landmarksMain(['--authorize-cli'], launch, () => {}), 7);
   assert.equal(launches, 1, 'Only the injected fake launch was invoked');
 });
 
@@ -207,7 +208,7 @@ test('installed ACP text conversion distinguishes baseline user prompt from refa
   const after = fakeTextModel('{}');
   const baseline = new ToolLoopAgent({ model: before, tools, maxRetries: 0, stopWhen: isStepCount(2) });
   await (await baseline.stream({ prompt: landmarksInstructions })).text;
-  const current = createLandmarksAgent(after, tools, () => {});
+  const current = new ToolLoopAgent({ model: after, tools, instructions: landmarksInstructions, maxRetries: 0, stopWhen: isStepCount(2) });
   const task = 'Retrieve and select one historical Doom landmark using findLandmarks.';
   await (await current.stream({ prompt: task })).text;
   assert.deepEqual(before.doStreamCalls[0].prompt, [{ role: 'user', content: [{ type: 'text', text: landmarksInstructions }], providerOptions: undefined }]);
@@ -232,8 +233,9 @@ test('installed ACP text conversion distinguishes baseline user prompt from refa
 test('invalid selection keeps settled SDK metadata and bounded schema diagnostics without raw content', async () => {
   await withFixture(async path => {
     const receipts: LandmarkReceipt[] = [];
-    const tools = rebuildSmokeTools(acpTools({ findLandmarks: createLandmarksTool(context, receipts, new AbortController(), path) }));
-    await tools.findLandmarks.execute({});
+    const callback = createLandmarksTool(context, receipts, new AbortController(), path);
+    await callback.execute({});
+    const tools = { findLandmarks: nativeTool('findLandmarks', callback, [], new AbortController().signal) };
     const found = receipts[0].result;
     assert.ok(found);
     const secret = 'PRIVATE_TEXT_MUST_NOT_APPEAR';
@@ -247,7 +249,7 @@ test('invalid selection keeps settled SDK metadata and bounded schema diagnostic
       { text: JSON.stringify(selection(found)), error: null },
     ];
     for (const example of cases) {
-      const result = await createLandmarksAgent(fakeTextModel(example.text), tools, () => {}).stream({ prompt: 'Offline response fixture' });
+      const result = await createLandmarksAgent(fakeTextModel(example.text), tools, () => {}, []).stream({ prompt: 'Offline response fixture' });
       const events = [];
       for await (const event of result.fullStream) events.push(event.type);
       const completion = await inspectLandmarksCompletion(result, receipts);

@@ -2,18 +2,17 @@ import { mkdtempSync, readFileSync, rmdirSync, writeSync, writeFileSync, rmSync 
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { LanguageModel } from 'ai';
-import { acpTools, createACPProvider } from '@mcpc-tech/acp-ai-provider';
+import { pathToFileURL } from 'node:url';
+import { createCliProvider, cliFailureCode, type CliFailureCode, type CliProvider } from './cli-provider.ts';
+import { nativeTool, hostResultMatches, domainResultMatches, type HostCall } from './native-tools.ts';
 import {
   executeAgentOperation, type AttachedLease, type MaterializedObserve,
 } from '../../../scripts/doom-agent-client.ts';
-import { cleanupDoomProviders, fenceDoomInitialization, type DoomInitialization } from './agent-lifecycle.ts';
-import { consumeDoomStream, DoomStreamError, envelopeMatches } from './agent-stream.ts';
+import { closeCliProviders, fenceCliInitialization, type CliInitialization } from './agent-lifecycle.ts';
+import { consumeDoomStream, DoomStreamError } from './agent-stream.ts';
 import {
-  createConsultLandmarks, createDoomPlayAgent, rebuildParentTools, validateParentOutput, validateDecisionOutput, maxDecisionOutputCharacters, ParentOutputError, type ConsultReceipt,
+  createConsultLandmarks, createDoomPlayAgent, validateParentOutput, validateDecisionOutput, maxDecisionOutputCharacters, ParentOutputError, type ConsultReceipt,
 } from './doom-play-agent.ts';
-import { rebuildSmokeTools } from './find-landmarks-acp-smoke.ts';
 import { createLandmarksAgent } from './landmarks-tool-loop-agent.ts';
 import {
   createLandmarksTool, lookupLandmarks, type LandmarkReceipt, type SavedContext,
@@ -22,17 +21,12 @@ import { createGuardedDecision, decisionLedger, type DecisionPorts } from './gua
 import { liveObserve, parseLease, requireLive, type ReadPng } from './live-observation.ts';
 import { createOperatorConsole } from './operator-console.ts';
 
-type Provider = Pick<ReturnType<typeof createACPProvider>, 'cleanup' | 'getSessionId'> & {
-  languageModel(): LanguageModel;
-  initSession: (...args: Parameters<ReturnType<typeof createACPProvider>['initSession']>) => Promise<unknown>;
-};
-
 // Construction/import is inert. Mutating ports are wired only behind explicit authorization.
 export type MainPorts = {
   attach(signal: AbortSignal): Promise<AttachedLease>;
   observe(leaseFile: string, signal: AbortSignal): Promise<MaterializedObserve>;
   readPng: ReadPng;
-  createProvider(cwd: string): Provider;
+  createProvider(cwd: string, abort: AbortController): CliProvider;
   makeDirectory(): string;
   removeDirectory(path: string): void;
   lookup: typeof lookupLandmarks;
@@ -40,14 +34,14 @@ export type MainPorts = {
   logger?: ReturnType<typeof createOperatorConsole>;
 };
 
-const operatorInstruction = 'Browser ownership is not released by ACP cleanup or process exit. Press Stop Agent in the browser before another attach, including after failed or uncertain attachment. Do not automatically retry.';
+const operatorInstruction = 'Browser ownership is not released by CLI provider cleanup or process exit. Press Stop Agent in the browser before another attach, including after failed or uncertain attachment. Do not automatically retry.';
 
 type FailureDiagnostic = {
   stage: 'setup' | 'attach' | 'initial_observation' | 'provider_initialization' | 'parent_stream' |
-    'callback_correlation' | 'completion_await' | 'completion_validation' | 'session_invariants' |
+    'callback_correlation' | 'completion_await' | 'completion_validation' | 'provider_invariants' |
     'final_validation' | ParentOutputError['stage'] | 'cleanup' | 'unknown';
-  code: ParentOutputError['code'] | 'COMPLETION_METADATA_INVALID' | 'SESSION_INVARIANTS_INVALID' |
-    'STREAM_REJECTED' | 'CANCELLED' | 'CLEANUP_UNVERIFIED' | 'INSTRUCTIONS_CLEANUP_FAILED' | 'unknown';
+  code: ParentOutputError['code'] | CliFailureCode | 'COMPLETION_METADATA_INVALID' | 'PROVIDER_INVARIANTS_INVALID' |
+    'STREAM_REJECTED' | 'CANCELLED' | 'DEADLINE' | 'CLEANUP_UNVERIFIED' | 'INSTRUCTIONS_CLEANUP_FAILED' | 'unknown';
 };
 
 export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs = 120_000, authorizeOneDecision = false) {
@@ -60,9 +54,10 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
   const interrupt = () => abort.abort(signal.reason);
   signal.addEventListener('abort', interrupt, { once: true });
   if (signal.aborted) interrupt();
-  const timer = setTimeout(() => abort.abort(new Error('DEADLINE')), timeoutMs);
-  const providers: Provider[] = [];
-  const startups: DoomInitialization[] = [];
+  const deadline = new Error('DEADLINE');
+  const timer = setTimeout(() => abort.abort(deadline), timeoutMs);
+  const providers: CliProvider[] = [];
+  const startups: CliInitialization[] = [];
   const directories: string[] = [];
   const landmarks: LandmarkReceipt[] = [];
   const consults: ConsultReceipt[] = [];
@@ -80,7 +75,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     decision: decisionLedger(),
     receiptAwareSummary: false,
     cleanup: [] as string[], directoryCleanup: [] as string[],
-    evidenceLimits: 'Initial PNG input only; structured decision feedback is not a second agent-visible image. Offline tests do not prove live inference or model understanding. Public ACP cleanup does not prove child-process exit or complete tool isolation.',
+    evidenceLimits: 'Initial PNG input only; structured decision feedback is not a second agent-visible image. Offline tests do not prove live inference or model understanding. Public CLI provider cleanup does not prove child-process exit or complete tool isolation.',
   };
   let onAbort = () => {};
   try {
@@ -88,7 +83,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     // Allocate owners synchronously before racing work: no late provider/directory creation.
     for (let i = 0; i < 2; i++) {
       directories.push(ports.makeDirectory());
-      providers.push(ports.createProvider(directories.at(-1)!));
+      providers.push(ports.createProvider(directories.at(-1)!, abort));
     }
     const [parentProvider, childProvider] = providers;
     const parentModel = parentProvider.languageModel();
@@ -129,33 +124,30 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
         mapKey: context.mapIdentity.mapKey, pngSha256: observation.pngSha256, imageBytes: image.length };
       const count = (role: 'parent' | 'child') => () => {
         abort.signal.throwIfAborted();
-        if (++report.sdkRequests[role] > (authorizeOneDecision && role === 'parent' ? 3 : 1)) throw new Error('REPEATED_SDK_REQUEST');
+        if (++report.sdkRequests[role] > (authorizeOneDecision && role === 'parent' ? 3 : 2)) throw new Error('REPEATED_SDK_REQUEST');
         if (role === 'parent') agentLog.info('DoomPlayAgent request started (initial image supplied)');
       };
-      const childTools = acpTools({ findLandmarks: createLandmarksTool(context, landmarks, abort, undefined, ports.lookup) });
-      const child = createLandmarksAgent(childModel, rebuildSmokeTools(childTools), count('child'));
+      const childCalls: HostCall[] = [], parentCalls: HostCall[] = [];
+      const childTools = { findLandmarks: nativeTool('findLandmarks',
+        createLandmarksTool(context, landmarks, abort, undefined, ports.lookup), childCalls, abort.signal) };
+      const child = createLandmarksAgent(childModel, childTools, count('child'), childCalls);
       requireLive(!authorizeOneDecision || ports.decision);
       if (authorizeOneDecision && ports.decision)
         guardedDecision = createGuardedDecision(true, lease, observation, ports.decision, report.decision, abort.signal, logger.withTag('decision'));
-      const parentTools = acpTools({
-        consultLandmarks: createConsultLandmarks(context, child, landmarks, consults, abort, logger.withTag('landmarks')),
-        ...(guardedDecision ? { executeGuardedDecision: guardedDecision } : {}),
-      });
-      const parent = createDoomPlayAgent(parentModel, rebuildParentTools(parentTools), count('parent'), 'live', authorizeOneDecision);
+      const parentTools = {
+        consultLandmarks: nativeTool('consultLandmarks', createConsultLandmarks(context, child, landmarks, consults, abort, logger.withTag('landmarks')), parentCalls, abort.signal),
+        ...(guardedDecision ? { executeGuardedDecision: nativeTool('executeGuardedDecision', guardedDecision, parentCalls, abort.signal) } : {}),
+      };
+      const parent = createDoomPlayAgent(parentModel, parentTools, count('parent'), 'live', authorizeOneDecision, parentCalls);
       stage = 'provider_initialization';
-      agentLog.info('Initializing separate parent and landmark ACP sessions');
-      for (const [owner, initialize] of [
-        [childProvider, () => childProvider.initSession(childTools)],
-        [parentProvider, () => parentProvider.initSession(parentTools)],
-      ] as const) {
+      agentLog.info('Initializing separate parent and landmark CLI provider owners (stateless threads)');
+      for (const owner of [childProvider, parentProvider]) {
         abort.signal.throwIfAborted();
-        const startup = fenceDoomInitialization(owner, initialize, abort.signal);
+        const startup = fenceCliInitialization(owner, abort.signal);
         startups.push(startup);
         await startup.settled;
         abort.signal.throwIfAborted();
       }
-      const ids = providers.map(provider => provider.getSessionId());
-      requireLive(ids[0] && ids[1] && ids[0] !== ids[1]);
       stage = 'parent_stream';
       const stream = await parent.stream({
         messages: [{ role: 'user', content: [
@@ -166,7 +158,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
       });
       abort.signal.throwIfAborted();
       const consumed = await consumeDoomStream(stream, abort.signal,
-        (output, name, ordinal) => envelopeMatches(output, name === 'executeGuardedDecision'
+        (output, name, ordinal, evidence) => hostResultMatches(parentCalls, output, name, ordinal, evidence) && domainResultMatches(output, name === 'executeGuardedDecision'
           ? report.decision.calls[ordinal]?.envelope ?? null : consults[ordinal]?.envelope ?? null),
         authorizeOneDecision ? ['consultLandmarks', 'executeGuardedDecision'] : 'consultLandmarks',
         authorizeOneDecision ? maxDecisionOutputCharacters : undefined,
@@ -185,17 +177,17 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
       ]);
       abort.signal.throwIfAborted();
       stage = 'completion_validation';
-      if (!(finish === 'stop' && rawFinish === 'end_turn' && steps.length === consumed.steps)) {
+      if (!(finish === 'stop' && rawFinish === 'completed' && steps.length === consumed.steps)) {
         failureCode = 'COMPLETION_METADATA_INVALID'; requireLive(false);
       }
-      stage = 'session_invariants';
-      if (!(providers.every((provider, index) => provider.getSessionId() === ids[index]) &&
-        report.sdkRequests.parent >= 1 && report.sdkRequests.parent <= (authorizeOneDecision ? 3 : 1) &&
-        report.sdkRequests.child === consults.length)) {
-        failureCode = 'SESSION_INVARIANTS_INVALID'; requireLive(false);
+      stage = 'provider_invariants';
+      if (!(providers.every(provider => { provider.assertHealthy(); return true; }) &&
+        report.sdkRequests.parent === consumed.steps && report.sdkRequests.parent === 1 + consults.length + report.decision.attempted &&
+        report.sdkRequests.child === 2 * consults.length)) {
+        failureCode = 'PROVIDER_INVARIANTS_INVALID'; requireLive(false);
       }
       failureCode = 'unknown'; stage = 'final_validation';
-      agentLog.info('Parent completion metadata and session invariants verified; validating final JSON and grounding');
+      agentLog.info('Parent completion metadata and provider invariants verified; validating final JSON and grounding');
       const result = authorizeOneDecision
         ? validateDecisionOutput(text, report.decision, consults, landmarks, abort.signal)
         : validateParentOutput(text, consults, landmarks, abort.signal);
@@ -211,9 +203,11 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     if (error instanceof DoomStreamError) report.parentStream = error.receipt;
     const streamCode = error instanceof DoomStreamError && ['AFTER_FINISH', 'DUPLICATE_TOOL_CALL', 'TOOL_CALL_MISMATCH',
       'DUPLICATE_TOOL_RESULT', 'TOOL_RESULT_MISMATCH', 'TOOL_ENVELOPE_MISMATCH', 'INCOMPLETE_STREAM'].includes(error.message) ? error.message : null;
-    report.error = streamCode ?? (abort.signal.aborted ? 'CANCELLED_OR_FAILED_CONSULT' : 'MAIN_FAILED');
+    const providerCode = cliFailureCode(abort.signal.reason);
+    report.error = streamCode ?? providerCode ?? (abort.signal.aborted ? 'CANCELLED_OR_FAILED_CONSULT' : 'MAIN_FAILED');
     report.failureDiagnostic = error instanceof ParentOutputError ? { stage: error.stage, code: error.code } : {
-      stage, code: abort.signal.aborted ? 'CANCELLED' : error instanceof DoomStreamError ? 'STREAM_REJECTED' : failureCode,
+      stage, code: providerCode ?? (abort.signal.aborted ? abort.signal.reason === deadline ? 'DEADLINE' : 'CANCELLED'
+        : error instanceof DoomStreamError ? 'STREAM_REJECTED' : failureCode),
     };
     runLog.warn(`Run failed: ${report.error}; stage=${report.failureDiagnostic.stage}, code=${report.failureDiagnostic.code}`);
     report.result = null;
@@ -225,16 +219,16 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     abort.signal.removeEventListener('abort', onAbort);
     cleanupLog.info('Cleanup started');
     await guardedDecision?.settleFileCleanup();
-    report.cleanup = cleanupDoomProviders(providers, startups);
+    report.cleanup = await closeCliProviders(providers, startups);
     for (const directory of directories) {
       try { ports.removeDirectory(directory); report.directoryCleanup.push('empty-directory-removed'); }
       catch { report.directoryCleanup.push('not-removed'); }
     }
-    if (report.cleanup.some(value => value !== 'returned-session-cleared; child-exit-unverified') ||
+    if (report.cleanup.some(value => !['close-returned; child-exit-unverified', 'close-returned; child-exit-observed'].includes(value)) ||
         report.directoryCleanup.some(value => value !== 'empty-directory-removed')) {
       report.outcome = 'failed'; report.result = null; report.error ??= 'CLEANUP_UNVERIFIED';
       report.failureDiagnostic ??= { stage: 'cleanup', code: 'CLEANUP_UNVERIFIED' };
-      cleanupLog.warn('ACP or temporary-directory cleanup unverified');
+      cleanupLog.warn('CLI provider or temporary-directory cleanup unverified');
     }
     if (report.decision.fileCleanup === 'failed') {
       report.outcome = 'failed'; report.error ??= 'INSTRUCTIONS_CLEANUP_FAILED';
@@ -243,7 +237,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     }
     report.callbacks = { consult: consults.length, find: landmarks.length };
     report.childStream = consults[0]?.childStream ? { ...consults[0].childStream } : null;
-    cleanupLog.info('ACP cleanup attempts finished; child-process exits unverified');
+    cleanupLog.info('CLI close attempts finished; child exit evidence is reported per owner');
     if (report.lease.state !== 'not-attempted') cleanupLog.warn(operatorInstruction);
     runLog.info(`Final report ready: ${report.outcome}`);
   }
@@ -264,9 +258,8 @@ export function reportExitCode(report: Awaited<ReturnType<typeof runMain>>, auth
 }
 
 async function launch(authorizeOneDecision = false) {
-  for (const [name, expected] of Object.entries({ ai: '7.0.159', '@mcpc-tech/acp-ai-provider': '0.3.9',
-    '@mcpc-tech/acp-ai-provider/node_modules/ai': '6.0.320', '@agentclientprotocol/codex-acp': '2.5.0',
-    '@openai/codex': '0.165.0' })) {
+  for (const [name, expected] of Object.entries({ ai: '7.0.159', 'ai-sdk-provider-codex-cli': '2.4.0',
+    '@ai-sdk-tool/parser': '5.1.6', zod: '4.6.7' })) {
     if (JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8')).version !== expected)
       throw new Error('VERSION_MISMATCH');
   }
@@ -287,13 +280,9 @@ async function launch(authorizeOneDecision = false) {
       attach: signal => executeAgentOperation({ op: 'attach' }, options(signal)),
       observe: (leaseFile, signal) => executeAgentOperation({ op: 'observe', leaseFile }, options(signal)),
       readPng: (path, signal) => readFile(path, { signal }),
-      makeDirectory: () => mkdtempSync(join(tmpdir(), 'doom-main-acp-')),
+      makeDirectory: () => mkdtempSync(join(tmpdir(), 'doom-main-cli-')),
       removeDirectory: rmdirSync,
-      createProvider: cwd => createACPProvider({
-        command: fileURLToPath(new URL('../node_modules/.bin/codex-acp', import.meta.url)),
-        env: { INITIAL_AGENT_MODE: 'read-only', CODEX_CONFIG: JSON.stringify({ model: 'gpt-6-luna', model_reasoning_effort: 'xhigh' }) },
-        session: { cwd, mcpServers: [] }, persistSession: true,
-      }),
+      createProvider: createCliProvider,
       lookup: lookupLandmarks,
       ...(authorizeOneDecision ? { decision: {
         startRun: (input, signal) => executeAgentOperation({ op: 'start-run', ...input }, options(signal)),
@@ -320,9 +309,9 @@ async function launch(authorizeOneDecision = false) {
 }
 
 export async function main(args: string[], run: (authorizeOneDecision?: boolean) => Promise<number> = launch, print = (value: string) => { writeSync(1, value); }) {
-  if (args.length === 1 && args[0] === '--authorize-live-observation-acp') return run(false);
-  if (args.length === 2 && new Set(args).size === 2 && args.includes('--authorize-live-observation-acp') && args.includes('--authorize-agent-one-decision')) return run(true);
-  print('Inert: no attach, SQLite open or ACP startup. After separate live authorization only:\nnode --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-acp\n' + 'One decision additionally requires --authorize-agent-one-decision and a restarted broker with AGENT_DECISION_BUDGET=1.\n' + operatorInstruction + '\n');
+  if (args.length === 1 && args[0] === '--authorize-live-observation-cli') return run(false);
+  if (args.length === 2 && new Set(args).size === 2 && args.includes('--authorize-live-observation-cli') && args.includes('--authorize-agent-one-decision')) return run(true);
+  print('Inert: no attach, SQLite open or CLI startup. After separate live authorization only:\nnode --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-cli\n' + 'One decision additionally requires --authorize-agent-one-decision and a restarted broker with AGENT_DECISION_BUDGET=1.\n' + operatorInstruction + '\n');
   return args.length === 0 || (args.length === 1 && args[0] === '--help') ? 0 : 2;
 }
 
@@ -334,5 +323,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     writeSync(1, `${JSON.stringify({ outcome: 'failed', error: 'PREFLIGHT_FAILED', failureDiagnostic: { stage: 'setup', code: 'unknown' }, lease: 'unknown', operatorInstruction })}\n`);
   }
   await new Promise<void>(resolve => process.stderr.write('', () => resolve()));
-  process.exit(code); // Public ACP cleanup cannot prove subprocess exit; browser lease is retained.
+  process.exit(code); // Public CLI provider cleanup cannot prove subprocess exit; browser lease is retained.
 }

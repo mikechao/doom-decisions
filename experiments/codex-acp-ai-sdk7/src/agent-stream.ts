@@ -1,5 +1,4 @@
 import { isDeepStrictEqual } from 'node:util';
-import { ACP_PROVIDER_AGENT_DYNAMIC_TOOL_NAME } from '@mcpc-tech/acp-ai-provider';
 
 export type Envelope = { content: { type: 'text'; text: string }[] };
 
@@ -27,9 +26,9 @@ export class DoomStreamError extends Error {
 
 export async function consumeDoomStream(
   result: { fullStream: AsyncIterable<{ type: string; text?: string; output?: unknown;
-    toolCallId?: string; toolName?: string; input?: unknown }> },
+    toolCallId?: string; toolName?: string; input?: unknown; providerExecuted?: boolean }> },
   signal: AbortSignal,
-  matchesToolResult: (output: unknown, name: string, ordinal: number) => boolean,
+  matchesToolResult: (output: unknown, name: string, ordinal: number, evidence: { toolCallId: string; input: unknown }) => boolean,
   expectedTool: 'consultLandmarks' | 'findLandmarks' | readonly string[],
   maxTextCharacters = 8192,
   maxEvents = 2000,
@@ -38,7 +37,7 @@ export async function consumeDoomStream(
   const receipt = { drained: false, events: 0, steps: 0, finishes: 0, toolCalls: 0, toolResults: 0, textCharacters: 0, tools };
   const multiple = Array.isArray(expectedTool);
   const allowed: readonly string[] = typeof expectedTool === 'string' ? [expectedTool] : expectedTool;
-  const calls = new Map<string, { name: string; ordinal: number; done: boolean }>();
+  const calls = new Map<string, { name: string; ordinal: number; input: unknown; done: boolean }>();
   const ordinals = new Map<string, number>();
   const fail = (code: string): never => { throw new DoomStreamError(code, structuredClone(receipt)); };
   for await (const event of result.fullStream) {
@@ -55,29 +54,22 @@ export async function consumeDoomStream(
     if (event.type === 'tool-call') {
       receipt.toolCalls++;
       if ((!multiple && receipt.toolCalls !== 1) || receipt.toolCalls > 3 || (event.toolCallId && calls.has(event.toolCallId))) fail('DUPLICATE_TOOL_CALL');
-      const input = event.input;
-      // ACP exposes a dynamic descriptor; codex-acp's MCP title is serialized
-      // inside its input. Correlate both that inner ID/name and the SDK ID/name.
-      if (event.toolName !== ACP_PROVIDER_AGENT_DYNAMIC_TOOL_NAME || !event.toolCallId ||
-          typeof input !== 'object' || input === null || !('toolCallId' in input) ||
-          input.toolCallId !== event.toolCallId || !('toolName' in input))
+      const name = event.toolName;
+      if (!name || !allowed.includes(name) || !event.toolCallId || event.providerExecuted === true)
         return fail('TOOL_CALL_MISMATCH');
-      const innerName = input.toolName;
-      const name = allowed.find(name => innerName === name || innerName === `mcp.acp-ai-sdk-tools.${name}`);
-      if (!name) return fail('TOOL_CALL_MISMATCH');
       receipt.tools[name] ??= { calls: 0, results: 0 };
       receipt.tools[name].calls++;
       const ordinal = ordinals.get(name) ?? 0;
       ordinals.set(name, ordinal + 1);
-      calls.set(event.toolCallId, { name, ordinal, done: false });
+      calls.set(event.toolCallId, { name, ordinal, input: structuredClone(event.input), done: false });
     }
     if (event.type === 'tool-result') {
       receipt.toolResults++;
       const call = event.toolCallId ? calls.get(event.toolCallId) : undefined;
       if (call?.done) fail('DUPLICATE_TOOL_RESULT');
-      if (!call || event.toolName !== ACP_PROVIDER_AGENT_DYNAMIC_TOOL_NAME)
+      if (!call || event.toolName !== call.name || event.providerExecuted === true)
         return fail('TOOL_RESULT_MISMATCH');
-      if (!matchesToolResult(event.output, call.name, call.ordinal)) fail('TOOL_ENVELOPE_MISMATCH');
+      if (!matchesToolResult(event.output, call.name, call.ordinal, { toolCallId: event.toolCallId!, input: call.input })) fail('TOOL_ENVELOPE_MISMATCH');
       call.done = true;
       receipt.tools[call.name].results++;
     }

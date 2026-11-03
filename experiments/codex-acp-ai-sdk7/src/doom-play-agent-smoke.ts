@@ -3,25 +3,23 @@ import { readFileSync, readdirSync, statSync, writeSync } from 'node:fs';
 import { mkdtemp, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { acpTools, createACPProvider } from '@mcpc-tech/acp-ai-provider';
+import { createCliProvider } from './cli-provider.ts';
+import { nativeTool, hostResultMatches, domainResultMatches, type HostCall } from './native-tools.ts';
 import {
-  consumeDoomStream, createConsultLandmarks, createDoomPlayAgent, DoomStreamError, envelopeMatches,
-  rebuildParentTools, validateParentOutput, type ConsultReceipt,
+  consumeDoomStream, createConsultLandmarks, createDoomPlayAgent, DoomStreamError,
+  validateParentOutput, type ConsultReceipt,
 } from './doom-play-agent.ts';
-import { rebuildSmokeTools } from './find-landmarks-acp-smoke.ts';
 import { createLandmarksAgent } from './landmarks-tool-loop-agent.ts';
 import {
   createLandmarksTool, loadSavedContext, savedObservationPath, snapshotPath, verifySnapshot, type LandmarkReceipt,
 } from './landmarks-tool.ts';
-import { cleanupDoomProviders, fenceDoomInitialization, type DoomInitialization } from './agent-lifecycle.ts';
+import { closeCliProviders, fenceCliInitialization, type CliInitialization } from './agent-lifecycle.ts';
 export { cleanupDoomProviders, fenceDoomInitialization } from './agent-lifecycle.ts';
 
 function versions() {
-  const pins = { ai: '7.0.159', '@mcpc-tech/acp-ai-provider': '0.3.9',
-    '@mcpc-tech/acp-ai-provider/node_modules/ai': '6.0.320',
-    '@agentclientprotocol/codex-acp': '2.5.0', '@openai/codex': '0.165.0' };
+  const pins = { ai: '7.0.159', 'ai-sdk-provider-codex-cli': '2.4.0', '@ai-sdk-tool/parser': '5.1.6', zod: '4.6.7' };
   for (const [name, version] of Object.entries(pins))
     if (JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8')).version !== version)
       throw new Error('VERSION_MISMATCH');
@@ -53,13 +51,13 @@ async function runAuthorized() {
   const abort = new AbortController();
   const landmarks: LandmarkReceipt[] = [];
   const consults: ConsultReceipt[] = [];
-  const providers: ReturnType<typeof createACPProvider>[] = [];
-  const startups: DoomInitialization[] = [];
+  const providers: ReturnType<typeof createCliProvider>[] = [];
+  const startups: CliInitialization[] = [];
   const directories: string[] = [];
   const report = {
     versions: installed, outcome: 'failed', error: null as string | null,
     recordedContext: context, fixturesBefore: before, fixturesUnchanged: false,
-    sessions: [] as string[], sessionsStableAndDistinct: false,
+    providersHealthyAndDistinct: false,
     sdkRequests: { parent: 0, child: 0 }, callbacks: { consult: 0, find: 0 },
     parentStream: null as Awaited<ReturnType<typeof consumeDoomStream>> | null,
     childStream: null as ConsultReceipt['childStream'],
@@ -67,8 +65,8 @@ async function runAuthorized() {
     childCompletion: null as ConsultReceipt['completion'], consultError: null as string | null,
     result: null as ReturnType<typeof validateParentOutput> | null,
     cleanup: [] as string[], directoryCleanup: [] as string[],
-    limits: 'Two independent ACP sessions; one SDK request and at most two SDK steps per agent; one callback each; 120s overall. SDK limits do not bound internal Codex processing or lazy-auth retries.',
-    evidenceLimits: 'No PNG supplied to models; historical advisory data only. Session IDs and cleanup returns do not prove tool isolation, cancellation acknowledgment or subprocess exit.',
+    limits: 'Two independent CLI owners with stateless threads; two SDK requests/steps per agent; one callback each; 120s overall. SDK limits do not bound internal Codex processing or lazy-auth retries.',
+    evidenceLimits: 'No PNG supplied to models; historical advisory data only. Provider ownership and close() returns do not prove tool isolation, cancellation acknowledgment or subprocess exit.',
   };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const interrupt = () => abort.abort(new Error('INTERRUPTED'));
@@ -76,30 +74,27 @@ async function runAuthorized() {
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', interrupt);
   try {
-    // Allocate every owner before racing asynchronous ACP startup; no late provider creation.
+    // Allocate every owner before racing asynchronous CLI startup; no late provider creation.
     for (const role of ['parent', 'child']) {
-      directories.push(await mkdtemp(join(tmpdir(), `doom-${role}-acp-`)));
+      directories.push(await mkdtemp(join(tmpdir(), `doom-${role}-cli-`)));
       abort.signal.throwIfAborted();
-      providers.push(createACPProvider({
-        command: fileURLToPath(new URL('../node_modules/.bin/codex-acp', import.meta.url)),
-        env: { INITIAL_AGENT_MODE: 'read-only', CODEX_CONFIG: JSON.stringify({ model: 'gpt-6-luna', model_reasoning_effort: 'xhigh' }) },
-        session: { cwd: directories.at(-1)!, mcpServers: [] }, persistSession: true,
-      }));
+      providers.push(createCliProvider(directories.at(-1)!, abort));
     }
     const [parentProvider, childProvider] = providers;
     const parentModel = parentProvider.languageModel();
     const childModel = childProvider.languageModel();
     if (parentModel === childModel) throw new Error('SHARED_MODEL');
-    const childRegistered = acpTools({ findLandmarks: createLandmarksTool(context, landmarks, abort) });
-    const child = createLandmarksAgent(childModel, rebuildSmokeTools(childRegistered), () => {
+    const childCalls: HostCall[] = [], parentCalls: HostCall[] = [];
+    const childTools = { findLandmarks: nativeTool('findLandmarks', createLandmarksTool(context, landmarks, abort), childCalls, abort.signal) };
+    const child = createLandmarksAgent(childModel, childTools, () => {
       abort.signal.throwIfAborted();
-      if (++report.sdkRequests.child !== 1) throw new Error('REPEATED_SDK_REQUEST');
-    });
-    const parentRegistered = acpTools({ consultLandmarks: createConsultLandmarks(context, child, landmarks, consults, abort) });
-    const parent = createDoomPlayAgent(parentModel, rebuildParentTools(parentRegistered), () => {
+      if (++report.sdkRequests.child > 2) throw new Error('REPEATED_SDK_REQUEST');
+    }, childCalls);
+    const parentTools = { consultLandmarks: nativeTool('consultLandmarks', createConsultLandmarks(context, child, landmarks, consults, abort), parentCalls, abort.signal) };
+    const parent = createDoomPlayAgent(parentModel, parentTools, () => {
       abort.signal.throwIfAborted();
-      if (++report.sdkRequests.parent !== 1) throw new Error('REPEATED_SDK_REQUEST');
-    });
+      if (++report.sdkRequests.parent > 2) throw new Error('REPEATED_SDK_REQUEST');
+    }, 'archived', false, parentCalls);
     const cancelled = new Promise<never>((_, reject) => {
       onAbort = () => reject(new Error('CANCELLED'));
       abort.signal.addEventListener('abort', onAbort, { once: true });
@@ -107,33 +102,28 @@ async function runAuthorized() {
     timer = setTimeout(() => abort.abort(new Error('DEADLINE')), 120_000);
     const work = async () => {
       abort.signal.throwIfAborted();
-      const childStartup = fenceDoomInitialization(childProvider, () => childProvider.initSession(childRegistered), abort.signal);
-      startups.push(childStartup);
-      await childStartup.settled;
-      abort.signal.throwIfAborted();
-      const parentStartup = fenceDoomInitialization(parentProvider, () => parentProvider.initSession(parentRegistered), abort.signal);
-      startups.push(parentStartup);
-      await parentStartup.settled;
-      abort.signal.throwIfAborted();
-      const ids = providers.map(provider => provider.getSessionId());
-      if (!ids[0] || !ids[1] || ids[0] === ids[1] ||
-          !ids.every(id => id !== null && /^[a-zA-Z0-9._:-]{1,128}$/.test(id))) throw new Error('SESSION_MISMATCH');
-      report.sessions = [ids[0], ids[1]];
+      for (const owner of [childProvider, parentProvider]) {
+        const startup = fenceCliInitialization(owner, abort.signal);
+        startups.push(startup);
+        await startup.settled;
+        abort.signal.throwIfAborted();
+      }
       const stream = await parent.stream({
         prompt: `Propose one high-level navigation question using this host-validated ARCHIVED context. No image was supplied. Recorded context=${JSON.stringify(context)}`,
         abortSignal: abort.signal,
       });
       report.parentStream = await consumeDoomStream(stream, abort.signal,
-        output => envelopeMatches(output, consults.length === 1 ? consults[0].envelope : null), 'consultLandmarks');
+        (output, name, ordinal, evidence) => hostResultMatches(parentCalls, output, name, ordinal, evidence) && domainResultMatches(output, consults.length === 1 ? consults[0].envelope : null), 'consultLandmarks');
       const [text, steps, finish, rawFinish] = await Promise.all([
         stream.text, stream.steps, stream.finishReason, stream.rawFinishReason,
       ]);
       abort.signal.throwIfAborted();
       report.parentFinish = finish;
-      report.parentRawFinish = rawFinish === 'end_turn' ? rawFinish : null;
-      report.sessionsStableAndDistinct = providers.every((provider, index) => provider.getSessionId() === report.sessions[index]);
-      if (finish !== 'stop' || rawFinish !== 'end_turn' || steps.length !== report.parentStream.steps ||
-          !report.sessionsStableAndDistinct || report.sdkRequests.parent !== 1 || report.sdkRequests.child !== 1)
+      report.parentRawFinish = rawFinish === 'completed' ? rawFinish : null;
+      report.providersHealthyAndDistinct = parentProvider !== childProvider;
+      providers.forEach(provider => provider.assertHealthy());
+      if (finish !== 'stop' || rawFinish !== 'completed' || steps.length !== report.parentStream.steps ||
+          !report.providersHealthyAndDistinct || report.sdkRequests.parent !== 2 || report.sdkRequests.child !== 2)
         throw new Error('COMPLETION_MISMATCH');
       report.result = validateParentOutput(text, consults, landmarks, abort.signal);
       report.outcome = report.result.historicalMemory ? 'passed' : consults[0].result?.selection.status === 'empty' ? 'empty' : 'completed-unattributed';
@@ -152,13 +142,13 @@ async function runAuthorized() {
     abort.signal.removeEventListener('abort', onAbort);
     process.removeListener('SIGINT', interrupt);
     process.removeListener('SIGTERM', interrupt);
-    report.cleanup = cleanupDoomProviders(providers, startups);
+    report.cleanup = await closeCliProviders(providers, startups);
     for (const directory of directories) {
       try { await rmdir(directory); report.directoryCleanup.push('empty-directory-removed'); }
       catch { report.directoryCleanup.push('not-removed'); }
     }
     try { report.fixturesUnchanged = isDeepStrictEqual(before, fixtureEvidence()); } catch { /* fail closed */ }
-    if (!report.fixturesUnchanged || report.cleanup.some(value => value !== 'returned-session-cleared; child-exit-unverified') ||
+    if (!report.fixturesUnchanged || report.cleanup.some(value => !['close-returned; child-exit-unverified', 'close-returned; child-exit-observed'].includes(value)) ||
         report.directoryCleanup.some(value => value !== 'empty-directory-removed')) {
       report.outcome = 'failed';
       report.error ??= 'CLOSEOUT_FAILED';
@@ -174,10 +164,10 @@ async function runAuthorized() {
 }
 
 // Future inference only, after separate authorization:
-// node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/doom-play-agent-smoke.ts --authorize-acp
+// node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/doom-play-agent-smoke.ts --authorize-cli
 export async function doomPlayMain(args: string[], launch: () => Promise<number> = runAuthorized, print = (text: string) => { writeSync(1, text); }) {
-  if (args.length === 1 && args[0] === '--authorize-acp') return launch();
-  print('No ACP started. After separate approval only: node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/doom-play-agent-smoke.ts --authorize-acp\n');
+  if (args.length === 1 && args[0] === '--authorize-cli') return launch();
+  print('No CLI inference started. After separate approval only: node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/doom-play-agent-smoke.ts --authorize-cli\n');
   return args.length === 0 || (args.length === 1 && args[0] === '--help') ? 0 : 2;
 }
 

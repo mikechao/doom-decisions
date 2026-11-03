@@ -1,17 +1,17 @@
 # DoomPlayAgent and bounded Doom supervisor
 
 `src/main.ts` is the primary composition root. Its original
-`--authorize-live-observation-acp` mode remains passive: attach, one verified PNG,
+`--authorize-live-observation-cli` mode remains passive: attach, one verified PNG,
 parent/child advisory tools, final validation, cleanup and retained browser lease.
 It cannot claim a run or dispatch gameplay. Default/help are inert: no attach,
-SQLite open, ACP process or inference.
+SQLite open, CLI process or inference.
 
 The separate **`--authorize-agent-one-decision`** flag enables a small agent-driven
-experiment. It also requires `--authorize-live-observation-acp`. Only the parent
+experiment. It also requires `--authorize-live-observation-cli`. Only the parent
 DoomPlayAgent receives `executeGuardedDecision({ objective, uncertainty })`.
 The parent may consult the existing read-only LandmarksToolLoopAgent once, invokes
-the guarded tool itself, receives an explicit MCP text envelope, and continues
-reasoning in the same parent run. `main.ts` never continues into a post-agent
+the guarded tool itself, receives an ordinary SDK JSON tool result, and continues
+reasoning in the same parent agent run. `main.ts` never continues into a post-agent
 `decide`. The independent supervisor below is reference material, not imported
 or used by this path.
 
@@ -47,7 +47,7 @@ The typed callback sequence is exactly:
    remaining=0`. Terminal/retired accounting is marked unavailable; verified
    native prefixes remain distinct from a fully completed action.
 
-The MCP result contains compact host receipt facts, including outcome, reason,
+The SDK result contains compact host receipt facts, including outcome, reason,
 uncertainty, action, requested/reported/verified/cumulative tics, SDK invocation,
 provider/model metadata and before/after identities. It contains no PNG, file
 paths, private memory text or unrestricted error details. The authorized final
@@ -66,8 +66,8 @@ Consola 3.4.2's BasicReporter has both output streams explicitly bound to
 **stderr**. Info milestones, warnings and short diagnostics are enabled by default
 at fixed level 3, with no colors, spinner, token/event logging or throttling.
 `CONSOLA_LEVEL` does not override this console; existing provider debug flags
-remain forbidden. The installed ACP provider also forwards child stderr; these
-host milestones do not filter that pre-existing third-party stream.
+remain forbidden. Provider warnings fail closed without echoing arbitrary provider text. These
+host milestones do not claim to filter all inherited Codex subprocess output.
 
 Only validated scoped `objective` and `uncertainty` fields are displayed as
 guidance, never the entire instruction template, private notes or transcript.
@@ -106,7 +106,7 @@ appear only when reached, consultation is optional, values come from receipts):
 [info] [decision] Verified action: forward, 6 tics (tic 1 → 7)
 [info] [decision] Budget verified: 1 SDK attempt used / 1 total; reserved=1, remaining=0
 [warn] [run] Run failed: MAIN_FAILED; stage=final_json, code=JSON_PARSE_INVALID
-[info] [cleanup] ACP cleanup attempts finished; child-process exits unverified
+[info] [cleanup] CLI close attempts finished; child exit evidence is reported per owner
 ```
 
 `failureDiagnostic` is null on success, otherwise `{stage, code}`. Stages locate
@@ -121,7 +121,7 @@ receipts, stream rejection, cancellation and cleanup failure. Other causes remai
 field names enter the diagnostic. Parent-finalization failure retains
 `MAIN_FAILED`, nonzero exit, the independently verified controller receipt and
 final accounting. These diagnostics do not establish the earlier live failure's
-root cause. ACP cleanup still does not release the lease: press **Stop Agent**
+root cause. CLI provider cleanup still does not release the lease: press **Stop Agent**
 in the browser before another attach. No retry or extra decision is added.
 
 Both agents retain separate ACP model/provider/session owners and the pinned
@@ -152,10 +152,10 @@ these commands have not been executed for this implementation:
 npm --prefix app run dev:agent
 
 # After browser preparation and credentials/readiness, in another terminal:
-node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-acp --authorize-agent-one-decision
+node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-cli --authorize-agent-one-decision
 
 # Observation-only mode (no gameplay allowance consumed):
-node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-acp
+node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-cli
 ```
 
 The operator prepares exactly one `http://127.0.0.1:5174/` dev:agent browser,
@@ -176,13 +176,13 @@ endpoint (`VITE_DECISION_PROVIDER=openai`). The ACP reasoning model is separate
 from the browser Decisions model. No credential/model/provider files were changed.
 
 **The browser lease is retained.** Successful attach reports `held`; lost/uncertain
-attach reports `possibly-held`. ACP cleanup, process exit and deleting lease files
+attach reports `possibly-held`. CLI provider cleanup, process exit and deleting lease files
 do not revoke browser ownership. Press **Stop Agent** before every retry. No
 revoke/detach is implemented. Owned instructions files are removed; typed-client
 lease/PNG files remain in their separate private directory. Reports preserve
 unknown outbound delivery before claim/CAS/decide transport. Cancellation or the
 120-second cooperative deadline fences all further mutations and late results;
-neither proves remote processing or billing stopped. Public ACP cleanup never
+neither proves remote processing or billing stopped. Public CLI provider cleanup never
 proves subprocess exit, full tool isolation or successful network cancellation.
 
 Offline verification (synthetic PNGs, fake typed HTTP transport without servers,
@@ -196,14 +196,102 @@ git diff --check
 
 The skip pattern excludes historical-snapshot integration. Synthetic throwaway
 SQLite fixtures remain included; no historical database is read or mutated.
-Success fixtures emit `parent-decision-1` for the registered
-`executeGuardedDecision`, execute the real typed-client/receipt validators, and
-feed the returned MCP block into the same fake ACP session's continuation before
-it emits final JSON. They use real SDK agents, not live ACP/Decisions inference.
-They establish wiring, guards and receipt grounding, not model understanding,
-native gameplay correctness, deployed usability, accounting availability or
-subprocess exit. Builds, live main/supervisor, browser, broker, game assets,
-authenticated APIs and historical SQLite were not run/read for this milestone.
+Success fixtures request ordinary tools from fake V4 models; the real SDK executes
+callbacks and forwards their results to subsequent model steps. A separate Hermes
+fixture emits textual requests and proves the full nested consultation/action/final
+JSON sequence, including malformed final markup rejection without erasing a verified
+synthetic receipt. Temporary SQLite fixtures are isolated; the historical-snapshot
+integration test is explicitly excluded. No live Codex, App Server, Decisions,
+browser, Doom or live memory database was used for this migration.
+
+## Native CLI migration and review boundary
+
+Baseline: `dc8ccf62ecaa4156520c965dc83e31a79a45eb4d` on
+`experiment/codex-cli-ai-sdk7`; the directory name is intentionally retained.
+The active `main.ts` dependency path and both agent smokes now use
+`ai@7.0.159`, `ai-sdk-provider-codex-cli@2.4.0`,
+`@ai-sdk-tool/parser@5.1.6` and direct `zod@4.6.7`. Provider interface v4
+is directly declared for offline model fixtures. Lockfile resolution keeps
+provider-utils v5.0.72 on this path and v4.0.63 on the retained ACP path.
+
+- `cli-provider.ts` owns independent parent/child clients, wrapping the native V4
+  model in Hermes plus a warning/native-event fence. It reuses the probe's local
+  Codex executable, `gpt-6.1-sol`, stateless threads, read-only sandbox, on-request
+  approvals (no auto-approval), and 15-second connection/request limits. Construction
+  is inert; authorized initialization checks the first model-list page without fallback.
+- `native-tools.ts` uses SDK `tool({ inputSchema, execute })` with the existing
+  Zod schemas. Its sole presentation conversion unwraps one MCP text block into an
+  ordinary JSON result. Domain callbacks and their ledgers retain existing envelopes
+  internally. Host evidence binds SDK IDs/names/inputs/outputs to callbacks and rejects
+  repetition, overlap, or same-step consultation/action dispatch.
+- `doom-play-agent.ts` and `landmarks-tool-loop-agent.ts` replace instructions per
+  step. The parent may consult then act, or act directly when authorized. Only after
+  the relevant callbacks settle does synthesis use `toolChoice: 'none'`. No tool
+  results are fabricated in instructions. Child completion needs two SDK requests;
+  the parent needs two (direct action/passive consultation) or three (consult then act).
+- `agent-stream.ts` consumes ordinary SDK call/result events and rejects duplicate,
+  orphaned, swapped, provider-executed or ungrounded results. Completion requires
+  unified `stop` plus raw `completed`, drained steps and matching callback counts.
+  `landmarks-completion.ts` keeps completion inspection separate from any runner.
+- `agent-lifecycle.ts` adds asynchronous native-owner cleanup alongside the retained
+  legacy ACP helpers. Both initialization and late `doStream` startup are fenced;
+  late settlements close again. `close()` returning does not prove child exit. A
+  child exit is labeled observed only when the provider's exit logger reports it.
+  The browser **Stop Agent** control still releases the browser lease.
+
+`guarded-decision.ts`, typed controller adapters, app/engine code and the proven
+probe are unchanged. A validated game receipt and validated final model JSON remain
+separate evidence; malformed synthesis fails the run while preserving the action.
+The diagnostic stage formerly named `session_invariants` is now `provider_invariants`:
+stateless model threads replace the ACP persistent-session-ID invariant. This is an
+explicit transport/lifecycle change, not a persistent-session parity claim. SDK
+request counts now include each host-tool continuation, rather than one ACP turn
+containing provider-owned tool execution. All request limits remain finite; they
+are not a bound on internal Codex/network work or a billing guarantee.
+
+Image tests prove exact bytes enter the SDK and the installed provider's pure
+conversion creates a local-image input with matching bytes. A failed temp write
+throws through the provider warning logger, aborting the run; mapping warnings
+also fail closed. Actual App Server receipt/reading of that image and model visual
+understanding remain unverified. A write failure after the provider creates its
+temporary directory may leave provider-owned files; close reports do not certify
+their deletion. Normalized native tool events are rejected below
+Hermes and approval requests abort, but inherited configuration, read-only mode and
+filtered provider events do **not** establish that native tools are disabled or
+exhaustively observable. No global Codex configuration is changed.
+
+The CLI boundary omits Hermes's empty `tools: []` before calling the provider:
+the pinned provider warns about any defined tools value, including an empty list.
+That warning previously tripped the fail-closed stream fence on the first request.
+Nonempty native declarations are rejected before provider invocation. Offline
+Hermes fixtures now include the installed provider's pure settings-warning mapper,
+with an empty-list negative control; they do not execute App Server or inference.
+
+Failure diagnostics retain fixed host codes for image-write/provider/stream warnings,
+native-tool events/declarations, server approval requests and closed/missing-model
+owners. Deadline expiry reports `DEADLINE`; earlier external cancellation keeps
+precedence. No arbitrary warning text, provider errors, credentials or paths are
+retained. Older reports containing only `CANCELLED` cannot identify which underlying
+cause triggered the abort. This correction has offline proof only, without a live retry.
+
+The active path is SDK 6/ACP-free. **The whole package is not**: the independent
+`supervisor-acp.ts` / `supervisor.ts` workflow and
+`find-landmarks-acp-smoke.ts` still need ACP 0.3.9, codex-acp 2.5.0 and nested
+SDK 6.0.320. Their bridge and tests remain intact. The smallest dependency-removal
+follow-up is to isolate those legacy scripts into their own package, or explicitly
+retire them; porting that supervisor is outside this migration.
+
+The two archived agent smokes now require `--authorize-cli` (their old ACP flag
+is rejected). They still access archived observations/SQLite only after explicit
+live authorization, and were not run. `main.ts` now uses
+`--authorize-live-observation-cli`; no old ACP flag starts the migrated runner.
+No live authorization is implied by offline test success.
+
+Review-ready offline verdict: **READY FOR SYNTHETIC LIVE INFERENCE** only. The next
+separately authorized experiment should use synthetic parent/child tools and PNG,
+one consultation then one harmless synthetic guarded-result callback, and exact
+final JSON. Do not use `main.ts` or the archived smokes for that experiment: they
+attach to the browser or read historical memory. No live inference was run here.
 
 ## Existing bounded supervisor
 
@@ -218,10 +306,10 @@ Use `--live --authorize-decisions N --trial NEW_ID`; legacy one/two flags alias 
 
 | File | Responsibility |
 | --- | --- |
-| `src/main.ts` | DoomPlayAgent composition root; passive bootstrap, optional explicitly authorized one-shot host tool, stream/report validation and ACP cleanup. |
+| `src/main.ts` | Native CLI/Hermes DoomPlayAgent composition root; verified bootstrap, optional guarded tool, stream/report validation and native-owner cleanup. |
 | `src/guarded-decision.ts` | Advisory input boundary, one-shot typed controller callback, CAS/freshness/receipt guards and action evidence. |
-| `src/agent-stream.ts` | Shared bounded stream consumption and exact tool call/result/envelope correlation. |
-| `src/agent-lifecycle.ts` | Existing provider initialization fence and truthful cleanup reporting, shared with the archived smoke. |
+| `src/agent-stream.ts` | Bounded ordinary SDK call/result and host-callback correlation. |
+| `src/agent-lifecycle.ts` | Native asynchronous owner fences/cleanup and retained legacy ACP lifecycle helpers. |
 | `src/supervisor.ts` | Gated live entry, installed/lock version admission, exclusive trial setup, signals, port composition, report publication and cleanup scheduling; stable workflow re-exports. |
 | `src/supervisor-workflow.ts` | Injectable bounded N-decision loop, evidence/report ledger, ACP checkpoints, session checks, cancellation/deadlines and ACP cleanup ownership. |
 | `src/supervisor-cli.ts` | Typed Doom operation ports, lease tracking, sanitized numbered receipts, PNG reads, temporary instruction-file creation and removal. |
@@ -362,6 +450,40 @@ a listener, establish real tool-result consumption or demonstrate bridge success
 
 ## Read-only historical landmark experiment
 
+`src/landmarks-tool-loop-agent.ts` defines the native SDK 7 child agent, with only
+`findLandmarks`, two SDK requests/steps and one host lookup. Its instructions select
+one unverified historical candidate, then a separate completion step validates exact
+ID, namespace, source and summary. It imports no runtime runner, provider, SQLite
+or filesystem module. `src/landmarks-tool.ts` retains the existing bounded read-only
+retrieval and attribution validation, including internally recorded MCP envelopes;
+`native-tools.ts` unwraps those envelopes for ordinary SDK results.
+
+`src/landmarks-tool-loop-agent-smoke.ts` and `src/doom-play-agent-smoke.ts` retain
+archived observation/snapshot preflight and explicit `--authorize-cli` gates. They
+now use independent native CLI owners, Hermes, native SDK callbacks, correlated
+streams, `stop`/`completed` completion and truthful asynchronous close reports.
+The parent smoke performs no gameplay; neither smoke supplies an image. These
+historical-data runners must not be used for a synthetic live-inference trial.
+
+The historical snapshot remains fixed to the worktree's ignored
+`.local/doom-memory.sqlite`; no migration, copying, fallback, creation or live
+memory write is added. The optional `local snapshot integration` test must remain
+excluded under the current task authorization. Offline checks use in-memory data
+and isolated throwaway SQLite fixtures only. Prior owner-reported ACP retrieval
+and gameplay evidence remains historical evidence for the former transport, not
+live acceptance evidence for this CLI migration. The separate standalone
+`find-landmarks-acp-smoke.ts` bridge still uses ACP and is unchanged.
+
+<details>
+<summary>Preserved pre-migration ACP notes and historical evidence</summary>
+
+These notes describe the prior implementation. Its tool ownership, session,
+prompt-placement discussion and live commands are historical; they are not
+current invocation instructions or CLI parity evidence. Use the native migration
+section above for the current contract. No historical artifacts were removed.
+
+### Historical ACP implementation notes (superseded)
+
 `src/landmarks-tool-loop-agent.ts` is the side-effect-free agent definition:
 `createLandmarksAgent(model, tools, onLanguageModelCallStart)` shows the model,
 landmark-advisor instructions, supplied `findLandmarks` tool map, and unchanged
@@ -473,3 +595,5 @@ tools, lazy-auth retry, generated MCP listener, subprocess exit, cancellation,
 billing and cleanup still apply. Pending setup can outlive deadline reporting
 and leave an empty temporary directory. No gameplay/agent MCP server is registered or
 contacted, and no browser session is observed or advanced.
+
+</details>

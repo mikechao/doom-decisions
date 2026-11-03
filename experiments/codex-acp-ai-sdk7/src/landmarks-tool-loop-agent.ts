@@ -1,8 +1,5 @@
-import { ToolLoopAgent, isStepCount, type LanguageModel } from 'ai';
-import type { rebuildSmokeTools } from './find-landmarks-acp-smoke.ts';
-
-// Prepared by the runner: findLandmarks plus the provider-executed ACP descriptor.
-type LandmarkTools = ReturnType<typeof rebuildSmokeTools>;
+import { ToolLoopAgent, isStepCount, type LanguageModel, type ToolSet } from 'ai';
+import { assertNativeTools, type HostCall } from './native-tools.ts';
 
 export const landmarksInstructions = `Call findLandmarks exactly once with {} to retrieve nearby historical Doom landmarks.
 The host fixes the supplied observation, verified map identity, location, radius and limit.
@@ -15,15 +12,26 @@ No game actions, memory writes, files, shell, network or other tools. Do not inv
 
 export function createLandmarksAgent(
   model: LanguageModel,
-  tools: LandmarkTools,
+  tools: ToolSet,
   onLanguageModelCallStart: () => void,
+  hostCalls: HostCall[],
 ) {
-  return new ToolLoopAgent({
+  assertNativeTools(tools, ['findLandmarks']);
+  const agent = new ToolLoopAgent({
     model,
     instructions: landmarksInstructions,
     tools,
     maxRetries: 0,
     stopWhen: isStepCount(2),
     onLanguageModelCallStart,
+    prepareStep: ({ stepNumber }) => {
+      if (stepNumber >= 2 || hostCalls.some(call => !call.settled)) throw new Error('INVALID_CHILD_STEP');
+      return hostCalls.length ? {
+        toolChoice: 'none', activeTools: [],
+        instructions: landmarksInstructions.replace('Call findLandmarks exactly once with {} to retrieve nearby historical Doom landmarks.',
+          'Completion step: findLandmarks has executed. Request no tools or tool-call markup. Read its actual tool-result message and select a historical landmark.'),
+      } : {};
+    },
   });
+  return Object.assign(agent, { hostCalls });
 }

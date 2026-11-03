@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { acpTools, ACP_PROVIDER_AGENT_DYNAMIC_TOOL_NAME as dynamicName, getExecuteByName, createACPProvider } from '@mcpc-tech/acp-ai-provider';
+import { createACPProvider } from '@mcpc-tech/acp-ai-provider';
+import { nativeTool, hostResultMatches, domainResultMatches, type HostCall } from '../src/native-tools.ts';
+import { fixtureStream, textParts, lastToolResult } from './native-fixture.ts';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { createAgentMapIdentity } from '../../../app/src/agent-observation.ts';
 import {
-  consumeDoomStream, createConsultLandmarks, createDoomPlayAgent, DoomStreamError, envelopeMatches,
-  rebuildParentTools, validateParentOutput, type ConsultReceipt,
+  consumeDoomStream, createConsultLandmarks, createDoomPlayAgent, DoomStreamError,
+  validateParentOutput, type ConsultReceipt,
 } from '../src/doom-play-agent.ts';
 import { cleanupDoomProviders, doomPlayMain, fenceDoomInitialization } from '../src/doom-play-agent-smoke.ts';
-import { rebuildSmokeTools } from '../src/find-landmarks-acp-smoke.ts';
 import { createLandmarksAgent } from '../src/landmarks-tool-loop-agent.ts';
 import type { LandmarkReceipt, LandmarkResult, SavedContext } from '../src/landmarks-tool.ts';
 
@@ -40,30 +41,17 @@ function decode(value: unknown) {
   return JSON.parse(block.text);
 }
 
-// Simulate only ACP's host-callback delivery, without a server, process, SQLite or inference.
-// The real SDK agents consume provider-executed tool events; the callback receives no options.
-function fakeToolModel(name: string, execute: (input: unknown) => Promise<unknown>, render: (value: any) => string,
-  afterCallback: () => Promise<void> = async () => {}, duplicateResult = false) {
+// Only the model emits requests; the real SDK owns callback execution/results.
+function fakeToolModel(name: string, render: (value: any) => string,
+  afterCallback: () => Promise<void> = async () => {}) {
   return new MockLanguageModelV4({ doStream: async options => {
-    assert.ok(options.tools?.some(tool => tool.type === 'function' && tool.name === name));
-    const output = CallToolResultSchema.parse(JSON.parse(JSON.stringify(await execute({}))));
-    const text = render(decode(output));
+    if (!options.prompt.some(message => message.role === 'tool')) {
+      assert.ok(options.tools?.some(tool => tool.type === 'function' && tool.name === name));
+      return fixtureStream([{ type: 'tool-call', toolCallId: name, toolName: name, input: '{}' }]);
+    }
+    const output = lastToolResult(options.prompt, name);
     await afterCallback();
-    return { stream: new ReadableStream({ start(controller) {
-      controller.enqueue({ type: 'tool-call', toolCallId: name, toolName: dynamicName,
-        input: JSON.stringify({ toolCallId: name, toolName: `mcp.acp-ai-sdk-tools.${name}`, args: {} }), providerExecuted: true });
-      controller.enqueue({ type: 'tool-result', toolCallId: name, toolName: dynamicName, result: JSON.parse(JSON.stringify(output)) });
-      if (duplicateResult)
-        controller.enqueue({ type: 'tool-result', toolCallId: name, toolName: dynamicName, result: JSON.parse(JSON.stringify(output)) });
-      controller.enqueue({ type: 'text-start', id: name });
-      controller.enqueue({ type: 'text-delta', id: name, delta: text });
-      controller.enqueue({ type: 'text-end', id: name });
-      controller.enqueue({ type: 'finish', finishReason: { unified: 'stop', raw: 'end_turn' }, usage: {
-        inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
-        outputTokens: { total: 0, text: 0, reasoning: 0 },
-      } });
-      controller.close();
-    } }) };
+    return fixtureStream(textParts(render(output)));
   } });
 }
 
@@ -87,7 +75,7 @@ function parentText(value: { selection: { status: string; noteId?: string } }, r
 }
 
 function fixture(options: { empty?: boolean; renderChild?: (value: LandmarkResult) => string;
-  renderParent?: (value: any) => string; afterChild?: () => Promise<void>; duplicateParent?: boolean; duplicateChild?: boolean } = {}) {
+  renderParent?: (value: any) => string; afterChild?: () => Promise<void> } = {}) {
   const abort = new AbortController();
   const landmarks: LandmarkReceipt[] = [];
   const consults: ConsultReceipt[] = [];
@@ -105,15 +93,14 @@ function fixture(options: { empty?: boolean; renderChild?: (value: LandmarkResul
       return envelope;
     },
   };
-  const childRegistered = acpTools({ findLandmarks: find });
-  const childTools = rebuildSmokeTools(childRegistered);
-  const childModel = fakeToolModel('findLandmarks', find.execute, options.renderChild ?? childText, options.afterChild, options.duplicateChild);
-  const child = createLandmarksAgent(childModel, childTools, () => assert.equal(++requests.child, 1));
+  const childCalls: HostCall[] = [], parentCalls: HostCall[] = [];
+  const childTools = { findLandmarks: nativeTool('findLandmarks', find, childCalls, abort.signal) };
+  const childModel = fakeToolModel('findLandmarks', options.renderChild ?? childText, options.afterChild);
+  const child = createLandmarksAgent(childModel, childTools, () => { if (++requests.child > 2) throw new Error('REPEATED'); }, childCalls);
   const consult = createConsultLandmarks(context, child, landmarks, consults, abort);
-  const registered = acpTools({ consultLandmarks: consult });
-  const parentTools = rebuildParentTools(registered);
-  const parentModel = fakeToolModel('consultLandmarks', consult.execute, options.renderParent ?? parentText, undefined, options.duplicateParent);
-  const parent = createDoomPlayAgent(parentModel, parentTools, () => assert.equal(++requests.parent, 1));
+  const parentTools = { consultLandmarks: nativeTool('consultLandmarks', consult, parentCalls, abort.signal) };
+  const parentModel = fakeToolModel('consultLandmarks', options.renderParent ?? parentText);
+  const parent = createDoomPlayAgent(parentModel, parentTools, () => { if (++requests.parent > 2) throw new Error('REPEATED'); }, 'archived', false, parentCalls);
   const cleanupCalls = [0, 0];
   const ids: (string | null)[] = ['fake-parent-session', 'fake-child-session'];
   const owners = ids.map((_, index) => ({ getSessionId: () => ids[index], cleanup() { cleanupCalls[index]++; ids[index] = null; } }));
@@ -121,13 +108,13 @@ function fixture(options: { empty?: boolean; renderChild?: (value: LandmarkResul
     try {
       const stream = await parent.stream({ prompt: `ARCHIVED context=${JSON.stringify(context)}`, abortSignal: abort.signal });
       const consumed = await consumeDoomStream(stream, abort.signal,
-        output => envelopeMatches(output, consults[0]?.envelope ?? null), 'consultLandmarks');
+        (output, name, ordinal, evidence) => hostResultMatches(parentCalls, output, name, ordinal, evidence) && domainResultMatches(output, consults[0]?.envelope ?? null), 'consultLandmarks');
       assert.equal(await stream.finishReason, 'stop');
-      assert.equal(await stream.rawFinishReason, 'end_turn');
+      assert.equal(await stream.rawFinishReason, 'completed');
       return { consumed, output: validateParentOutput(await stream.text, consults, landmarks, abort.signal) };
     } finally { cleanupDoomProviders(owners); }
   }
-  return { run, abort, consult, registered, child, parent, childTools, parentTools, childModel, parentModel,
+  return { run, abort, consult, child, parent, childTools, parentTools, childModel, parentModel,
     consults, landmarks, requests, cleanupCalls, owners, ids };
 }
 
@@ -135,8 +122,8 @@ test('real SDK parent → consult → unchanged child → in-memory find receipt
   const f = fixture();
   assert.notEqual(f.parentModel, f.childModel);
   assert.notEqual(f.ids[0], f.ids[1], 'Simulated owners only, not proof of ACP isolation');
-  assert.deepEqual(Object.keys(f.parentTools).sort(), [dynamicName, 'consultLandmarks'].sort());
-  assert.deepEqual(Object.keys(f.childTools).sort(), [dynamicName, 'findLandmarks'].sort());
+  assert.deepEqual(Object.keys(f.parentTools).sort(), ['consultLandmarks']);
+  assert.deepEqual(Object.keys(f.childTools).sort(), ['findLandmarks']);
   assert.equal(f.childModel.doStreamCalls.length + f.parentModel.doStreamCalls.length, 0, 'Construction is inert');
   const { consumed, output } = await f.run();
   assert.equal(consumed.drained, true);
@@ -147,7 +134,7 @@ test('real SDK parent → consult → unchanged child → in-memory find receipt
   assert.equal(consumed.toolCalls, 1);
   assert.equal(f.consults[0].childStream?.toolResults, 1);
   assert.equal(f.consults[0].childStream?.toolCalls, 1);
-  assert.deepEqual(f.requests, { parent: 1, child: 1 });
+  assert.deepEqual(f.requests, { parent: 2, child: 2 });
   assert.equal(f.consults.length, 1);
   assert.equal(f.landmarks.length, 1);
   assert.deepEqual(decode(f.consults[0].envelope), f.consults[0].result);
@@ -158,22 +145,25 @@ test('real SDK parent → consult → unchanged child → in-memory find receipt
   assert.deepEqual(f.ids, [null, null]);
 });
 
-test('P2 duplicate tool-result: one callback and two matching SDK parent results fail closed', async () => {
-  const f = fixture({ duplicateParent: true });
-  await assert.rejects(f.run(), error => error instanceof DoomStreamError &&
-    error.message === 'DUPLICATE_TOOL_RESULT' && error.receipt.toolCalls === 1 && error.receipt.toolResults === 2);
-  assert.deepEqual(f.requests, { parent: 1, child: 1 });
+test('duplicate SDK results fail closed against the completed host callback', async () => {
+  const f = fixture();
+  await f.run();
+  for (const name of ['consultLandmarks', 'findLandmarks'] as const) {
+    const output = name === 'consultLandmarks' ? f.consults[0].result : f.landmarks[0].result;
+    const result = { type: 'tool-result', toolCallId: name, toolName: name, output };
+    const stream = { fullStream: (async function* () {
+      yield { type: 'tool-call', toolCallId: name, toolName: name, input: {} };
+      yield result; yield result;
+      yield { type: 'finish-step' }; yield { type: 'finish' };
+    })() };
+    await assert.rejects(consumeDoomStream(stream, f.abort.signal, value => value === output, name),
+      error => error instanceof DoomStreamError && error.message === 'DUPLICATE_TOOL_RESULT');
+  }
   assert.equal(f.consults.length, 1);
   assert.equal(f.landmarks.length, 1);
-  const childDuplicate = fixture({ duplicateChild: true });
-  await assert.rejects(childDuplicate.run());
-  assert.equal(childDuplicate.consults[0].error, 'DUPLICATE_TOOL_RESULT');
-  assert.equal(childDuplicate.consults[0].childStream?.toolCalls, 1);
-  assert.equal(childDuplicate.consults[0].childStream?.toolResults, 2);
-  assert.equal(childDuplicate.consults[0].result, null);
 });
 
-test('P2 delayed-auth cancellation: installed provider cannot retain late initialized state after cleanup', async t => {
+test('legacy ACP delayed-auth cancellation: installed provider cannot retain late initialized state after cleanup', async t => {
   for (const lateRejection of [false, true]) await t.test(lateRejection ? 'late rejection' : 'late resolution', async () => {
   let authenticated!: () => void;
   let notifyAuthenticating!: () => void;
@@ -231,16 +221,15 @@ test('P2 delayed-auth cancellation: installed provider cannot retain late initia
 });
 
 test('tool-event correlation rejects orphan, mismatched, missing and duplicate calls', async () => {
-  const call = { type: 'tool-call', toolCallId: 'expected-id', toolName: dynamicName,
-    input: { toolCallId: 'expected-id', toolName: 'mcp.acp-ai-sdk-tools.consultLandmarks', args: {} } };
-  const result = { type: 'tool-result', toolCallId: 'expected-id', toolName: dynamicName, output: {} };
+  const call = { type: 'tool-call', toolCallId: 'expected-id', toolName: 'consultLandmarks', input: {} };
+  const result = { type: 'tool-result', toolCallId: 'expected-id', toolName: 'consultLandmarks', output: {} };
   const tail = [{ type: 'finish-step' }, { type: 'finish' }];
   for (const [events, code] of [
     [[result], 'TOOL_RESULT_MISMATCH'],
     [[call, { ...result, toolCallId: 'other' }], 'TOOL_RESULT_MISMATCH'],
     [[call, { ...result, toolName: 'other' }], 'TOOL_RESULT_MISMATCH'],
-    [[{ ...call, input: { ...call.input, toolName: 'mcp.acp-ai-sdk-tools.findLandmarks' } }], 'TOOL_CALL_MISMATCH'],
-    [[{ ...call, input: { ...call.input, toolCallId: 'other' } }], 'TOOL_CALL_MISMATCH'],
+    [[{ ...call, toolName: 'findLandmarks' }], 'TOOL_CALL_MISMATCH'],
+    [[{ ...call, providerExecuted: true }], 'TOOL_CALL_MISMATCH'],
     [[call, call], 'DUPLICATE_TOOL_CALL'],
     [[call], 'INCOMPLETE_STREAM'],
     [[], 'INCOMPLETE_STREAM'],
@@ -257,7 +246,7 @@ test('empty and declined landmarks produce no historical attribution', async () 
     const { output } = await f.run();
     assert.equal(output.historicalMemory, null);
     assert.equal(output.interpretation.memoryInfluence.noteId, null);
-    assert.deepEqual(f.requests, { parent: 1, child: 1 });
+    assert.deepEqual(f.requests, { parent: 2, child: 2 });
     assert.equal(f.consults[0].childStream?.drained, true);
   }
 });
@@ -314,39 +303,28 @@ test('closure-owned abort rejects late child output with no callback options, cl
   assert.equal(f.consults[0].result, null);
   assert.equal(f.consults[0].envelope, null);
   assert.deepEqual(f.cleanupCalls, [1, 1]);
-  assert.equal(f.requests.child, 1);
+  assert.equal(f.requests.child, 2);
   assert.equal(f.childModel.doStreamCalls[0].abortSignal?.aborted, true);
 });
 
-test('parent bridge preserves installed registration/schema; invalid descriptors and extra inputs fail closed', async () => {
+test('native parent schemas reject extra inputs and callback repetition fails closed', async () => {
   const f = fixture();
-  assert.equal(getExecuteByName('consultLandmarks'), f.consult.execute);
-  assert.equal(getExecuteByName('findLandmarks'), f.childTools.findLandmarks.execute);
-  assert.equal(f.parentTools[dynamicName].isProviderExecuted, true);
-  assert.equal(f.parentTools.consultLandmarks, f.registered.consultLandmarks);
-  const schema = f.registered[dynamicName].inputSchema;
-  assert.ok(typeof schema === 'object' && schema !== null && 'jsonSchema' in schema);
-  assert.deepEqual(await f.parentTools[dynamicName].inputSchema.jsonSchema, await schema.jsonSchema);
-  const dynamic = f.registered[dynamicName];
-  assert.equal(dynamic.type, 'provider');
-  if (dynamic.type !== 'provider') throw new Error('Unexpected descriptor');
-  dynamic.id = 'unexpected.tool';
-  assert.throws(() => rebuildParentTools(f.registered), /UNEXPECTED_DYNAMIC_TOOL/);
+  assert.ok(f.parentTools.consultLandmarks.inputSchema);
   await assert.rejects(f.consult.execute({ sql: 'forbidden' }), /CONSULT_FAILED/);
   assert.equal(f.requests.child, 0);
   const repeated = fixture();
   await repeated.consult.execute({});
   await assert.rejects(repeated.consult.execute({}), /CONSULT_FAILED/);
-  assert.equal(repeated.requests.child, 1);
+  assert.equal(repeated.requests.child, 2);
 });
 
 test('CLI is inert without exact opt-in; fake launch only and cleanup does not skip second owner on failure', async () => {
   let launches = 0;
   const launch = async () => { launches++; return 7; };
-  for (const args of [[], ['--help'], ['--authorize-acp', 'extra'], ['--live'], ['--authorize-acp=true']])
+  for (const args of [[], ['--help'], ['--authorize-cli', 'extra'], ['--live'], ['--authorize-cli=true']])
     assert.equal(await doomPlayMain(args, launch, () => {}), args.length === 0 || args[0] === '--help' ? 0 : 2);
   assert.equal(launches, 0);
-  assert.equal(await doomPlayMain(['--authorize-acp'], launch, () => {}), 7);
+  assert.equal(await doomPlayMain(['--authorize-cli'], launch, () => {}), 7);
   assert.equal(launches, 1, 'Only an in-memory injected launch ran');
   let second = 0;
   assert.deepEqual(cleanupDoomProviders([
@@ -359,9 +337,8 @@ test('CLI is inert without exact opt-in; fake launch only and cleanup does not s
 
 test('multi-tool stream correlates each accepted call and rejects duplicates/orphans/name swaps', async () => {
   const signal = new AbortController().signal;
-  const call = (id: string, name: string) => ({ type: 'tool-call', toolCallId: id, toolName: dynamicName,
-    input: { toolCallId: id, toolName: `mcp.acp-ai-sdk-tools.${name}`, args: {} } });
-  const result = (id: string, output: string) => ({ type: 'tool-result', toolCallId: id, toolName: dynamicName, output });
+  const call = (id: string, name: string) => ({ type: 'tool-call', toolCallId: id, toolName: name, input: {} });
+  const result = (id: string, output: string) => ({ type: 'tool-result', toolCallId: id, toolName: output, output });
   const first = call('c1', 'consultLandmarks'), second = call('c2', 'executeGuardedDecision');
   const a = result('c1', 'consultLandmarks'), b = result('c2', 'executeGuardedDecision');
   const consume = (events: ReturnType<typeof call | typeof result>[]) => consumeDoomStream({ fullStream: (async function* () {
@@ -371,4 +348,32 @@ test('multi-tool stream correlates each accepted call and rejects duplicates/orp
   for (const events of [[first, a, second, b, b], [first, a, second, result('orphan', 'executeGuardedDecision')],
     [first, a, second, result('c2', 'consultLandmarks')], [first, a, first], [first, a, call('c2', 'doom_decide')]])
     await assert.rejects(consume(events), error => error instanceof DoomStreamError);
+});
+
+test('native host correlation binds SDK ID, name, input and output to the actual callback', async () => {
+  const signal = new AbortController().signal;
+  const calls: HostCall[] = [{ toolCallId: 'sdk-owned', toolName: 'consultLandmarks', input: {}, output: { selection: 'synthetic' }, settled: true }];
+  const call = { type: 'tool-call', toolCallId: 'sdk-owned', toolName: 'consultLandmarks', input: {} };
+  const result = { type: 'tool-result', toolCallId: 'sdk-owned', toolName: 'consultLandmarks', output: calls[0].output };
+  const consume = (first: typeof call, last: typeof result) => consumeDoomStream({ fullStream: (async function* () {
+    yield first; yield last; yield { type: 'finish-step' }; yield { type: 'finish' };
+  })() }, signal, (output, name, ordinal, evidence) => hostResultMatches(calls, output, name, ordinal, evidence), 'consultLandmarks');
+  assert.equal((await consume(call, result)).drained, true);
+  await assert.rejects(consume({ ...call, input: { extra: true } }, result), /TOOL_ENVELOPE_MISMATCH/);
+  await assert.rejects(consume({ ...call, toolCallId: 'forged' }, { ...result, toolCallId: 'forged' }), /TOOL_ENVELOPE_MISMATCH/);
+  await assert.rejects(consume(call, { ...result, output: { selection: 'invented' } }), /TOOL_ENVELOPE_MISMATCH/);
+});
+
+test('one parent inference step cannot dispatch both consultation and gameplay, even after synchronous consultation settles', async () => {
+  const calls: HostCall[] = [], abort = new AbortController();
+  let mutations = 0;
+  const callback = { description: 'Synthetic presentation only', inputSchema: z.strictObject({}),
+    execute: async () => ({ content: [{ type: 'text' as const, text: '{"ok":true}' }] }) };
+  const consult = nativeTool('consultLandmarks', callback, calls, abort.signal);
+  const action = nativeTool('executeGuardedDecision', { ...callback, execute: async () => { mutations++; return callback.execute(); } }, calls, abort.signal);
+  assert.ok(consult.execute && action.execute);
+  const options = { toolCallId: 'first', messages: [], abortSignal: abort.signal, context: {} };
+  await consult.execute({}, options);
+  await assert.rejects(Promise.resolve(action.execute({}, { ...options, toolCallId: 'second' })), /REPEATED_OR_OVERLAPPING_HOST_CALL/);
+  assert.equal(mutations, 0);
 });
