@@ -135,7 +135,8 @@ export function createAgentMcpServer({
           return {
             content,
             ...(content.some(
-              (block) => block.type === 'image' && block.mimeType === 'image/png',
+              (block) =>
+                block.type === 'image' && block.mimeType === 'image/png',
             )
               ? {}
               : { structuredContent: result }),
