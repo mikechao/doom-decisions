@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createACPProvider } from '@mcpc-tech/acp-ai-provider';
 import { nativeTool, hostResultMatches, domainResultMatches, type HostCall } from '../src/native-tools.ts';
 import { fixtureStream, textParts, lastToolResult } from './native-fixture.ts';
-import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
 import { createAgentMapIdentity } from '../../../app/src/agent-observation.ts';
@@ -11,7 +9,9 @@ import {
   consumeDoomStream, createConsultLandmarks, createDoomPlayAgent, DoomStreamError,
   validateParentOutput, type ConsultReceipt,
 } from '../src/doom-play-agent.ts';
-import { cleanupDoomProviders, doomPlayMain, fenceDoomInitialization } from '../src/doom-play-agent-smoke.ts';
+import { doomPlayMain } from '../src/doom-play-agent-smoke.ts';
+import { closeCliProviders } from '../src/agent-lifecycle.ts';
+import type { CliProvider } from '../src/cli-provider.ts';
 import { createLandmarksAgent } from '../src/landmarks-tool-loop-agent.ts';
 import type { LandmarkReceipt, LandmarkResult, SavedContext } from '../src/landmarks-tool.ts';
 
@@ -33,12 +33,9 @@ const found: LandmarkResult = {
 };
 
 function decode(value: unknown) {
-  const wire = CallToolResultSchema.parse(JSON.parse(JSON.stringify(value)));
-  assert.equal(wire.content.length, 1);
-  const block = wire.content[0];
-  assert.equal(block.type, 'text');
-  if (block.type !== 'text') throw new Error('Expected text');
-  return JSON.parse(block.text);
+  const wire = z.strictObject({ content: z.tuple([z.strictObject({ type: z.literal('text'), text: z.string() })]) })
+    .parse(JSON.parse(JSON.stringify(value)));
+  return JSON.parse(wire.content[0].text);
 }
 
 // Only the model emits requests; the real SDK owns callback execution/results.
@@ -102,8 +99,11 @@ function fixture(options: { empty?: boolean; renderChild?: (value: LandmarkResul
   const parentModel = fakeToolModel('consultLandmarks', options.renderParent ?? parentText);
   const parent = createDoomPlayAgent(parentModel, parentTools, () => { if (++requests.parent > 2) throw new Error('REPEATED'); }, 'archived', false, parentCalls);
   const cleanupCalls = [0, 0];
-  const ids: (string | null)[] = ['fake-parent-session', 'fake-child-session'];
-  const owners = ids.map((_, index) => ({ getSessionId: () => ids[index], cleanup() { cleanupCalls[index]++; ids[index] = null; } }));
+  const closed = [false, false];
+  const owners: CliProvider[] = [parentModel, childModel].map((model, index) => ({
+    languageModel: () => model, initialize: async () => {}, assertHealthy() {}, childExitObserved: () => false,
+    async close() { cleanupCalls[index]++; closed[index] = true; },
+  }));
   async function run() {
     try {
       const stream = await parent.stream({ prompt: `ARCHIVED context=${JSON.stringify(context)}`, abortSignal: abort.signal });
@@ -112,16 +112,16 @@ function fixture(options: { empty?: boolean; renderChild?: (value: LandmarkResul
       assert.equal(await stream.finishReason, 'stop');
       assert.equal(await stream.rawFinishReason, 'completed');
       return { consumed, output: validateParentOutput(await stream.text, consults, landmarks, abort.signal) };
-    } finally { cleanupDoomProviders(owners); }
+    } finally { await closeCliProviders(owners); }
   }
   return { run, abort, consult, child, parent, childTools, parentTools, childModel, parentModel,
-    consults, landmarks, requests, cleanupCalls, owners, ids };
+    consults, landmarks, requests, cleanupCalls, owners, closed };
 }
 
 test('real SDK parent → consult → unchanged child → in-memory find receipt, both streams drained', async () => {
   const f = fixture();
   assert.notEqual(f.parentModel, f.childModel);
-  assert.notEqual(f.ids[0], f.ids[1], 'Simulated owners only, not proof of ACP isolation');
+  assert.notEqual(f.owners[0], f.owners[1], 'Simulated independent CLI owners');
   assert.deepEqual(Object.keys(f.parentTools).sort(), ['consultLandmarks']);
   assert.deepEqual(Object.keys(f.childTools).sort(), ['findLandmarks']);
   assert.equal(f.childModel.doStreamCalls.length + f.parentModel.doStreamCalls.length, 0, 'Construction is inert');
@@ -142,7 +142,7 @@ test('real SDK parent → consult → unchanged child → in-memory find receipt
     source: found.candidates[0].source, summary: found.candidates[0].summary, advisoryStatus: 'unverified' });
   assert.equal(output.interpretation.memoryInfluence.noteId, noteId);
   assert.deepEqual(f.cleanupCalls, [1, 1]);
-  assert.deepEqual(f.ids, [null, null]);
+  assert.deepEqual(f.closed, [true, true]);
 });
 
 test('duplicate SDK results fail closed against the completed host callback', async () => {
@@ -161,63 +161,6 @@ test('duplicate SDK results fail closed against the completed host callback', as
   }
   assert.equal(f.consults.length, 1);
   assert.equal(f.landmarks.length, 1);
-});
-
-test('legacy ACP delayed-auth cancellation: installed provider cannot retain late initialized state after cleanup', async t => {
-  for (const lateRejection of [false, true]) await t.test(lateRejection ? 'late rejection' : 'late resolution', async () => {
-  let authenticated!: () => void;
-  let notifyAuthenticating!: () => void;
-  const authenticating = new Promise<void>(resolve => { notifyAuthenticating = resolve; });
-  const auth = new Promise<void>(resolve => { authenticated = resolve; });
-  const abort = new AbortController();
-  const provider = createACPProvider({ command: 'never-executed', persistSession: true, authMethodId: 'synthetic',
-    session: { cwd: process.cwd(), mcpServers: [] } });
-  const model = provider.languageModel();
-  let connections = 0;
-  let sessions = 0;
-  const transport = {
-    newSession: async () => {
-      if (++sessions === 1) throw { code: -32000, message: 'authentication required' };
-      return { sessionId: 'late-synthetic-session' };
-    },
-    authenticate: async () => {
-      notifyAuthenticating();
-      await auth;
-      if (lateRejection) throw new Error('synthetic auth failure');
-    },
-  };
-  // Replace only process/transport admission. Actual initSession → lazy auth →
-  // retry → startSession and public cleanup are the installed provider lifecycle.
-  model.connectClient = async () => {
-    if (!Object.getOwnPropertyDescriptor(model, 'connection')?.value) {
-      connections++;
-      Object.assign(model, { connection: transport, availableAuthMethodIds: ['synthetic'] });
-    }
-  };
-  let cleanups = 0;
-  const cleanup = provider.cleanup.bind(provider);
-  provider.cleanup = () => { cleanups++; cleanup(); };
-  const initializing = fenceDoomInitialization(provider, () => provider.initSession(), abort.signal);
-  const rejected = assert.rejects(initializing.settled, lateRejection ? /synthetic auth failure/ : /abort/i);
-  try {
-    await authenticating;
-    abort.abort();
-    assert.deepEqual(cleanupDoomProviders([provider], [initializing]),
-      ['initialization-pending; cleanup-unverified; child-exit-unverified']);
-    assert.equal(initializing.pending, true, 'Finalization did not wait for lazy auth');
-    assert.equal(cleanups, 1);
-    assert.equal(provider.getSessionId(), null, 'Initial cleanup alone appears successful');
-    authenticated();
-    await rejected;
-    assert.equal(connections, lateRejection ? 1 : 2, 'Resolved auth retries connection after initial cleanup');
-    assert.equal(sessions, lateRejection ? 1 : 2);
-    assert.equal(cleanups, 2, 'One initial shutdown and one ordered post-initialization cleanup');
-    assert.equal(initializing.pending, false);
-    assert.equal(initializing.lateCleanup, 'returned-session-cleared; child-exit-unverified');
-    assert.equal(provider.getSessionId(), null, 'Late retry must also be cleaned');
-    assert.equal(Object.getOwnPropertyDescriptor(model, 'connection')?.value, null);
-  } finally { provider.cleanup(); }
-  });
 });
 
 test('tool-event correlation rejects orphan, mismatched, missing and duplicate calls', async () => {
@@ -293,8 +236,8 @@ test('closure-owned abort rejects late child output with no callback options, cl
   const entered = new Promise<void>(resolve => { notifyEntered = resolve; });
   const pending = new Promise<void>(resolve => { release = resolve; });
   const f = fixture({ afterChild: async () => { notifyEntered(); await pending; } });
-  // Invoke exactly as ACP does: no SDK options or callback abortSignal.
-  const work = f.consult.execute({}).finally(() => cleanupDoomProviders(f.owners));
+  // The domain callback owns cancellation even without SDK callback options.
+  const work = f.consult.execute({}).finally(() => closeCliProviders(f.owners));
   await entered;
   assert.equal(f.landmarks.length, 1);
   f.abort.abort();
@@ -318,7 +261,7 @@ test('native parent schemas reject extra inputs and callback repetition fails cl
   assert.equal(repeated.requests.child, 2);
 });
 
-test('CLI is inert without exact opt-in; fake launch only and cleanup does not skip second owner on failure', async () => {
+test('CLI is inert without exact opt-in; fake launch only', async () => {
   let launches = 0;
   const launch = async () => { launches++; return 7; };
   for (const args of [[], ['--help'], ['--authorize-cli', 'extra'], ['--live'], ['--authorize-cli=true']])
@@ -326,12 +269,6 @@ test('CLI is inert without exact opt-in; fake launch only and cleanup does not s
   assert.equal(launches, 0);
   assert.equal(await doomPlayMain(['--authorize-cli'], launch, () => {}), 7);
   assert.equal(launches, 1, 'Only an in-memory injected launch ran');
-  let second = 0;
-  assert.deepEqual(cleanupDoomProviders([
-    { cleanup() { throw new Error('secret'); }, getSessionId: () => 'first' },
-    { cleanup() { second++; }, getSessionId: () => null },
-  ]), ['cleanup-failed; child-exit-unverified', 'returned-session-cleared; child-exit-unverified']);
-  assert.equal(second, 1);
 });
 
 

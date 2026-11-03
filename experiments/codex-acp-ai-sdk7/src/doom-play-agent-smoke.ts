@@ -16,7 +16,6 @@ import {
   createLandmarksTool, loadSavedContext, savedObservationPath, snapshotPath, verifySnapshot, type LandmarkReceipt,
 } from './landmarks-tool.ts';
 import { closeCliProviders, fenceCliInitialization, type CliInitialization } from './agent-lifecycle.ts';
-export { cleanupDoomProviders, fenceDoomInitialization } from './agent-lifecycle.ts';
 
 function versions() {
   const pins = { ai: '7.0.159', 'ai-sdk-provider-codex-cli': '2.4.0', '@ai-sdk-tool/parser': '5.1.6', zod: '4.6.7' };

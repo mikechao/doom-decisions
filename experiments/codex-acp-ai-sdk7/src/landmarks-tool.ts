@@ -178,13 +178,10 @@ export function validateSelection(text: string, receipts: LandmarkReceipt[]) {
   return { ok: true, selection: output } as const;
 }
 
-// Event notifications are distinct from the host callback's receipt.
+// The archived CLI runner summarizes direct host envelopes, not provider events.
 export function summarizeLandmarkEvent(output: unknown, receipts: LandmarkReceipt[]) {
-  const nested = typeof output === 'object' && output !== null && 'result' in output;
-  const result = nested ? output.result : output;
-  const acpError = nested && 'error' in output && output.error != null;
   const envelopeMatches = receipts.length === 1 && receipts[0].error === null && receipts[0].returnedEnvelope !== null &&
-    !acpError && typeof result === 'object' && result !== null && !('isError' in result && result.isError === true) &&
-    'content' in result && JSON.stringify(result.content) === JSON.stringify(receipts[0].returnedEnvelope.content);
-  return { nested, acpError, envelopeMatches };
+    typeof output === 'object' && output !== null && !('isError' in output && output.isError === true) &&
+    'content' in output && JSON.stringify(output.content) === JSON.stringify(receipts[0].returnedEnvelope.content);
+  return { envelopeMatches };
 }
