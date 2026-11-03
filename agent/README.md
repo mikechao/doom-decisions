@@ -207,9 +207,7 @@ The package now lives at the repository root in `agent/`. It remains
 `doom-play-agent-cli-sdk7`; it no longer includes the ACP provider, codex-acp,
 SDK 6, descriptor conversion, or the abandoned bounded-N supervisor. Their source,
 tests and historical guidance remain available in Git history. Ignored private
-artifacts are untouched. The independent
-`../experiments/codex-cli-ai-sdk7-probe/` is reference material, with no runtime
-or build dependency from this package.
+artifacts are untouched.
 
 Direct runtime dependencies are pinned to `ai@7.0.159`,
 `ai-sdk-provider-codex-cli@2.4.0`, `@ai-sdk-tool/parser@5.1.6`,
