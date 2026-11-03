@@ -105,7 +105,8 @@ function fixture(attributed = false) {
     operations.push(op);
     const command = JSON.parse(String(init?.body));
     if (op === 'attach') return Response.json({ pageId: ids.pageId, epoch: ids.epoch, ownerId: command.ownerId });
-    assert.equal(op, 'observe', 'No gameplay, settings, revoke, detach or Stop operation is allowed');
+    if (op === 'detach') return Response.json({ ...command, released: true });
+    assert.equal(op, 'observe', 'No gameplay, settings, revoke or Stop operation is allowed');
     assert.equal(command.pageId, ids.pageId); assert.equal(command.epoch, ids.epoch);
     assert.notEqual(command.commandId, ids.observationId, 'Transport and observation identities are independent');
     return Response.json({ pageId: ids.pageId, epoch: ids.epoch,
@@ -116,6 +117,11 @@ function fixture(attributed = false) {
   const ports: MainPorts = {
     logger: createOperatorConsole(stderr as unknown as NodeJS.WriteStream),
     attach: () => executeAgentOperation({ op: 'attach' }, { transport, temporaryRoot: root }),
+    detach: (leaseFile, signal) => {
+      assert.equal(signal.aborted, false, 'Cleanup uses its own live signal');
+      assert.ok(owners.every(owner => owner.cleanups === 0), 'Detach precedes provider cleanup');
+      return executeAgentOperation({ op: 'detach', leaseFile }, { transport });
+    },
     observe: leaseFile => executeAgentOperation({ op: 'observe', leaseFile }, { transport }),
     readPng: (path, signal) => readFile(path, { signal }),
     makeDirectory() { const path = mkdtempSync(join(root, 'acp-')); directories.push(path); return path; },
@@ -146,17 +152,18 @@ function fixture(attributed = false) {
     staleCommand: () => { staleCommand = true; }, destroy: () => rm(root, { recursive: true, force: true }) };
 }
 
-test('live main: typed attach → one verified PNG → real SDK nested agents → validated advisory; retained lease', async () => {
+test('live main: typed attach → one verified PNG → real SDK nested agents → validated advisory; broker detach', async () => {
   for (const attributed of [false, true]) {
     const f = fixture(attributed);
     try {
       const report = await runMain(f.ports, f.abort.signal);
       assert.equal(report.outcome, attributed ? 'completed' : 'empty');
-      assert.deepEqual(f.operations, ['attach', 'observe']);
+      assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
       assert.equal(report.lease.state, 'held');
+      assert.deepEqual(report.release, { status: 'broker-confirmed', error: null });
       assert.ok(report.lease.leaseFile);
-      await readFile(report.lease.leaseFile); // Process cleanup deliberately retains the lease receipt.
-      assert.match(report.operatorInstruction, /Press Stop Agent.*before another attach/);
+      await readFile(report.lease.leaseFile); // Keep acquisition evidence; the file grants no renewed ownership.
+      assert.match(report.operatorInstruction, /Broker confirmed.*cleanup may still be pending/);
       assert.deepEqual(report.sdkRequests, { parent: 2, child: 2 });
       assert.deepEqual(report.callbacks, { consult: 1, find: 1 });
       assert.equal(report.parentStream?.drained, true); assert.equal(report.childStream?.drained, true);
@@ -184,7 +191,7 @@ test('live main: typed attach → one verified PNG → real SDK nested agents �
   }
 });
 
-test('invalid/missing image, stale receipt and foreign ownership fail before CLI startup; lease retained', async () => {
+test('invalid/missing image, stale receipt and foreign ownership fail before CLI startup; acknowledged lease detached', async () => {
   for (const fault of ['hash', 'missing', 'frame', 'epoch', 'stale-command', 'active-run', 'map'] as const) {
     const f = fixture();
     try {
@@ -208,7 +215,7 @@ test('invalid/missing image, stale receipt and foreign ownership fail before CLI
       assert.equal(report.lease.state, 'held');
       assert.deepEqual(report.sdkRequests, { parent: 0, child: 0 });
       assert.ok(f.owners.every(owner => owner.inits === 0 && owner.cleanups === 1));
-      assert.deepEqual(f.removed, f.directories); assert.deepEqual(f.operations, ['attach', 'observe']);
+      assert.deepEqual(f.removed, f.directories); assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
     } finally { await f.destroy(); }
   }
 });
@@ -231,6 +238,8 @@ test('lost or late attach is possibly held; cancellation never accepts late comp
       if (late) f.abort.abort();
       const report = await work, before = JSON.stringify(report);
       assert.equal(report.lease.state, 'possibly-held'); assert.equal(report.result, null);
+      assert.deepEqual(report.release, { status: 'unavailable', error: null });
+      assert.match(report.operatorInstruction, /Press Stop Agent/);
       assert.deepEqual(f.operations, ['attach']);
       assert.deepEqual(f.owners.map(owner => owner.cleanups), [1, 1]);
       release(); await new Promise(resolve => setImmediate(resolve));
@@ -281,7 +290,7 @@ test('late parent output cannot become accepted advice after cancellation', asyn
     assert.equal(report.result, null); assert.equal(report.outcome, 'failed');
     release(); await new Promise(resolve => setImmediate(resolve));
     assert.equal(JSON.stringify(report), before);
-    assert.deepEqual(f.operations, ['attach', 'observe']);
+    assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
     assert.deepEqual(f.owners.map(owner => owner.cleanups), [1, 1]);
   } finally { release(); await f.destroy(); }
 });
@@ -473,7 +482,8 @@ test('agent event → guarded typed controller action → SDK-owned receipt-awar
     try {
       const report = await f.run();
       assert.equal(report.outcome, 'completed', JSON.stringify(report));
-      assert.deepEqual(f.operations, ['attach', 'observe']); // main bootstrap only
+      assert.deepEqual(f.operations, ['attach', 'observe', 'detach']); // Host bootstrap and finalization only.
+      assert.deepEqual(report.release, { status: 'broker-confirmed', error: null });
       assert.deepEqual(f.deliveries, ['start-run', 'set-prompt', 'observe', 'decide', 'get-config']);
       assert.equal(report.decision.receipt?.action, 'turn_left');
       assert.deepEqual([report.decision.receipt?.requestedTics, report.decision.receipt?.reportedTics,
@@ -498,6 +508,95 @@ test('agent event → guarded typed controller action → SDK-owned receipt-awar
   }
 });
 
+test('detach rejection, malformed acknowledgement and lost delivery fail cleanup without erasing verified gameplay', async () => {
+  for (const fault of ['rejected', 'malformed', 'lost']) {
+    const f = decisionFixture();
+    const detach = f.ports.detach;
+    let calls = 0;
+    f.ports.detach = async (...args) => {
+      calls++;
+      if (fault === 'rejected') throw new Error('PRIVATE_DETACH_FAILURE');
+      const released = await detach(...args);
+      if (fault === 'lost') throw new Error('PRIVATE_LOST_ACK');
+      return { ...released, ownerId: randomUUID() };
+    };
+    try {
+      const report = await f.run();
+      assert.equal(calls, 1);
+      assert.deepEqual(report.release, { status: 'unverified', error: 'DETACH_FAILED' });
+      assert.equal(report.error, 'DETACH_UNVERIFIED');
+      assert.deepEqual(report.failureDiagnostic, { stage: 'cleanup', code: 'DETACH_UNVERIFIED' });
+      assert.equal(report.outcome, 'failed'); assert.equal(reportExitCode(report, true), 1);
+      assert.ok(report.result, 'Grounded agent result remains independently available');
+      assert.equal(report.decision.dispatch, 'validated-receipt');
+      assert.equal(report.decision.receipt?.verifiedTics, 6);
+      assert.equal(report.decision.accounting, 'exhausted');
+      assert.deepEqual(f.deliveries, ['start-run', 'set-prompt', 'observe', 'decide', 'get-config']);
+      assert.deepEqual(f.owners.map(owner => owner.cleanups), [1, 1]);
+      assert.match(report.operatorInstruction, /Press Stop Agent/);
+      assert.doesNotMatch(JSON.stringify(report) + f.progress(), /PRIVATE_DETACH|PRIVATE_LOST/);
+    } finally { await f.destroy(); }
+  }
+});
+
+test('detach bounds the entire ignored-abort transfer/body and ignores late success or rejection', async t => {
+  for (const fault of ['late-ack', 'late-rejection', 'late-body']) await t.test(fault, async t => {
+    const f = decisionFixture();
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    let cleanupSignal: AbortSignal | undefined, calls = 0;
+    f.ports.detach = (leaseFile, signal) => executeAgentOperation({ op: 'detach', leaseFile }, {
+      transport: async (_url, options) => {
+        calls++; cleanupSignal = signal;
+        assert.equal(signal.aborted, false);
+        const body = JSON.stringify({ ...JSON.parse(String(options?.body)), released: true });
+        if (fault === 'late-body') {
+          const response = new Response(body);
+          response.text = async () => { entered(); await waiting; return body; };
+          return response;
+        }
+        entered(); await waiting; // Deliberately ignore cleanup signal.
+        if (fault === 'late-rejection') throw new Error('PRIVATE_LATE_REJECTION');
+        return new Response(body);
+      },
+    });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    try {
+      let finished = false;
+      const work = f.run().then(report => { finished = true; return report; });
+      await started;
+      t.mock.timers.tick(4999);
+      await Promise.resolve(); assert.equal(finished, false);
+      t.mock.timers.tick(1);
+      const report = await work, saved = JSON.stringify(report);
+      assert.equal(cleanupSignal?.aborted, true); assert.equal(calls, 1);
+      assert.deepEqual(report.release, { status: 'unverified', error: 'DETACH_TIMEOUT' });
+      assert.equal(reportExitCode(report, true), 1);
+      assert.equal(report.decision.dispatch, 'validated-receipt');
+      assert.equal(report.decision.receipt?.verifiedTics, 6);
+      assert.equal(report.decision.accounting, 'exhausted');
+      assert.match(report.operatorInstruction, /Press Stop Agent/);
+      release(); await new Promise(resolve => setImmediate(resolve));
+      assert.equal(calls, 1); assert.equal(JSON.stringify(report), saved);
+      assert.deepEqual(f.owners.map(owner => owner.cleanups), [1, 1]);
+    } finally { release(); t.mock.timers.reset(); await f.destroy(); }
+  });
+});
+
+test('malformed attach never supplies finalizer authority', async () => {
+  const f = fixture();
+  const attach = f.ports.attach;
+  f.ports.attach = async signal => ({ ...await attach(signal), epoch: 'invalid' });
+  try {
+    const report = await runMain(f.ports, f.abort.signal);
+    assert.equal(report.lease.state, 'possibly-held');
+    assert.equal(report.release.status, 'unavailable');
+    assert.deepEqual(f.operations, ['attach']);
+    assert.match(report.operatorInstruction, /Press Stop Agent/);
+  } finally { await f.destroy(); }
+});
+
 test('Consola milestones follow the owning verified boundaries and show only scoped guidance', async () => {
   const advisory = { objective: 'Can the opening be reached?\nMake a short probe.', uncertainty: 'Passability remains unverified.' };
   const f = decisionFixture({ consult: true, advisory });
@@ -514,7 +613,7 @@ test('Consola milestones follow the owning verified boundaries and show only sco
       'Submitting guarded controller decision request', 'Controller receipt validated: completed; SDK invoked: true',
       'Verified action: turn_left, 6 tics (tic 43 → 49)', 'Budget verified: 1 SDK attempt used / 1 total; reserved=1, remaining=0',
       'Parent stream drained', 'Awaiting parent completion', 'Parent completion metadata and provider invariants verified',
-      'Parent final output accepted', '[cleanup] Cleanup started', 'child exit evidence is reported per owner', 'Press Stop Agent',
+      'Parent final output accepted', '[cleanup] Cleanup started', 'Broker confirmed lease release', 'child exit evidence is reported per owner',
       '[run] Final report ready: completed',
     ];
     let previous = -1;
@@ -983,6 +1082,7 @@ test('cancellation fences late claim/CAS/decide settlements and parent continuat
       assert.deepEqual(f.deliveries, dispatched);
       assert.equal(JSON.stringify(report), snapshot);
       assert.equal(report.lease.state, 'held');
+      assert.equal(report.release.status, 'broker-confirmed');
     } finally { release(); await f.destroy(); }
   }
 });
@@ -1059,6 +1159,9 @@ test('CLI exit whitelist preserves controller outcomes and successful decision/p
       assert.equal(JSON.stringify(report), snapshot);
       if (fault === undefined) {
         assert.ok(report.decision.receipt);
+        report.release.status = 'unverified';
+        assert.equal(reportExitCode(report, true), 1, 'release uncertainty independently prevents overall success');
+        report.release.status = 'broker-confirmed';
         report.decision.receipt.completionUncertain = true;
         assert.equal(reportExitCode(report, true), 1, 'uncertainty must independently prevent success');
         report.decision.receipt.completionUncertain = false;

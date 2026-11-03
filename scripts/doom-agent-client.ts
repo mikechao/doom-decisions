@@ -26,6 +26,7 @@ import {
 
 type LeaseIdentity = { pageId: string; ownerId: string; epoch: string };
 export type AttachedLease = LeaseIdentity & { leaseFile: string };
+export type DetachedLease = LeaseIdentity & { commandId: string; released: true };
 type FileLease = { leaseFile: string };
 type Correlation = { pageId: string; epoch: string; commandId: string };
 export type MaterializedObserve = Correlation & Omit<AgentObserveResult, 'png'> & { pngPath: string };
@@ -39,6 +40,7 @@ export type PromptResult = Correlation & Exclude<AgentPromptResult, { error: str
 
 export type AgentOperation =
   | { op: 'attach' }
+  | ({ op: 'detach' } & FileLease)
   | ({ op: 'observe' } & FileLease)
   | ({ op: 'get-config' | 'get-prompt'; sessionId: string } & FileLease)
   | ({ op: 'start-run'; observationId: string; sessionId: string; revision: number } & FileLease)
@@ -47,7 +49,7 @@ export type AgentOperation =
   | ({ op: 'decide'; observationId: string; scope?: AgentScope } & FileLease);
 
 export type AgentClientOptions = { transport?: typeof fetch; temporaryRoot?: string };
-type OperationResult = AttachedLease | MaterializedObserve | MaterializedDecision | ConfigResult | PromptResult;
+type OperationResult = AttachedLease | DetachedLease | MaterializedObserve | MaterializedDecision | ConfigResult | PromptResult;
 
 const errors = new Set<string>([
   'forbidden',
@@ -99,6 +101,10 @@ export function executeAgentOperation(
   input: Extract<AgentOperation, { op: 'attach' }>,
   options?: AgentClientOptions,
 ): Promise<AttachedLease>;
+export function executeAgentOperation(
+  input: Extract<AgentOperation, { op: 'detach' }>,
+  options?: AgentClientOptions,
+): Promise<DetachedLease>;
 export function executeAgentOperation(
   input: Extract<AgentOperation, { op: 'observe' }>,
   options?: AgentClientOptions,
@@ -164,6 +170,16 @@ export async function executeAgentOperation(
   const commandId = input.op === 'decide' ? input.observationId : randomUUID();
   validateArguments?.();
   const command: Record<string, unknown> = { ...lease, commandId };
+  if (input.op === 'detach') {
+    const result = object(await post('detach', command));
+    if (
+      Object.keys(result).sort().join(',') !== 'commandId,epoch,ownerId,pageId,released' ||
+      result.pageId !== lease.pageId || result.ownerId !== lease.ownerId || result.epoch !== lease.epoch ||
+      result.commandId !== commandId || result.released !== true
+    )
+      throw Error('Invalid detach acknowledgment.');
+    return { ...lease, commandId, released: true };
+  }
   if (input.op === 'decide' || input.op === 'start-run') command.observationId = input.observationId;
   if (input.op === 'start-run') Object.assign(command, { sessionId: input.sessionId, revision: input.revision });
   if (input.op === 'get-config' || input.op === 'get-prompt' || input.op === 'set-config' || input.op === 'set-prompt')

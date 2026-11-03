@@ -238,6 +238,18 @@ export function createAgentBridge(allowance = createAgentAllowance()) {
       close(intentional ? 'agent-stopped' : 'lease-revoked');
       return json(res, 200, { stopped: true });
     }
+    if (op === 'detach' && cli(req)) {
+      const fields = ['pageId', 'ownerId', 'epoch', 'commandId'];
+      if (!shape(data, fields) || !fields.every((key) => isAgentId(data[key])))
+        return fail(res, 'invalid-request', 400);
+      if (!ownsLease(data)) return fail(res, 'lease-revoked');
+      // Broker confirmation only: browser Stop/SDK/native cleanup may follow.
+      // Detach bypasses ordinary pending-command admission and never dispatches work.
+      const acknowledgment = { ...data, released: true };
+      event({ type: 'revoked' });
+      close();
+      return json(res, 200, acknowledgment);
+    }
     if (op === 'attach' && cli(req)) {
       if (!shape(data, ['ownerId']) || !isAgentId(data.ownerId))
         return fail(res, 'invalid-request', 400);

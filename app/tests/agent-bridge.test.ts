@@ -438,6 +438,108 @@ it('delivers a correlated verified PNG through browser, broker and CLI without p
   await assert.rejects(runAgentCli(['observe', '--lease', attached.leaseFile], { transport: h.transport }), /agent-stopped/);
   await assert.rejects(h.post('attach', { ownerId: randomUUID() }), /no-ready-page/);
 });
+it('detaches only the exact owner, closes an unclaimed allowance and requires a replacement page', async () => {
+  const s = await budgetSession({}, createAgentAllowance('1'));
+  const command = { ...s.lease, commandId: randomUUID() };
+  for (const data of [
+    { ...command, extra: true }, { ...command, commandId: 'invalid' },
+    { pageId: command.pageId, ownerId: command.ownerId, commandId: command.commandId },
+  ]) {
+    const response = await s.h.send('detach', data).result.promise;
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: 'invalid-request' });
+  }
+  for (const key of ['pageId', 'ownerId', 'epoch'])
+    await assert.rejects(s.h.post('detach', { ...command, [key]: randomUUID() }), /lease-revoked/);
+  await assert.rejects(s.h.post('detach', command, 'page'), /invalid-request/);
+  for (const headers of [{ origin: agentOrigin }, { 'sec-fetch-site': 'same-origin' }, { host: 'localhost:5174' }]) {
+    const response = await s.h.send('detach', command, 'cli', headers).result.promise;
+    assert.equal(response.status, 403);
+  }
+  assert.equal(s.allowance.status, 'unclaimed');
+  assert.equal((await s.observe()).tic, s.observation.tic, 'Rejected detach never changes ownership');
+  const frame = structuredClone(s.game.view.session.frame);
+  const released = await s.cli(['detach', ...s.base]);
+  assert.deepEqual(released, { ...s.lease, commandId: released.commandId, released: true });
+  assert.match(released.commandId, /^[0-9a-f-]{36}$/);
+  await checkpoint(() => s.page.states.at(-1) === 'stopped');
+  assert.equal(s.allowance.status, 'closed');
+  assert.equal(s.game.view.session.controls.ready, true);
+  assert.deepEqual(s.game.view.session.frame, frame);
+  assert.equal(s.game.sdkCalls, 0); assert.equal(s.game.gameCalls, 0);
+  await assert.rejects(s.h.post('attach', { ownerId: randomUUID() }), /no-ready-page/);
+  await assert.rejects(s.get(), /lease-revoked/);
+  const replacement = s.h.browser(); await replacement.ready;
+  assert.equal(replacement.states.at(-1), 'run-unavailable');
+  const next = await s.h.post('attach', { ownerId: randomUUID() });
+  await assert.rejects(s.h.post('detach', command), /lease-revoked/);
+  assert.equal((await s.h.post('observe', { ...next, commandId: randomUUID() })).epoch, next.epoch);
+  await assert.rejects(s.h.post('start-run', { ...next, commandId: randomUUID(),
+    sessionId: s.observation.sessionId, observationId: s.observation.observationId, revision: 0 }), /budget-closed/);
+});
+
+it('strictly correlates typed detach acknowledgements and admits only exact CLI syntax', async () => {
+  const s = await budgetSession();
+  const mutations = [
+    data => { data.extra = true; }, data => { delete data.ownerId; },
+    ...['pageId', 'ownerId', 'epoch', 'commandId'].map(key => data => { data[key] = randomUUID(); }),
+    data => { data.released = false; }, data => { data.released = 'true'; },
+    data => { delete data.released; },
+  ];
+  const commands = new Set();
+  for (const mutate of mutations) {
+    await assert.rejects(executeAgentOperation({ op: 'detach', leaseFile: s.base[1] }, {
+      transport: async (_url, options) => {
+        const command = JSON.parse(options.body);
+        assert.deepEqual(Object.keys(command).sort(), ['commandId', 'epoch', 'ownerId', 'pageId']);
+        assert.ok(!commands.has(command.commandId)); commands.add(command.commandId);
+        const data = { ...command, released: true }; mutate(data);
+        return Response.json(data);
+      },
+    }), /Invalid detach acknowledgment/);
+  }
+  for (const args of [['detach'], ['detach', '--lease', 'relative'], ['detach', '--lease', s.base[1], '--extra']])
+    await assert.rejects(runAgentCli(args, { transport: () => assert.fail('Invalid syntax reached transport') }), /Usage:/);
+  assert.equal(s.allowance.status, 'unclaimed');
+  assert.equal((await s.observe()).epoch, s.lease.epoch);
+});
+
+it('one completed decision retains its receipt/frame/accounting after broker detach without issuing another run', async () => {
+  const s = await budgetSession({}, createAgentAllowance('1'));
+  const config = await s.start();
+  const receipt = await s.decide(s.observation, config);
+  const accounting = await s.get();
+  const saved = JSON.stringify(receipt);
+  const evidence = structuredClone(s.game.view.session.evidence);
+  const frame = structuredClone(s.game.view.session.frame);
+  await s.cli(['detach', ...s.base]);
+  await checkpoint(() => s.page.states.at(-1) === 'stopped');
+  assert.equal(receipt.outcome, 'completed');
+  assert.equal(JSON.stringify(receipt), saved);
+  assert.deepEqual(s.game.view.session.evidence, evidence);
+  assert.deepEqual(s.game.view.session.frame, frame);
+  assert.equal(accounting.run.sdkInvoked, 1); assert.equal(accounting.run.remaining, 0);
+  assert.equal(s.game.sdkCalls, 1); assert.equal(s.game.gameCalls, 6);
+  assert.equal(s.allowance.status, 'closed');
+});
+
+it('detach after native dispatch keeps verification owned even though the pending CLI result is revoked', async () => {
+  const s = await budgetSession({}, createAgentAllowance('1'));
+  const config = await s.start();
+  const held = s.game.hold('render');
+  const pending = s.decide(s.observation, config).catch(error => error.message);
+  await held.waiting;
+  await s.cli(['detach', ...s.base]);
+  assert.equal(await pending, 'lease-revoked');
+  assert.equal(s.game.view.session.agentBusy, true);
+  assert.equal(s.game.view.session.controls.ready, false);
+  held.release();
+  await checkpoint(() => !s.game.view.session.agentBusy);
+  assert.equal(s.game.view.session.evidence.decisions[0].stage, 'completed');
+  assert.equal(s.game.view.session.controls.ready, true);
+  assert.equal(s.game.sdkCalls, 1); assert.equal(s.game.gameCalls, 6);
+});
+
 it('fences delayed observations and duplicates, and never transfers a lease to another owner/page', async () => {
   const h = harness();
   const gate = deferred(); let fresh;
@@ -548,7 +650,7 @@ it('Stop aborts an in-flight result before notification; aborted/incomplete bodi
     }
   }
 });
-it('rechecks a fully delivered late upload after revocation, but does not cancel an already accepted result', async () => {
+it.each(['stop', 'detach'])('rechecks a fully delivered late upload after %s, but does not cancel an already accepted result', async cause => {
   for (const acceptedFirst of [false, true]) {
     const h = harness();
     const started = deferred(), acknowledgement = deferred(), acknowledged = deferred();
@@ -577,14 +679,19 @@ it('rechecks a fully delivered late upload after revocation, but does not cancel
       await page.ready;
       const lease = await h.post('attach', { ownerId: randomUUID() });
       const command = { ...lease, commandId: randomUUID() };
+      const end = async () => {
+        if (cause === 'stop') page.stop();
+        else assert.deepEqual(await h.post('detach', { ...lease, commandId: command.commandId }),
+          { ...lease, commandId: command.commandId, released: true });
+      };
       const cli = h.send('observe', command).result.promise;
       await started.promise;
       if (acceptedFirst) {
         finishBody();
         assert.equal((await cli).status, 200, 'Accepted before Stop: success remains valid');
-        page.stop();
+        await end();
       } else {
-        page.stop();
+        await end();
         assert.equal((await cli).status, 409);
         finishBody(); // Broker learns intentional revoke before the body finishes.
       }
@@ -593,7 +700,7 @@ it('rechecks a fully delivered late upload after revocation, but does not cancel
       acknowledgement.resolve();
       if (acceptedFirst) { await acknowledged.promise; await Promise.resolve(); }
       assert.equal(page.states.at(-1), 'stopped', 'Late acknowledgement cannot rearm');
-      await assert.rejects(h.post('observe', { ...command, commandId: randomUUID() }), /agent-stopped/);
+      await assert.rejects(h.post('observe', { ...command, commandId: randomUUID() }), cause === 'stop' ? /agent-stopped/ : /lease-revoked/);
     } finally {
       input.destroy(); acknowledgement.resolve(); page.stop();
     }
@@ -873,7 +980,7 @@ globalThis.fetch = async (url, options) => {
   assert.equal(game.sdkCalls, reservation);
   assert.equal(game.gameCalls, consumed);
 });
-it.each(['stop', 'disconnect', 'second-page'].flatMap(interruption => ['single', 'legacy', 'configured'].map(mode => ({ interruption, bounded: mode !== 'single', budget: mode === 'configured' ? '3' : undefined }))))('$interruption revokes controller admission (bounded=$bounded, budget=$budget) and never delivers a late paid result', async ({ interruption, bounded, budget }) => {
+it.each(['stop', 'detach', 'disconnect', 'second-page'].flatMap(interruption => ['single', 'legacy', 'configured'].map(mode => ({ interruption, bounded: mode !== 'single', budget: mode === 'configured' ? '3' : undefined }))))('$interruption revokes controller admission (bounded=$bounded, budget=$budget) and never delivers a late paid result', async ({ interruption, bounded, budget }) => {
   const game = fixture({ pngFor, delayedBody: true });
   cleanups.push(() => game.dispose());
   await game.prepare();
@@ -902,6 +1009,7 @@ it.each(['stop', 'disconnect', 'second-page'].flatMap(interruption => ['single',
   const cli = h.send('decide', { ...lease, commandId: randomUUID(), observationId: observed.observation.observationId, ...scope });
   await game.waiting;
   if (interruption === 'stop') page.stop();
+  if (interruption === 'detach') await h.post('detach', { ...lease, commandId: randomUUID() });
   if (interruption === 'disconnect') h.broker.close();
   if (interruption === 'second-page') {
     const rejected = await h.send('register', { pageId: randomUUID() }, 'page').result.promise;

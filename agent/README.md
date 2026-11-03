@@ -2,7 +2,7 @@
 
 `src/main.ts` is the primary composition root. Its original
 `--authorize-live-observation-cli` mode remains passive: attach, one verified PNG,
-parent/child advisory tools, final validation, cleanup and retained browser lease.
+parent/child advisory tools, final validation, cleanup and broker-confirmed detach.
 It cannot claim a run or dispatch gameplay. Default/help are inert: no attach,
 SQLite open, CLI process or inference.
 
@@ -120,8 +120,9 @@ receipts, stream rejection, cancellation and cleanup failure. Other causes remai
 field names enter the diagnostic. Parent-finalization failure retains
 `MAIN_FAILED`, nonzero exit, the independently verified controller receipt and
 final accounting. These diagnostics do not establish the earlier live failure's
-root cause. CLI provider cleanup still does not release the lease: press **Stop Agent**
-in the browser before another attach. No retry or extra decision is added.
+root cause. The host attempts detach separately from CLI provider cleanup. An
+unverified detach or possibly-held attachment requires **Stop Agent** in the
+browser. No retry or extra decision is added.
 
 Both agents use independent CLI provider owners and native SDK 7 tools. Hermes
 parses textual tool requests; the SDK executes the host callbacks and supplies
@@ -150,14 +151,15 @@ npm --prefix app run dev:agent
 # After browser preparation and credentials/readiness, in another terminal:
 node --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli --authorize-agent-one-decision
 
-# Observation-only mode (no gameplay allowance consumed):
+# Alternative observation-only mode (no gameplay attempts; detach closes the allowance):
 node --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli
 ```
 
 The operator prepares exactly one `http://127.0.0.1:5174/` dev:agent browser,
-ensures no previous owner or active run, and presses **Stop Agent** to reset any
-previous ownership before retrying. `AGENT_DECISION_BUDGET` is read from ignored
-`app/.env.agent.local` and process-cached by the broker: editing it or changing an
+ensures no previous owner or active run, and uses **Stop Agent** if the previous
+attach/release was uncertain. Refresh the page before another attach and fully
+restart the broker before another claimed run. `AGENT_DECISION_BUDGET` is read
+from ignored `app/.env.agent.local` and process-cached by the broker: editing it or changing an
 environment variable without fully restarting the broker is insufficient. This
 entry cannot supply/replenish the allowance. Budget is SDK attempts, not dollars.
 Browser preparation may use local game assets and live requests can incur charges.
@@ -171,11 +173,26 @@ chooses `typesafe/jev-1.14`. This does not select the experimental direct OpenAI
 endpoint (`VITE_DECISION_PROVIDER=openai`). The CLI reasoning model is separate
 from the browser Decisions model. No credential/model/provider files were changed.
 
-**The browser lease is retained.** Successful attach reports `held`; lost/uncertain
-attach reports `possibly-held`. CLI provider cleanup, process exit and deleting lease files
-do not revoke browser ownership. Press **Stop Agent** before every retry. No
-revoke/detach is implemented. Owned instructions files are removed; typed-client
-lease/PNG files remain in their separate private directory. Reports preserve
+**The host attempts automatic detach once.** `lease.state` records acquisition:
+`held` means a validated attach acknowledgement; lost/uncertain attach remains
+`possibly-held`. The separate `release.status` is `broker-confirmed`, `unverified`,
+`unavailable` (possibly-held attach without a validated lease), or `not-attempted`.
+The host fences work, then calls the CLI-only detach port before provider cleanup,
+with a separate five-second total bound covering the entire await. No model/MCP
+cleanup tool, retry or owner discovery is added. A correlated acknowledgement
+proves only broker revocation of the exact lease and closure of its page
+registration; browser Stop and safe SDK/native settlement may still be pending.
+Healthy Doom state/frame remain visible. The stopped page needs refresh before
+another attach. Detach closes even an unclaimed configured allowance; only a full
+dev broker restart permits another claimed run, without refunds or replenishment.
+
+Unverified release reports `DETACH_FAILED` or `DETACH_TIMEOUT` and makes overall
+success/exit nonzero, retaining independently verified decision receipts, accounting
+and dispatch uncertainty. Lost/malformed acknowledgements do not prove release.
+Press **Stop Agent** if detach is unverified or attach is possibly held; do not
+automatically retry. CLI provider cleanup, process exit and deleting lease files
+do not revoke ownership. Owned instructions files are removed; typed-client
+lease/PNG evidence remains in its separate private directory. Reports preserve
 unknown outbound delivery before claim/CAS/decide transport. Cancellation or the
 120-second cooperative deadline fences all further mutations and late results;
 neither proves remote processing or billing stopped. Public CLI provider cleanup never
@@ -261,8 +278,9 @@ Initialization and late `doStream` startup remain fenced; late settlements close
 again. A returned `close()` does not prove subprocess exit. Exit is labeled observed
 only when the provider's exit logger reports it. Read-only mode and filtered events
 do not establish full internal-tool isolation or remote cancellation. A failed
-provider image write may leave provider-owned temporary files. Neither cleanup nor
-process exit releases the browser lease: use **Stop Agent**.
+provider image write may leave provider-owned temporary files. Provider cleanup and
+process exit do not release the browser lease; inspect the separate detach status
+and use **Stop Agent** when release is unverified or unavailable.
 
 The archived-data smokes remain separate from `main.ts`. They access saved
 observations and historical SQLite only after explicit live authorization; neither

@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { createCliProvider, cliFailureCode, type CliFailureCode, type CliProvider } from './cli-provider.ts';
 import { nativeTool, hostResultMatches, domainResultMatches, type HostCall } from './native-tools.ts';
 import {
-  executeAgentOperation, type AttachedLease, type MaterializedObserve,
+  executeAgentOperation, type AttachedLease, type DetachedLease, type MaterializedObserve,
 } from '../../scripts/doom-agent-client.ts';
 import { closeCliProviders, fenceCliInitialization, type CliInitialization } from './agent-lifecycle.ts';
 import { consumeDoomStream, DoomStreamError } from './agent-stream.ts';
@@ -19,11 +19,13 @@ import {
 } from './landmarks-tool.ts';
 import { createGuardedDecision, decisionLedger, type DecisionPorts } from './guarded-decision.ts';
 import { liveObserve, parseLease, requireLive, type ReadPng } from './live-observation.ts';
+import { isAgentId } from '../../app/src/agent-observation.ts';
 import { createOperatorConsole } from './operator-console.ts';
 
 // Construction/import is inert. Mutating ports are wired only behind explicit authorization.
 export type MainPorts = {
   attach(signal: AbortSignal): Promise<AttachedLease>;
+  detach(leaseFile: string, signal: AbortSignal): Promise<DetachedLease>;
   observe(leaseFile: string, signal: AbortSignal): Promise<MaterializedObserve>;
   readPng: ReadPng;
   createProvider(cwd: string, abort: AbortController): CliProvider;
@@ -34,14 +36,15 @@ export type MainPorts = {
   logger?: ReturnType<typeof createOperatorConsole>;
 };
 
-const operatorInstruction = 'Browser ownership is not released by CLI provider cleanup or process exit. Press Stop Agent in the browser before another attach, including after failed or uncertain attachment. Do not automatically retry.';
+const operatorInstruction = 'Press Stop Agent in the browser before another attach if detach is unverified or attachment is possibly held. Do not automatically retry. Refresh the page for another attach; fully restart dev:agent for another allowance. CLI provider cleanup and process exit do not release browser ownership.';
+const releasedInstruction = 'Broker confirmed lease release; browser Stop and safe cleanup may still be pending. Refresh the page for another attach; fully restart dev:agent for another allowance. No automatic retry.';
 
 type FailureDiagnostic = {
   stage: 'setup' | 'attach' | 'initial_observation' | 'provider_initialization' | 'parent_stream' |
     'callback_correlation' | 'completion_await' | 'completion_validation' | 'provider_invariants' |
     'final_validation' | ParentOutputError['stage'] | 'cleanup' | 'unknown';
   code: ParentOutputError['code'] | CliFailureCode | 'COMPLETION_METADATA_INVALID' | 'PROVIDER_INVARIANTS_INVALID' |
-    'STREAM_REJECTED' | 'CANCELLED' | 'DEADLINE' | 'CLEANUP_UNVERIFIED' | 'INSTRUCTIONS_CLEANUP_FAILED' | 'unknown';
+    'STREAM_REJECTED' | 'CANCELLED' | 'DEADLINE' | 'CLEANUP_UNVERIFIED' | 'INSTRUCTIONS_CLEANUP_FAILED' | 'DETACH_UNVERIFIED' | 'unknown';
 };
 
 export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs = 120_000, authorizeOneDecision = false) {
@@ -62,10 +65,13 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
   const landmarks: LandmarkReceipt[] = [];
   const consults: ConsultReceipt[] = [];
   let guardedDecision: ReturnType<typeof createGuardedDecision> | undefined;
+  let acknowledgedLease: AttachedLease | undefined;
   const report = {
     outcome: 'failed', error: null as string | null,
     failureDiagnostic: null as FailureDiagnostic | null,
     lease: { state: 'not-attempted' as 'not-attempted' | 'possibly-held' | 'held', leaseFile: null as string | null },
+    release: { status: 'not-attempted' as 'not-attempted' | 'broker-confirmed' | 'unverified' | 'unavailable',
+      error: null as 'DETACH_TIMEOUT' | 'DETACH_FAILED' | null },
     operatorInstruction,
     source: null as { observationId: string; sessionId: string; tic: number; mapKey: string; pngSha256: string; imageBytes: number } | null,
     sdkRequests: { parent: 0, child: 0 }, callbacks: { consult: 0, find: 0 },
@@ -102,6 +108,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
       const attached = await ports.attach(abort.signal);
       abort.signal.throwIfAborted();
       const lease = parseLease(attached);
+      acknowledgedLease = structuredClone(lease);
       report.lease = { state: 'held', leaseFile: lease.leaseFile };
       doomLog.info('Browser lease acknowledged');
       stage = 'initial_observation';
@@ -218,6 +225,42 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     abort.abort();
     abort.signal.removeEventListener('abort', onAbort);
     cleanupLog.info('Cleanup started');
+    if (acknowledgedLease) {
+      const lease = acknowledgedLease;
+      const cleanup = new AbortController();
+      let detachTimer: ReturnType<typeof setTimeout> | undefined;
+      let timedOut = false;
+      try {
+        const timeout = new Promise<never>((_, reject) => {
+          detachTimer = setTimeout(() => {
+            timedOut = true;
+            cleanup.abort();
+            reject(new Error('DETACH_TIMEOUT'));
+          }, 5000);
+        });
+        // Race the entire port, including file/body reads. Even ignored aborts
+        // cannot hold finalization; late settlements never write report fields.
+        const released = await Promise.race([
+          Promise.resolve().then(() => ports.detach(lease.leaseFile, cleanup.signal)), timeout,
+        ]);
+        requireLive(Object.keys(released).sort().join(',') === 'commandId,epoch,ownerId,pageId,released' &&
+          isAgentId(released.commandId) && released.pageId === lease.pageId && released.ownerId === lease.ownerId &&
+          released.epoch === lease.epoch && released.released === true);
+        report.release.status = 'broker-confirmed';
+        report.operatorInstruction = releasedInstruction;
+        cleanupLog.info(releasedInstruction);
+      } catch {
+        report.release = { status: 'unverified', error: timedOut ? 'DETACH_TIMEOUT' : 'DETACH_FAILED' };
+        report.outcome = 'failed'; report.error ??= 'DETACH_UNVERIFIED';
+        report.failureDiagnostic ??= { stage: 'cleanup', code: 'DETACH_UNVERIFIED' };
+        cleanupLog.warn('Broker lease release unverified');
+      } finally {
+        clearTimeout(detachTimer);
+        cleanup.abort();
+      }
+    } else if (report.lease.state === 'possibly-held') {
+      report.release.status = 'unavailable';
+    }
     await guardedDecision?.settleFileCleanup();
     report.cleanup = await closeCliProviders(providers, startups);
     for (const directory of directories) {
@@ -238,7 +281,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     report.callbacks = { consult: consults.length, find: landmarks.length };
     report.childStream = consults[0]?.childStream ? { ...consults[0].childStream } : null;
     cleanupLog.info('CLI close attempts finished; child exit evidence is reported per owner');
-    if (report.lease.state !== 'not-attempted') cleanupLog.warn(operatorInstruction);
+    if (report.lease.state !== 'not-attempted' && report.release.status !== 'broker-confirmed') cleanupLog.warn(operatorInstruction);
     runLog.info(`Final report ready: ${report.outcome}`);
   }
   return structuredClone(report); // Late settlements cannot rewrite returned evidence.
@@ -249,7 +292,7 @@ export function writeMainReport(report: Awaited<ReturnType<typeof runMain>>, pri
 }
 
 export function reportExitCode(report: Awaited<ReturnType<typeof runMain>>, authorizeOneDecision: boolean) {
-  if (report.error !== null || report.result === null) return 1;
+  if (report.error !== null || report.result === null || report.release.status !== 'broker-confirmed') return 1;
   if (!authorizeOneDecision) return ['completed', 'empty'].includes(report.outcome) ? 0 : 1;
   const receipt = report.decision.receipt;
   return ['completed', 'terminal'].includes(report.outcome) &&
@@ -278,6 +321,7 @@ async function launch(authorizeOneDecision = false) {
     });
     const report = await runMain({
       attach: signal => executeAgentOperation({ op: 'attach' }, options(signal)),
+      detach: (leaseFile, signal) => executeAgentOperation({ op: 'detach', leaseFile }, options(signal)),
       observe: (leaseFile, signal) => executeAgentOperation({ op: 'observe', leaseFile }, options(signal)),
       readPng: (path, signal) => readFile(path, { signal }),
       makeDirectory: () => mkdtempSync(join(tmpdir(), 'doom-main-cli-')),
@@ -323,5 +367,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     writeSync(1, `${JSON.stringify({ outcome: 'failed', error: 'PREFLIGHT_FAILED', failureDiagnostic: { stage: 'setup', code: 'unknown' }, lease: 'unknown', operatorInstruction })}\n`);
   }
   await new Promise<void>(resolve => process.stderr.write('', () => resolve()));
-  process.exit(code); // Public CLI provider cleanup cannot prove subprocess exit; browser lease is retained.
+  process.exit(code); // Provider cleanup cannot prove subprocess exit; release evidence is reported separately.
 }

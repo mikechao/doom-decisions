@@ -366,6 +366,21 @@ Another playable run after Stop/disconnect requires a fresh dev-server process;
 reload alone does not restore its allowance. A second page revokes the existing
 attachment rather than taking it over.
 
+The host-owned `agent/src/main.ts` finalizer attempts CLI-only
+`detach --lease FILE` once for a validated, acknowledged lease, before provider
+cleanup, with a separate five-second total deadline. The request carries exactly
+`pageId,ownerId,epoch,commandId`; the broker checks current ownership, sends the
+existing `revoked` event and closes the page registration even with a command
+pending. The exact correlated acknowledgement adds `released:true`. It confirms
+broker revocation only; browser Stop and safe SDK/native settlement may still be
+pending. Healthy game/frame evidence remains visible. Refresh is required before
+another attach, and a full broker restart before another claimed run; detach also
+closes an unclaimed configured allowance. No budget is replenished. Lost/invalid
+detach acknowledgements remain unverified and are never retried. Lost/late attach
+without validated lease identity cannot be detached automatically. In either case,
+use **Stop Agent** as the manual fallback. No MCP or model-visible detach tool is
+exposed; provider cleanup, process exit and lease-file deletion do not release ownership.
+
 After local Stop, the browser attempts a `user-requested` revoke before explicitly
 closing its stream, bounded to one second. A validated revoke returns HTTP 409
 `{"error":"agent-stopped"}` to a pending CLI command independently of SDK/native

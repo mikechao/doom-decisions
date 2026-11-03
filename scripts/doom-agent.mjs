@@ -21,7 +21,7 @@ export async function runAgentCli(args, options = {}) {
   const getting = args.length === 5 && ['get-prompt', 'get-config'].includes(args[0]) && args[3] === '--session';
   const setting = args.length === 11 && ['set-prompt', 'set-config'].includes(args[0]) && args[3] === '--session';
   if (
-    ((args.length === 3 && args[0] === 'observe') || deciding || getting || setting || starting) &&
+    ((args.length === 3 && ['observe', 'detach'].includes(args[0])) || deciding || getting || setting || starting) &&
     args[1] === '--lease' &&
     isAbsolute(args[2])
   ) {
@@ -57,7 +57,7 @@ export async function runAgentCli(args, options = {}) {
     });
   }
   throw Error(
-    'Usage: node scripts/doom-agent.mjs attach | observe --lease FILE | start-run --lease FILE --observation ID --session ID --revision N | get-prompt/get-config --lease FILE --session ID | set-prompt --lease FILE --session ID --run ID --revision N --instructions-file FILE | set-config --lease FILE --session ID --run ID --revision N --config-file FILE | decide --lease FILE --observation ID [--session ID --run ID --revision N] (absolute files required)',
+    'Usage: node scripts/doom-agent.mjs attach | observe/detach --lease FILE | start-run --lease FILE --observation ID --session ID --revision N | get-prompt/get-config --lease FILE --session ID | set-prompt --lease FILE --session ID --run ID --revision N --instructions-file FILE | set-config --lease FILE --session ID --run ID --revision N --config-file FILE | decide --lease FILE --observation ID [--session ID --run ID --revision N] (absolute files required)',
   );
 }
 
