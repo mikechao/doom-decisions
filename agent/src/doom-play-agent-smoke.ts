@@ -23,7 +23,7 @@ function versions() {
     if (JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8')).version !== version)
       throw new Error('VERSION_MISMATCH');
   if (process.versions.node !== '22.20.0') throw new Error('VERSION_MISMATCH');
-  if (JSON.parse(readFileSync(new URL('../../../app/node_modules/typescript/package.json', import.meta.url), 'utf8')).version !== '7.0.2')
+  if (JSON.parse(readFileSync(new URL('../../app/node_modules/typescript/package.json', import.meta.url), 'utf8')).version !== '7.0.2')
     throw new Error('VERSION_MISMATCH');
   return { ...pins, node: process.version, typescript: '7.0.2' };
 }
@@ -163,10 +163,10 @@ async function runAuthorized() {
 }
 
 // Future inference only, after separate authorization:
-// node --experimental-strip-types experiments/codex-cli-ai-sdk7/src/doom-play-agent-smoke.ts --authorize-cli
+// node --experimental-strip-types agent/src/doom-play-agent-smoke.ts --authorize-cli
 export async function doomPlayMain(args: string[], launch: () => Promise<number> = runAuthorized, print = (text: string) => { writeSync(1, text); }) {
   if (args.length === 1 && args[0] === '--authorize-cli') return launch();
-  print('No CLI inference started. After separate approval only: node --experimental-strip-types experiments/codex-cli-ai-sdk7/src/doom-play-agent-smoke.ts --authorize-cli\n');
+  print('No CLI inference started. After separate approval only: node --experimental-strip-types agent/src/doom-play-agent-smoke.ts --authorize-cli\n');
   return args.length === 0 || (args.length === 1 && args[0] === '--help') ? 0 : 2;
 }
 

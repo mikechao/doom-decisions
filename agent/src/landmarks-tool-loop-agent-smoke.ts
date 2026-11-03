@@ -19,7 +19,7 @@ function installedVersions() {
     if (JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8')).version !== expected)
       throw new Error('VERSION_MISMATCH');
   }
-  const typescript = JSON.parse(readFileSync(new URL('../../../app/node_modules/typescript/package.json', import.meta.url), 'utf8')).version;
+  const typescript = JSON.parse(readFileSync(new URL('../../app/node_modules/typescript/package.json', import.meta.url), 'utf8')).version;
   if (typescript !== '7.0.2') throw new Error('VERSION_MISMATCH');
   if (process.versions.node !== '22.20.0') throw new Error('NODE_VERSION_MISMATCH');
   return { ...pins, typescript, node: process.version };
@@ -142,7 +142,7 @@ async function runAuthorized() {
 
 export async function landmarksMain(args: string[], launch: () => Promise<number> = runAuthorized, print = (text: string) => { writeSync(1, text); }) {
   if (args.length === 1 && args[0] === '--authorize-cli') return launch();
-  print('No CLI inference started. After separate approval only: node --experimental-strip-types experiments/codex-cli-ai-sdk7/src/landmarks-tool-loop-agent-smoke.ts --authorize-cli\n');
+  print('No CLI inference started. After separate approval only: node --experimental-strip-types agent/src/landmarks-tool-loop-agent-smoke.ts --authorize-cli\n');
   return args.length === 0 || (args.length === 1 && args[0] === '--help') ? 0 : 2;
 }
 

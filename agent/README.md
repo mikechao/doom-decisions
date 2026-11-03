@@ -148,10 +148,10 @@ introduced.
 npm --prefix app run dev:agent
 
 # After browser preparation and credentials/readiness, in another terminal:
-node --experimental-strip-types experiments/codex-cli-ai-sdk7/src/main.ts --authorize-live-observation-cli --authorize-agent-one-decision
+node --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli --authorize-agent-one-decision
 
 # Observation-only mode (no gameplay allowance consumed):
-node --experimental-strip-types experiments/codex-cli-ai-sdk7/src/main.ts --authorize-live-observation-cli
+node --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli
 ```
 
 The operator prepares exactly one `http://127.0.0.1:5174/` dev:agent browser,
@@ -185,8 +185,8 @@ Offline verification (synthetic PNGs, fake typed HTTP transport without servers,
 in-memory landmark data and deterministic provider streams; no historical DBs):
 
 ```bash
-node --experimental-strip-types --test --test-skip-pattern='local snapshot integration' experiments/codex-cli-ai-sdk7/tests/*.test.ts
-node app/node_modules/typescript/bin/tsc -p experiments/codex-cli-ai-sdk7 --noEmit
+node --experimental-strip-types --test --test-skip-pattern='local snapshot integration' agent/tests/*.test.ts
+node app/node_modules/typescript/bin/tsc -p agent --noEmit
 git diff --check
 ```
 
@@ -203,12 +203,13 @@ no live inference or historical database access.
 
 ## Runtime and dependency map
 
-The directory name is retained for a separate mechanical rename. This package is
+The package now lives at the repository root in `agent/`. It remains
 `doom-play-agent-cli-sdk7`; it no longer includes the ACP provider, codex-acp,
 SDK 6, descriptor conversion, or the abandoned bounded-N supervisor. Their source,
 tests and historical guidance remain available in Git history. Ignored private
-artifacts are untouched. The independent `../codex-cli-ai-sdk7-probe/` is reference
-material, with no runtime or build dependency from this package.
+artifacts are untouched. The independent
+`../experiments/codex-cli-ai-sdk7-probe/` is reference material, with no runtime
+or build dependency from this package.
 
 Direct runtime dependencies are pinned to `ai@7.0.159`,
 `ai-sdk-provider-codex-cli@2.4.0`, `@ai-sdk-tool/parser@5.1.6`,
@@ -279,7 +280,7 @@ one parent SDK-owned `executeGuardedDecision` callback and two parent SDK
 requests, with validated stream, guarded receipt, budget accounting, final JSON
 and completion. It performed **no landmark consultation**. The child pathway is
 covered offline but remains unproven in a real parent/child inference run.
-Deletion-only cleanup does not require repeating that live run.
+Relocation does not require repeating that live run.
 
 | Retained test file | Coverage |
 | --- | --- |
@@ -296,11 +297,11 @@ Delayed initialization and failed-owner cleanup coverage remains in the CLI suit
 From the repository root, offline only:
 
 ```bash
-npm --prefix experiments/codex-cli-ai-sdk7 ci
-npm --prefix experiments/codex-cli-ai-sdk7 ls ai --all
-node app/node_modules/typescript/bin/tsc -p experiments/codex-cli-ai-sdk7 --noEmit
-node --experimental-strip-types --test --test-skip-pattern='local snapshot integration' experiments/codex-cli-ai-sdk7/tests/*.test.ts
-node --experimental-strip-types experiments/codex-cli-ai-sdk7/src/main.ts --help
+npm --prefix agent ci
+npm --prefix agent ls ai --all
+node app/node_modules/typescript/bin/tsc -p agent --noEmit
+node --experimental-strip-types --test --test-skip-pattern='local snapshot integration' agent/tests/*.test.ts
+node --experimental-strip-types agent/src/main.ts --help
 git diff --check
 ```
 

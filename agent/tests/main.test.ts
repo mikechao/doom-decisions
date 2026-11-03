@@ -14,13 +14,13 @@ import { wrapLanguageModel } from 'ai';
 import { hermesToolMiddleware } from '@ai-sdk-tool/parser';
 import { cliSafetyMiddleware, rejectCliWarning, rejectCliProvider } from '../src/cli-provider.ts';
 import { domainResultMatches } from '../src/native-tools.ts';
-import { executeAgentOperation } from '../../../scripts/doom-agent-client.ts';
-import { buildDefaultDecisionRequest, resolveDecisionInstructions } from '../../../app/src/decision-request.ts';
-import type { AgentObserveResult } from '../../../app/src/agent-control.ts';
+import { executeAgentOperation } from '../../scripts/doom-agent-client.ts';
+import { buildDefaultDecisionRequest, resolveDecisionInstructions } from '../../app/src/decision-request.ts';
+import type { AgentObserveResult } from '../../app/src/agent-control.ts';
 import { createGuardedDecision, decisionLedger, type DecisionPorts } from '../src/guarded-decision.ts';
 import { consumeDoomStream, maxDecisionOutputCharacters, validateDecisionOutput, validateParentOutput } from '../src/doom-play-agent.ts';
 import { liveObserve } from '../src/live-observation.ts';
-import { createAgentMapIdentity } from '../../../app/src/agent-observation.ts';
+import { createAgentMapIdentity } from '../../app/src/agent-observation.ts';
 import { main, reportExitCode, runMain, writeMainReport, type MainPorts } from '../src/main.ts';
 import { createOperatorConsole, displayGuidance } from '../src/operator-console.ts';
 import { createLandmarksTool, type LandmarkResult, type SavedContext } from '../src/landmarks-tool.ts';
@@ -601,8 +601,8 @@ test('success and post-receipt failure publish exactly one JSON document; real C
       // BasicReporter severity routes with their actual fd=2 defaults in a child.
       // The input and agent/controller work are entirely the offline fixture above.
       const script = `import { readFileSync } from 'node:fs';
-import { writeMainReport, reportExitCode } from './experiments/codex-cli-ai-sdk7/src/main.ts';
-import { createOperatorConsole } from './experiments/codex-cli-ai-sdk7/src/operator-console.ts';
+import { writeMainReport, reportExitCode } from './agent/src/main.ts';
+import { createOperatorConsole } from './agent/src/operator-console.ts';
 const input = JSON.parse(readFileSync(0, 'utf8'));
 const log = createOperatorConsole().withTag('run');
 log.info('info stream check'); log.warn('warn stream check'); log.error('error stream check');
@@ -611,7 +611,7 @@ writeMainReport(input.report);
 await new Promise(resolve => process.stderr.write('', resolve));
 process.exit(reportExitCode(input.report, true));`;
       const child = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', script], {
-        cwd: new URL('../../../', import.meta.url), encoding: 'utf8', timeout: 10_000,
+        cwd: new URL('../../', import.meta.url), encoding: 'utf8', timeout: 10_000,
         input: JSON.stringify({ report, progress: f.progress() }), env: { ...process.env, CONSOLA_LEVEL: '0' },
       });
       assert.equal(child.status, code, child.stderr);

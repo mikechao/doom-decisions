@@ -7,7 +7,7 @@ import { createCliProvider, cliFailureCode, type CliFailureCode, type CliProvide
 import { nativeTool, hostResultMatches, domainResultMatches, type HostCall } from './native-tools.ts';
 import {
   executeAgentOperation, type AttachedLease, type MaterializedObserve,
-} from '../../../scripts/doom-agent-client.ts';
+} from '../../scripts/doom-agent-client.ts';
 import { closeCliProviders, fenceCliInitialization, type CliInitialization } from './agent-lifecycle.ts';
 import { consumeDoomStream, DoomStreamError } from './agent-stream.ts';
 import {
@@ -263,7 +263,7 @@ async function launch(authorizeOneDecision = false) {
     if (JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8')).version !== expected)
       throw new Error('VERSION_MISMATCH');
   }
-  if (JSON.parse(readFileSync(new URL('../../../app/node_modules/typescript/package.json', import.meta.url), 'utf8')).version !== '7.0.2')
+  if (JSON.parse(readFileSync(new URL('../../app/node_modules/typescript/package.json', import.meta.url), 'utf8')).version !== '7.0.2')
     throw new Error('VERSION_MISMATCH');
   if (process.versions.node !== '22.20.0' || process.env.DEBUG?.trim() || process.env.ACP_AI_PROVIDER_DEBUG?.trim())
     throw new Error('PREFLIGHT_FAILED');
@@ -311,7 +311,7 @@ async function launch(authorizeOneDecision = false) {
 export async function main(args: string[], run: (authorizeOneDecision?: boolean) => Promise<number> = launch, print = (value: string) => { writeSync(1, value); }) {
   if (args.length === 1 && args[0] === '--authorize-live-observation-cli') return run(false);
   if (args.length === 2 && new Set(args).size === 2 && args.includes('--authorize-live-observation-cli') && args.includes('--authorize-agent-one-decision')) return run(true);
-  print('Inert: no attach, SQLite open or CLI startup. After separate live authorization only:\nnode --experimental-strip-types experiments/codex-cli-ai-sdk7/src/main.ts --authorize-live-observation-cli\n' + 'One decision additionally requires --authorize-agent-one-decision and a restarted broker with AGENT_DECISION_BUDGET=1.\n' + operatorInstruction + '\n');
+  print('Inert: no attach, SQLite open or CLI startup. After separate live authorization only:\nnode --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli\n' + 'One decision additionally requires --authorize-agent-one-decision and a restarted broker with AGENT_DECISION_BUDGET=1.\n' + operatorInstruction + '\n');
   return args.length === 0 || (args.length === 1 && args[0] === '--help') ? 0 : 2;
 }
 

@@ -4,7 +4,7 @@ import { nativeTool, hostResultMatches, domainResultMatches, type HostCall } fro
 import { fixtureStream, textParts, lastToolResult } from './native-fixture.ts';
 import { MockLanguageModelV4 } from 'ai/test';
 import { z } from 'zod';
-import { createAgentMapIdentity } from '../../../app/src/agent-observation.ts';
+import { createAgentMapIdentity } from '../../app/src/agent-observation.ts';
 import {
   consumeDoomStream, createConsultLandmarks, createDoomPlayAgent, DoomStreamError,
   validateParentOutput, type ConsultReceipt,

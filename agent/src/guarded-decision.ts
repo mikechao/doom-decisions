@@ -1,9 +1,9 @@
 import { isDeepStrictEqual as same } from 'node:util';
 import { z } from 'zod';
 import type { ConsolaInstance } from 'consola/basic';
-import type { AgentOperation, ConfigResult, MaterializedDecision, MaterializedObserve, PromptResult } from '../../../scripts/doom-agent-client.ts';
-import { maxAgentInstructions, parseAgentObserveResult, type AgentObserveResult, type AgentRunState } from '../../../app/src/agent-control.ts';
-import type { AgentDecisionResult } from '../../../app/src/agent-observation.ts';
+import type { AgentOperation, ConfigResult, MaterializedDecision, MaterializedObserve, PromptResult } from '../../scripts/doom-agent-client.ts';
+import { maxAgentInstructions, parseAgentObserveResult, type AgentObserveResult, type AgentRunState } from '../../app/src/agent-control.ts';
+import type { AgentDecisionResult } from '../../app/src/agent-observation.ts';
 import type { Envelope } from './agent-stream.ts';
 import { configResult, liveDecision, liveObserve, parseLease, promptResult, requireLive, type Lease, type ReadPng } from './live-observation.ts';
 import { displayGuidance } from './operator-console.ts';
