@@ -22,7 +22,7 @@ Continuous Mode freezes a positive safe-integer **per-run SDK-attempt budget, de
 - `app/`: static browser application using vanilla TypeScript and DOM APIs, plain CSS, and an app-local `package-lock.json`. Exact pins in `app/package.json`: TypeScript **7.0.2**, Vite **8.3.4**, official OpenRouter SDK **1.4.25**, official OpenAI SDK **7.32.0**, Biome **2.5.15**, Vitest **5.0.4**. No React or Tailwind.
 - `build.sh`: Node admission → foreground Make → Node closeout → verified staging → Vite build wrapper. `scripts/build_engine.mjs` owns supported-build admission/evidence and shared fingerprint/inspection helpers; `scripts/inspect_doom.mjs` checks the WASM interface; `scripts/stage_web.mjs` verifies/stages artifacts; `scripts/check_worker.mjs` protects Worker packaging.
 - `README.md` is the project entry point; `app/README.md` is the setup/run guide. `docs/` retains build/provenance references. Historical reports, retired experiments and superseded plans are recoverable from Git history. Do not silently move or delete ignored assets/artifacts, including any historical `references/doom.wasm/build/` outputs. New engine outputs belong under `engine/doom/build/`.
-- `agent/`: independent Node/TypeScript package implementing DoomPlayAgent with Vercel AI SDK 7, Codex CLI provider, and Hermes tool parsing. The parent agent coordinates optional historical landmark consultation and explicitly authorized guarded Doom decisions. The Decisions API retains authority over low-level gameplay actions. One live guarded decision has been verified; two sequential agent decisions are not yet implemented. Preserve browser lease ownership, authorization, budget accounting, fresh-observation checks, Stop precedence, uncertain-dispatch protection, and gameplay receipt verification. Historical ACP, App Server, and supervisor experiments remain recoverable from Git history.
+- `agent/`: independent Node/TypeScript package implementing `DoomPlayAgent` with Vercel AI SDK 7, Codex CLI provider, and Hermes tool parsing. The parent exposes landmark consultation and explicitly authorized guarded decision tools; the child landmark agent performs read-only SQLite lookup. The Decisions API, not Codex, chooses the low-level Doom action. See Agent Development below and [agent/README.md](agent/README.md). Historical ACP, App Server, and supervisor experiments remain recoverable from Git history.
 
 Structured Doom observations flow through native extraction/dispatch, the indexed WASM getter, Worker sampling, and the TypeScript player-state adapter; see [Doom game-state pipeline](docs/doom-game-state-pipeline.md) before changing observation indices, schemas, or sampling boundaries.
 
@@ -71,6 +71,25 @@ The suite covers request construction, admission/receipts, presentation, SDK lif
 Read-only inspection and non-writing syntax/diff checks include `git status --short`, `git diff`, `git diff --check`, `rg`, `bash -n build.sh`, and `node --check scripts/stage_web.mjs`. Explicit task-specific execution limits (such as “read-only investigation; do not run tests”) override the standing check authorization. A documentation-only edit does not require the check or itself authorize tests or runtime execution.
 
 `npm --prefix app run build` verifies staged assets, typechecks, runs Vite, and verifies emitted assets; use `build.sh` for the engine handoff and Worker check. Builds do not format source. An old `app/dist/` after a failed build is not new build evidence.
+
+### Agent Development
+
+The current verified milestone is **one guarded live Doom decision**. Exactly two sequential decisions with a fresh **agent-visible post-decision screenshot** between them are the next proposed milestone, not existing behavior. The parent currently receives only the initial image; host observation and structured receipt feedback do not supply a second image. There is no arbitrary N-decision loop.
+
+For agent changes, preserve browser lease ownership, explicit decision authorization, the nonrefundable decision-attempt budget, fresh observation/image/session/map checks, compare-and-swap (CAS) and one-shot mutation protection, Stop/cancellation precedence, uncertainty handling (never replay after uncertain dispatch), and verified gameplay receipts. Prefer the smallest experiment that tests the next architectural assumption. Do not redesign safeguards for hypothetical issues or introduce new frameworks, generic schedulers, compatibility layers, or unrelated refactors.
+
+After dependencies have been installed with owner approval, the existing agent-only offline verification commands, run from the repository root when authorized, are:
+
+```bash
+node app/node_modules/typescript/bin/tsc -p agent --noEmit
+node --experimental-strip-types --test --test-skip-pattern='local snapshot integration' agent/tests/*.test.ts
+node --experimental-strip-types agent/src/main.ts --help
+git diff --check
+```
+
+Skipping historical snapshot integration is deliberate: the remaining tests use synthetic images, fake transports, deterministic model streams, and isolated throwaway SQLite fixtures without historical database access. Offline checks are not evidence of real Doom, browser, or paid API behavior.
+
+This command list does not extend the standing authorization for `npm --prefix app run check` to agent tests; obtain separate owner approval for agent test execution. Dependency installation, builds, browser or native Doom execution, authenticated/billable inference, and live browser attach still require owner approval under the boundaries above. A documentation-only edit does not authorize tests or runtime execution.
 
 ## Coding Style & Naming Conventions
 
