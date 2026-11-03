@@ -142,7 +142,7 @@ async function runAuthorized() {
 
 export async function landmarksMain(args: string[], launch: () => Promise<number> = runAuthorized, print = (text: string) => { writeSync(1, text); }) {
   if (args.length === 1 && args[0] === '--authorize-cli') return launch();
-  print('No CLI inference started. After separate approval only: node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/landmarks-tool-loop-agent-smoke.ts --authorize-cli\n');
+  print('No CLI inference started. After separate approval only: node --experimental-strip-types experiments/codex-cli-ai-sdk7/src/landmarks-tool-loop-agent-smoke.ts --authorize-cli\n');
   return args.length === 0 || (args.length === 1 && args[0] === '--help') ? 0 : 2;
 }
 

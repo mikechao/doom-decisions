@@ -148,10 +148,10 @@ introduced.
 npm --prefix app run dev:agent
 
 # After browser preparation and credentials/readiness, in another terminal:
-node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-cli --authorize-agent-one-decision
+node --experimental-strip-types experiments/codex-cli-ai-sdk7/src/main.ts --authorize-live-observation-cli --authorize-agent-one-decision
 
 # Observation-only mode (no gameplay allowance consumed):
-node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --authorize-live-observation-cli
+node --experimental-strip-types experiments/codex-cli-ai-sdk7/src/main.ts --authorize-live-observation-cli
 ```
 
 The operator prepares exactly one `http://127.0.0.1:5174/` dev:agent browser,
@@ -185,8 +185,8 @@ Offline verification (synthetic PNGs, fake typed HTTP transport without servers,
 in-memory landmark data and deterministic provider streams; no historical DBs):
 
 ```bash
-node --experimental-strip-types --test --test-skip-pattern='local snapshot integration' experiments/codex-acp-ai-sdk7/tests/*.test.ts
-node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7 --noEmit
+node --experimental-strip-types --test --test-skip-pattern='local snapshot integration' experiments/codex-cli-ai-sdk7/tests/*.test.ts
+node app/node_modules/typescript/bin/tsc -p experiments/codex-cli-ai-sdk7 --noEmit
 git diff --check
 ```
 
@@ -296,11 +296,11 @@ Delayed initialization and failed-owner cleanup coverage remains in the CLI suit
 From the repository root, offline only:
 
 ```bash
-npm --prefix experiments/codex-acp-ai-sdk7 ci
-npm --prefix experiments/codex-acp-ai-sdk7 ls ai --all
-node app/node_modules/typescript/bin/tsc -p experiments/codex-acp-ai-sdk7 --noEmit
-node --experimental-strip-types --test --test-skip-pattern='local snapshot integration' experiments/codex-acp-ai-sdk7/tests/*.test.ts
-node --experimental-strip-types experiments/codex-acp-ai-sdk7/src/main.ts --help
+npm --prefix experiments/codex-cli-ai-sdk7 ci
+npm --prefix experiments/codex-cli-ai-sdk7 ls ai --all
+node app/node_modules/typescript/bin/tsc -p experiments/codex-cli-ai-sdk7 --noEmit
+node --experimental-strip-types --test --test-skip-pattern='local snapshot integration' experiments/codex-cli-ai-sdk7/tests/*.test.ts
+node --experimental-strip-types experiments/codex-cli-ai-sdk7/src/main.ts --help
 git diff --check
 ```
 

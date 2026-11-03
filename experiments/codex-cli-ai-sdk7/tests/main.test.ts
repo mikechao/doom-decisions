@@ -601,8 +601,8 @@ test('success and post-receipt failure publish exactly one JSON document; real C
       // BasicReporter severity routes with their actual fd=2 defaults in a child.
       // The input and agent/controller work are entirely the offline fixture above.
       const script = `import { readFileSync } from 'node:fs';
-import { writeMainReport, reportExitCode } from './experiments/codex-acp-ai-sdk7/src/main.ts';
-import { createOperatorConsole } from './experiments/codex-acp-ai-sdk7/src/operator-console.ts';
+import { writeMainReport, reportExitCode } from './experiments/codex-cli-ai-sdk7/src/main.ts';
+import { createOperatorConsole } from './experiments/codex-cli-ai-sdk7/src/operator-console.ts';
 const input = JSON.parse(readFileSync(0, 'utf8'));
 const log = createOperatorConsole().withTag('run');
 log.info('info stream check'); log.warn('warn stream check'); log.error('error stream check');
