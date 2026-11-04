@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { deflateSync } from 'node:zlib';
 import test from 'node:test';
@@ -12,12 +12,13 @@ import { fixtureStream, cliFixtureStream, textParts, lastToolResult } from './na
 import { MockLanguageModelV4 } from 'ai/test';
 import { wrapLanguageModel } from 'ai';
 import { hermesToolMiddleware } from '@ai-sdk-tool/parser';
+import { createCodexAppServer } from 'ai-sdk-provider-codex-cli';
 import { cliSafetyMiddleware, rejectCliWarning, rejectCliProvider } from '../src/cli-provider.ts';
-import { domainResultMatches } from '../src/native-tools.ts';
+import { nativeTool, domainResultMatches, type HostCall } from '../src/native-tools.ts';
 import { executeAgentOperation } from '../../scripts/doom-agent-client.ts';
 import { buildDefaultDecisionRequest, resolveDecisionInstructions } from '../../app/src/decision-request.ts';
 import type { AgentObserveResult } from '../../app/src/agent-control.ts';
-import { createGuardedDecision, decisionLedger, type DecisionPorts } from '../src/guarded-decision.ts';
+import { createGuardedDecision, createTwoGuardedDecisions, decisionLedger, type DecisionPorts } from '../src/guarded-decision.ts';
 import { consumeDoomStream, maxDecisionOutputCharacters, validateDecisionOutput, validateParentOutput } from '../src/doom-play-agent.ts';
 import { liveObserve } from '../src/live-observation.ts';
 import { createAgentMapIdentity } from '../../app/src/agent-observation.ts';
@@ -27,7 +28,7 @@ import { createLandmarksTool, type LandmarkResult, type SavedContext } from '../
 
 const hash = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
 // Real, synthetic 640x400 RGBA PNG. No game assets, archives or database files.
-function syntheticPng() {
+function syntheticPng(red = 0) {
   function chunk(name: string, bytes: Buffer) {
     const data = Buffer.concat([Buffer.from(name), bytes]);
     let crc = 0xffffffff;
@@ -43,7 +44,7 @@ function syntheticPng() {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(640); header.writeUInt32BE(400, 4); header[8] = 8; header[9] = 6;
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header),
-    chunk('IDAT', deflateSync(Buffer.alloc(400 * 2561))), chunk('IEND', Buffer.alloc(0))]);
+    chunk('IDAT', deflateSync(Object.assign(Buffer.alloc(400 * 2561), { 1: red }))), chunk('IEND', Buffer.alloc(0))]);
 }
 const image = syntheticPng();
 const identity = createAgentMapIdentity('b'.repeat(64), 1, 1);
@@ -344,14 +345,21 @@ syncBuiltinESMExports();`;
 
 
 const guidance = { objective: 'Does another perspective clarify the visible boundary?', uncertainty: 'Visibility alone cannot establish passability.' };
-function decisionFixture(options: { fault?: string; consult?: boolean; twice?: boolean; input?: unknown; advisory?: typeof guidance;
+function decisionFixture(options: { fault?: string; two?: boolean; faultAt?: 1 | 2; consult?: boolean; twice?: boolean; input?: unknown; advisory?: typeof guidance; secondAdvisory?: typeof guidance;
   reflection?: { recordedEvidence: string; explanation: string }; chunkSize?: number; final?: string;
   renderFinal?: (value: Record<string, unknown>) => string; rawFinish?: string; after?: () => Promise<void> } = {}) {
   const f = fixture();
   const submitted = options.advisory ?? guidance;
   const advisory = { objective: submitted.objective.trim(), uncertainty: submitted.uncertainty.trim() };
-  const runId = randomUUID(), freshId = randomUUID(), afterId = randomUUID();
-  const unused = { runId, active: true, limit: 1, reserved: 0, sdkInvoked: 0, remaining: 1 };
+  const runId = randomUUID();
+  let freshId = randomUUID();
+  const afterId = randomUUID();
+  let used = 0;
+  const limit = options.two ? 2 : 1;
+  const resultImages = [image, syntheticPng(255), syntheticPng(128)];
+  const observedIds: string[] = [], budgets: unknown[] = [];
+  const feedbacks: unknown[] = [];
+  const unused = { runId, active: true, limit, reserved: 0, sdkInvoked: 0, remaining: limit };
   let template = '', instructionPath = '';
   let current = structuredClone(f.observation);
   const deliveries: string[] = [], continuations: unknown[] = [];
@@ -361,15 +369,17 @@ function decisionFixture(options: { fault?: string; consult?: boolean; twice?: b
   f.ports.attach = async signal => { const lease = await attach(signal); leaseFile = lease.leaseFile; return lease; };
   const transport: typeof fetch = async (url, init) => {
     const op = String(url).split('/').at(-1)!;
+    const fault = !options.faultAt || options.faultAt === (op === 'get-config' ? used : used + 1) ? options.fault : undefined;
     deliveries.push(op);
     const command = JSON.parse(String(init?.body));
+    const expectedAdvisory = used === 1 && options.secondAdvisory ? options.secondAdvisory : advisory;
     assert.equal(command.pageId, f.ids.pageId); assert.equal(command.epoch, f.ids.epoch);
     assert.equal(command.sessionId ?? f.ids.sessionId, f.ids.sessionId);
     if (['set-prompt', 'decide'].includes(op)) {
       assert.equal(command.runId, runId);
-      assert.equal(command.revision, op === 'set-prompt' ? 0 : 1);
+      assert.equal(command.revision, op === 'set-prompt' ? used : used + 1);
     }
-    if (options.fault === `lost-${op}`) throw new Error('private /tmp/secret sk-private');
+    if (fault === `lost-${op}`) throw new Error('private /tmp/secret sk-private');
     let field = 'config';
     let data: unknown;
     if (op === 'start-run') {
@@ -377,31 +387,34 @@ function decisionFixture(options: { fault?: string; consult?: boolean; twice?: b
       assert.equal(command.observationId, f.observation.observationId);
       assert.equal(command.revision, 0);
       data = { sessionId: f.ids.sessionId, revision: 0, configuration: current.configuration,
-        run: options.fault === 'allowance' ? { ...unused, limit: 2, remaining: 2 } :
-          options.fault === 'missing-run' ? null : unused };
+        run: fault === 'allowance' ? { ...unused, limit: limit === 1 ? 2 : 1, remaining: limit === 1 ? 2 : 1 } :
+          fault === 'missing-run' ? null : unused };
     } else if (op === 'set-prompt') {
       field = 'prompt'; template = command.instructions;
       assert.match(template, /Advisory navigation interpretation/);
       assert.match(template, /Human settings \{\{tics\}\}/);
-      assert.deepEqual(JSON.parse(template.split('Advisory navigation interpretation (unverified): ')[1].split('\n')[0]), advisory);
+      assert.deepEqual(JSON.parse(template.split('Advisory navigation interpretation (unverified): ')[1].split('\n')[0]), expectedAdvisory);
       assert.deepEqual(Object.keys(command).sort(), ['pageId', 'ownerId', 'epoch', 'commandId', 'sessionId', 'runId', 'revision', 'instructions'].sort());
       assert.match(resolveDecisionInstructions(6, template), /Human settings 6/);
       assert.ok(!resolveDecisionInstructions(6, template).includes('{{tics}}'));
-      current = { ...current, revision: 1, run: unused,
+      current = { ...current, revision: used + 1, run: { ...unused, reserved: used, sdkInvoked: used, remaining: limit - used },
         configuration: { ...current.configuration, instructionTemplate: template } };
-      data = { sessionId: current.sessionId, revision: options.fault === 'cas' ? 2 : 1,
-        run: options.fault === 'foreign-run' ? { ...unused, runId: randomUUID() } : unused, instructions: template };
+      data = { sessionId: current.sessionId, revision: fault === 'cas' ? used + 2 : used + 1,
+        run: fault === 'foreign-run' ? { ...current.run!, runId: randomUUID() } : current.run, instructions: template };
     } else if (op === 'observe') {
       field = 'observation';
-      current = { ...current, observationId: options.fault === 'stale' ? f.ids.observationId : freshId,
+      if (options.two) freshId = randomUUID();
+      observedIds.push(freshId);
+      current = { ...current, observationId: fault === 'stale' ? f.ids.observationId : freshId,
         counters: { ...current.counters, render: 999, frame: 999 } }; // Incidental render counters can change.
-      if (options.fault === 'hash') current.pngSha256 = 'd'.repeat(64);
-      if (options.fault === 'native') current.frame.nativeSha256 = current.frame.canvasSha256 = 'd'.repeat(64);
-      if (options.fault === 'telemetry') current.telemetry.health--;
-      if (options.fault === 'revision') current.revision++;
-      if (options.fault === 'config') current.configuration = { ...current.configuration, includeHealth: false };
-      if (options.fault === 'post-run') current.run = { ...unused, runId: randomUUID() };
-      if (options.fault === 'session') current.sessionId = randomUUID();
+      if (fault === 'hash') current.pngSha256 = 'd'.repeat(64);
+      if (fault === 'native') current.frame.nativeSha256 = current.frame.canvasSha256 = 'd'.repeat(64);
+      if (fault === 'telemetry') current.telemetry.health--;
+      if (fault === 'revision') current.revision++;
+      if (fault === 'config') current.configuration = { ...current.configuration, includeHealth: false };
+      if (fault === 'post-run') current.run = { ...unused, runId: randomUUID() };
+      if (fault === 'map') current.mapIdentity = createAgentMapIdentity('e'.repeat(64), 1, 1);
+      if (fault === 'session') current.sessionId = randomUUID();
       data = current;
     } else if (op === 'decide') {
       field = 'decision';
@@ -410,31 +423,36 @@ function decisionFixture(options: { fault?: string; consult?: boolean; twice?: b
       assert.deepEqual(Object.keys(command).sort(), ['pageId', 'ownerId', 'epoch', 'commandId', 'observationId', 'sessionId', 'runId', 'revision'].sort());
       const request = buildDefaultDecisionRequest(current.tic, current.configuration.tics, current.png, undefined, current.configuration);
       assert.match(request.instructions, /Human settings 6/);
-      assert.deepEqual(JSON.parse(request.instructions.split('Advisory navigation interpretation (unverified): ')[1].split('\n')[0]), advisory);
+      assert.deepEqual(JSON.parse(request.instructions.split('Advisory navigation interpretation (unverified): ')[1].split('\n')[0]), expectedAdvisory);
       providerInstructions.push(request.instructions);
-      const terminal = options.fault === 'terminal';
-      const tics = terminal || options.fault === 'retired' ? 2 : 6;
+      const terminal = fault === 'terminal';
+      const tics = terminal || fault === 'retired' ? 2 : 6;
       const { configuration, revision, run, ...base } = current;
-      const after = { ...base, observationId: afterId, tic: 43 + tics, phase: terminal ? 'terminal' : 'ready',
-        frame: { ...base.frame, tic: 43 + tics }, counters: { ...base.counters, gametic: 43 + tics, leveltime: 43 + tics } };
-      data = { outcome: terminal ? 'terminal' : options.fault === 'retired' ? 'retired' : 'completed', reason: null,
-        beforeObservationId: options.fault === 'receipt-before' ? randomUUID() : freshId, sdkInvoked: true, action: 'turn_left', requestedTics: 6,
-        reportedTics: tics, verifiedTics: options.fault === 'receipt' ? 5 : tics, cumulativeTics: 43 + tics,
-        completionUncertain: options.fault === 'retired', requestIdentity: { provider: 'OpenRouter', requestedModel: 'openai/gpt-6-luna-decisions' },
+      const after = { ...base, observationId: options.two ? randomUUID() : afterId, tic: current.tic + tics, phase: terminal ? 'terminal' : 'ready',
+        png: `data:image/png;base64,${resultImages[used + 1]?.toString('base64') ?? image.toString('base64')}`,
+        pngSha256: hash(resultImages[used + 1] ?? image),
+        frame: { ...base.frame, tic: current.tic + tics }, counters: { ...base.counters, gametic: current.tic + tics, leveltime: current.tic + tics } };
+      data = { outcome: terminal ? 'terminal' : fault === 'retired' ? 'retired' : 'completed', reason: null,
+        beforeObservationId: fault === 'receipt-before' ? randomUUID() : freshId, sdkInvoked: true, action: 'turn_left', requestedTics: 6,
+        reportedTics: tics, verifiedTics: fault === 'receipt' ? 5 : tics, cumulativeTics: current.tic + tics,
+        completionUncertain: fault === 'retired', requestIdentity: { provider: 'OpenRouter', requestedModel: 'openai/gpt-6-luna-decisions' },
         responseMetadata: { reportedModel: 'fixture', usage: { input: 3, output: 1, total: 4 } },
-        observation: options.fault === 'retired' ? null : after };
-      if (['api-failure', 'stopped', 'not-admitted'].includes(options.fault ?? '')) data = {
-        outcome: options.fault, reason: options.fault === 'not-admitted' ? 'no-grant' : null,
-        beforeObservationId: freshId, sdkInvoked: options.fault !== 'not-admitted', action: null,
+        observation: fault === 'retired' ? null : after };
+      if (options.two && !['terminal', 'retired', 'api-failure', 'stopped', 'not-admitted'].includes(fault ?? '')) current = { ...after, phase: 'ready', configuration, revision, run };
+      used++;
+      if (['api-failure', 'stopped', 'not-admitted'].includes(fault ?? '')) data = {
+        outcome: fault, reason: fault === 'not-admitted' ? 'no-grant' : null,
+        beforeObservationId: freshId, sdkInvoked: fault !== 'not-admitted', action: null,
         requestedTics: null, reportedTics: null, verifiedTics: null, cumulativeTics: null,
         completionUncertain: false, requestIdentity: null, responseMetadata: null, observation: null,
       };
     } else {
       assert.equal(op, 'get-config');
       data = { sessionId: current.sessionId, revision: current.revision, configuration: current.configuration,
-        run: { ...unused, active: false, reserved: 1, sdkInvoked: options.fault === 'accounting' ? 0 : 1, remaining: 0 } };
+        run: { ...unused, active: used < limit, reserved: used, sdkInvoked: fault === 'accounting' ? 0 : used, remaining: limit - used } };
     }
-    return Response.json({ pageId: f.ids.pageId, epoch: options.fault === 'epoch' && op === 'observe' ? randomUUID() : f.ids.epoch,
+    if (op === 'get-config' || op === 'start-run') budgets.push(structuredClone(data));
+    return Response.json({ pageId: f.ids.pageId, epoch: fault === 'epoch' && op === 'observe' ? randomUUID() : f.ids.epoch,
       commandId: command.commandId, [field]: data });
   };
   f.ports.decision = {
@@ -460,20 +478,40 @@ function decisionFixture(options: { fault?: string; consult?: boolean; twice?: b
       return fixtureStream([{ type: 'tool-call', toolCallId: 'parent-decision-1', toolName: 'executeGuardedDecision', input: JSON.stringify(options.input ?? submitted) }]);
     }
     // This result exists only after the real SDK executes the guarded callback.
-    const result: any = lastToolResult(input.prompt, 'executeGuardedDecision');
+    const toolParts = input.prompt.flatMap(message => message.role === 'tool' ? message.content : []);
+    const results = toolParts.filter(part => part.type === 'tool-result' && part.toolName === 'executeGuardedDecision').map(part => {
+      if (part.type !== 'tool-result') throw new Error('bad fixture');
+      if (part.output.type === 'json') return part.output.value;
+      assert.equal(part.output.type, 'content');
+      if (part.output.type !== 'content') throw new Error('missing content');
+      const text = part.output.value[0]; assert.equal(text.type, 'text');
+      if (text.type !== 'text') throw new Error('missing state');
+      const projected = JSON.parse(text.text);
+      assert.equal(projected.state.tic, 49);
+      const file = part.output.value[1]; assert.equal(file.type, 'file');
+      if (file.type !== 'file' || file.data.type !== 'data') throw new Error('missing image');
+      assert.deepEqual(typeof file.data.data === 'string' ? Buffer.from(file.data.data, 'base64') : Buffer.from(file.data.data), resultImages[1]);
+      return projected.feedback;
+    });
+    const result: any = results.at(-1);
+    feedbacks.splice(0, feedbacks.length, ...results);
+    if (options.two && results.length === 1 && result.error === null && result.accounting === 'remaining') {
+      assert.notEqual(input.toolChoice?.type, 'none');
+      return fixtureStream([{ type: 'tool-call', toolCallId: 'parent-decision-2', toolName: 'executeGuardedDecision', input: JSON.stringify(options.secondAdvisory ?? submitted) }]);
+    }
     continuations.push(structuredClone(result));
     assert.equal(input.toolChoice?.type, 'none');
     assert.equal(input.tools?.length ?? 0, 0);
     if (options.twice) return fixtureStream([{ type: 'tool-call', toolCallId: 'parent-decision-2', toolName: 'executeGuardedDecision', input: JSON.stringify(guidance) }]);
     await options.after?.();
-    const output = { ...advisory,
+    const output = { ...(options.two && results.length === 2 ? options.secondAdvisory ?? advisory : advisory),
       recordedEvidence: options.reflection?.recordedEvidence ?? 'The structured host receipt supplies the outcome; the initial image cannot prove progress.',
-      memoryInfluence: { noteId: null, explanation: options.reflection?.explanation ?? 'No historical note materially influenced the objective.' }, decision: result };
+      memoryInfluence: { noteId: null, explanation: options.reflection?.explanation ?? 'No historical note materially influenced the objective.' }, ...(options.two ? { decisions: results } : { decision: result }) };
     const text = options.final ?? (options.renderFinal ?? JSON.stringify)(output);
     return fixtureStream(textParts(text, options.chunkSize), options.rawFinish ?? 'completed');
   } });
-  return { ...f, deliveries, continuations, providerInstructions, lease: () => ({ pageId: f.ids.pageId, ownerId: '11111111-1111-4111-8111-111111111111', epoch: f.ids.epoch, leaseFile }),
-    run: () => runMain(f.ports, f.abort.signal, 2000, true) };
+  return { ...f, deliveries, continuations, providerInstructions, observedIds, budgets, feedbacks, lease: () => ({ pageId: f.ids.pageId, ownerId: '11111111-1111-4111-8111-111111111111', epoch: f.ids.epoch, leaseFile }),
+    run: () => runMain(f.ports, f.abort.signal, 2000, options.two ? 2 : true) };
 }
 
 test('agent event → guarded typed controller action → SDK-owned receipt-aware continuation (optional child)', async () => {
@@ -1039,8 +1077,8 @@ test('terminal and retired native prefix receipts remain distinct from ordinary 
 });
 
 test('explicit authorization required by CLI and callback, independently of agent SDK activity', async () => {
-  const modes: boolean[] = [];
-  const launch = async (enabled = false) => { modes.push(enabled); return 0; };
+  const modes: (boolean | 2)[] = [];
+  const launch = async (enabled: boolean | 2 = false) => { modes.push(enabled); return 0; };
   await main(['--authorize-agent-one-decision'], launch, () => {});
   assert.deepEqual(modes, []);
   await main(['--authorize-live-observation-cli'], launch, () => {});
@@ -1388,4 +1426,312 @@ test('provider abort reports its fixed cause instead of generic cancellation and
       assert.doesNotMatch(JSON.stringify(report) + f.progress(), /PRIVATE_CAUSE|PRIVATE_WARNING|sk-private|\/tmp\/private/);
     } finally { await f.destroy(); }
   }
+});
+
+
+test('two slots share one run: optional consult, ordered fresh checkpoints, noncumulative CAS and 1/2 then 2/2 accounting', async () => {
+  for (const consult of [false, true]) {
+    const f = decisionFixture({ two: true, consult });
+    try {
+      const report = await f.run();
+      assert.equal(report.outcome, 'completed', JSON.stringify(report.failureDiagnostic));
+      assert.equal(report.error, null);
+      assert.deepEqual(f.deliveries, ['start-run', 'set-prompt', 'observe', 'decide', 'get-config', 'set-prompt', 'observe', 'decide', 'get-config']);
+      assert.equal(report.decision.claim, 'acknowledged');
+      assert.equal(report.secondDecision.claim, 'not-attempted');
+      assert.equal(report.decision.accounting, 'remaining');
+      assert.equal(report.secondDecision.accounting, 'exhausted');
+      const runId = report.decision.allowance!.runId;
+      assert.deepEqual(report.decision.allowance, { runId, active: true, limit: 2, reserved: 0, sdkInvoked: 0, remaining: 2 });
+      assert.deepEqual(report.decision.finalRun, { runId, active: true, limit: 2, reserved: 1, sdkInvoked: 1, remaining: 1 });
+      assert.deepEqual(report.secondDecision.finalRun, { runId, active: false, limit: 2, reserved: 2, sdkInvoked: 2, remaining: 0 });
+      assert.deepEqual(report.decision.scope, { sessionId: f.ids.sessionId, runId, revision: 1 });
+      assert.deepEqual(report.secondDecision.scope, { sessionId: f.ids.sessionId, runId, revision: 2 });
+      assert.equal(new Set(f.observedIds).size, 2);
+      assert.equal(report.decision.receipt?.before.tic, 43);
+      assert.equal(report.decision.receipt?.after?.tic, 49);
+      assert.equal(report.secondDecision.receipt?.before.tic, 49);
+      assert.equal(report.secondDecision.receipt?.after?.tic, 55);
+      assert.deepEqual(f.providerInstructions[0], f.providerInstructions[1]);
+      assert.equal(f.providerInstructions[1].split('Advisory navigation interpretation').length, 2);
+      assert.equal(report.sdkRequests.parent, consult ? 4 : 3);
+      assert.equal(report.parentStream?.toolCalls, consult ? 3 : 2);
+      assert.equal(report.parentStream?.steps, consult ? 4 : 3);
+      assert.equal(report.release.status, 'broker-confirmed');
+      assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
+      assert.equal(reportExitCode(report, 2), 0);
+    } finally { await f.destroy(); }
+  }
+});
+
+test('two-decision CLI authorization is separate, exact and mutually exclusive; both budget mismatches fail closed', async () => {
+  const modes: (boolean | 2 | undefined)[] = [];
+  const launch = async (mode?: boolean | 2) => { modes.push(mode); return 0; };
+  for (const args of [
+    ['--authorize-agent-two-decisions'],
+    ['--authorize-live-observation-cli', '--authorize-agent-one-decision', '--authorize-agent-two-decisions'],
+    ['--authorize-live-observation-cli', '--authorize-agent-two-decisions', '--authorize-agent-two-decisions'],
+  ]) assert.equal(await main(args, launch, () => {}), 2);
+  assert.deepEqual(modes, []);
+  assert.equal(await main(['--authorize-agent-two-decisions', '--authorize-live-observation-cli'], launch, () => {}), 0);
+  assert.deepEqual(modes, [2]);
+  for (const two of [false, true]) {
+    const f = decisionFixture({ two, fault: 'allowance' });
+    try {
+      const report = await f.run();
+      assert.deepEqual(f.deliveries, ['start-run']);
+      assert.equal(report.decision.calls[0].feedback.error, 'CLAIM_UNVERIFIED');
+      assert.equal(report.secondDecision.attempted, 0);
+      assert.equal(reportExitCode(report, two ? 2 : true), 1);
+      assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
+    } finally { await f.destroy(); }
+  }
+});
+
+test('first-slot faults and nonhealthy outcomes never open slot 2 or project an image', async t => {
+  for (const fault of ['lost-start-run', 'lost-set-prompt', 'lost-decide', 'cas', 'stale', 'session', 'map', 'hash', 'epoch',
+    'native', 'revision', 'config', 'foreign-run', 'post-run', 'telemetry', 'receipt', 'receipt-before', 'accounting',
+    'terminal', 'retired', 'api-failure', 'stopped', 'not-admitted']) await t.test(fault, async () => {
+    const f = decisionFixture({ two: true, fault });
+    try {
+      const report = await f.run();
+      assert.equal(report.secondDecision.attempted, 0);
+      assert.ok(f.deliveries.filter(op => op === 'decide').length <= 1);
+      assert.ok(f.models[0].doStreamCalls.slice(1).every(call => call.prompt.every(message => message.role !== 'tool' ||
+        message.content.every(part => part.type !== 'tool-result' || part.output.type !== 'content'))));
+      assert.notEqual(report.outcome, 'completed');
+      assert.equal(reportExitCode(report, 2), 1);
+      assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
+      if (['terminal', 'retired', 'accounting'].includes(fault)) assert.ok(report.decision.receipt);
+    } finally { await f.destroy(); }
+  });
+});
+
+test('second-slot failure, final grounding failure and detach failure preserve the independently verified first receipt', async t => {
+  for (const fault of ['lost-set-prompt', 'lost-decide', 'stale', 'session', 'map', 'hash', 'revision', 'foreign-run',
+    'accounting', 'stopped', 'retired', 'bad-final', 'reversed', 'invented', 'detach']) await t.test(fault, async () => {
+    const f = decisionFixture({ two: true, faultAt: 2, fault,
+      ...(fault === 'bad-final' ? { final: '{}' } : {}),
+      ...(fault === 'reversed' || fault === 'invented' ? { renderFinal: value => JSON.stringify({ ...value,
+        decisions: fault === 'reversed' ? [...value.decisions as unknown[]].reverse() : [...value.decisions as unknown[], {}] }) } : {}),
+    });
+    let detaches = 0;
+    if (fault === 'detach') f.ports.detach = async () => { detaches++; throw new Error('lost detach'); };
+    try {
+      const report = await f.run();
+      assert.notEqual(report.outcome, 'completed');
+      assert.equal(report.decision.receipt?.outcome, 'completed');
+      assert.equal(report.decision.receipt?.verifiedTics, 6);
+      assert.equal(report.decision.receipt?.after?.tic, 49);
+      assert.equal(report.decision.accounting, 'remaining');
+      assert.equal(reportExitCode(report, 2), 1);
+      assert.equal(f.deliveries.filter(op => op === 'start-run').length, 1);
+      if (fault === 'detach') { assert.equal(detaches, 1); assert.equal(report.release.status, 'unverified'); }
+      else assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
+      if (fault === 'lost-decide') assert.equal(report.secondDecision.dispatch, 'unknown');
+    } finally { await f.destroy(); }
+  });
+});
+
+test('native second-call admission requires exact forwarded image-bearing predecessor and unique IDs; no overlap or third call', async t => {
+  for (const fault of ['none', 'overlap', 'missing', 'json-only', 'changed-image', 'duplicate-id', 'third', 'unrelated']) await t.test(fault, async () => {
+    const f = decisionFixture({ two: true });
+    try {
+      const lease = await f.ports.attach(f.abort.signal);
+      const { observation } = await liveObserve(await f.ports.observe(lease.leaseFile, f.abort.signal), lease, f.ports.readPng, f.abort.signal);
+      const first = decisionLedger(), second = decisionLedger(), calls: HostCall[] = [];
+      const callback = createTwoGuardedDecisions(lease, observation, f.ports.decision!, first, second, f.abort.signal);
+      const tool = nativeTool('executeGuardedDecision', callback, calls, f.abort.signal);
+      const execute = (id: string, messages: import('ai').ModelMessage[] = []) =>
+        tool.execute!(guidance, { toolCallId: id, messages, abortSignal: f.abort.signal, context: {} });
+      const pending = execute('one');
+      if (fault === 'overlap') await assert.rejects(async () => execute('two'), /REPEATED_OR_OVERLAPPING/);
+      const output = await pending;
+      if (fault === 'overlap') { assert.equal(second.attempted, 0); return; }
+      const projected = await tool.toModelOutput!({ toolCallId: 'one', input: guidance, output });
+      const changed = structuredClone(projected);
+      if (fault === 'changed-image' && changed.type === 'content') changed.value.pop();
+      const messages: import('ai').ModelMessage[] = fault === 'missing' ? [] : [{ role: 'tool', content: [{
+        type: 'tool-result', toolCallId: 'one', toolName: 'executeGuardedDecision',
+        output: fault === 'json-only' ? { type: 'json', value: output as import('@ai-sdk/provider').JSONValue } : changed,
+      }] }];
+      if (fault === 'unrelated') {
+        let unrelated = 0;
+        const consult = nativeTool('consultLandmarks', { description: 'Synthetic forbidden callback', inputSchema: callback.inputSchema,
+          execute: async () => { unrelated++; return { content: [{ type: 'text', text: '{}' }] }; } }, calls, f.abort.signal);
+        await assert.rejects(async () => consult.execute!(guidance, { toolCallId: 'consult-after-decision', messages, context: {} }), /REPEATED_OR_OVERLAPPING/);
+        assert.equal(unrelated, 0); assert.equal(second.attempted, 0);
+      } else if (['missing', 'json-only', 'changed-image', 'duplicate-id'].includes(fault)) {
+        await assert.rejects(async () => execute(fault === 'duplicate-id' ? 'one' : 'two', messages), /REPEATED_OR_OVERLAPPING/);
+        assert.equal(second.attempted, 0);
+      } else {
+        const next = await execute('two', messages);
+        assert.equal(second.receipt?.after?.tic, 55);
+        if (fault === 'third') {
+          messages.push({ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'two', toolName: 'executeGuardedDecision', output: await tool.toModelOutput!({ toolCallId: 'two', input: guidance, output: next }) }] });
+          await assert.rejects(async () => execute('three', messages), /REPEATED_OR_OVERLAPPING/);
+          assert.equal(second.attempted, 1);
+        }
+      }
+      assert.equal(first.accepted, 1);
+      assert.equal(f.deliveries.filter(op => op === 'start-run').length, 1);
+    } finally { await f.destroy(); }
+  });
+});
+
+
+test('verified guarded PNG B and current state enter installed Hermes/CLI next input before decision 2; no live provider', async t => {
+  const secondAdvisory = { objective: 'Does the synthetic view at tic 49 clarify the boundary?', uncertainty: 'The changed synthetic PNG does not prove passability.' };
+  const f = decisionFixture({ two: true, secondAdvisory });
+  const provider = createCodexAppServer();
+  const cli = provider('synthetic-pure-conversion-only');
+  assert.ok('preparePrompt' in cli && typeof cli.preparePrompt === 'function');
+  assert.ok('buildUserInput' in cli && typeof cli.buildUserInput === 'function');
+  const preparePrompt = cli.preparePrompt.bind(cli), buildUserInput = cli.buildUserInput.bind(cli);
+  let requests = 0;
+  const endpoint = new MockLanguageModelV4({ doStream: async params => {
+    const step = requests++;
+    assert.ok(step < 3);
+    assert.equal(params.tools, undefined);
+    assert.ok(!params.prompt.some(message => message.role === 'tool'));
+    const mapped = preparePrompt(params.prompt, false);
+    assert.deepEqual(mapped.warnings, []);
+    const built = await buildUserInput(mapped.promptText, mapped.images);
+    t.after(async () => { for (const path of built.tempImagePaths) await rm(dirname(path), { recursive: true, force: true }); });
+    const images = await Promise.all(built.input.filter((part: { type: string }) => part.type === 'localImage').map((part: { path: string }) => readFile(part.path)));
+    assert.deepEqual(images, step === 0 ? [image] : [image, syntheticPng(255)]);
+    const responses = params.prompt.flatMap(message => message.role === 'user' && Array.isArray(message.content)
+      ? message.content.flatMap(part => {
+        if (part.type !== 'text') return [];
+        const match = part.text.match(/^<tool_response>(.*)<\/tool_response>$/s);
+        if (!match) return [];
+        const response = JSON.parse(match[1]);
+        assert.equal(response.name, 'executeGuardedDecision');
+        return [typeof response.content === 'string' ? JSON.parse(response.content) : response.content];
+      }) : []);
+    if (step === 1) {
+      assert.equal(responses.length, 1);
+      assert.equal(responses[0].state.tic, 49);
+      assert.equal(responses[0].state.phase, 'ready');
+      assert.equal(responses[0].feedback.receipt.cumulativeTics, 49);
+      assert.equal(responses[0].feedback.accounting, 'remaining');
+      assert.equal(f.deliveries.filter(op => op === 'decide').length, 1);
+      assert.deepEqual(f.operations, ['attach', 'observe'], 'No detach between decisions');
+      t.diagnostic(`Before decision 2: exact verified PNG B ${hash(images[1])}, state tic 49, first receipt 6/6/6`);
+    }
+    if (step < 2) {
+      const next = step === 0 ? guidance : { objective: `Does the synthetic view at tic ${responses[0].state.tic} clarify the boundary?`, uncertainty: secondAdvisory.uncertainty };
+      return cliFixtureStream(params, textParts(`<tool_call>${JSON.stringify({ name: 'executeGuardedDecision', arguments: next })}</tool_call>`));
+    }
+    assert.equal(responses.length, 2);
+    const feedbacks = [responses[0].feedback, responses[1]];
+    assert.equal(feedbacks[1].receipt.cumulativeTics, 55);
+    return cliFixtureStream(params, textParts(JSON.stringify({ ...secondAdvisory,
+      recordedEvidence: 'Two synthetic verified results; image interpretation remains unproven.',
+      memoryInfluence: { noteId: null, explanation: 'No historical consultation.' }, decisions: feedbacks })));
+  } });
+  const createProvider = f.ports.createProvider;
+  f.ports.createProvider = (cwd, abort) => {
+    const owner = createProvider(cwd, abort);
+    if (f.owners.length !== 1) return owner;
+    return { ...owner, languageModel: () => wrapLanguageModel({ model: endpoint, middleware: [hermesToolMiddleware,
+      cliSafetyMiddleware(f.abort, () => false, async () => {})] }) };
+  };
+  try {
+    const report = await f.run();
+    assert.equal(report.outcome, 'completed', JSON.stringify(report.failureDiagnostic));
+    assert.equal(reportExitCode(report, 2), 0);
+    assert.equal(requests, 3);
+    assert.equal(report.parentStream?.toolCalls, 2);
+    assert.deepEqual(report.secondDecision.guidance, secondAdvisory);
+    assert.equal(f.providerInstructions[1].split('Advisory navigation interpretation').length, 2);
+    assert.ok(!f.providerInstructions[1].includes(guidance.objective));
+    assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
+  } finally { await provider.close(); await f.destroy(); }
+});
+
+
+test('unverified first result PNG or reused/foreign resulting identity cannot become second-model evidence', async t => {
+  for (const fault of ['bytes', 'result-id', 'result-session', 'result-map']) await t.test(fault, async () => {
+    const f = decisionFixture({ two: true });
+    const decide = f.ports.decision!.decide;
+    f.ports.decision!.decide = async (...args) => {
+      const result = await decide(...args);
+      assert.ok(result.observation);
+      const observation = { ...result.observation! };
+      if (fault === 'bytes') observation.pngSha256 = 'f'.repeat(64);
+      if (fault === 'result-id') observation.observationId = f.ids.observationId;
+      if (fault === 'result-session') observation.sessionId = randomUUID();
+      if (fault === 'result-map') observation.mapIdentity = createAgentMapIdentity('e'.repeat(64), 1, 1);
+      return { ...result, observation };
+    };
+    try {
+      const report = await f.run();
+      assert.equal(report.decision.dispatch, 'unknown');
+      assert.equal(report.secondDecision.attempted, 0);
+      assert.equal(report.decision.receipt, null);
+      assert.deepEqual(f.deliveries, ['start-run', 'set-prompt', 'observe', 'decide']);
+      assert.equal(reportExitCode(report, 2), 1);
+      assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
+    } finally { await f.destroy(); }
+  });
+});
+
+test('cancellation fences first accounting and second pre-dispatch observation; late second dispatch is never replayed', async t => {
+  for (const boundary of ['first-accounting', 'second-observe', 'second-dispatch']) await t.test(boundary, async () => {
+    const f = decisionFixture({ two: true });
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    if (boundary === 'first-accounting') {
+      const get = f.ports.decision!.getConfig;
+      f.ports.decision!.getConfig = async (...args) => { const value = await get(...args); entered(); await pending; return value; };
+    } else if (boundary === 'second-observe') {
+      const observe = f.ports.decision!.observe;
+      let reads = 0;
+      f.ports.decision!.observe = async (...args) => {
+        const value = await observe(...args);
+        if (++reads === 2) { entered(); await pending; }
+        return value;
+      };
+    } else {
+      const decide = f.ports.decision!.decide;
+      let decisions = 0;
+      f.ports.decision!.decide = async (...args) => {
+        const value = await decide(...args);
+        if (++decisions === 2) { entered(); await pending; }
+        return value;
+      };
+    }
+    try {
+      const work = f.run(); await started; f.abort.abort();
+      const report = await work;
+      assert.equal(report.decision.receipt?.verifiedTics, 6);
+      assert.equal(report.decision.receipt?.after?.tic, 49);
+      assert.equal(report.secondDecision.dispatch, boundary === 'second-dispatch' ? 'unknown' : 'not-attempted');
+      assert.equal(report.secondDecision.receipt, null);
+      assert.equal(f.deliveries.filter(op => op === 'decide').length, boundary === 'second-dispatch' ? 2 : 1);
+      assert.equal(reportExitCode(report, 2), 1);
+      assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
+      assert.deepEqual(f.owners.map(owner => owner.cleanups), [1, 1]);
+      const snapshot = JSON.stringify(report), deliveries = [...f.deliveries];
+      release(); await new Promise(resolve => setImmediate(resolve));
+      assert.equal(JSON.stringify(report), snapshot);
+      assert.deepEqual(f.deliveries, deliveries);
+    } finally { release(); await f.destroy(); }
+  });
+});
+
+test('terminal prefix on slot 2 is reported separately from two completed actions', async () => {
+  const f = decisionFixture({ two: true, fault: 'terminal', faultAt: 2 });
+  try {
+    const report = await f.run();
+    assert.equal(report.outcome, 'terminal');
+    assert.equal(report.decision.receipt?.outcome, 'completed');
+    assert.equal(report.secondDecision.receipt?.outcome, 'terminal');
+    assert.equal(report.secondDecision.receipt?.verifiedTics, 2);
+    assert.equal(report.secondDecision.accounting, 'unavailable');
+    assert.equal(reportExitCode(report, 2), 0);
+    assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
+  } finally { await f.destroy(); }
 });

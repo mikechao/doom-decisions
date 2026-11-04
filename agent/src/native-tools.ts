@@ -3,14 +3,25 @@ import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 import type { Envelope } from './agent-stream.ts';
 
-export type HostCall = { toolCallId: string; toolName: string; input: unknown; output?: unknown; settled: boolean };
+type Projection = { type: 'content'; value: ({ type: 'text'; text: string } | { type: 'file'; mediaType: string; data: { type: 'data'; data: string } })[] } | { type: 'json'; value: import('@ai-sdk/provider').JSONValue };
+
+export type HostCall = { toolCallId: string; toolName: string; input: unknown; output?: unknown; settled: boolean; modelOutput?: Projection };
 
 // Presentation conversion only: schemas and execution belong to SDK 7. The
 // domain callbacks retain their independent validation, ledgers and latches.
 export function nativeTool<S extends z.ZodType>(name: string, callback: {
   description: string; inputSchema: S; execute(input: unknown): Promise<Envelope>;
+  secondReady?(): boolean; project?(output: unknown): Projection;
 }, calls: HostCall[], signal: AbortSignal) {
   return tool({
+    ...(callback.project ? { toModelOutput: ({ toolCallId, input, output }: { toolCallId: string; input: unknown; output: unknown }) => {
+      const call = calls.find(call => call.toolCallId === toolCallId && call.toolName === name);
+      if (!call?.settled || !isDeepStrictEqual(call.input, input) || !isDeepStrictEqual(call.output, output)) throw new Error('INVALID_HOST_PROJECTION');
+      const projected = callback.project!(output);
+      if (call.modelOutput && !isDeepStrictEqual(call.modelOutput, projected)) throw new Error('CHANGED_HOST_PROJECTION');
+      call.modelOutput = structuredClone(projected);
+      return projected;
+    } } : {}),
     description: callback.description, inputSchema: callback.inputSchema,
     execute: async (input, options) => {
       signal.throwIfAborted();
@@ -18,13 +29,19 @@ export function nativeTool<S extends z.ZodType>(name: string, callback: {
         input: structuredClone(input), settled: false };
       calls.push(call);
       // More than one call per inference step is forbidden, including parallel
-      // consult/action calls. A failed callback never permits another step.
+      // consult/action calls. Only the fixed image-bearing decision predecessor
+      // permits a second call of the same tool; it cannot authorize another tool.
       const invalid = calls.some(previous => {
         if (previous === call) return false;
         const forwarded = options.messages.some(message => message.role === 'tool' && message.content.some(part =>
           part.type === 'tool-result' && part.toolCallId === previous.toolCallId &&
-          part.toolName === previous.toolName && part.output.type === 'json' && isDeepStrictEqual(part.output.value, previous.output)));
-        return !previous.settled || previous.toolName === name || previous.toolCallId === call.toolCallId || !forwarded;
+          part.toolName === previous.toolName && (previous.modelOutput
+            ? isDeepStrictEqual(part.output, previous.modelOutput)
+            : part.output.type === 'json' && isDeepStrictEqual(part.output.value, previous.output))));
+        return !previous.settled ||
+          (previous.toolName === 'executeGuardedDecision' && previous.modelOutput?.type === 'content' && name !== previous.toolName) ||
+          (previous.toolName === name && !(name === 'executeGuardedDecision' && callback.secondReady?.() &&
+          calls.filter(call => call.toolName === name).length === 2 && previous.modelOutput?.type === 'content')) || previous.toolCallId === call.toolCallId || !forwarded;
       });
       if (invalid)
         throw new Error('REPEATED_OR_OVERLAPPING_HOST_CALL');

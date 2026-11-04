@@ -11,13 +11,13 @@ import {
 import { closeCliProviders, fenceCliInitialization, type CliInitialization } from './agent-lifecycle.ts';
 import { consumeDoomStream, DoomStreamError } from './agent-stream.ts';
 import {
-  createConsultLandmarks, createDoomPlayAgent, validateParentOutput, validateDecisionOutput, maxDecisionOutputCharacters, ParentOutputError, type ConsultReceipt,
+  createConsultLandmarks, createDoomPlayAgent, validateParentOutput, validateDecisionOutput, validateTwoDecisionOutput, maxDecisionOutputCharacters, maxTwoDecisionOutputCharacters, ParentOutputError, type ConsultReceipt,
 } from './doom-play-agent.ts';
 import { createLandmarksAgent } from './landmarks-tool-loop-agent.ts';
 import {
   createLandmarksTool, lookupLandmarks, type LandmarkReceipt, type SavedContext,
 } from './landmarks-tool.ts';
-import { createGuardedDecision, decisionLedger, type DecisionPorts } from './guarded-decision.ts';
+import { createGuardedDecision, createTwoGuardedDecisions, decisionLedger, type DecisionPorts } from './guarded-decision.ts';
 import { liveObserve, parseLease, requireLive, type ReadPng } from './live-observation.ts';
 import { isAgentId } from '../../app/src/agent-observation.ts';
 import { createOperatorConsole } from './operator-console.ts';
@@ -47,7 +47,10 @@ type FailureDiagnostic = {
     'STREAM_REJECTED' | 'CANCELLED' | 'DEADLINE' | 'CLEANUP_UNVERIFIED' | 'INSTRUCTIONS_CLEANUP_FAILED' | 'DETACH_UNVERIFIED' | 'unknown';
 };
 
-export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs = 120_000, authorizeOneDecision = false) {
+export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs = 120_000, authorization: boolean | 2 = false) {
+  const two = authorization === 2;
+  const parentSteps = two ? 4 : authorization ? 3 : 2;
+  const parentCharacters = two ? maxTwoDecisionOutputCharacters : authorization ? maxDecisionOutputCharacters : undefined;
   const logger = ports.logger ?? createOperatorConsole();
   const doomLog = logger.withTag('doom'), agentLog = logger.withTag('agent');
   const cleanupLog = logger.withTag('cleanup'), runLog = logger.withTag('run');
@@ -64,7 +67,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
   const directories: string[] = [];
   const landmarks: LandmarkReceipt[] = [];
   const consults: ConsultReceipt[] = [];
-  let guardedDecision: ReturnType<typeof createGuardedDecision> | undefined;
+  let guardedDecision: ReturnType<typeof createGuardedDecision> | ReturnType<typeof createTwoGuardedDecisions> | undefined;
   let acknowledgedLease: AttachedLease | undefined;
   const report = {
     outcome: 'failed', error: null as string | null,
@@ -77,11 +80,12 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     sdkRequests: { parent: 0, child: 0 }, callbacks: { consult: 0, find: 0 },
     parentStream: null as Awaited<ReturnType<typeof consumeDoomStream>> | null,
     childStream: null as ConsultReceipt['childStream'],
-    result: null as ReturnType<typeof validateParentOutput> | ReturnType<typeof validateDecisionOutput> | null,
+    result: null as ReturnType<typeof validateParentOutput> | ReturnType<typeof validateDecisionOutput> | ReturnType<typeof validateTwoDecisionOutput> | null,
     decision: decisionLedger(),
+    secondDecision: decisionLedger(),
     receiptAwareSummary: false,
     cleanup: [] as string[], directoryCleanup: [] as string[],
-    evidenceLimits: 'Initial PNG input only; structured decision feedback is not a second agent-visible image. Offline tests do not prove live inference or model understanding. Public CLI provider cleanup does not prove child-process exit or complete tool isolation.',
+    evidenceLimits: two ? 'The verified first resulting PNG and current state are projected as next-model input; offline conversion does not prove live model interpretation. Public CLI provider cleanup does not prove child-process exit or complete tool isolation.' : 'Initial PNG input only; structured decision feedback is not a second agent-visible image. Offline tests do not prove live inference or model understanding. Public CLI provider cleanup does not prove child-process exit or complete tool isolation.',
   };
   let onAbort = () => {};
   try {
@@ -131,21 +135,23 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
         mapKey: context.mapIdentity.mapKey, pngSha256: observation.pngSha256, imageBytes: image.length };
       const count = (role: 'parent' | 'child') => () => {
         abort.signal.throwIfAborted();
-        if (++report.sdkRequests[role] > (authorizeOneDecision && role === 'parent' ? 3 : 2)) throw new Error('REPEATED_SDK_REQUEST');
-        if (role === 'parent') agentLog.info('DoomPlayAgent request started (initial image supplied)');
+        if (++report.sdkRequests[role] > (role === 'parent' ? parentSteps : 2)) throw new Error('REPEATED_SDK_REQUEST');
+        if (role === 'parent') agentLog.info(two ? 'DoomPlayAgent request started (verified image input)' : 'DoomPlayAgent request started (initial image supplied)');
       };
       const childCalls: HostCall[] = [], parentCalls: HostCall[] = [];
       const childTools = { findLandmarks: nativeTool('findLandmarks',
         createLandmarksTool(context, landmarks, abort, undefined, ports.lookup), childCalls, abort.signal) };
       const child = createLandmarksAgent(childModel, childTools, count('child'), childCalls);
-      requireLive(!authorizeOneDecision || ports.decision);
-      if (authorizeOneDecision && ports.decision)
-        guardedDecision = createGuardedDecision(true, lease, observation, ports.decision, report.decision, abort.signal, logger.withTag('decision'));
+      requireLive(!authorization || ports.decision);
+      if (authorization && ports.decision)
+        guardedDecision = two
+          ? createTwoGuardedDecisions(lease, observation, ports.decision, report.decision, report.secondDecision, abort.signal, logger.withTag('decision'))
+          : createGuardedDecision(true, lease, observation, ports.decision, report.decision, abort.signal, logger.withTag('decision'));
       const parentTools = {
         consultLandmarks: nativeTool('consultLandmarks', createConsultLandmarks(context, child, landmarks, consults, abort, logger.withTag('landmarks')), parentCalls, abort.signal),
         ...(guardedDecision ? { executeGuardedDecision: nativeTool('executeGuardedDecision', guardedDecision, parentCalls, abort.signal) } : {}),
       };
-      const parent = createDoomPlayAgent(parentModel, parentTools, count('parent'), 'live', authorizeOneDecision, parentCalls);
+      const parent = createDoomPlayAgent(parentModel, parentTools, count('parent'), 'live', authorization, parentCalls, () => !!guardedDecision && 'secondReady' in guardedDecision && guardedDecision.secondReady());
       stage = 'provider_initialization';
       agentLog.info('Initializing separate parent and landmark CLI provider owners (stateless threads)');
       for (const owner of [childProvider, parentProvider]) {
@@ -158,7 +164,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
       stage = 'parent_stream';
       const stream = await parent.stream({
         messages: [{ role: 'user', content: [
-          { type: 'text', text: `${authorizeOneDecision ? 'Request the single authorized guarded decision, then report its actual result in this same run.' : 'Propose one navigation question.'} Reason from this fresh verified observation and its attached PNG. Historical memory is advisory. State=${JSON.stringify(payload)}` },
+          { type: 'text', text: `${two ? 'Request exactly two sequential guarded decisions, using the first verified resulting PNG and current state before decision 2. Report ordered actual results.' : authorization ? 'Request the single authorized guarded decision, then report its actual result in this same run.' : 'Propose one navigation question.'} Reason from this fresh verified observation and its attached PNG. Historical memory is advisory. State=${JSON.stringify(payload)}` },
           { type: 'file', data: image, mediaType: 'image/png' },
         ] }],
         abortSignal: abort.signal,
@@ -166,16 +172,17 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
       abort.signal.throwIfAborted();
       const consumed = await consumeDoomStream(stream, abort.signal,
         (output, name, ordinal, evidence) => hostResultMatches(parentCalls, output, name, ordinal, evidence) && domainResultMatches(output, name === 'executeGuardedDecision'
-          ? report.decision.calls[ordinal]?.envelope ?? null : consults[ordinal]?.envelope ?? null),
-        authorizeOneDecision ? ['consultLandmarks', 'executeGuardedDecision'] : 'consultLandmarks',
-        authorizeOneDecision ? maxDecisionOutputCharacters : undefined,
+          ? (ordinal === 0 ? report.decision : report.secondDecision).calls[0]?.envelope ?? null : consults[ordinal]?.envelope ?? null),
+        authorization ? ['consultLandmarks', 'executeGuardedDecision'] : 'consultLandmarks',
+        parentCharacters,
         // Allow one event per text character plus the existing 2000-event
         // allowance for tool/lifecycle events and empty chunks; floods stay finite.
-        authorizeOneDecision ? maxDecisionOutputCharacters + 2000 : undefined);
+        parentCharacters === undefined ? undefined : parentCharacters + 2000,
+        parentSteps);
       report.parentStream = consumed;
       stage = 'callback_correlation';
       requireLive((consumed.tools.consultLandmarks?.calls ?? 0) === consults.length &&
-        (consumed.tools.executeGuardedDecision?.calls ?? 0) === report.decision.attempted);
+        (consumed.tools.executeGuardedDecision?.calls ?? 0) === report.decision.attempted + report.secondDecision.attempted);
       agentLog.info('Parent stream drained; tool calls/results and callback counts matched');
       stage = 'completion_await';
       agentLog.info('Awaiting parent completion metadata and final output');
@@ -189,20 +196,23 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
       }
       stage = 'provider_invariants';
       if (!(providers.every(provider => { provider.assertHealthy(); return true; }) &&
-        report.sdkRequests.parent === consumed.steps && report.sdkRequests.parent === 1 + consults.length + report.decision.attempted &&
+        report.sdkRequests.parent === consumed.steps && report.sdkRequests.parent === 1 + consults.length + report.decision.attempted + report.secondDecision.attempted &&
         report.sdkRequests.child === 2 * consults.length)) {
         failureCode = 'PROVIDER_INVARIANTS_INVALID'; requireLive(false);
       }
       failureCode = 'unknown'; stage = 'final_validation';
       agentLog.info('Parent completion metadata and provider invariants verified; validating final JSON and grounding');
-      const result = authorizeOneDecision
+      const result = two
+        ? validateTwoDecisionOutput(text, report.decision, report.secondDecision, consults, landmarks, abort.signal)
+        : authorization
         ? validateDecisionOutput(text, report.decision, consults, landmarks, abort.signal)
         : validateParentOutput(text, consults, landmarks, abort.signal);
       report.result = result;
-      report.receiptAwareSummary = authorizeOneDecision;
+      report.receiptAwareSummary = !!authorization;
       agentLog.info('Parent final output accepted; schema and grounding verified');
-      report.outcome = authorizeOneDecision
-        ? report.decision.receipt && report.decision.calls[0]?.feedback.error === null ? report.decision.receipt.outcome : 'failed'
+      const last = two && report.secondDecision.attempted ? report.secondDecision : report.decision;
+      report.outcome = authorization
+        ? last.receipt && last.calls[0]?.feedback.error === null ? last.receipt.outcome : 'failed'
         : consults[0].result?.selection.status === 'empty' ? 'empty' : 'completed';
     };
     await Promise.race([work(), cancelled]);
@@ -273,7 +283,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
       report.failureDiagnostic ??= { stage: 'cleanup', code: 'CLEANUP_UNVERIFIED' };
       cleanupLog.warn('CLI provider or temporary-directory cleanup unverified');
     }
-    if (report.decision.fileCleanup === 'failed') {
+    if ([report.decision, report.secondDecision].some(slot => slot.fileCleanup === 'failed')) {
       report.outcome = 'failed'; report.error ??= 'INSTRUCTIONS_CLEANUP_FAILED';
       report.failureDiagnostic ??= { stage: 'cleanup', code: 'INSTRUCTIONS_CLEANUP_FAILED' };
       cleanupLog.warn('Instructions file cleanup failed');
@@ -291,16 +301,18 @@ export function writeMainReport(report: Awaited<ReturnType<typeof runMain>>, pri
   print(`${JSON.stringify(report, null, 2)}\n`);
 }
 
-export function reportExitCode(report: Awaited<ReturnType<typeof runMain>>, authorizeOneDecision: boolean) {
+export function reportExitCode(report: Awaited<ReturnType<typeof runMain>>, authorization: boolean | 2) {
   if (report.error !== null || report.result === null || report.release.status !== 'broker-confirmed') return 1;
-  if (!authorizeOneDecision) return ['completed', 'empty'].includes(report.outcome) ? 0 : 1;
-  const receipt = report.decision.receipt;
+  if (!authorization) return ['completed', 'empty'].includes(report.outcome) ? 0 : 1;
+  const slot = authorization === 2 ? report.secondDecision : report.decision;
+  if (authorization === 2 && (report.decision.receipt?.outcome !== 'completed' || report.decision.accounting !== 'remaining')) return 1;
+  const receipt = slot.receipt;
   return ['completed', 'terminal'].includes(report.outcome) &&
-    report.receiptAwareSummary && report.decision.dispatch === 'validated-receipt' &&
+    report.receiptAwareSummary && slot.dispatch === 'validated-receipt' &&
     receipt?.outcome === report.outcome && receipt.completionUncertain === false ? 0 : 1;
 }
 
-async function launch(authorizeOneDecision = false) {
+async function launch(authorization: boolean | 2 = false) {
   for (const [name, expected] of Object.entries({ ai: '7.0.159', 'ai-sdk-provider-codex-cli': '2.4.0',
     '@ai-sdk-tool/parser': '5.1.6', zod: '4.6.7' })) {
     if (JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8')).version !== expected)
@@ -328,7 +340,7 @@ async function launch(authorizeOneDecision = false) {
       removeDirectory: rmdirSync,
       createProvider: createCliProvider,
       lookup: lookupLandmarks,
-      ...(authorizeOneDecision ? { decision: {
+      ...(authorization ? { decision: {
         startRun: (input, signal) => executeAgentOperation({ op: 'start-run', ...input }, options(signal)),
         setPrompt: (input, signal) => executeAgentOperation({ op: 'set-prompt', ...input }, options(signal)),
         observe: (leaseFile, signal) => executeAgentOperation({ op: 'observe', leaseFile }, options(signal)),
@@ -343,19 +355,20 @@ async function launch(authorizeOneDecision = false) {
           return { path, remove: () => rmSync(directory, { recursive: true, force: true }) };
         },
       } satisfies DecisionPorts } : {}),
-    }, abort.signal, 120_000, authorizeOneDecision);
+    }, abort.signal, 120_000, authorization);
     writeMainReport(report);
-    return reportExitCode(report, authorizeOneDecision);
+    return reportExitCode(report, authorization);
   } finally {
     process.removeListener('SIGINT', interrupt);
     process.removeListener('SIGTERM', interrupt);
   }
 }
 
-export async function main(args: string[], run: (authorizeOneDecision?: boolean) => Promise<number> = launch, print = (value: string) => { writeSync(1, value); }) {
+export async function main(args: string[], run: (authorization?: boolean | 2) => Promise<number> = launch, print = (value: string) => { writeSync(1, value); }) {
   if (args.length === 1 && args[0] === '--authorize-live-observation-cli') return run(false);
   if (args.length === 2 && new Set(args).size === 2 && args.includes('--authorize-live-observation-cli') && args.includes('--authorize-agent-one-decision')) return run(true);
-  print('Inert: no attach, SQLite open or CLI startup. After separate live authorization only:\nnode --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli\n' + 'One decision additionally requires --authorize-agent-one-decision and a restarted broker with AGENT_DECISION_BUDGET=1.\n' + operatorInstruction + '\n');
+  if (args.length === 2 && new Set(args).size === 2 && args.includes('--authorize-live-observation-cli') && args.includes('--authorize-agent-two-decisions')) return run(2);
+  print('Inert: no attach, SQLite open or CLI startup. After separate live authorization only:\nnode --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli\n' + 'Two decisions require --authorize-agent-two-decisions (mutually exclusive with one-decision) and a restarted broker with AGENT_DECISION_BUDGET=2.\nOne decision additionally requires --authorize-agent-one-decision and a restarted broker with AGENT_DECISION_BUDGET=1.\n' + operatorInstruction + '\n');
   return args.length === 0 || (args.length === 1 && args[0] === '--help') ? 0 : 2;
 }
 

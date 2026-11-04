@@ -36,7 +36,7 @@ function png(red: number) {
     chunk('IDAT', deflateSync(Buffer.from([0, red, 0, 0, 255]))), chunk('IEND', Buffer.alloc(0))]);
 }
 
-test('post-decision PNG survives installed SDK → Hermes → CLI pure input conversion', async t => {
+test('next input carries exact post-decision PNG and state before the second native call via installed SDK → Hermes → CLI conversion', async t => {
   for (const [name, version] of Object.entries({ ai: '7.0.159', '@ai-sdk-tool/parser': '5.1.6',
     'ai-sdk-provider-codex-cli': '2.4.0' })) {
     assert.equal(JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8')).version, version);
@@ -62,30 +62,38 @@ test('post-decision PNG survives installed SDK → Hermes → CLI pure input con
     const feedback = { status: 'receipt', receipt: { outcome: 'completed', action: 'turn_right',
       requestedTics: 6, reportedTics: 6, verifiedTics: 6, cumulativeTics: 7, completionUncertain: false },
       state: { tic: 7, phase: 'ready', telemetry: { health: 100, angle: 123 } } };
+    const secondFeedback = { ...feedback, receipt: { ...feedback.receipt, cumulativeTics: 13 }, state: { ...feedback.state, tic: 13 } };
     const envelope: Envelope = { content: [{ type: 'text', text: JSON.stringify(feedback) }] };
+    const secondEnvelope: Envelope = { content: [{ type: 'text', text: JSON.stringify(secondFeedback) }] };
     let executed = 0, projected = 0, requests = 0, correlated = 0;
-    const callback = nativeTool('executeGuardedDecision', {
-      description: 'Return one synthetic completed receipt; no gameplay or API calls.', inputSchema: decisionGuidance,
-      execute: async input => { assert.deepEqual(input, guidance); assert.equal(++executed, 1); return envelope; },
-    }, calls, abort.signal);
-    const tools = { executeGuardedDecision: { ...callback,
-      toModelOutput: ({ toolCallId, input, output }: { toolCallId: string; input: unknown; output: unknown }) => {
+    const tools = { executeGuardedDecision: nativeTool('executeGuardedDecision', {
+      description: 'Return two synthetic completed receipts; no gameplay or API calls.', inputSchema: decisionGuidance,
+      secondReady: () => executed === 1,
+      execute: async input => {
+        assert.deepEqual(input, guidance);
+        assert.ok(++executed <= 2);
+        return executed === 1 ? envelope : secondEnvelope;
+      },
+      project: output => {
         projected++;
-        assert.equal(toolCallId, calls[0]?.toolCallId);
-        assert.deepEqual(input, guidance); assert.deepEqual(output, feedback);
-        return { type: 'content' as const, value: [
-          { type: 'text' as const, text: JSON.stringify(output) },
-          { type: 'file' as const, mediaType: 'image/png', data: unsupported
-            ? { type: 'reference' as const, reference: { synthetic: 'post-decision-B' } }
-            : { type: 'data' as const, data: b.toString('base64') } },
+        if (JSON.stringify(output) === JSON.stringify(secondFeedback)) return { type: 'json', value: secondFeedback };
+        assert.deepEqual(output, feedback);
+        return { type: 'content', value: [
+          { type: 'text', text: JSON.stringify(output) },
+          { type: 'file', mediaType: 'image/png', data: { type: 'data', data: b.toString('base64') } },
         ] };
       },
-    } };
+    }, calls, abort.signal) };
+    // Keep the unsupported-reference negative case on the same installed path.
+    if (unsupported) tools.executeGuardedDecision.toModelOutput = () => ({ type: 'content', value: [
+      { type: 'text', text: JSON.stringify(feedback) },
+      { type: 'file', mediaType: 'image/png', data: { type: 'reference', reference: { synthetic: 'post-decision-B' } } },
+    ] });
     // The fake endpoint supplies deterministic response text only. Both request
     // projections below are the installed CLI provider's own implementation.
     const endpoint = new MockLanguageModelV4({ doStream: async params => {
       const step = requests++;
-      assert.ok(step < 2); assert.equal(params.tools, undefined);
+      assert.ok(step < (unsupported ? 2 : 3)); assert.equal(params.tools, undefined);
       assert.deepEqual(cliSettingsWarnings(params), []);
       assert.ok(!params.prompt.some(message => message.role === 'tool'), 'Real Hermes must project tool results into user content');
       const mapped = preparePrompt(params.prompt, false);
@@ -94,14 +102,14 @@ test('post-decision PNG survives installed SDK → Hermes → CLI pure input con
       const images = built.input.filter((part: { type: string }) => part.type === 'localImage');
       assert.deepEqual(images.map((part: { path: string }) => part.path), built.tempImagePaths);
       assert.deepEqual(built.input.map((part: { type: string }) => part.type),
-        ['text', ...Array(step === 1 && !unsupported ? 2 : 1).fill('localImage')]);
+        ['text', ...Array(step >= 1 && !unsupported ? 2 : 1).fill('localImage')]);
       const bytes = await Promise.all(images.map((part: { path: string }) => readFile(part.path)));
       if (step === 0) {
         assert.equal(executed, 0); assert.equal(projected, 0);
         assert.deepEqual(bytes, [a]); assert.deepEqual(mapped.warnings, []);
       } else {
-        assert.equal(executed, 1); assert.ok(projected >= 1);
-        const response = params.prompt.findLast(message => message.role === 'user');
+        assert.equal(executed, step); if (!unsupported) assert.ok(projected >= 1);
+        const response = params.prompt.find(message => message.role === 'user' && Array.isArray(message.content) && message.content.some(part => part.type === 'file') && message.content.some(part => part.type === 'text' && part.text.includes('<tool_response>')));
         assert.ok(response && Array.isArray(response.content));
         assert.deepEqual(response.content.map(part => part.type), ['text', 'file']);
         const text = response.content[0]; assert.equal(text.type, 'text');
@@ -124,14 +132,14 @@ test('post-decision PNG survives installed SDK → Hermes → CLI pure input con
       }
       return fixtureStream([{ type: 'stream-start', warnings: mapped.warnings }, ...textParts(step === 0
         ? `<tool_call>${JSON.stringify({ name: 'executeGuardedDecision', arguments: guidance })}</tool_call>`
-        : 'Synthetic projection complete.')]);
+        : step === 1 && !unsupported ? `<tool_call>${JSON.stringify({ name: 'executeGuardedDecision', arguments: guidance })}</tool_call>` : 'Synthetic projection complete.')]);
     } });
     const parent = new ToolLoopAgent({
       model: wrapLanguageModel({ model: endpoint, middleware: [hermesToolMiddleware,
         cliSafetyMiddleware(abort, () => false, async () => {})] }),
-      tools, maxRetries: 0, stopWhen: isStepCount(2),
-      prepareStep: ({ stepNumber }) => ({ activeTools: stepNumber === 0 ? ['executeGuardedDecision'] : [],
-        toolChoice: stepNumber === 0 ? 'auto' : 'none' }),
+      tools, maxRetries: 0, stopWhen: isStepCount(3),
+      prepareStep: ({ stepNumber }) => ({ activeTools: stepNumber < 2 ? ['executeGuardedDecision'] : [],
+        toolChoice: stepNumber < 2 ? 'auto' : 'none' }),
     });
     try {
       const stream = await parent.stream({ messages: [{ role: 'user', content: [
@@ -140,20 +148,20 @@ test('post-decision PNG survives installed SDK → Hermes → CLI pure input con
       ] }], abortSignal: abort.signal });
       const consume = () => consumeDoomStream(stream, abort.signal, (output, name, ordinal, evidence) => {
         assert.ok(hostResultMatches(calls, output, name, ordinal, evidence));
-        assert.ok(domainResultMatches(output, envelope)); correlated++; return true;
+        assert.ok(domainResultMatches(output, ordinal === 0 ? envelope : secondEnvelope)); correlated++; return true;
       }, ['executeGuardedDecision']);
       if (unsupported) {
         await assert.rejects(consume(), /STREAM_FAILURE|CLI_STREAM_WARNING/);
         assert.equal(cliFailureCode(abort.signal.reason), 'CLI_STREAM_WARNING');
       } else {
         const receipt = await consume();
-        assert.equal(receipt.drained, true); assert.equal(receipt.steps, 2);
-        assert.equal(receipt.toolCalls, 1); assert.equal(receipt.toolResults, 1);
+        assert.equal(receipt.drained, true); assert.equal(receipt.steps, 3);
+        assert.equal(receipt.toolCalls, 2); assert.equal(receipt.toolResults, 2);
         assert.equal(await stream.text, 'Synthetic projection complete.');
         assert.equal(abort.signal.aborted, false);
       }
-      assert.equal(requests, 2); assert.equal(executed, 1); assert.equal(correlated, 1);
-      assert.equal(calls.length, 1); assert.equal(calls[0].settled, true);
+      assert.equal(requests, unsupported ? 2 : 3); assert.equal(executed, unsupported ? 1 : 2); assert.equal(correlated, unsupported ? 1 : 2);
+      assert.equal(calls.length, unsupported ? 1 : 2); assert.equal(calls[0].settled, true);
     } finally { await provider.close(); }
   });
 });

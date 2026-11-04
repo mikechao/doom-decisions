@@ -26,7 +26,7 @@ never parent-restated provenance. Without consultation, attribution must be null
 A private invocation latch is consumed before the first mutating transport call.
 A second independent latch guards decision dispatch. Neither can be reset by
 model retries, SDK steps, failed transport, final-output repair or lost responses.
-The typed callback sequence is exactly:
+The one-decision typed callback sequence is exactly:
 
 1. `start-run` with the initial observation/session/revision; require the same
    configuration and acknowledged `active=true, limit=1, reserved=0,
@@ -55,6 +55,56 @@ host-captured structured result. This proves structured receipt grounding, not
 semantic truth of every sentence of model prose. A malformed/ungrounded final
 response, accounting failure or cleanup failure cannot erase the report's
 independently verified action. Nothing is replayed to obtain nicer prose.
+
+### Exactly two guarded decisions
+
+`--authorize-agent-two-decisions` additionally requires
+`--authorize-live-observation-cli`, is mutually exclusive with the one-decision
+flag, and requires a restarted broker configured with exactly
+`AGENT_DECISION_BUDGET=2`. One-decision mode still requires exactly 1. Neither
+mode changes or replenishes the browser allowance.
+
+The fixed two-slot callback claims once, then performs CAS → fresh observe →
+decide → accounting for each slot, with independent invocation/dispatch latches.
+The lease, session, map and run remain fixed. Both guidance blocks are composed
+from the original template. Slot 2 starts from slot 1's independently verified
+result, retaining its actual observation and the separately corroborated current
+configuration/revision/run. Every observation ID must be new within this run.
+Healthy accounting is `0/0/2` after claim, `1/1/1` with `active=true` after slot 1,
+and `2/2/0` with `active=false` after slot 2 (reserved/SDK invoked/remaining).
+The first checkpoint is `remaining`, not `exhausted`.
+
+After healthy first receipt, PNG, accounting and instructions cleanup validation,
+`nativeTool.toModelOutput` projects canonical text plus an `image/png` file with
+the exact verified bytes. Text contains `{feedback, state}`; feedback remains the
+original exact host result, and state is the current `liveDecision().payload`.
+The SDK supplies that content to the next parent request, Hermes preserves the
+file, and the CLI provider converts it to a local image. The second callback
+requires the exact forwarded image-bearing result, a unique call ID and a
+settled predecessor. JSON-only, changed, missing, overlapping, duplicate or third
+calls are rejected. Unverified bytes are never projected. The second receipt
+remains ordinary JSON; this experiment adds only the first resulting image.
+
+Two-decision final JSON uses ordered `decisions` instead of `decision`, matching
+the actual host feedback objects exactly, and its objective must match the last
+submitted guidance. Host reports retain separate `decision` and `secondDecision`
+ledgers, including a verified first receipt when the second action or finalization
+fails. A failed, terminal, uncertain, stopped or incomplete first action never
+opens slot 2. A first-slot terminal result retains its prefix and reports terminal,
+but exits nonzero because the two-decision milestone was not completed. A terminal
+second action retains its prefix separately from two completed actions. No retry,
+reattach, separate observation tool or arbitrary decision loop is added.
+
+The parent permits at most four requests/steps (optional consultation, decision 1,
+decision 2, final response), three without consultation. One host-owned detach
+runs only in `runMain.finally`, after completion or failure, before provider cleanup.
+There is no detach between decisions or model-exposed cleanup tool.
+
+Offline tests cover this flow through real SDK callbacks and installed
+SDK 7.0.159 → Hermes 5.1.6 → CLI provider 2.4.0 pure input conversion. They verify
+exact A/B PNG bytes and updated state before the second call, plus an unsupported
+image negative case. No provider inference or browser is started. This is evidence
+of input material, not live model perception or two-decision Doom gameplay.
 
 ### CLI output and diagnostics
 
@@ -126,7 +176,7 @@ browser. No retry or extra decision is added.
 
 Both agents use independent CLI provider owners and native SDK 7 tools. Hermes
 parses textual tool requests; the SDK executes the host callbacks and supplies
-ordinary JSON results to the next model request. The parent permits at most three
+ordinary results to the next model request (image-bearing content in two-decision mode). In one-decision mode the parent permits at most three
 SDK requests/steps (consultation, decision, final response); the child permits two
 (lookup, final response). Direct action takes two parent requests. Both use
 `maxRetries: 0`. Streams must fully drain and correlate every accepted tool call
@@ -134,12 +184,10 @@ ID/name/input/result with its host callback. Duplicate, orphan, foreign,
 provider-executed and mismatched events fail closed. Reports distinguish SDK
 requests/steps from host callback attempts, browser budget and verified actions.
 
-The initial PNG is still the only image delivered to the parent. The internal
-post-CAS `observe` is a host protocol step. Structured resulting-state feedback
-does not demonstrate agent-controlled observation cadence or supply a second
-image. An agent-visible `observeDoom` is deferred until its own image seam can be
-proven. No generalized executor, continuous loop, automatic retry or reattach is
-introduced.
+In passive and one-decision modes, the initial PNG is the only parent image.
+The internal post-CAS `observe` remains a host protocol step. Two-decision mode
+adds only the verified first-result image described above, with no separate
+`observeDoom` tool or generalized observation cadence.
 
 **Operator-run examples only**, requiring separate live authorization:
 
@@ -150,6 +198,9 @@ npm --prefix app run dev:agent
 
 # After browser preparation and credentials/readiness, in another terminal:
 node --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli --authorize-agent-one-decision
+
+# Two decisions instead require a NEW broker with AGENT_DECISION_BUDGET=2:
+node --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli --authorize-agent-two-decisions
 
 # Alternative observation-only mode (no gameplay attempts; detach closes the allowance):
 node --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli
@@ -241,9 +292,9 @@ of experiment source and tests is unchanged.
 | `main.ts` | Inert authorization gate, verified bootstrap, agent/tool composition, bounded report publication and cleanup. |
 | `doom-play-agent.ts` | Parent agent, optional child consultation, decision/final JSON grounding. |
 | `landmarks-tool-loop-agent.ts` | Read-only child agent with one SDK-owned `findLandmarks` callback. |
-| `guarded-decision.ts` | Unchanged one-shot claim/CAS/fresh-observation/decision callback and receipt/accounting validation. |
+| `guarded-decision.ts` | Fixed one/two-slot claim/CAS/fresh-observation/decision callbacks and receipt/accounting validation. |
 | `cli-provider.ts` | Independent provider owners, Hermes middleware and fail-closed warning/native-event fences. |
-| `native-tools.ts` | SDK `tool({ inputSchema, execute })`, envelope-to-JSON presentation and callback correlation. |
+| `native-tools.ts` | SDK tools, exact JSON correlation, verified image presentation and causal second-call admission. |
 | `agent-stream.ts` | Bounded stream consumption and ordinary SDK call/result correlation. |
 | `agent-lifecycle.ts` | Asynchronous CLI initialization fences and owner cleanup, including late settlement. |
 | `live-observation.ts` | Shared typed controller DTO, lease, PNG and resulting-state validation. |

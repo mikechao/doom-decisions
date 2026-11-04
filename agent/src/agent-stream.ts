@@ -32,6 +32,7 @@ export async function consumeDoomStream(
   expectedTool: 'consultLandmarks' | 'findLandmarks' | readonly string[],
   maxTextCharacters = 8192,
   maxEvents = 2000,
+  maxSteps: 2 | 3 | 4 = Array.isArray(expectedTool) ? 3 : 2,
 ) {
   const tools: Record<string, { calls: number; results: number }> = {};
   const receipt = { drained: false, events: 0, steps: 0, finishes: 0, toolCalls: 0, toolResults: 0, textCharacters: 0, tools };
@@ -75,7 +76,7 @@ export async function consumeDoomStream(
     }
   }
   signal.throwIfAborted();
-  if (receipt.finishes !== 1 || receipt.steps < 1 || receipt.steps > (multiple ? 3 : 2) || receipt.toolCalls < 1 || receipt.toolCalls !== receipt.toolResults || [...calls.values()].some(call => !call.done))
+  if (receipt.finishes !== 1 || receipt.steps < 1 || receipt.steps > maxSteps || receipt.toolCalls < 1 || receipt.toolCalls !== receipt.toolResults || [...calls.values()].some(call => !call.done))
     fail('INCOMPLETE_STREAM');
   receipt.drained = true;
   return receipt;
