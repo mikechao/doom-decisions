@@ -1,0 +1,23 @@
+{
+  "name": "doomplayagent-openai-oauth-experiment",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.20.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "ai": "^7.0.159",
+    "@ai-sdk/openai": "^4.0.0",
+    "@openai-oauth/core": "^2.0.0",
+    "@openai-oauth/local": "^2.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "@types/node": "^22.0.0"
+  }
+}
