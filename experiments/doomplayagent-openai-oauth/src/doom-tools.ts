@@ -55,6 +55,8 @@ const findMemoryInput = z.strictObject({
 		.describe("Unsigned 32-bit Doom angle from telemetry."),
 });
 
+export type FindMemoryInput = z.infer<typeof findMemoryInput>;
+
 type MemoryModule = {
 	findMemory(input: unknown): Promise<DoomMemoryLookupResult>;
 	memoryFindSchema: { parse(input: unknown): unknown };

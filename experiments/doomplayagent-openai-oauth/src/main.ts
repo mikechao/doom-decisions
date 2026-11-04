@@ -67,7 +67,7 @@ export async function main(
 		attached = true;
 		console.log("Doom attached successfully.");
 		console.log("Starting Doom play...");
-		play(doomClient, doomTools, codexProvider);
+		await play(doomClient, doomTools, codexProvider);
 	} finally {
 		if (attached) {
 			const detached = await doomClient.detach();
