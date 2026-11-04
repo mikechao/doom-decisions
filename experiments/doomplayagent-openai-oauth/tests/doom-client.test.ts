@@ -6,10 +6,10 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import type { AgentObserveResult } from '../../../app/src/agent-control.ts';
 import { createAgentMapIdentity } from '../../../app/src/agent-observation.ts';
-import type { DoomClient } from '../src/doom-client.ts';
+import { DoomAttachError, type DoomClient } from '../src/doom-client.ts';
 
 type Operation = 'attach' | 'observe' | 'detach';
-type Fault = 'rejected' | 'lost' | 'invalid';
+type Fault = 'rejected' | 'transport' | 'transport-code' | 'lost' | 'malformed' | 'invalid';
 
 function deferred() {
   let resolve!: () => void;
@@ -22,7 +22,7 @@ test('imports and synchronous factory are inert and expose a frozen client', asy
     throw new Error('Real network access is forbidden');
   });
   const originalArgv = process.argv;
-  process.argv = [process.execPath, '/inert-import.ts', '--attach-doom'];
+  process.argv = [process.execPath, '/inert-import.ts'];
   t.after(() => { process.argv = originalArgv; });
 
   const { createDoomClient } = await import('../src/doom-client.ts');
@@ -37,13 +37,26 @@ test('imports and synchronous factory are inert and expose a frozen client', asy
   assert.equal(typeof createDoomClient, 'function');
   assert.equal(typeof main, 'function');
   assert.deepEqual(await readdir(temporaryRoot), []);
-  await assert.rejects(main(['--unknown']), /Usage:/);
+  let factoryCalls = 0;
+  await assert.rejects(main(['--unknown'], () => {
+    factoryCalls++;
+    return {} as DoomClient;
+  }), /Usage:/);
+  await assert.rejects(main(['--attach-doom'], () => {
+    factoryCalls++;
+    return {} as DoomClient;
+  }), /Usage:/);
+  assert.equal(factoryCalls, 0);
   assert.equal(network.mock.callCount(), 0);
 });
 
 async function broker(
   t: TestContext,
-  options: { faults?: Partial<Record<Operation, Fault>>; blocked?: Operation } = {},
+  options: {
+    faults?: Partial<Record<Operation, Fault>>;
+    blocked?: Operation;
+    attachRejection?: string;
+  } = {},
 ) {
   t.mock.method(globalThis, 'fetch', async () => {
     throw new Error('Only the injected fake transport may be used');
@@ -85,8 +98,14 @@ async function broker(
     assert.equal(init?.method, 'POST');
     const command = JSON.parse(String(init?.body));
     calls.push(op);
+    const fault = options.faults?.[op];
     if (op === 'attach') {
       assert.deepEqual(Object.keys(command), ['ownerId']);
+      if (fault === 'transport') throw new Error('SECRET_TRANSPORT_SENTINEL');
+      if (fault === 'transport-code') throw new Error('no-ready-page');
+      if (options.attachRejection)
+        return Response.json({ error: options.attachRejection }, { status: 409 });
+      if (fault === 'rejected') return Response.json({ error: 'lease-revoked' }, { status: 409 });
       ownerId = command.ownerId;
     } else {
       assert.deepEqual(Object.keys(command).sort(), ['commandId', 'epoch', 'ownerId', 'pageId']);
@@ -98,9 +117,11 @@ async function broker(
       pendingStarted.resolve();
       await pendingRelease.promise;
     }
-    const fault = options.faults?.[op];
-    if (fault === 'lost') throw new Error('sensitive raw transport detail');
+    if (fault === 'transport') throw new Error('SECRET_TRANSPORT_SENTINEL');
+    if (fault === 'transport-code') throw new Error('no-ready-page');
+    if (fault === 'lost') throw new Error('SECRET_LOST_RESPONSE_SENTINEL');
     if (fault === 'rejected') return Response.json({ error: 'lease-revoked' }, { status: 409 });
+    if (fault === 'malformed') return new Response('{broken json', { status: 200 });
     if (op === 'attach')
       return Response.json({ pageId, epoch, ownerId: fault === 'invalid' ? randomUUID() : ownerId });
     if (op === 'detach') return Response.json({ ...command, released: fault !== 'invalid' });
@@ -108,7 +129,8 @@ async function broker(
       commandId: fault === 'invalid' ? randomUUID() : command.commandId, observation });
   };
   return {
-    create: () => createDoomClient({ transport, temporaryRoot }),
+    create: (root = temporaryRoot) => createDoomClient({ transport, temporaryRoot: root }),
+    temporaryRoot,
     calls,
     observation,
     png,
@@ -147,7 +169,7 @@ test('attach, observe, and detach use the acknowledged lease and materialize the
   assert.deepEqual(fake.calls, ['attach', 'observe', 'detach']);
 });
 
-for (const fault of ['rejected', 'lost', 'invalid'] as const) {
+for (const fault of ['transport', 'transport-code', 'lost', 'malformed', 'invalid'] as const) {
   test(`${fault} attach is uncertain, surfaced safely, and never retried`, async (t) => {
     const fake = await broker(t, { faults: { attach: fault } });
     const client = fake.create();
@@ -159,8 +181,11 @@ for (const fault of ['rejected', 'lost', 'invalid'] as const) {
     await assert.rejects(client.observe(), expected);
     await assert.rejects(client.detach(), expected);
     assert.deepEqual(fake.calls, ['attach']);
+    assert.doesNotMatch(expected.message, /SECRET_|no-ready-page/);
   });
+}
 
+for (const fault of ['rejected', 'lost', 'malformed', 'invalid'] as const) {
   test(`${fault} detach is unconfirmed, closes the client, and is never retried`, async (t) => {
     const fake = await broker(t, { faults: { detach: fault } });
     const client = fake.create();
@@ -186,6 +211,53 @@ for (const fault of ['rejected', 'lost', 'invalid'] as const) {
     assert.deepEqual(fake.calls, ['attach', 'observe', 'detach']);
   });
 }
+
+for (const code of [
+  'no-ready-page',
+  'owner-already-attached',
+  'multiple-pages',
+  'forbidden',
+  'invalid-request',
+  'lease-revoked',
+] as const) {
+  test(`attach preserves the exact whitelisted broker rejection ${code}`, async (t) => {
+    const fake = await broker(t, { attachRejection: code });
+    const client = fake.create();
+    await assert.rejects(client.attach(), (error: unknown) => {
+      assert.ok(error instanceof DoomAttachError);
+      assert.equal(error.code, code);
+      assert.equal(error.message, `Doom attach rejected by broker (${code}).`);
+      return true;
+    });
+    await assert.rejects(client.attach(), /ownership may be held/);
+    await assert.rejects(client.observe(), /ownership may be held/);
+    await assert.rejects(client.detach(), /ownership may be held/);
+    assert.deepEqual(fake.calls, ['attach']);
+  });
+}
+
+test('a non-whitelisted broker response remains unconfirmed', async (t) => {
+  const fake = await broker(t, { attachRejection: 'no-ready-page-extra' });
+  const client = fake.create();
+  await assert.rejects(client.attach(), (error: unknown) => {
+    assert.ok(error instanceof DoomAttachError);
+    assert.equal(error.code, null);
+    assert.match(error.message, /attach unconfirmed; ownership may be held/);
+    assert.doesNotMatch(error.message, /no-ready-page-extra/);
+    return true;
+  });
+  assert.deepEqual(fake.calls, ['attach']);
+});
+
+test('an attach acknowledgment followed by local lease-file failure stays unconfirmed', async (t) => {
+  const fake = await broker(t);
+  const client = fake.create(join(fake.temporaryRoot, 'missing-parent'));
+  await assert.rejects(client.attach(), /ownership may be held/);
+  await assert.rejects(client.attach(), /ownership may be held/);
+  await assert.rejects(client.observe(), /ownership may be held/);
+  await assert.rejects(client.detach(), /ownership may be held/);
+  assert.deepEqual(fake.calls, ['attach']);
+});
 
 test('overlapping attach and observation operations do not dispatch', async (t) => {
   const attachFake = await broker(t, { blocked: 'attach' });
@@ -234,20 +306,88 @@ test('overlapping detach and calls after detach do not dispatch', async (t) => {
   assert.deepEqual(fake.calls, ['attach', 'detach']);
 });
 
-test('main attaches only for the explicit flag and skips detach after uncertain attach', async (t) => {
+test('main defaults to passive Doom attach, observe, and acknowledged detach', async (t) => {
+  const { main } = await import('../src/main.ts');
+  const fake = await broker(t);
+  const messages: string[] = [];
+  t.mock.method(console, 'log', (message?: unknown) => messages.push(String(message)));
+  await main([], () => fake.create());
+  assert.deepEqual(fake.calls, ['attach', 'observe', 'detach']);
+  assert.ok(messages.includes('Doom attach mode: passive observation only; no model inference or tool execution.'));
+  assert.ok(messages.includes('Doom observation:'));
+  assert.ok(messages.includes('Doom tools composed:'));
+  assert.ok(messages.includes('Doom lease detached:'));
+});
+
+test('main rejects --oauth-smoke, obsolete, and unknown args inertly', async (t) => {
   const { main } = await import('../src/main.ts');
   let factoryCalls = 0;
-  await assert.rejects(main(['--unknown'], () => {
+  const factory = () => {
     factoryCalls++;
     return {} as DoomClient;
-  }), /Usage:/);
+  };
+
+  await assert.rejects(main(['--oauth-smoke'], factory), /Usage:/);
+  await assert.rejects(main(['--attach-doom'], factory), /Usage:/);
+  await assert.rejects(main(['--unknown'], factory), /Usage:/);
   assert.equal(factoryCalls, 0);
+});
 
-  const fake = await broker(t);
-  await main(['--attach-doom'], fake.create);
+for (const [code, guidance] of [
+  ['no-ready-page', 'npm --prefix app run dev:agent'],
+  ['owner-already-attached', 'This client did not acquire ownership.'],
+  ['multiple-pages', 'reload the intended page'],
+  ['forbidden', 'rejected the attach as forbidden'],
+  ['invalid-request', 'rejected the attach request as invalid'],
+  ['lease-revoked', 'page lease was revoked'],
+] as const) {
+  test(`main gives bounded operator guidance for ${code}`, async (t) => {
+    const { main } = await import('../src/main.ts');
+    const fake = await broker(t, { attachRejection: code });
+    await assert.rejects(main([], () => fake.create()), (error: unknown) => {
+      assert.ok(error instanceof DoomAttachError);
+      assert.equal(error.code, code);
+      assert.match(error.message, new RegExp(guidance));
+      assert.doesNotMatch(error.message, /SECRET_|sensitive raw|response body/i);
+      return true;
+    });
+    assert.deepEqual(fake.calls, ['attach']);
+  });
+}
+
+test('main keeps ambiguous attach errors unconfirmed and hides raw transport details', async (t) => {
+  const { main } = await import('../src/main.ts');
+  const fake = await broker(t, { faults: { attach: 'transport' } });
+  await assert.rejects(main([], () => fake.create()), (error: unknown) => {
+    assert.ok(error instanceof DoomAttachError);
+    assert.equal(error.code, null);
+    assert.match(error.message, /attach unconfirmed; ownership may be held/);
+    assert.match(error.message, /npm --prefix app run dev:agent/);
+    assert.match(error.message, /http:\/\/127\.0\.0\.1:5174/);
+    assert.match(error.message, /Stop Agent/);
+    assert.match(error.message, /No automatic retry/);
+    assert.doesNotMatch(error.message, /SECRET_TRANSPORT_SENTINEL/);
+    return true;
+  });
+  assert.deepEqual(fake.calls, ['attach']);
+});
+
+test('main detaches after observation failure and reports release only after acknowledgment', async (t) => {
+  const { main } = await import('../src/main.ts');
+  const fake = await broker(t, { faults: { observe: 'rejected' } });
+  const messages: string[] = [];
+  t.mock.method(console, 'log', (message?: unknown) => messages.push(String(message)));
+  await assert.rejects(main([], () => fake.create()), /Doom observation unconfirmed/);
   assert.deepEqual(fake.calls, ['attach', 'observe', 'detach']);
+  assert.ok(messages.includes('Doom lease detached:'));
+});
 
-  const uncertain = await broker(t, { faults: { attach: 'lost' } });
-  await assert.rejects(main(['--attach-doom'], uncertain.create), /ownership may be held/);
-  assert.deepEqual(uncertain.calls, ['attach']);
+test('main does not claim lease release when detach acknowledgment fails', async (t) => {
+  const { main } = await import('../src/main.ts');
+  const fake = await broker(t, { faults: { detach: 'lost' } });
+  const messages: string[] = [];
+  t.mock.method(console, 'log', (message?: unknown) => messages.push(String(message)));
+  await assert.rejects(main([], () => fake.create()), /Doom detach unconfirmed/);
+  assert.deepEqual(fake.calls, ['attach', 'observe', 'detach']);
+  assert.equal(messages.includes('Doom lease detached:'), false);
 });
