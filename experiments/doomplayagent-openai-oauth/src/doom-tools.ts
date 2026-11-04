@@ -1,4 +1,4 @@
-import { tool } from 'ai';
+import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
 
 export type NearbyMemoryQuery = Readonly<{
@@ -117,5 +117,7 @@ export function createDoomTools(dependencies: DoomToolDependencies = {}) {
         };
       },
     }),
-  };
+  } satisfies ToolSet;
 }
+
+export type DoomTools = ReturnType<typeof createDoomTools>;
