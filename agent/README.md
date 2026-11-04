@@ -394,3 +394,68 @@ The remaining tests use synthetic PNGs, fake transports, deterministic model
 streams and isolated throwaway SQLite files. No broker, browser, App Server or
 real model is started.
 Package installation and any live invocation still require operator authorization.
+
+### Focused tool-call diagnostics
+
+For a separately authorized controlled smoke, append `--trace-tool-calls` to an
+existing `main.ts` invocation, for example:
+
+```bash
+node --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli --authorize-agent-two-decisions --trace-tool-calls
+```
+
+This flag grants no additional gameplay authorization and does not change the
+broker budget. It does not enable `DEBUG`. The existing final JSON adds an opt-in
+`toolTrace` object (otherwise `null`), on success or failure. Share that object
+alongside `failureDiagnostic`, `parentStream`, and lease release status; the full
+existing report/operator guidance can contain advisory text and local paths and
+is not a privacy-safe trace artifact.
+
+The trace covers the parent only. `seq` orders observations across the run;
+`step` and `request` are one-based SDK step and model-response request ordinals.
+`call` aliases correlate Hermes output, SDK stream events and native invocations.
+`item` aliases identify provider notification items in a separate namespace.
+`parsed-call.ordinal` counts calls in that response. `forwarded-result` and
+`native-admitted.prior` identify the predecessor on a legitimate later step.
+`callback-returned` means only that the domain callback returned, not that a Doom
+receipt succeeded. `callback-cancelled` means it returned/threw after host abort;
+the existing decision ledger remains the authority for uncertainty and receipts.
+`outstanding` counts observed stream calls without an observed successful result,
+including a rejected call at the instant its error is observed.
+
+Supported boundaries in the pinned stack:
+
+- Below Hermes, the documented CLI `includeRawChunks` option exposes JSON-RPC
+  notifications. Only agent-message delta/completion kinds, local item aliases,
+  and prior occurrence of that kind/item **in this request** are recorded.
+  Other notifications become `provider-other`. Raw parts are consumed before
+  Hermes/SDK reporting; no raw notification object is retained in the trace.
+- Above Hermes, observational model middleware records parsed calls and response
+  completion. Every model/tool part passes unchanged. It does not reject, filter,
+  serialize, retry or otherwise enforce tool cardinality.
+- Native events separate invocation attempt, admission/rejection, domain callback
+  start, and return/throw/cancellation. Stream events record the first observed
+  error category and the fixed overlap code when present. `host-abort` is emitted
+  by the abort listener before pending callback cancellation settles.
+
+A repeated completion for one item supports a provider-notification repetition
+hypothesis. Multiple deltas for one item are normal streaming and **do not prove
+identical text was replayed**: neither text nor text hashes are captured. Two
+parsed calls do not establish distinct model intent. If one parsed call has two
+native attempts, investigate SDK invocation downstream; if two parsed calls have
+one admitted callback, the native guard prevented the second domain mutation.
+Absent repeated upstream notifications, this trace cannot conclusively separate
+model multi-call text from Hermes recovery/duplication. Transport/server behavior
+before the provider's raw notification boundary is also unobserved. Notification
+availability depends on the installed App Server's raw-event support; absence of
+recorded notifications alone is not proof that none occurred.
+
+Storage is bounded to the latest 128 events, 128 call aliases and 128 item aliases;
+`truncated: true` flags omitted events/aliases. Sequence numbers remain monotonic
+when older events are dropped. Alias lookup keys live only in bounded per-run
+memory and are cleared on finalization. The serialized trace contains no original
+IDs, arguments, prompts, text, screenshots, result bodies, paths, exception
+messages or environment values. The finalized report is detached from late events.
+Synthetic regression tests exercise the installed SDK/Hermes and bounded extracts
+of installed pure CLI notification conversion without starting Codex, a browser,
+Doom or a network transport; they do not identify the live duplicate's cause.

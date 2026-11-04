@@ -1,3 +1,4 @@
+import type { ToolTrace } from './tool-trace.ts';
 import { hermesToolMiddleware } from '@ai-sdk-tool/parser';
 import { wrapLanguageModel, type LanguageModelMiddleware } from 'ai';
 import { createCodexAppServer } from 'ai-sdk-provider-codex-cli';
@@ -43,7 +44,7 @@ export function rejectCliWarning(abort: AbortController, message: string): never
 // Below Hermes: inspect provider events before text parsing. Late startup must
 // close again after settlement, because close() can race lazy client creation.
 export function cliSafetyMiddleware(abort: AbortController, isClosed: () => boolean,
-  close: () => Promise<void>): LanguageModelMiddleware {
+  close: () => Promise<void>, trace?: ToolTrace): LanguageModelMiddleware {
   return {
     specificationVersion: 'v4',
     transformParams: async ({ params }) => {
@@ -51,7 +52,8 @@ export function cliSafetyMiddleware(abort: AbortController, isClosed: () => bool
       if (params.tools?.length) rejectCliProvider(abort, 'CLI_NATIVE_TOOL_DECLARATION');
       // Hermes has already rendered SDK tools into text and retains its parsing
       // metadata. The pinned provider warns for ANY defined tools value, even [].
-      return params.tools?.length === 0 ? { ...params, tools: undefined } : params;
+      return { ...params, ...(params.tools?.length === 0 ? { tools: undefined } : {}),
+        ...(trace ? { includeRawChunks: true } : {}) };
     },
     wrapGenerate: async () => { throw new Error('STREAMING_ONLY'); },
     wrapStream: async ({ doStream }) => {
@@ -63,6 +65,8 @@ export function cliSafetyMiddleware(abort: AbortController, isClosed: () => bool
         if (isClosed()) rejectCliProvider(abort, 'CLI_PROVIDER_CLOSED');
         return { ...result, stream: result.stream.pipeThrough(new TransformStream({ transform(part, controller) {
           abort.signal.throwIfAborted();
+          // Raw notifications are consumed here, never handed to Hermes/SDK.
+          if (trace && part.type === 'raw') { trace.providerRaw(part.rawValue); return; }
           if (part.type === 'stream-start' && part.warnings.length) rejectCliProvider(abort, 'CLI_STREAM_WARNING');
           if (part.type === 'tool-result' || part.type === 'tool-call' || part.type === 'tool-input-start' ||
               part.type === 'tool-input-delta' || part.type === 'tool-input-end') rejectCliProvider(abort, 'CLI_NATIVE_TOOL_EVENT');
@@ -76,7 +80,7 @@ export function cliSafetyMiddleware(abort: AbortController, isClosed: () => bool
 }
 
 // Construction is lazy. No global configuration or authentication is changed.
-export function createCliProvider(cwd: string, abort: AbortController): CliProvider {
+export function createCliProvider(cwd: string, abort: AbortController, trace?: ToolTrace): CliProvider {
   let exited = false, closed = false;
   const deny = (code: CliFailureCode) => abort.abort(new CliProviderError(code));
   const provider = createCodexAppServer({ defaultSettings: {
@@ -102,7 +106,7 @@ export function createCliProvider(cwd: string, abort: AbortController): CliProvi
     },
   } });
   const model = wrapLanguageModel({ model: provider(cliModel), middleware: [hermesToolMiddleware,
-    cliSafetyMiddleware(abort, () => closed, () => provider.close()),
+    cliSafetyMiddleware(abort, () => closed, () => provider.close(), trace),
   ] });
   return {
     languageModel: () => model,

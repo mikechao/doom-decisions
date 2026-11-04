@@ -1,3 +1,5 @@
+import { ToolTrace } from './tool-trace.ts';
+import { wrapLanguageModel } from 'ai';
 import { mkdtempSync, readFileSync, rmdirSync, writeSync, writeFileSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -28,7 +30,7 @@ export type MainPorts = {
   detach(leaseFile: string, signal: AbortSignal): Promise<DetachedLease>;
   observe(leaseFile: string, signal: AbortSignal): Promise<MaterializedObserve>;
   readPng: ReadPng;
-  createProvider(cwd: string, abort: AbortController): CliProvider;
+  createProvider(cwd: string, abort: AbortController, trace?: ToolTrace): CliProvider;
   makeDirectory(): string;
   removeDirectory(path: string): void;
   lookup: typeof lookupLandmarks;
@@ -47,7 +49,8 @@ type FailureDiagnostic = {
     'CANCELLED' | 'DEADLINE' | 'CLEANUP_UNVERIFIED' | 'INSTRUCTIONS_CLEANUP_FAILED' | 'DETACH_UNVERIFIED' | 'unknown';
 };
 
-export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs = 120_000, authorization: boolean | 2 = false) {
+export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs = 120_000, authorization: boolean | 2 = false, traceToolCalls = false) {
+  const trace = traceToolCalls ? new ToolTrace() : undefined;
   const two = authorization === 2;
   const parentSteps = two ? 4 : authorization ? 3 : 2;
   const parentCharacters = two ? maxTwoDecisionOutputCharacters : authorization ? maxDecisionOutputCharacters : undefined;
@@ -57,6 +60,8 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
   let stage: FailureDiagnostic['stage'] = 'setup';
   let failureCode: FailureDiagnostic['code'] = 'unknown';
   const abort = new AbortController();
+  const traceAbort = () => trace?.abort();
+  abort.signal.addEventListener('abort', traceAbort, { once: true });
   const interrupt = () => abort.abort(signal.reason);
   signal.addEventListener('abort', interrupt, { once: true });
   if (signal.aborted) interrupt();
@@ -72,6 +77,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
   const report = {
     outcome: 'failed', error: null as string | null,
     failureDiagnostic: null as FailureDiagnostic | null,
+    toolTrace: null as ReturnType<ToolTrace['finish']> | null,
     lease: { state: 'not-attempted' as 'not-attempted' | 'possibly-held' | 'held', leaseFile: null as string | null },
     release: { status: 'not-attempted' as 'not-attempted' | 'broker-confirmed' | 'unverified' | 'unavailable',
       error: null as 'DETACH_TIMEOUT' | 'DETACH_FAILED' | null },
@@ -93,12 +99,13 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     // Allocate owners synchronously before racing work: no late provider/directory creation.
     for (let i = 0; i < 2; i++) {
       directories.push(ports.makeDirectory());
-      providers.push(ports.createProvider(directories.at(-1)!, abort));
+      providers.push(ports.createProvider(directories.at(-1)!, abort, i === 0 ? trace : undefined));
     }
     const [parentProvider, childProvider] = providers;
-    const parentModel = parentProvider.languageModel();
+    const parentBase = parentProvider.languageModel();
+    const parentModel = trace ? wrapLanguageModel({ model: parentBase, middleware: trace.parsedMiddleware() }) : parentBase;
     const childModel = childProvider.languageModel();
-    requireLive(parentProvider !== childProvider && parentModel !== childModel);
+    requireLive(parentProvider !== childProvider && parentBase !== childModel);
     const cancelled = new Promise<never>((_, reject) => {
       onAbort = () => reject(new Error('CANCELLED'));
       abort.signal.addEventListener('abort', onAbort, { once: true });
@@ -148,10 +155,10 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
           ? createTwoGuardedDecisions(lease, observation, ports.decision, report.decision, report.secondDecision, abort.signal, logger.withTag('decision'))
           : createGuardedDecision(true, lease, observation, ports.decision, report.decision, abort.signal, logger.withTag('decision'));
       const parentTools = {
-        consultLandmarks: nativeTool('consultLandmarks', createConsultLandmarks(context, child, landmarks, consults, abort, logger.withTag('landmarks')), parentCalls, abort.signal),
-        ...(guardedDecision ? { executeGuardedDecision: nativeTool('executeGuardedDecision', guardedDecision, parentCalls, abort.signal) } : {}),
+        consultLandmarks: nativeTool('consultLandmarks', createConsultLandmarks(context, child, landmarks, consults, abort, logger.withTag('landmarks')), parentCalls, abort.signal, trace),
+        ...(guardedDecision ? { executeGuardedDecision: nativeTool('executeGuardedDecision', guardedDecision, parentCalls, abort.signal, trace) } : {}),
       };
-      const parent = createDoomPlayAgent(parentModel, parentTools, count('parent'), 'live', authorization, parentCalls, () => !!guardedDecision && 'secondReady' in guardedDecision && guardedDecision.secondReady());
+      const parent = createDoomPlayAgent(parentModel, parentTools, count('parent'), 'live', authorization, parentCalls, () => !!guardedDecision && 'secondReady' in guardedDecision && guardedDecision.secondReady(), trace);
       stage = 'provider_initialization';
       agentLog.info('Initializing separate parent and landmark CLI provider owners (stateless threads)');
       for (const owner of [childProvider, parentProvider]) {
@@ -178,7 +185,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
         // Allow one event per text character plus the existing 2000-event
         // allowance for tool/lifecycle events and empty chunks; floods stay finite.
         parentCharacters === undefined ? undefined : parentCharacters + 2000,
-        parentSteps);
+        parentSteps, trace);
       report.parentStream = consumed;
       stage = 'callback_correlation';
       requireLive((consumed.tools.consultLandmarks?.calls ?? 0) === consults.length &&
@@ -295,6 +302,8 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
     if (report.lease.state !== 'not-attempted' && report.release.status !== 'broker-confirmed') cleanupLog.warn(operatorInstruction);
     runLog.info(`Final report ready: ${report.outcome}`);
   }
+  report.toolTrace = trace?.finish() ?? null;
+  abort.signal.removeEventListener('abort', traceAbort);
   return structuredClone(report); // Late settlements cannot rewrite returned evidence.
 }
 
@@ -313,7 +322,7 @@ export function reportExitCode(report: Awaited<ReturnType<typeof runMain>>, auth
     receipt?.outcome === report.outcome && receipt.completionUncertain === false ? 0 : 1;
 }
 
-async function launch(authorization: boolean | 2 = false) {
+async function launch(authorization: boolean | 2 = false, traceToolCalls = false) {
   for (const [name, expected] of Object.entries({ ai: '7.0.159', 'ai-sdk-provider-codex-cli': '2.4.0',
     '@ai-sdk-tool/parser': '5.1.6', zod: '4.6.7' })) {
     if (JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8')).version !== expected)
@@ -356,7 +365,7 @@ async function launch(authorization: boolean | 2 = false) {
           return { path, remove: () => rmSync(directory, { recursive: true, force: true }) };
         },
       } satisfies DecisionPorts } : {}),
-    }, abort.signal, 120_000, authorization);
+    }, abort.signal, 120_000, authorization, traceToolCalls);
     writeMainReport(report);
     return reportExitCode(report, authorization);
   } finally {
@@ -365,11 +374,13 @@ async function launch(authorization: boolean | 2 = false) {
   }
 }
 
-export async function main(args: string[], run: (authorization?: boolean | 2) => Promise<number> = launch, print = (value: string) => { writeSync(1, value); }) {
+export async function main(args: string[], run: (authorization?: boolean | 2, traceToolCalls?: boolean) => Promise<number> = launch, print = (value: string) => { writeSync(1, value); }) {
+  if (args.includes('--trace-tool-calls') && args.filter(arg => arg === '--trace-tool-calls').length === 1)
+    return main(args.filter(arg => arg !== '--trace-tool-calls'), authorization => run(authorization, true), print);
   if (args.length === 1 && args[0] === '--authorize-live-observation-cli') return run(false);
   if (args.length === 2 && new Set(args).size === 2 && args.includes('--authorize-live-observation-cli') && args.includes('--authorize-agent-one-decision')) return run(true);
   if (args.length === 2 && new Set(args).size === 2 && args.includes('--authorize-live-observation-cli') && args.includes('--authorize-agent-two-decisions')) return run(2);
-  print('Inert: no attach, SQLite open or CLI startup. After separate live authorization only:\nnode --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli\n' + 'Two decisions require --authorize-agent-two-decisions (mutually exclusive with one-decision) and a restarted broker with AGENT_DECISION_BUDGET=2.\nOne decision additionally requires --authorize-agent-one-decision and a restarted broker with AGENT_DECISION_BUDGET=1.\n' + operatorInstruction + '\n');
+  print('Inert: no attach, SQLite open or CLI startup. Optional --trace-tool-calls adds bounded parent diagnostics (no payloads) to toolTrace.\nAfter separate live authorization only:\nnode --experimental-strip-types agent/src/main.ts --authorize-live-observation-cli\n' + 'Two decisions require --authorize-agent-two-decisions (mutually exclusive with one-decision) and a restarted broker with AGENT_DECISION_BUDGET=2.\nOne decision additionally requires --authorize-agent-one-decision and a restarted broker with AGENT_DECISION_BUDGET=1.\n' + operatorInstruction + '\n');
   return args.length === 0 || (args.length === 1 && args[0] === '--help') ? 0 : 2;
 }
 

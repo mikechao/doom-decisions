@@ -1,3 +1,4 @@
+import type { ToolTrace } from './tool-trace.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { ToolLoopAgent, isStepCount, type LanguageModel, type ToolSet } from 'ai';
 import { z } from 'zod';
@@ -73,7 +74,7 @@ export function createConsultLandmarks(
   };
 }
 
-export function createDoomPlayAgent(model: LanguageModel, tools: ToolSet, onCallStart: () => void, context: 'archived' | 'live', authorization: boolean | 2, hostCalls: HostCall[], secondReady: () => boolean = () => false) {
+export function createDoomPlayAgent(model: LanguageModel, tools: ToolSet, onCallStart: () => void, context: 'archived' | 'live', authorization: boolean | 2, hostCalls: HostCall[], secondReady: () => boolean = () => false, trace?: ToolTrace) {
   const two = authorization === 2;
   const parentSteps = two ? 4 : authorization ? 3 : 2;
   assertNativeTools(tools, authorization ? ['consultLandmarks', 'executeGuardedDecision'] : ['consultLandmarks']);
@@ -83,6 +84,7 @@ export function createDoomPlayAgent(model: LanguageModel, tools: ToolSet, onCall
     // diagnostics; observing here does not consume or recover the stream error.
     onError() {},
     prepareStep: ({ stepNumber }) => {
+      trace?.prepare(stepNumber);
       if (stepNumber >= parentSteps || hostCalls.some(call => !call.settled)) throw new Error('INVALID_PARENT_STEP');
       const consulted = hostCalls.some(call => call.toolName === 'consultLandmarks');
       const decisions = hostCalls.filter(call => call.toolName === 'executeGuardedDecision').length;

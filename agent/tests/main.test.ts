@@ -1780,9 +1780,13 @@ test('synthetic fullStream failure precedes cleanup CANCELLED during first claim
         } });
       });
       try {
-        const report = await f.run();
+        const report = await runMain(f.ports, f.abort.signal, 2000, 2, true);
         assert.deepEqual(report.failureDiagnostic, { stage: 'parent_stream', code: failure === 'error' ? 'STREAM_ERROR_EVENT' : failure === 'abort' ? 'STREAM_ABORT_EVENT' : failure === 'tool-error' ? 'STREAM_TOOL_ERROR_EVENT' : 'STREAM_FAILURE' });
         assert.equal(report.error, 'MAIN_FAILED');
+        assert.equal(report.toolTrace?.firstError, failure === 'throw' ? 'iterator-failure' : failure);
+        const traceKinds = report.toolTrace!.events.map(event => event.kind);
+        assert.ok(traceKinds.indexOf('host-abort') > traceKinds.indexOf(failure === 'throw' ? 'iterator-failure' : failure));
+        assert.ok(traceKinds.indexOf('callback-cancelled') > traceKinds.indexOf('host-abort'));
         assert.equal(report.outcome, 'failed');
         assert.equal(report.result, null);
         assert.equal(reportExitCode(report, 2), 1);
@@ -1920,4 +1924,78 @@ test('stream limits, invalid correlation and consumer/iterator throws retain bou
       return true;
     });
   }
+});
+
+test('trace flag preserves exact authorization and inert invalid invocations', async () => {
+  const calls: unknown[] = [];
+  const run = async (authorization?: boolean | 2, trace?: boolean) => { calls.push([authorization, trace]); return 0; };
+  for (const args of [['--trace-tool-calls'], ['--authorize-agent-two-decisions', '--trace-tool-calls'],
+    ['--authorize-live-observation-cli', '--trace-tool-calls', '--trace-tool-calls'],
+    ['--authorize-live-observation-cli', '--authorize-agent-one-decision', '--authorize-agent-two-decisions', '--trace-tool-calls']])
+    await main(args, run, () => {});
+  assert.deepEqual(calls, []);
+  await main(['--authorize-live-observation-cli', '--trace-tool-calls'], run, () => {});
+  await main(['--authorize-live-observation-cli', '--authorize-agent-one-decision', '--trace-tool-calls'], run, () => {});
+  await main(['--trace-tool-calls', '--authorize-agent-two-decisions', '--authorize-live-observation-cli'], run, () => {});
+  assert.deepEqual(calls, [[false, true], [true, true], [2, true]]);
+});
+
+test('opt-in report trace preserves passive and two-step completion with broker cleanup', async () => {
+  for (const authorization of [false, 2] as const) {
+    const f = authorization ? decisionFixture({ two: true }) : fixture();
+    try {
+      const report = await runMain(f.ports, f.abort.signal, 2000, authorization, true);
+      assert.equal(reportExitCode(report, authorization), 0);
+      assert.equal(report.toolTrace?.firstError, null);
+      const parsed = report.toolTrace!.events.filter(event => event.kind === 'parsed-call');
+      assert.deepEqual(parsed.map(event => event.step), authorization ? [1, 2] : [1]);
+      assert.ok(!report.toolTrace!.events.some(event => event.kind === 'native-rejected'));
+      assert.equal(report.release.status, 'broker-confirmed');
+      assert.deepEqual(f.owners.map(owner => owner.cleanups), [1, 1]);
+    } finally { await f.destroy(); }
+  }
+});
+
+test('same-step duplicate report records rejection → stream error → abort → cancelled claim, then detach', async () => {
+  const f = decisionFixture({ two: true });
+  const privateText = 'PRIVATE_DUPLICATE_PROVIDER sk-private /tmp/private';
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const originalClaim = f.ports.decision!.startRun;
+  f.ports.decision!.startRun = async (...args) => { const value = await originalClaim(...args); await pending; return value; };
+  const createProvider = f.ports.createProvider;
+  f.ports.createProvider = (cwd, abort, trace) => {
+    const owner = createProvider(cwd, abort);
+    if (f.owners.length !== 1) return owner;
+    const endpoint = new MockLanguageModelV4({ doStream: async () => cliFixtureStream({}, [
+      { type: 'raw', rawValue: { method: 'item/completed', params: { item: { type: 'agentMessage', id: privateText, text: privateText } } } },
+      ...textParts(`<tool_call>${JSON.stringify({ name: 'executeGuardedDecision', arguments: guidance })}</tool_call>`.repeat(2)),
+    ]) });
+    return { ...owner, languageModel: () => wrapLanguageModel({ model: endpoint, middleware: [hermesToolMiddleware,
+      cliSafetyMiddleware(abort, () => false, async () => {}, trace)] }) };
+  };
+  try {
+    const report = await runMain(f.ports, f.abort.signal, 2000, 2, true);
+    assert.equal(report.error, 'MAIN_FAILED');
+    assert.deepEqual(report.failureDiagnostic, { stage: 'parent_stream', code: 'STREAM_TOOL_ERROR_EVENT' });
+    assert.equal(report.parentStream?.events, 11); assert.equal(report.parentStream?.steps, 0);
+    assert.equal(report.parentStream?.toolCalls, 2); assert.equal(report.parentStream?.toolResults, 0);
+    assert.equal(report.decision.attempted, 1); assert.equal(report.secondDecision.attempted, 0);
+    assert.equal(report.decision.claim, 'unknown'); assert.equal(report.decision.dispatchConsumed, false);
+    assert.equal(report.decision.calls[0].feedback.error, 'CANCELLED');
+    assert.deepEqual(f.deliveries, ['start-run']);
+    const events = report.toolTrace!.events;
+    assert.equal(events.filter(event => event.kind === 'parsed-call').length, 2);
+    assert.equal(events.filter(event => event.kind === 'callback-begin').length, 1);
+    const order = ['native-rejected', 'tool-error', 'host-abort', 'callback-cancelled'].map(kind => events.findIndex(event => event.kind === kind));
+    assert.ok(order.every((index, i) => index >= 0 && (!i || index > order[i - 1])));
+    assert.equal(report.toolTrace?.firstError, 'tool-error');
+    assert.equal(report.release.status, 'broker-confirmed');
+    assert.deepEqual(f.owners.map(owner => owner.cleanups), [1, 1]);
+    let printed = ''; writeMainReport(report, text => { printed += text; });
+    assert.doesNotMatch(printed + f.progress(), /PRIVATE_DUPLICATE_PROVIDER|sk-private|\/tmp\/private/);
+    const snapshot = JSON.stringify(report);
+    release(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(JSON.stringify(report), snapshot);
+  } finally { release(); await f.destroy(); }
 });

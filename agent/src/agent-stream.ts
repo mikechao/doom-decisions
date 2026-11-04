@@ -1,3 +1,4 @@
+import type { ToolTrace } from './tool-trace.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { cliFailureCode, type CliFailureCode } from './cli-provider.ts';
 
@@ -33,13 +34,14 @@ export class DoomStreamError extends Error {
 
 export async function consumeDoomStream(
   result: { fullStream: AsyncIterable<{ type: string; text?: string; output?: unknown;
-    toolCallId?: string; toolName?: string; input?: unknown; providerExecuted?: boolean }> },
+    toolCallId?: string; toolName?: string; input?: unknown; providerExecuted?: boolean; error?: unknown }> },
   signal: AbortSignal,
   matchesToolResult: (output: unknown, name: string, ordinal: number, evidence: { toolCallId: string; input: unknown }) => boolean,
   expectedTool: 'consultLandmarks' | 'findLandmarks' | readonly string[],
   maxTextCharacters = 8192,
   maxEvents = 2000,
   maxSteps: 2 | 3 | 4 = Array.isArray(expectedTool) ? 3 : 2,
+  trace?: ToolTrace,
 ) {
   const tools: Record<string, { calls: number; results: number }> = {};
   const receipt = { drained: false, events: 0, steps: 0, finishes: 0, toolCalls: 0, toolResults: 0, textCharacters: 0, tools };
@@ -53,7 +55,8 @@ export async function consumeDoomStream(
       signal.throwIfAborted();
       if (receipt.finishes !== 0) fail('AFTER_FINISH');
       if (++receipt.events > maxEvents) fail('STREAM_LIMIT');
-      // Classify only the event discriminator; never read or retain its payload.
+      trace?.stream(event.type, event.toolCallId, event.toolName, event.error);
+      // Default diagnostics classify only the event discriminator.
       if (event.type === 'error') fail('STREAM_ERROR_EVENT');
       if (event.type === 'abort') fail('STREAM_ABORT_EVENT');
       if (event.type === 'tool-error') fail('STREAM_TOOL_ERROR_EVENT');
@@ -93,6 +96,7 @@ export async function consumeDoomStream(
     return receipt;
   } catch (error) {
     if (error instanceof DoomStreamError) throw error;
+    trace?.stream('iterator-failure');
     // Iterator/getter rejection, synchronous consumer/correlation failure, or
     // SDK failure without an event. Do not infer a provider cause from text.
     return fail(cliFailureCode(signal.reason) ?? (signal.aborted ? 'CANCELLED' : cliFailureCode(error) ?? 'STREAM_FAILURE'));

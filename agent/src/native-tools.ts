@@ -1,3 +1,4 @@
+import type { ToolTrace } from './tool-trace.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
@@ -12,7 +13,7 @@ export type HostCall = { toolCallId: string; toolName: string; input: unknown; o
 export function nativeTool<S extends z.ZodType>(name: string, callback: {
   description: string; inputSchema: S; execute(input: unknown): Promise<Envelope>;
   secondReady?(): boolean; project?(output: unknown): Projection;
-}, calls: HostCall[], signal: AbortSignal) {
+}, calls: HostCall[], signal: AbortSignal, trace?: ToolTrace) {
   return tool({
     ...(callback.project ? { toModelOutput: ({ toolCallId, input, output }: { toolCallId: string; input: unknown; output: unknown }) => {
       const call = calls.find(call => call.toolCallId === toolCallId && call.toolName === name);
@@ -24,6 +25,7 @@ export function nativeTool<S extends z.ZodType>(name: string, callback: {
     } } : {}),
     description: callback.description, inputSchema: callback.inputSchema,
     execute: async (input, options) => {
+      trace?.native('native-attempt', options.toolCallId, name);
       signal.throwIfAborted();
       const call: HostCall = { toolCallId: options.toolCallId, toolName: name,
         input: structuredClone(input), settled: false };
@@ -43,9 +45,20 @@ export function nativeTool<S extends z.ZodType>(name: string, callback: {
           (previous.toolName === name && !(name === 'executeGuardedDecision' && callback.secondReady?.() &&
           calls.filter(call => call.toolName === name).length === 2 && previous.modelOutput?.type === 'content')) || previous.toolCallId === call.toolCallId || !forwarded;
       });
-      if (invalid)
+      if (invalid) {
+        trace?.native('native-rejected', call.toolCallId, name, calls.at(-2)?.toolCallId);
         throw new Error('REPEATED_OR_OVERLAPPING_HOST_CALL');
-      const envelope = await callback.execute(input);
+      }
+      trace?.native('native-admitted', call.toolCallId, name, calls.at(-2)?.toolCallId);
+      trace?.native('callback-begin', call.toolCallId, name);
+      let envelope: Envelope;
+      try {
+        envelope = await callback.execute(input);
+        trace?.native(signal.aborted ? 'callback-cancelled' : 'callback-returned', call.toolCallId, name);
+      } catch (error) {
+        trace?.native(signal.aborted ? 'callback-cancelled' : 'callback-threw', call.toolCallId, name);
+        throw error;
+      }
       signal.throwIfAborted();
       if (envelope.content.length !== 1 || envelope.content[0].type !== 'text') throw new Error('INVALID_HOST_RESULT');
       const output: unknown = JSON.parse(envelope.content[0].text);
