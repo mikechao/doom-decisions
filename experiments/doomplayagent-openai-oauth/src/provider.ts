@@ -4,15 +4,20 @@ import {
 	type OpenAIOAuthSession,
 } from "@openai-oauth/core";
 
-export function createOAuthResponsesModel(
+export function createOAuthProvider(
 	auth: () => Promise<OpenAIOAuthSession | null | undefined>,
-	modelId: string,
 ) {
 	const transport = createOpenAIOAuthTransport({ auth });
-	const provider = createOpenAI({
+	return createOpenAI({
 		apiKey: "nonsecret-oauth-transport-placeholder",
 		baseURL: transport.baseURL,
 		fetch: transport.fetch,
 	});
-	return provider.responses(modelId);
+}
+
+export function createOAuthResponsesModel(
+	auth: () => Promise<OpenAIOAuthSession | null | undefined>,
+	modelId: string,
+) {
+	return createOAuthProvider(auth).responses(modelId);
 }

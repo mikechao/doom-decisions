@@ -1,6 +1,5 @@
 import { pathToFileURL } from "node:url";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createOpenAIOAuthTransport } from "@openai-oauth/core";
+import type { OpenAIProvider } from "@ai-sdk/openai";
 import { openaiCredentials } from "@openai-oauth/local";
 import {
 	createDoomClient,
@@ -8,11 +7,12 @@ import {
 	type DoomAttachErrorCode,
 	type DoomClient,
 } from "./doom-client.ts";
-import { play } from "./doom-play-agent.ts";
-import { createDoomTools } from "./doom-tools.ts";
+import { PlaybackError, type PlayResult, play } from "./doom-play-agent.ts";
+import { createDoomTools, type DoomTools } from "./doom-tools.ts";
+import { createOAuthProvider } from "./provider.ts";
 
 const usage =
-	"Usage: main.ts (takes no arguments; no arguments performs passive Doom attach)";
+	"Usage: main.ts (takes no arguments; no arguments authorizes one Doom decision)";
 const unconfirmedAttachGuidance =
 	"Doom attach unconfirmed; ownership may be held. If the local page is not running, from the repository root run `npm --prefix app run dev:agent`, open `http://127.0.0.1:5174`, and wait for the Doom page to be ready. If a page is already open, check its connection and use Stop Agent to release possible ownership before a fresh operator-initiated attempt. No automatic retry was made.";
 
@@ -37,43 +37,75 @@ function safeAttachError(error: unknown): DoomAttachError {
 	return new DoomAttachError(null, unconfirmedAttachGuidance);
 }
 
-const credentials = openaiCredentials();
-const transport = createOpenAIOAuthTransport({
-	auth: () => credentials.getSession(),
-});
-
-const codexProvider = createOpenAI({
-	apiKey: "openai-oauth", // Placeholder string required by the SDK constructor
-	baseURL: transport.baseURL,
-	fetch: transport.fetch,
-});
+type MainDependencies = {
+	playback?: typeof play;
+	makeTools?: () => DoomTools;
+	makeProvider?: () => OpenAIProvider;
+};
+function authenticatedProvider() {
+	const credentials = openaiCredentials();
+	return createOAuthProvider(() => credentials.getSession());
+}
 
 export async function main(
 	makeDoomClient: typeof createDoomClient = createDoomClient,
+	dependencies: MainDependencies = {},
 ) {
 	const args = process.argv.slice(2);
 	if (args.length !== 0) throw new Error(usage);
 
 	const doomClient: DoomClient = makeDoomClient();
-	const doomTools = createDoomTools();
+	const doomTools = (dependencies.makeTools ?? createDoomTools)();
+	const provider = (dependencies.makeProvider ?? authenticatedProvider)();
 	let attached = false;
+	let failed = false;
+	let playbackError: unknown;
+	let cleanupFailed = false;
+	let cleanupError: unknown;
+	let result!: PlayResult;
+	let lease: Awaited<ReturnType<DoomClient["attach"]>>;
 	try {
 		try {
 			console.log("Attaching to Doom...");
-			await doomClient.attach();
+			lease = await doomClient.attach();
 		} catch (error) {
 			throw safeAttachError(error);
 		}
 		attached = true;
 		console.log("Doom attached successfully.");
 		console.log("Starting Doom play...");
-		await play(doomClient, doomTools, codexProvider);
+		result = await (dependencies.playback ?? play)(
+			doomClient,
+			doomTools,
+			provider,
+			{
+				lease,
+				modelId: process.env.DOOM_REASONING_MODEL ?? "gpt-6-luna",
+			},
+		);
+		console.log("Doom one-decision result:", result);
+	} catch (error) {
+		failed = true;
+		playbackError = error;
 	} finally {
 		if (attached) {
-			const detached = await doomClient.detach();
-			console.log("Doom lease detached:", { released: detached.released });
+			try {
+				const detached = await doomClient.detach();
+				console.log("Doom lease detached:", { released: detached.released });
+			} catch (detachError) {
+				cleanupFailed = true;
+				cleanupError = detachError;
+			}
 		}
 	}
+	if (failed && cleanupFailed)
+		throw new AggregateError(
+			[playbackError, cleanupError],
+			"Doom playback and detach both failed.",
+		);
+	if (failed) throw playbackError;
+	if (cleanupFailed) throw cleanupError;
+	return result;
 }
 
 if (
@@ -89,7 +121,20 @@ if (
 					"Doom observation unconfirmed. No retry was made.",
 					"Doom detach unconfirmed; client is closed. Use Stop Agent in the browser before another attach. No retry was made.",
 				].includes(error.message));
-		if (error instanceof Error && error.message === usage) console.error(usage);
+		if (error instanceof AggregateError) {
+			console.error(error.message);
+			for (const failure of error.errors) {
+				if (failure instanceof PlaybackError)
+					console.error(failure.message, failure.result);
+				else
+					console.error(
+						"Doom operation or cleanup unconfirmed. Use Stop Agent before another attach.",
+					);
+			}
+		} else if (error instanceof PlaybackError)
+			console.error(error.message, error.result);
+		else if (error instanceof Error && error.message === usage)
+			console.error(usage);
 		else if (args.length === 0 && safeDoomMessage && error instanceof Error)
 			console.error(error.message);
 		else if (args.length === 0)

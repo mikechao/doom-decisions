@@ -830,26 +830,50 @@ test("overlapping detach and calls after detach do not dispatch", async (t) => {
 	assert.deepEqual(fake.calls, ["attach", "detach"]);
 });
 
-test("main defaults to passive Doom attach, observe, and acknowledged detach", async (t) => {
+test("main awaits offline playback and then detaches", async (t) => {
 	const { main } = await import("../src/main.ts");
 	const fake = await broker(t);
 	const messages: string[] = [];
 	t.mock.method(console, "log", (message?: unknown) =>
 		messages.push(String(message)),
 	);
-	await main(() => fake.create());
+	await main(() => fake.create(), { playback: offlinePlayback });
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);
-	assert.ok(
-		messages.includes(
-			"Doom attach mode: passive observation only; no model inference or tool execution.",
-		),
-	);
-	assert.ok(messages.includes("Doom observation:"));
-	assert.ok(messages.includes("Doom tools composed:"));
+	assert.ok(messages.includes("Doom one-decision result:"));
 	assert.ok(messages.includes("Doom lease detached:"));
 });
 
-test("main rejects --oauth-smoke, obsolete, and unknown args inertly", async (t) => {
+// Legacy transport tests inject playback so they never invoke real memory/model.
+const offlinePlayback: typeof import("../src/doom-play-agent.ts").play = async (
+	client,
+) => {
+	await client.observe();
+	return {
+		memoryStatus: "empty",
+		candidateCount: 0,
+		judgment: {
+			updatePrompt: false,
+			targetNoteId: null,
+			objective: null,
+			uncertainty: "synthetic",
+		},
+		promptChanged: false,
+		runId: null,
+		claim: "not-attempted",
+		promptCAS: "not-attempted",
+		decision: "not-attempted",
+		outcome: null,
+		reason: null,
+		action: null,
+		sdkInvoked: null,
+		cumulativeTics: null,
+		tics: null,
+		accounting: "not-read",
+		uncertainties: [],
+	};
+};
+
+test("main rejects --oauth-smoke, obsolete, and unknown args inertly", async () => {
 	const { main } = await import("../src/main.ts");
 	let factoryCalls = 0;
 	const factory = () => {
@@ -881,7 +905,7 @@ for (const [code, guidance] of [
 		const { main } = await import("../src/main.ts");
 		const fake = await broker(t, { attachRejection: code });
 		await assert.rejects(
-			main(() => fake.create()),
+			main(() => fake.create(), { playback: offlinePlayback }),
 			(error: unknown) => {
 				assert.ok(error instanceof DoomAttachError);
 				assert.equal(error.code, code);
@@ -901,7 +925,7 @@ test("main keeps ambiguous attach errors unconfirmed and hides raw transport det
 	const { main } = await import("../src/main.ts");
 	const fake = await broker(t, { faults: { attach: "transport" } });
 	await assert.rejects(
-		main(() => fake.create()),
+		main(() => fake.create(), { playback: offlinePlayback }),
 		(error: unknown) => {
 			assert.ok(error instanceof DoomAttachError);
 			assert.equal(error.code, null);
@@ -925,7 +949,7 @@ test("main detaches after observation failure and reports release only after ack
 		messages.push(String(message)),
 	);
 	await assert.rejects(
-		main(() => fake.create()),
+		main(() => fake.create(), { playback: offlinePlayback }),
 		/Doom observation unconfirmed/,
 	);
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);
@@ -940,7 +964,7 @@ test("main does not claim lease release when detach acknowledgment fails", async
 		messages.push(String(message)),
 	);
 	await assert.rejects(
-		main(() => fake.create()),
+		main(() => fake.create(), { playback: offlinePlayback }),
 		/Doom detach unconfirmed/,
 	);
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);

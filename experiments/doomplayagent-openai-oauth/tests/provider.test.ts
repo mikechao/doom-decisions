@@ -18,3 +18,83 @@ test("Responses model construction does not invoke auth or fetch", async (t) => 
 	assert.equal(authStub.mock.callCount(), 0);
 	assert.equal(fetchStub.mock.callCount(), 0);
 });
+
+test("offline OAuth transport preserves Responses schema and exact inline image", async (t) => {
+	const { createOAuthProvider } = await import("../src/provider.ts");
+	const { play } = await import("../src/doom-play-agent.ts");
+	const { fixture, noUpdate } = await import("./fixtures.ts");
+	const f = await fixture(t);
+	let responseCalls = 0;
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = new URL(input instanceof Request ? input.url : String(input));
+			if (url.hostname === "registry.npmjs.org")
+				return Response.json({ version: "0.144.1" });
+			if (url.pathname.endsWith("/models"))
+				return Response.json({ models: [] });
+			assert.ok(url.pathname.endsWith("/responses"));
+			responseCalls++;
+			const body = JSON.parse(String(init?.body));
+			assert.equal(body.model, "synthetic");
+			assert.equal(body.store, false);
+			assert.equal(
+				body.stream,
+				true,
+				"OAuth transport normalizes nonstreaming SDK calls to SSE",
+			);
+			assert.equal(body.text.format.type, "json_schema");
+			assert.equal(body.text.format.schema.additionalProperties, false);
+			assert.equal(
+				body.text.format.schema.properties.updatePrompt.type,
+				"boolean",
+			);
+			const user = body.input.find(
+				(message: { role: string }) => message.role === "user",
+			);
+			const image = user.content.find(
+				(part: { type: string }) => part.type === "input_image",
+			);
+			assert.equal(
+				image.image_url,
+				`data:image/png;base64,${f.png.toString("base64")}`,
+			);
+			const response = {
+				id: "resp_synthetic",
+				object: "response",
+				created_at: 1,
+				model: "synthetic",
+				status: "completed",
+				output: [
+					{
+						type: "message",
+						id: "msg_synthetic",
+						role: "assistant",
+						status: "completed",
+						content: [
+							{
+								type: "output_text",
+								text: JSON.stringify(noUpdate),
+								annotations: [],
+							},
+						],
+					},
+				],
+				usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+			};
+			return new Response(
+				`data: ${JSON.stringify({ type: "response.completed", response })}\n\ndata: [DONE]\n\n`,
+				{ headers: { "content-type": "text/event-stream" } },
+			);
+		},
+	);
+	const provider = createOAuthProvider(async () => ({
+		accessToken: "synthetic-offline-token",
+		accountId: "synthetic-offline-account",
+	}));
+	const result = await play(f.client, f.tools, provider, f.options);
+	assert.equal(result.outcome, "completed");
+	assert.equal(responseCalls, 1);
+	assert.equal(f.events.filter((event) => event === "decide").length, 1);
+});
