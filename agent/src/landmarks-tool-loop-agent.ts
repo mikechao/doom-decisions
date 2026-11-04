@@ -22,6 +22,8 @@ export function createLandmarksAgent(
     instructions: landmarksInstructions,
     tools,
     maxRetries: 0,
+    // Keep raw SDK/provider errors out of stderr; consumeDoomStream rejects them.
+    onError() {},
     stopWhen: isStepCount(2),
     onLanguageModelCallStart,
     prepareStep: ({ stepNumber }) => {

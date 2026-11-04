@@ -79,6 +79,9 @@ export function createDoomPlayAgent(model: LanguageModel, tools: ToolSet, onCall
   assertNativeTools(tools, authorization ? ['consultLandmarks', 'executeGuardedDecision'] : ['consultLandmarks']);
   return new ToolLoopAgent({
     model, tools, maxRetries: 0, stopWhen: isStepCount(parentSteps), onLanguageModelCallStart: onCallStart,
+    // SDK default onError logs raw errors. The draining consumer owns safe
+    // diagnostics; observing here does not consume or recover the stream error.
+    onError() {},
     prepareStep: ({ stepNumber }) => {
       if (stepNumber >= parentSteps || hostCalls.some(call => !call.settled)) throw new Error('INVALID_PARENT_STEP');
       const consulted = hostCalls.some(call => call.toolName === 'consultLandmarks');

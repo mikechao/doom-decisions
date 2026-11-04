@@ -9,7 +9,7 @@ import {
   executeAgentOperation, type AttachedLease, type DetachedLease, type MaterializedObserve,
 } from '../../scripts/doom-agent-client.ts';
 import { closeCliProviders, fenceCliInitialization, type CliInitialization } from './agent-lifecycle.ts';
-import { consumeDoomStream, DoomStreamError } from './agent-stream.ts';
+import { consumeDoomStream, DoomStreamError, type DoomStreamCode } from './agent-stream.ts';
 import {
   createConsultLandmarks, createDoomPlayAgent, validateParentOutput, validateDecisionOutput, validateTwoDecisionOutput, maxDecisionOutputCharacters, maxTwoDecisionOutputCharacters, ParentOutputError, type ConsultReceipt,
 } from './doom-play-agent.ts';
@@ -43,8 +43,8 @@ type FailureDiagnostic = {
   stage: 'setup' | 'attach' | 'initial_observation' | 'provider_initialization' | 'parent_stream' |
     'callback_correlation' | 'completion_await' | 'completion_validation' | 'provider_invariants' |
     'final_validation' | ParentOutputError['stage'] | 'cleanup' | 'unknown';
-  code: ParentOutputError['code'] | CliFailureCode | 'COMPLETION_METADATA_INVALID' | 'PROVIDER_INVARIANTS_INVALID' |
-    'STREAM_REJECTED' | 'CANCELLED' | 'DEADLINE' | 'CLEANUP_UNVERIFIED' | 'INSTRUCTIONS_CLEANUP_FAILED' | 'DETACH_UNVERIFIED' | 'unknown';
+  code: ParentOutputError['code'] | CliFailureCode | DoomStreamCode | 'COMPLETION_METADATA_INVALID' | 'PROVIDER_INVARIANTS_INVALID' |
+    'CANCELLED' | 'DEADLINE' | 'CLEANUP_UNVERIFIED' | 'INSTRUCTIONS_CLEANUP_FAILED' | 'DETACH_UNVERIFIED' | 'unknown';
 };
 
 export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs = 120_000, authorization: boolean | 2 = false) {
@@ -219,12 +219,13 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
   } catch (error) {
     if (error instanceof DoomStreamError) report.parentStream = error.receipt;
     const streamCode = error instanceof DoomStreamError && ['AFTER_FINISH', 'DUPLICATE_TOOL_CALL', 'TOOL_CALL_MISMATCH',
-      'DUPLICATE_TOOL_RESULT', 'TOOL_RESULT_MISMATCH', 'TOOL_ENVELOPE_MISMATCH', 'INCOMPLETE_STREAM'].includes(error.message) ? error.message : null;
-    const providerCode = cliFailureCode(abort.signal.reason);
+      'DUPLICATE_TOOL_RESULT', 'TOOL_RESULT_MISMATCH', 'TOOL_ENVELOPE_MISMATCH', 'INCOMPLETE_STREAM'].includes(error.code) ? error.code : null;
+    const providerCode = cliFailureCode(abort.signal.reason) ?? cliFailureCode(error);
+    const failedStage = stage as FailureDiagnostic['stage']; // Updated inside the raced work closure.
     report.error = streamCode ?? providerCode ?? (abort.signal.aborted ? 'CANCELLED_OR_FAILED_CONSULT' : 'MAIN_FAILED');
     report.failureDiagnostic = error instanceof ParentOutputError ? { stage: error.stage, code: error.code } : {
-      stage, code: providerCode ?? (abort.signal.aborted ? abort.signal.reason === deadline ? 'DEADLINE' : 'CANCELLED'
-        : error instanceof DoomStreamError ? 'STREAM_REJECTED' : failureCode),
+      stage: failedStage, code: providerCode ?? (abort.signal.aborted ? abort.signal.reason === deadline ? 'DEADLINE' : 'CANCELLED'
+        : error instanceof DoomStreamError ? error.code : failedStage === 'parent_stream' ? 'STREAM_FAILURE' : failureCode),
     };
     runLog.warn(`Run failed: ${report.error}; stage=${report.failureDiagnostic.stage}, code=${report.failureDiagnostic.code}`);
     report.result = null;

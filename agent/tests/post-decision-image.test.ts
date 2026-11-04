@@ -151,7 +151,7 @@ test('next input carries exact post-decision PNG and state before the second nat
         assert.ok(domainResultMatches(output, ordinal === 0 ? envelope : secondEnvelope)); correlated++; return true;
       }, ['executeGuardedDecision']);
       if (unsupported) {
-        await assert.rejects(consume(), /STREAM_FAILURE|CLI_STREAM_WARNING/);
+        await assert.rejects(consume(), /STREAM_ERROR_EVENT|CLI_STREAM_WARNING/);
         assert.equal(cliFailureCode(abort.signal.reason), 'CLI_STREAM_WARNING');
       } else {
         const receipt = await consume();

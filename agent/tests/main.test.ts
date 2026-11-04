@@ -10,16 +10,17 @@ import { deflateSync } from 'node:zlib';
 import test from 'node:test';
 import { fixtureStream, cliFixtureStream, textParts, lastToolResult } from './native-fixture.ts';
 import { MockLanguageModelV4 } from 'ai/test';
-import { wrapLanguageModel } from 'ai';
+import { ToolLoopAgent, wrapLanguageModel } from 'ai';
 import { hermesToolMiddleware } from '@ai-sdk-tool/parser';
 import { createCodexAppServer } from 'ai-sdk-provider-codex-cli';
-import { cliSafetyMiddleware, rejectCliWarning, rejectCliProvider } from '../src/cli-provider.ts';
+import { cliSafetyMiddleware, rejectCliWarning, rejectCliProvider, CliProviderError } from '../src/cli-provider.ts';
 import { nativeTool, domainResultMatches, type HostCall } from '../src/native-tools.ts';
 import { executeAgentOperation } from '../../scripts/doom-agent-client.ts';
 import { buildDefaultDecisionRequest, resolveDecisionInstructions } from '../../app/src/decision-request.ts';
 import type { AgentObserveResult } from '../../app/src/agent-control.ts';
 import { createGuardedDecision, createTwoGuardedDecisions, decisionLedger, type DecisionPorts } from '../src/guarded-decision.ts';
 import { consumeDoomStream, maxDecisionOutputCharacters, validateDecisionOutput, validateParentOutput } from '../src/doom-play-agent.ts';
+import { DoomStreamError } from '../src/agent-stream.ts';
 import { liveObserve } from '../src/live-observation.ts';
 import { createAgentMapIdentity } from '../../app/src/agent-observation.ts';
 import { main, reportExitCode, runMain, writeMainReport, type MainPorts } from '../src/main.ts';
@@ -1734,4 +1735,189 @@ test('terminal prefix on slot 2 is reported separately from two completed action
     assert.equal(reportExitCode(report, 2), 0);
     assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
   } finally { await f.destroy(); }
+});
+
+test('synthetic fullStream failure precedes cleanup CANCELLED during first claim or second CAS', { timeout: 6000 }, async t => {
+  for (const slot of [1, 2] as const) for (const failure of ['error', 'abort', 'tool-error', 'throw'] as const)
+    await t.test(`slot ${slot}: ${failure}`, async () => {
+      const f = decisionFixture({ two: true });
+      let entered!: () => void, release!: () => void;
+      const started = new Promise<void>(resolve => { entered = resolve; });
+      const pending = new Promise<void>(resolve => { release = resolve; });
+      if (slot === 1) {
+        const claim = f.ports.decision!.startRun;
+        f.ports.decision!.startRun = async (...args) => { const value = await claim(...args); entered(); await pending; return value; };
+      } else {
+        const cas = f.ports.decision!.setPrompt;
+        let calls = 0;
+        f.ports.decision!.setPrompt = async (...args) => {
+          const value = await cas(...args);
+          if (++calls === 2) { entered(); await pending; }
+          return value;
+        };
+      }
+      // Inject at fullStream, not the provider reader: the pinned SDK can defer
+      // provider-reader failure until an executing tool settles. This reproduces
+      // the host's failure mapping/order, not an external provider root cause.
+      const original = ToolLoopAgent.prototype.stream;
+      const mock = t.mock.method(ToolLoopAgent.prototype, 'stream', async function(this: ToolLoopAgent, ...args: Parameters<typeof original>) {
+        const result = await original.apply(this, args);
+        return new Proxy(result, { get(target, key) {
+          if (key !== 'fullStream') return Reflect.get(target, key, target);
+          return (async function* () {
+            let calls = 0;
+            for await (const event of target.fullStream) {
+              yield event;
+              if (event.type === 'tool-call' && ++calls === slot) {
+                await started;
+                assert.equal(f.abort.signal.aborted, false);
+                if (failure !== 'throw') yield { type: failure, error: new Error('PRIVATE_STREAM_CAUSE sk-private /tmp/private') };
+                else throw new Error('PRIVATE_STREAM_CAUSE sk-private /tmp/private');
+                return;
+              }
+            }
+          })();
+        } });
+      });
+      try {
+        const report = await f.run();
+        assert.deepEqual(report.failureDiagnostic, { stage: 'parent_stream', code: failure === 'error' ? 'STREAM_ERROR_EVENT' : failure === 'abort' ? 'STREAM_ABORT_EVENT' : failure === 'tool-error' ? 'STREAM_TOOL_ERROR_EVENT' : 'STREAM_FAILURE' });
+        assert.equal(report.error, 'MAIN_FAILED');
+        assert.equal(report.outcome, 'failed');
+        assert.equal(report.result, null);
+        assert.equal(reportExitCode(report, 2), 1);
+        assert.equal(report.parentStream?.drained, false);
+        assert.equal(report.parentStream?.toolCalls, slot);
+        assert.equal(report.parentStream?.toolResults, slot - 1);
+        assert.equal(report.sdkRequests.parent, slot);
+        const ledger = slot === 1 ? report.decision : report.secondDecision;
+        assert.equal(ledger.calls[0].feedback.error, 'CANCELLED');
+        assert.equal(ledger.dispatch, 'not-attempted');
+        assert.equal(ledger.dispatchConsumed, false);
+        assert.equal(ledger.receipt, null);
+        assert.equal(ledger.fileCleanup, 'removed');
+        if (slot === 1) {
+          assert.equal(ledger.claim, 'unknown');
+          assert.equal(ledger.allowance, null);
+          assert.equal(report.secondDecision.attempted, 0);
+          assert.deepEqual(f.deliveries, ['start-run']);
+        } else {
+          assert.equal(ledger.promptCAS, 'unknown');
+          assert.equal(ledger.allowance?.remaining, 1);
+          assert.equal(report.decision.receipt?.verifiedTics, 6);
+          assert.equal(report.decision.receipt?.after?.tic, 49);
+          assert.equal(report.decision.accounting, 'remaining');
+          assert.deepEqual(f.deliveries, ['start-run', 'set-prompt', 'observe', 'decide', 'get-config', 'set-prompt']);
+        }
+        assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
+        assert.equal(report.release.status, 'broker-confirmed');
+        assert.deepEqual(f.owners.map(owner => owner.cleanups), [1, 1]);
+        assert.ok(f.progress().indexOf('Run failed:') < f.progress().indexOf('Guarded decision feedback: uncertain; CANCELLED'));
+        assert.doesNotMatch(JSON.stringify(report) + f.progress(), /PRIVATE_STREAM_CAUSE|sk-private|\/tmp\/private/);
+        const snapshot = JSON.stringify(report), deliveries = [...f.deliveries];
+        release(); await new Promise(resolve => setImmediate(resolve));
+        assert.equal(JSON.stringify(report), snapshot);
+        assert.deepEqual(f.deliveries, deliveries);
+      } finally { mock.mock.restore(); release(); await f.destroy(); }
+    });
+});
+
+test('installed SDK maps sync/rejected provider calls and callback validation failures to distinct stream events', async t => {
+  await new Promise(resolve => setImmediate(resolve)); // Flush Node's import-time SQLite warning before spying.
+  for (const failure of ['sync', 'reject', 'event', 'tool-input'] as const) await t.test(failure, async () => {
+    const f = decisionFixture(failure === 'tool-input' ? { input: {} } : {});
+    const sdkLogs: unknown[][] = [];
+    const log = t.mock.method(console, 'error', (...args: unknown[]) => { sdkLogs.push(args); });
+    if (failure !== 'tool-input') f.models[0] = new MockLanguageModelV4({ doStream: () => {
+      const error = new Error('PRIVATE_PROVIDER_BODY sk-private /tmp/private');
+      if (failure === 'sync') throw error;
+      if (failure === 'reject') return Promise.reject(error);
+      return Promise.resolve(fixtureStream([{ type: 'error', error }]));
+    } });
+    try {
+      const report = await f.run();
+      assert.equal(report.error, 'MAIN_FAILED');
+      assert.deepEqual(report.failureDiagnostic, { stage: 'parent_stream',
+        code: failure === 'tool-input' ? 'STREAM_TOOL_ERROR_EVENT' : 'STREAM_ERROR_EVENT' });
+      assert.equal(report.parentStream?.drained, false);
+      assert.ok(report.parentStream!.events > 0);
+      assert.equal(report.decision.attempted, 0);
+      assert.deepEqual(f.deliveries, []);
+      assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
+      assert.equal(reportExitCode(report, true), 1);
+      assert.doesNotMatch(JSON.stringify(report) + f.progress(), /PRIVATE_PROVIDER_BODY|sk-private|\/tmp\/private/);
+      assert.deepEqual(sdkLogs, [], 'SDK default logging must not bypass safe diagnostics');
+    } finally { log.mock.restore(); await f.destroy(); }
+  });
+});
+
+test('child provider failure also avoids SDK raw logging and never admits gameplay', async t => {
+  await new Promise(resolve => setImmediate(resolve));
+  const f = decisionFixture({ consult: true });
+  const sdkLogs: unknown[][] = [];
+  const log = t.mock.method(console, 'error', (...args: unknown[]) => { sdkLogs.push(args); });
+  f.models[1] = new MockLanguageModelV4({ doStream: async () => { throw new Error('PRIVATE_CHILD_BODY sk-private'); } });
+  try {
+    const report = await f.run();
+    assert.equal(report.outcome, 'failed');
+    assert.equal(report.result, null);
+    assert.equal(report.childStream?.drained, false);
+    assert.equal(report.callbacks.consult, 1);
+    assert.equal(report.decision.attempted, 0);
+    assert.deepEqual(f.deliveries, []);
+    assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
+    assert.deepEqual(sdkLogs, []);
+    assert.doesNotMatch(JSON.stringify(report) + f.progress(), /PRIVATE_CHILD_BODY|sk-private/);
+  } finally { log.mock.restore(); await f.destroy(); }
+});
+
+test('parent.stream setup rejection uses safe fallback or recognized CLI code without message matching', async t => {
+  for (const failure of ['sync', 'reject', 'cli'] as const) await t.test(failure, async () => {
+    const f = decisionFixture();
+    const mock = t.mock.method(ToolLoopAgent.prototype, 'stream', () => {
+      const error = failure === 'cli' ? new CliProviderError('CLI_PROVIDER_CLOSED') : new Error('STREAM_LIMIT PRIVATE_SETUP_CAUSE sk-private');
+      if (failure === 'sync') throw error;
+      return Promise.reject(error);
+    });
+    try {
+      const report = await f.run();
+      assert.deepEqual(report.failureDiagnostic, { stage: 'parent_stream', code: failure === 'cli' ? 'CLI_PROVIDER_CLOSED' : 'STREAM_FAILURE' });
+      assert.equal(report.parentStream, null, 'No consumer started; no fabricated counters');
+      assert.equal(report.decision.attempted, 0);
+      assert.deepEqual(f.deliveries, []);
+      assert.deepEqual(f.operations, ['attach', 'observe', 'detach']);
+      assert.doesNotMatch(JSON.stringify(report) + f.progress(), /PRIVATE_SETUP_CAUSE|sk-private/);
+    } finally { mock.mock.restore(); await f.destroy(); }
+  });
+});
+
+test('stream limits, invalid correlation and consumer/iterator throws retain bounded undrained counters', async () => {
+  const signal = new AbortController().signal;
+  const call = { type: 'tool-call', toolCallId: 'one', toolName: 'consultLandmarks', input: {} };
+  const result = { type: 'tool-result', toolCallId: 'one', toolName: 'consultLandmarks', output: {} };
+  const cases = [
+    { events: [{ type: 'text-delta', text: 'xx' }], code: 'STREAM_LIMIT', textLimit: 1, count: 1, characters: 2 },
+    { events: [{ type: 'start' }, { type: 'start' }], code: 'STREAM_LIMIT', eventLimit: 1, count: 2 },
+    { events: [call, call], code: 'DUPLICATE_TOOL_CALL', count: 2 },
+    { events: [{ type: 'finish' }, { type: 'text-delta', text: 'PRIVATE_AFTER_FINISH' }], code: 'AFTER_FINISH', count: 1 },
+    { events: [call, result], code: 'STREAM_FAILURE', matchThrows: true, count: 2 },
+    { events: [{ type: 'start' }], code: 'STREAM_FAILURE', iteratorThrows: true, count: 1 },
+  ];
+  for (const c of cases) {
+    await assert.rejects(consumeDoomStream({ fullStream: (async function* () {
+      yield* c.events;
+      if (c.iteratorThrows) throw new Error('PRIVATE_ITERATOR_CAUSE sk-private');
+    })() }, signal, () => {
+      if (c.matchThrows) throw new Error('PRIVATE_MATCH_CAUSE sk-private');
+      return true;
+    }, 'consultLandmarks', c.textLimit, c.eventLimit), error => {
+      assert.ok(error instanceof DoomStreamError);
+      assert.equal(error.code, c.code);
+      assert.equal(error.receipt.drained, false);
+      assert.equal(error.receipt.events, c.count);
+      assert.equal(error.receipt.textCharacters, c.characters ?? 0);
+      assert.doesNotMatch(JSON.stringify(error), /PRIVATE_|sk-private/);
+      return true;
+    });
+  }
 });

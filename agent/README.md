@@ -174,6 +174,22 @@ root cause. The host attempts detach separately from CLI provider cleanup. An
 unverified detach or possibly-held attachment requires **Stop Agent** in the
 browser. No retry or extra decision is added.
 
+Parent-stream diagnostics distinguish `STREAM_ERROR_EVENT`, `STREAM_ABORT_EVENT`,
+`STREAM_TOOL_ERROR_EVENT`, and `STREAM_LIMIT`. Existing call/result correlation
+codes remain specific; `STREAM_FAILURE` is the safe fallback for stream setup,
+iterator, or consumer exceptions without a recognized code. A stream error event
+alone does not identify which SDK/provider operation failed. Recognized CLI
+provider failures retain their fixed codes; host abort and the per-run deadline
+retain `CANCELLED` and `DEADLINE`. When the consumer fails, `parentStream` retains
+only partial counters with `drained: false`; setup failures before consumption
+leave it null. SDK default raw-error logging is disabled for both agents; stream
+failures still reject through the consumer. Cleanup may then abort a pending
+guarded callback, whose slot reports `CANCELLED` without replacing the initiating
+parent-stream diagnostic or a verified earlier receipt. Synthetic offline tests
+exercise pending first claim and second CAS failures at the `fullStream` boundary;
+the intermittent live initiating cause remains unknown. No recovery or retry is
+attempted.
+
 Both agents use independent CLI provider owners and native SDK 7 tools. Hermes
 parses textual tool requests; the SDK executes the host callbacks and supplies
 ordinary results to the next model request (image-bearing content in two-decision mode). In one-decision mode the parent permits at most three

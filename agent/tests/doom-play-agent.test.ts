@@ -163,6 +163,49 @@ test('duplicate SDK results fail closed against the completed host callback', as
   assert.equal(f.landmarks.length, 1);
 });
 
+test('native callback throws emit tool-error; model projection throws reject the iterator, without raw SDK logging', async t => {
+  for (const failure of ['sync-callback', 'async-callback', 'projection'] as const) await t.test(failure, async () => {
+    const signal = new AbortController().signal;
+    const calls: HostCall[] = [];
+    const envelope = { content: [{ type: 'text' as const, text: '{}' }] };
+    const secret = new Error('PRIVATE_NATIVE_CAUSE sk-private');
+    const sdkLogs: unknown[][] = [];
+    const log = t.mock.method(console, 'error', (...args: unknown[]) => { sdkLogs.push(args); });
+    const callback = {
+      description: 'Synthetic callback only', inputSchema: z.strictObject({}),
+      execute: failure === 'sync-callback' ? () => { throw secret; } : async () => {
+        if (failure === 'async-callback') throw secret;
+        return envelope;
+      },
+      ...(failure === 'projection' ? { project: () => { throw secret; } } : {}),
+    };
+    const model = new MockLanguageModelV4({ doStream: async () => fixtureStream([
+      { type: 'tool-call', toolCallId: 'one', toolName: 'consultLandmarks', input: '{}' },
+    ]) });
+    let requests = 0;
+    const parent = createDoomPlayAgent(model, { consultLandmarks: nativeTool('consultLandmarks', callback, calls, signal) },
+      () => { requests++; }, 'live', false, calls);
+    try {
+      const stream = await parent.stream({ prompt: 'Synthetic request', abortSignal: signal });
+      await assert.rejects(consumeDoomStream(stream, signal,
+        (output, name, ordinal, evidence) => hostResultMatches(calls, output, name, ordinal, evidence), 'consultLandmarks'), error => {
+        assert.ok(error instanceof DoomStreamError);
+        assert.equal(error.code, failure === 'projection' ? 'STREAM_FAILURE' : 'STREAM_TOOL_ERROR_EVENT');
+        assert.equal(error.receipt.drained, false);
+        assert.equal(error.receipt.toolCalls, 1);
+        assert.equal(error.receipt.toolResults, failure === 'projection' ? 1 : 0);
+        assert.doesNotMatch(JSON.stringify(error), /PRIVATE_NATIVE_CAUSE|sk-private/);
+        return true;
+      });
+      assert.equal(requests, 1);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].settled, failure === 'projection');
+      assert.equal(signal.aborted, false);
+      assert.deepEqual(sdkLogs, []);
+    } finally { log.mock.restore(); }
+  });
+});
+
 test('tool-event correlation rejects orphan, mismatched, missing and duplicate calls', async () => {
   const call = { type: 'tool-call', toolCallId: 'expected-id', toolName: 'consultLandmarks', input: {} };
   const result = { type: 'tool-result', toolCallId: 'expected-id', toolName: 'consultLandmarks', output: {} };
