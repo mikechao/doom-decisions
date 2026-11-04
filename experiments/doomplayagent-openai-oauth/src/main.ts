@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'node:url';
-import { initializeDoomClient } from './doom-client.ts';
+import { createDoomClient } from './doom-client.ts';
+import type { DoomClient } from './doom-client.ts';
 import { createDoomTools } from './doom-tools.ts';
 
 async function runOAuthSmoke() {
@@ -40,13 +41,19 @@ async function runOAuthSmoke() {
   console.log('Usage:', result.usage);
 }
 
-export async function main(args: readonly string[] = process.argv.slice(2)) {
+export async function main(
+  args: readonly string[] = process.argv.slice(2),
+  makeDoomClient: typeof createDoomClient = createDoomClient,
+) {
   if (args.length === 0) return runOAuthSmoke();
   if (args.length !== 1 || args[0] !== '--attach-doom')
     throw new Error('Usage: main.ts [--attach-doom]');
 
-  const doomClient = await initializeDoomClient();
+  const doomClient: DoomClient = makeDoomClient();
+  let attached = false;
   try {
+    await doomClient.attach();
+    attached = true;
     const observation = await doomClient.observe();
     const doomTools = createDoomTools();
     console.log('Doom attach mode: passive observation only; no model inference or tool execution.');
@@ -56,7 +63,7 @@ export async function main(args: readonly string[] = process.argv.slice(2)) {
     });
     console.log('Doom tools composed:', Object.keys(doomTools));
   } finally {
-    await doomClient.detach();
+    if (attached) await doomClient.detach();
   }
 }
 
