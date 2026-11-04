@@ -66,10 +66,8 @@ async function runOAuthSmoke() {
   console.log('Usage:', result.usage);
 }
 
-export async function main(
-  args: readonly string[] = process.argv.slice(2),
-  makeDoomClient: typeof createDoomClient = createDoomClient,
-) {
+export async function main(makeDoomClient: typeof createDoomClient = createDoomClient) {
+  const args = process.argv.slice(2);
   if (args.length !== 0) throw new Error(usage);
 
   const doomClient: DoomClient = makeDoomClient();

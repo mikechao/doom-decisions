@@ -38,14 +38,14 @@ test('imports and synchronous factory are inert and expose a frozen client', asy
   assert.equal(typeof main, 'function');
   assert.deepEqual(await readdir(temporaryRoot), []);
   let factoryCalls = 0;
-  await assert.rejects(main(['--unknown'], () => {
-    factoryCalls++;
-    return {} as DoomClient;
-  }), /Usage:/);
-  await assert.rejects(main(['--attach-doom'], () => {
-    factoryCalls++;
-    return {} as DoomClient;
-  }), /Usage:/);
+  for (const arg of ['--unknown', '--attach-doom']) {
+    process.argv = [process.execPath, '/inert-import.ts', arg];
+    await assert.rejects(main(() => {
+      factoryCalls++;
+      return {} as DoomClient;
+    }), /Usage:/);
+  }
+  process.argv = [process.execPath, '/inert-import.ts'];
   assert.equal(factoryCalls, 0);
   assert.equal(network.mock.callCount(), 0);
 });
@@ -311,7 +311,7 @@ test('main defaults to passive Doom attach, observe, and acknowledged detach', a
   const fake = await broker(t);
   const messages: string[] = [];
   t.mock.method(console, 'log', (message?: unknown) => messages.push(String(message)));
-  await main([], () => fake.create());
+  await main(() => fake.create());
   assert.deepEqual(fake.calls, ['attach', 'observe', 'detach']);
   assert.ok(messages.includes('Doom attach mode: passive observation only; no model inference or tool execution.'));
   assert.ok(messages.includes('Doom observation:'));
@@ -327,9 +327,15 @@ test('main rejects --oauth-smoke, obsolete, and unknown args inertly', async (t)
     return {} as DoomClient;
   };
 
-  await assert.rejects(main(['--oauth-smoke'], factory), /Usage:/);
-  await assert.rejects(main(['--attach-doom'], factory), /Usage:/);
-  await assert.rejects(main(['--unknown'], factory), /Usage:/);
+  const originalArgv = process.argv;
+  try {
+    for (const arg of ['--oauth-smoke', '--attach-doom', '--unknown']) {
+      process.argv = [process.execPath, '/main-args-test.ts', arg];
+      await assert.rejects(main(factory), /Usage:/);
+    }
+  } finally {
+    process.argv = originalArgv;
+  }
   assert.equal(factoryCalls, 0);
 });
 
@@ -344,7 +350,7 @@ for (const [code, guidance] of [
   test(`main gives bounded operator guidance for ${code}`, async (t) => {
     const { main } = await import('../src/main.ts');
     const fake = await broker(t, { attachRejection: code });
-    await assert.rejects(main([], () => fake.create()), (error: unknown) => {
+    await assert.rejects(main(() => fake.create()), (error: unknown) => {
       assert.ok(error instanceof DoomAttachError);
       assert.equal(error.code, code);
       assert.match(error.message, new RegExp(guidance));
@@ -358,7 +364,7 @@ for (const [code, guidance] of [
 test('main keeps ambiguous attach errors unconfirmed and hides raw transport details', async (t) => {
   const { main } = await import('../src/main.ts');
   const fake = await broker(t, { faults: { attach: 'transport' } });
-  await assert.rejects(main([], () => fake.create()), (error: unknown) => {
+  await assert.rejects(main(() => fake.create()), (error: unknown) => {
     assert.ok(error instanceof DoomAttachError);
     assert.equal(error.code, null);
     assert.match(error.message, /attach unconfirmed; ownership may be held/);
@@ -377,7 +383,7 @@ test('main detaches after observation failure and reports release only after ack
   const fake = await broker(t, { faults: { observe: 'rejected' } });
   const messages: string[] = [];
   t.mock.method(console, 'log', (message?: unknown) => messages.push(String(message)));
-  await assert.rejects(main([], () => fake.create()), /Doom observation unconfirmed/);
+  await assert.rejects(main(() => fake.create()), /Doom observation unconfirmed/);
   assert.deepEqual(fake.calls, ['attach', 'observe', 'detach']);
   assert.ok(messages.includes('Doom lease detached:'));
 });
@@ -387,7 +393,7 @@ test('main does not claim lease release when detach acknowledgment fails', async
   const fake = await broker(t, { faults: { detach: 'lost' } });
   const messages: string[] = [];
   t.mock.method(console, 'log', (message?: unknown) => messages.push(String(message)));
-  await assert.rejects(main([], () => fake.create()), /Doom detach unconfirmed/);
+  await assert.rejects(main(() => fake.create()), /Doom detach unconfirmed/);
   assert.deepEqual(fake.calls, ['attach', 'observe', 'detach']);
   assert.equal(messages.includes('Doom lease detached:'), false);
 });
