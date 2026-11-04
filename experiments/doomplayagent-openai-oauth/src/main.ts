@@ -63,11 +63,10 @@ export async function main(
 	let cleanupFailed = false;
 	let cleanupError: unknown;
 	let result!: PlayResult;
-	let lease: Awaited<ReturnType<DoomClient["attach"]>>;
 	try {
 		try {
 			console.log("Attaching to Doom...");
-			lease = await doomClient.attach();
+			await doomClient.attach();
 		} catch (error) {
 			throw safeAttachError(error);
 		}
@@ -79,7 +78,6 @@ export async function main(
 			doomTools,
 			provider,
 			{
-				lease,
 				modelId: process.env.DOOM_REASONING_MODEL ?? "gpt-6-luna",
 			},
 		);
@@ -125,14 +123,20 @@ if (
 			console.error(error.message);
 			for (const failure of error.errors) {
 				if (failure instanceof PlaybackError)
-					console.error(failure.message, failure.result);
+					console.error(failure.message, {
+						judgment: failure.judgment,
+						warnings: failure.warnings,
+					});
 				else
 					console.error(
 						"Doom operation or cleanup unconfirmed. Use Stop Agent before another attach.",
 					);
 			}
 		} else if (error instanceof PlaybackError)
-			console.error(error.message, error.result);
+			console.error(error.message, {
+				judgment: error.judgment,
+				warnings: error.warnings,
+			});
 		else if (error instanceof Error && error.message === usage)
 			console.error(usage);
 		else if (args.length === 0 && safeDoomMessage && error instanceof Error)

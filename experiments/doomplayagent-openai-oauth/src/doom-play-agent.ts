@@ -1,28 +1,16 @@
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
-import { isDeepStrictEqual as same } from "node:util";
+import { join } from "node:path";
 import type { OpenAIProvider } from "@ai-sdk/openai";
 import { generateText, type LanguageModel, Output } from "ai";
 import { z } from "zod";
 import {
 	type AgentObserveResult,
-	type AgentRunState,
 	maxAgentInstructions,
-	parseAgentConfigResult,
-	parseAgentObserveResult,
-	parseAgentPromptResult,
 } from "../../../app/src/agent-control.ts";
-import {
-	type AgentDecisionResult,
-	isAgentId,
-	parseAgentDecisionResult,
-} from "../../../app/src/agent-observation.ts";
-import type {
-	AttachedLease,
-	MaterializedObserve,
-} from "../../../scripts/doom-agent-client.ts";
+import type { AgentDecisionResult } from "../../../app/src/agent-observation.ts";
+import type { MaterializedObserve } from "../../../scripts/doom-agent-client.ts";
 import type { DoomClient } from "./doom-client.ts";
 import type { DoomMemoryCandidate, DoomTools } from "./doom-tools.ts";
 
@@ -40,7 +28,6 @@ export type InterpretationInput = {
 	memory: Memory;
 };
 export type PlayOptions = {
-	lease: AttachedLease;
 	modelId: string;
 	infer?: (
 		model: LanguageModel,
@@ -48,58 +35,17 @@ export type PlayOptions = {
 	) => Promise<unknown>;
 };
 
-function requireEvidence(ok: unknown): asserts ok {
-	if (!ok) throw new Error("Invalid Doom evidence.");
+async function reasoningImage(observation: MaterializedObserve) {
+	// The executor validated the PNG before writing it. We read it again, so
+	// bind the exact owned inference bytes to that validated digest (file TOCTOU).
+	const image = await readFile(observation.pngPath);
+	if (
+		createHash("sha256").update(image).digest("hex") !== observation.pngSha256
+	)
+		throw new Error("Materialized Doom PNG changed before inference.");
+	return image;
 }
-function envelope<
-	T extends { pageId: string; epoch: string; commandId: string },
->(value: T, lease: AttachedLease) {
-	const { pageId, epoch, commandId, ...domain } = value;
-	requireEvidence(
-		pageId === lease.pageId && epoch === lease.epoch && isAgentId(commandId),
-	);
-	return { commandId, domain };
-}
-async function imageFor(
-	path: string,
-	commandId: string,
-	lease: AttachedLease,
-	metadata: { pngSha256: string },
-) {
-	requireEvidence(path === join(dirname(lease.leaseFile), `${commandId}.png`));
-	requireEvidence(!Object.hasOwn(metadata, "png"));
-	const image = Buffer.from(await readFile(path));
-	requireEvidence(
-		image.length < 1_500_000 &&
-			createHash("sha256").update(image).digest("hex") === metadata.pngSha256,
-	);
-	return {
-		image,
-		inline: {
-			...metadata,
-			png: `data:image/png;base64,${image.toString("base64")}`,
-		},
-	};
-}
-async function verifyObservation(
-	value: MaterializedObserve,
-	lease: AttachedLease,
-) {
-	const { commandId, domain } = envelope(value, lease);
-	const { pngPath, ...metadata } = domain;
-	const { image, inline } = await imageFor(pngPath, commandId, lease, metadata);
-	const observation = parseAgentObserveResult(inline);
-	requireEvidence(
-		observation.telemetry.x >= -2147483648 &&
-			observation.telemetry.x <= 2147483648 &&
-			observation.telemetry.y >= -2147483648 &&
-			observation.telemetry.y <= 2147483648 &&
-			observation.telemetry.angle >= 0 &&
-			observation.telemetry.angle <= 0xffffffff,
-	);
-	return { image, observation };
-}
-function modelState(o: AgentObserveResult) {
+function modelState(o: Omit<AgentObserveResult, "png">) {
 	return {
 		map: { mapSlot: o.mapIdentity.mapSlot },
 		tic: o.tic,
@@ -142,44 +88,28 @@ export async function interpretObservation(
 			},
 		],
 	});
-	requireEvidence(result.finishReason === "stop");
-	return judgmentSchema.parse(result.output);
+	if (result.finishReason !== "stop")
+		throw new Error("Navigation judgment did not finish.");
+	return result.output;
 }
 
-function checkpoint(
-	run: AgentRunState | null,
-	runId?: string,
-): asserts run is AgentRunState {
-	requireEvidence(
-		run &&
-			(!runId || run.runId === runId) &&
-			run.active &&
-			run.limit === 1 &&
-			run.reserved === 0 &&
-			run.sdkInvoked === 0 &&
-			run.remaining === 1,
-	);
-}
 function validateJudgment(value: unknown, memory: Memory) {
 	const judgment = judgmentSchema.parse(value);
 	if (!judgment.updatePrompt) {
-		requireEvidence(
-			judgment.targetNoteId === null && judgment.objective === null,
-		);
+		if (judgment.targetNoteId !== null || judgment.objective !== null)
+			throw new Error(
+				"Declined guidance must not select a landmark objective.",
+			);
 		return { judgment, target: null };
 	}
 	const target = memory.candidates.find(
 		(note) => note.noteId === judgment.targetNoteId,
 	);
-	requireEvidence(memory.status === "found" && target && judgment.objective);
+	if (!target || !judgment.objective)
+		throw new Error("Navigation judgment must select a supplied landmark.");
 	return { judgment, target };
 }
-function composeGuidance(
-	base: string,
-	target: DoomMemoryCandidate,
-	judgment: Judgment,
-) {
-	requireEvidence(base.includes("{{tics}}"));
+function composeGuidance(base: string, target: DoomMemoryCandidate) {
 	// Only host-selected ID/anchor enter the amendment. Free model prose is kept
 	// in the diagnostic judgment, so it cannot replace rules or prescribe actions.
 	const hint = JSON.stringify({
@@ -187,9 +117,8 @@ function composeGuidance(
 		anchorWorldUnits: target.anchor,
 	});
 	const instructions = `${base}\n\nFor the next decision only: consider exploring toward this historical landmark anchor (unverified): ${hint}. Reachability and geometry are uncertain; assess against the current image and verified state. Preserve all base rules; Decisions alone selects the action and the controller owns duration and authorization.`;
-	requireEvidence(
-		judgment.updatePrompt && instructions.length <= maxAgentInstructions,
-	);
+	if (instructions.length > maxAgentInstructions)
+		throw new Error("Navigation guidance exceeds the Decisions prompt limit.");
 	return instructions;
 }
 
@@ -198,31 +127,41 @@ export type PlayResult = {
 	candidateCount: number;
 	judgment: Judgment;
 	promptChanged: boolean;
-	runId: string | null;
-	claim: "not-attempted" | "uncertain" | "acknowledged";
-	promptCAS: "not-attempted" | "uncertain" | "acknowledged";
-	decision: "not-attempted" | "uncertain" | "validated";
-	outcome: AgentDecisionResult["outcome"] | null;
+	runId: string;
+	outcome: AgentDecisionResult["outcome"];
 	reason: AgentDecisionResult["reason"];
 	action: AgentDecisionResult["action"];
-	sdkInvoked: boolean | null;
+	sdkInvoked: boolean;
+	completionUncertain: boolean;
 	cumulativeTics: number | null;
 	tics: {
 		requested: number | null;
 		reported: number | null;
 		verified: number | null;
-	} | null;
-	accounting: "not-read" | "unavailable" | "verified";
-	uncertainties: string[];
+	};
+	warnings: string[];
 };
 export class PlaybackError extends Error {
 	readonly stage: string;
-	readonly result: PlayResult | null;
-	constructor(stage: string, result: PlayResult | null) {
-		super(`Doom playback stopped at ${stage}. No retry was made.`);
+	readonly decisionMayHaveBeenSent: boolean;
+	readonly warnings: string[];
+	readonly judgment: Judgment | null;
+	constructor(
+		stage: string,
+		decisionMayHaveBeenSent: boolean,
+		warnings: string[],
+		judgment: Judgment | null,
+		cause: unknown,
+	) {
+		super(
+			`Doom playback stopped at ${stage}. ${decisionMayHaveBeenSent ? "Decision outcome may be unknown." : "No decision was sent."} No retry was made.`,
+			{ cause },
+		);
 		this.name = "PlaybackError";
 		this.stage = stage;
-		this.result = result;
+		this.decisionMayHaveBeenSent = decisionMayHaveBeenSent;
+		this.warnings = warnings;
+		this.judgment = judgment;
 	}
 }
 
@@ -233,239 +172,122 @@ export async function play(
 	openAIProvider: OpenAIProvider,
 	options: PlayOptions,
 ): Promise<PlayResult> {
-	let stage = "initial-observation";
-	let result: PlayResult | null = null;
+	let stage = "observation";
+	let decisionMayHaveBeenSent = false;
 	let directory: string | undefined;
+	const warnings: string[] = [];
+	let judgment: Judgment | null = null;
 	try {
-		const lease = structuredClone(options.lease);
-		requireEvidence(
-			[lease.pageId, lease.ownerId, lease.epoch].every(isAgentId) &&
-				isAbsolute(lease.leaseFile),
-		);
-		const initial = await verifyObservation(await doomClient.observe(), lease);
-		const before = initial.observation;
-		requireEvidence(before.run === null);
-		stage = "landmark-validation";
+		const before = await doomClient.observe();
+		const image = await reasoningImage(before);
+		stage = "landmarks";
 		const memory = await doomTools.findMemory(before);
-		stage = "model-judgment";
-		// Submit this owned buffer, never a path or a later file reread by the SDK.
-		const { judgment, target } = validateJudgment(
+		stage = "judgment";
+		const assessment = validateJudgment(
 			await (options.infer ?? interpretObservation)(
 				openAIProvider.responses(options.modelId),
-				{
-					image: initial.image,
-					state: structuredClone(modelState(before)),
-					memory: structuredClone(memory),
-				},
+				{ image, state: modelState(before), memory },
 			),
 			memory,
 		);
-		result = {
-			memoryStatus: memory.status,
-			candidateCount: memory.candidates.length,
-			judgment,
-			promptChanged: false,
-			runId: null,
-			claim: "not-attempted",
-			promptCAS: "not-attempted",
-			decision: "not-attempted",
-			outcome: null,
-			reason: null,
-			action: null,
-			sdkInvoked: null,
-			cumulativeTics: null,
-			tics: null,
-			accounting: "not-read",
-			uncertainties:
-				memory.status === "lookup_failed" || memory.status === "unavailable"
-					? [memory.status]
-					: [],
-		};
-		// Validate and compose before the nonrefundable claim. getPrompt is legal
-		// before startRun; setPrompt requires the run ID returned by startRun.
-		let instructions = before.configuration.instructionTemplate;
+		judgment = assessment.judgment;
+		const { target } = assessment;
+		// Prepare the bounded amendment before claiming the nonrefundable run.
+		let instructionsFile: string | undefined;
 		if (target) {
-			stage = "get-prompt";
-			const current = parseAgentPromptResult(
-				envelope(await doomClient.getPrompt(before.sessionId), lease).domain,
+			stage = "guidance";
+			const instructions = composeGuidance(
+				before.configuration.instructionTemplate,
+				target,
 			);
-			requireEvidence(
-				!("error" in current) &&
-					current.sessionId === before.sessionId &&
-					current.revision === before.revision &&
-					current.run === null &&
-					current.instructions === instructions,
-			);
-			instructions = composeGuidance(current.instructions, target, judgment);
 			directory = await mkdtemp(join(tmpdir(), "doom-one-step-"));
-			await writeFile(join(directory, "instructions.txt"), instructions, {
+			instructionsFile = join(directory, "instructions.txt");
+			await writeFile(instructionsFile, instructions, {
 				mode: 0o600,
 				flag: "wx",
 			});
 		}
+
 		stage = "start-run";
-		result.claim = "uncertain";
-		const started = parseAgentConfigResult(
-			envelope(
-				await doomClient.startRun({
-					observationId: before.observationId,
-					sessionId: before.sessionId,
-					revision: before.revision,
-				}),
-				lease,
-			).domain,
-		);
-		requireEvidence(
-			!("error" in started) &&
-				started.sessionId === before.sessionId &&
-				started.revision === before.revision &&
-				same(started.configuration, before.configuration),
-		);
-		checkpoint(started.run);
-		result.claim = "acknowledged";
-		const runId = started.run.runId;
-		result.runId = runId;
-		let revision = started.revision;
-		if (target) {
-			stage = "prompt-cas";
-			requireEvidence(directory);
-			result.promptCAS = "uncertain";
-			const changed = parseAgentPromptResult(
-				envelope(
-					await doomClient.setPrompt({
-						sessionId: before.sessionId,
-						runId,
-						revision,
-						instructionsFile: join(directory, "instructions.txt"),
-					}),
-					lease,
-				).domain,
-			);
-			requireEvidence(
-				!("error" in changed) &&
-					changed.sessionId === before.sessionId &&
-					changed.revision === revision + 1 &&
-					changed.instructions === instructions,
-			);
-			checkpoint(changed.run, runId);
-			revision = changed.revision;
-			result.promptChanged = true;
-			result.promptCAS = "acknowledged";
-		}
-		stage = "dispatch-observation";
-		const { observation: ready } = await verifyObservation(
-			await doomClient.observe(),
-			lease,
-		);
-		requireEvidence(
-			ready.observationId !== before.observationId &&
-				ready.sessionId === before.sessionId &&
-				same(ready.mapIdentity, before.mapIdentity) &&
-				ready.tic === before.tic &&
-				same(ready.frame, before.frame) &&
-				same(ready.telemetry, before.telemetry) &&
-				same(ready.facingProbe, before.facingProbe) &&
-				same(ready.previousAction, before.previousAction) &&
-				ready.counters.gametic === before.counters.gametic &&
-				ready.counters.leveltime === before.counters.leveltime &&
-				ready.pngSha256 === before.pngSha256 &&
-				ready.revision === revision &&
-				same(ready.configuration, {
-					...before.configuration,
-					instructionTemplate: instructions,
-				}),
-		);
-		checkpoint(ready.run, runId);
-		stage = "decision-receipt";
-		result.decision = "uncertain";
-		const raw = await doomClient.decide({
-			observationId: ready.observationId,
-			scope: { sessionId: ready.sessionId, runId, revision },
+		const started = await doomClient.startRun({
+			observationId: before.observationId,
+			sessionId: before.sessionId,
+			revision: before.revision,
 		});
-		const { commandId, domain } = envelope(raw, lease);
-		const { pngPath, ...metadata } = domain;
-		requireEvidence(
-			commandId === ready.observationId &&
-				metadata.beforeObservationId === ready.observationId,
-		);
-		let after = null;
-		if (metadata.observation) {
-			requireEvidence(pngPath !== null);
-			after = (await imageFor(pngPath, commandId, lease, metadata.observation))
-				.inline;
-		} else requireEvidence(pngPath === null);
-		const receipt = parseAgentDecisionResult({
-			...metadata,
-			observation: after,
-		});
-		requireEvidence(
-			receipt.requestedTics === null ||
-				receipt.requestedTics === ready.configuration.tics,
-		);
-		requireEvidence(
-			receipt.reportedTics === null ||
-				(receipt.requestedTics !== null &&
-					receipt.reportedTics <= receipt.requestedTics),
-		);
-		requireEvidence(
-			receipt.verifiedTics === null ||
-				(receipt.reportedTics !== null &&
-					receipt.verifiedTics <= receipt.reportedTics &&
-					receipt.cumulativeTics === ready.tic + receipt.verifiedTics),
-		);
-		if (receipt.observation)
-			requireEvidence(
-				receipt.reason === null &&
-					receipt.observation.sessionId === ready.sessionId &&
-					same(receipt.observation.mapIdentity, ready.mapIdentity) &&
-					receipt.observation.observationId !== ready.observationId &&
-					receipt.observation.observationId !== before.observationId &&
-					receipt.observation.tic === ready.tic + Number(receipt.verifiedTics),
+		// The broker chooses the budget. This experiment requires one slot;
+		// active/fresh claim, session and revision are enforced below play().
+		if (started.run?.limit !== 1)
+			throw new Error(
+				"The one-decision experiment requires a run budget of 1.",
 			);
-		result.decision = "validated";
-		result.outcome = receipt.outcome;
-		result.reason = receipt.reason;
-		result.action = receipt.action;
-		result.sdkInvoked = receipt.sdkInvoked;
-		result.cumulativeTics = receipt.cumulativeTics;
-		result.tics = {
-			requested: receipt.requestedTics,
-			reported: receipt.reportedTics,
-			verified: receipt.verifiedTics,
+		const scope = {
+			sessionId: before.sessionId,
+			runId: started.run.runId,
+			revision: started.revision,
 		};
-		if (receipt.completionUncertain)
-			result.uncertainties.push("native-completion-uncertain");
-		// Terminal/retired/stopped controllers may no longer expose config. Never
-		// turn missing final accounting into permission to replay the decision.
-		result.accounting = "unavailable";
-		if (receipt.outcome === "completed") {
-			stage = "final-accounting";
-			const final = parseAgentConfigResult(
-				envelope(await doomClient.getConfig(ready.sessionId), lease).domain,
-			);
-			requireEvidence(
-				!("error" in final) &&
-					final.sessionId === ready.sessionId &&
-					final.revision === revision &&
-					same(final.configuration, ready.configuration) &&
-					same(final.run, {
-						runId,
-						active: false,
-						limit: 1,
-						reserved: 1,
-						sdkInvoked: 1,
-						remaining: 0,
-					}),
-			);
-			result.accounting = "verified";
-		} else result.uncertainties.push("final-accounting-unavailable");
-		return result;
-	} catch {
-		throw new PlaybackError(stage, result);
+		if (instructionsFile) {
+			stage = "prompt-cas";
+			const changed = await doomClient.setPrompt({
+				...scope,
+				instructionsFile,
+			});
+			scope.revision = changed.revision;
+		}
+
+		stage = "dispatch-observation";
+		// CAS invalidates observation admission. Always observe again, even when
+		// guidance is unchanged. Do not reread an image we won't send to a model.
+		const ready = await doomClient.observe();
+		if (
+			ready.observationId === before.observationId ||
+			ready.sessionId !== before.sessionId ||
+			ready.mapIdentity.mapKey !== before.mapIdentity.mapKey ||
+			ready.tic !== before.tic ||
+			ready.revision !== scope.revision
+		)
+			throw new Error("Doom changed since the navigation judgment.");
+
+		stage = "decision";
+		decisionMayHaveBeenSent = true;
+		const receipt = await doomClient.decide({
+			observationId: ready.observationId,
+			scope,
+		});
+		// The executor parsed/correlated the receipt and verified its resulting
+		// PNG. No second action depends on it; report it without another readback.
+		return {
+			memoryStatus: memory.status,
+			candidateCount: memory.candidates.length,
+			judgment,
+			promptChanged: instructionsFile !== undefined,
+			runId: scope.runId,
+			outcome: receipt.outcome,
+			reason: receipt.reason,
+			action: receipt.action,
+			sdkInvoked: receipt.sdkInvoked,
+			completionUncertain: receipt.completionUncertain,
+			cumulativeTics: receipt.cumulativeTics,
+			tics: {
+				requested: receipt.requestedTics,
+				reported: receipt.reportedTics,
+				verified: receipt.verifiedTics,
+			},
+			warnings,
+		};
+	} catch (cause) {
+		// Preserve debugging causes for callers; main prints only this bounded
+		// message, never raw model/transport errors that could contain credentials.
+		throw new PlaybackError(
+			stage,
+			decisionMayHaveBeenSent,
+			warnings,
+			judgment,
+			cause,
+		);
 	} finally {
 		if (directory)
 			await rm(directory, { recursive: true, force: true }).catch(() => {
-				result?.uncertainties.push("temporary-prompt-cleanup-failed");
+				warnings.push("temporary-prompt-cleanup-failed");
 			});
 	}
 }

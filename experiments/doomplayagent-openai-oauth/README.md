@@ -14,43 +14,66 @@ or model retry.
 
 The host sequence is:
 
-1. Attach once; retain the acknowledged page/epoch/lease identity.
-2. Observe once for reasoning. Re-read the materialized PNG, hash the owned bytes,
-   and validate observation, canonical map identity, telemetry and PNG header/
-   dimensions with the shared protocol parsers. Those exact bytes enter inference.
-3. Query historical memory using that verified map key and pose: 16.16 coordinates
-   become world units; unsigned angle becomes degrees; radius 128, limit 3.
-   Existing storage opens read-only. Missing storage, lookup failure and successful
-   empty results are distinct. Malformed evidence stops the experiment. Only
-   landmark candidates are offered; note text is untrusted advisory data.
-4. Make one structured model inference with image, compact game state and bounded
-   candidates. Host validation rejects invented IDs and inconsistent judgments.
-5. If guidance is approved, `getPrompt` before claim must match the initial
-   session/revision/template. Compose the amendment and prepare its private
-   temporary file before claiming. The amendment uses only the selected note ID
-   and numeric anchor; free model prose remains diagnostic. The base template,
-   including every `{{tics}}`, remains intact. Oversized amendments stop early.
-6. `startRun` uses the initial observation/session/revision. **The broker owns
-   the configured budget**; the experiment requires the acknowledgment to show
-   exactly one available attempt. Claiming does not increment the revision.
-   `setPrompt` requires this active run ID, uses revision CAS, and must echo the
-   exact instructions at revision + 1. Without guidance, no prompt write occurs.
-7. Observe afresh after claim/optional CAS. Verify unchanged game/map/pose/tic/
-   image and expected configuration/run/revision, then `decide` exactly once with
-   this fresh observation ID and `{ sessionId, runId, revision }`.
-8. Validate correlated receipt, resulting PNG/hash/identity, requested/reported/
-   verified tic semantics and cumulative tic. A completed decision additionally
-   requires final accounting: one reserved and one SDK invocation, zero remaining.
-   Terminal and unsuccessful outcomes report final accounting as unavailable.
-9. Report compact diagnostics and detach in `finally`. Playback and detach
-   failures remain separate members of an `AggregateError` when both fail.
+1. `main.ts` composes the provider/tools/client, attaches once, awaits `play()`,
+   and detaches in `finally`. `DoomClient` owns the acknowledged lease.
+2. Obtain the executor-validated observation. Re-read its materialized PNG and
+   hash those owned bytes against the validated digest before submitting them
+   to inference. Later file changes cannot change the inference image.
+3. Query nearby historical landmarks using the verified map key and pose:
+   16.16 coordinates become world units; unsigned angle becomes degrees;
+   radius 128, limit 3. The model cannot select the query location. Existing
+   storage opens read-only; unavailable, failed and empty results stay distinct.
+4. Ask the model for one advisory judgment. Validate its shape and selected
+   candidate ID. Declining guidance still permits the one authorized decision.
+   Objective and uncertainty remain in result/error diagnostics. We deliberately
+   retain anchor-only Decisions guidance: the model selects a landmark, while
+   free objective prose cannot introduce button presses or duration instructions.
+5. Optionally compose bounded guidance from the initial validated template and
+   selected anchor. Prepare a private temporary file before claiming the run.
+   No extra `getPrompt` is needed: revision CAS protects that template snapshot.
+6. Claim the run using the initial observation/session/revision. Require the
+   broker-selected budget to be exactly one. Optionally `setPrompt` using the
+   claimed run and current revision; use the acknowledged revision afterward.
+7. Observe afresh. Require a new observation ID, the same session/map/tic, and
+   the expected revision so the judgment still applies. Send `decide` once with
+   that fresh ID and the claimed scope. Browser/controller gates remain decisive.
+8. Report the executor-validated receipt directly, including terminal prefixes,
+   declined admission and native uncertainty. No final accounting call or PNG
+   reread is needed: there is no next action to authorize.
 
-A thrown/lost claim, prompt CAS or decision acknowledgment is uncertain and never
-retried. A valid declined guidance judgment still permits the one decision. Stop
-and lease revocation remain enforced by the browser's admission and dispatch
-fences. There is no second action slot, config write, autonomous loop or subagent.
-The prompt amendment is lease-owned and is not restored through an extra mutation;
-the flow ends by detaching.
+A failed claim, prompt update or decision stops the sequence without retry.
+Before calling `decide`, an error means no decision was sent. During `decide`,
+errors are conservatively unconfirmed: the client has only textual pre/post-send
+errors, so `play()` does not infer dispatch certainty from error-message parsing.
+The failure stage identifies a possibly unacknowledged run/prompt mutation;
+original causes remain available to programmatic callers. CLI output uses only
+bounded host messages, judgment diagnostics and cleanup warnings, never raw
+model/transport exceptions. Temporary guidance is removed in `finally`; cleanup
+failure is a warning and does not hide the primary failure. Playback and detach
+failures remain separate members of an `AggregateError` when both fail.
+
+There is no second action slot, config write, autonomous loop or subagent. The
+lease-owned prompt amendment is not restored through another mutation; the flow
+ends by detaching.
+
+## Responsibility audit
+
+This experiment trusts the existing executor/browser stack; it is not an
+independent security boundary.
+
+| Ownership | Actual enforcement and simplification |
+| --- | --- |
+| Already guaranteed below `play()` | [`executeAgentOperation`](../../scripts/doom-agent-client.ts) validates wire commands, lease/page/epoch/command correlation, calls `parseAgentObserveResult`, `parseAgentConfigResult`, `parseAgentPromptResult` and `parseAgentDecisionResult`, and verifies PNG bytes/hashes before materializing. It checks settings session/run correlation, exact submitted prompt echo and revision + 1, start-run active/revision acknowledgment, and decision `beforeObservationId`. Removed duplicate envelopes, parsers, path/header checks, CAS echoes and receipt correlation. `DoomClient` delegates these guarantees rather than implementing DTO parsing itself; its own responsibility is lease lifecycle and rejecting overlapping calls. |
+| Already guaranteed by browser/controller | [`startAgentRun`, `agentConfig`/`agentPrompt`, `agentNext`](../../app/src/session-controller.ts) enforce one-shot claim, session/run/revision CAS, fresh observation admission and nonrefundable reservations. `decide` fences one SDK create; `runOneDecision`, `action` and `captureAgentObservation` verify native stepping, resulting frame and Canvas linkage. [`agent-bridge.mjs`](../../app/agent-bridge.mjs) issues the process budget once and rejects duplicate commands; [`agent-browser.ts`](../../app/src/agent-browser.ts) also rejects duplicates and fences Stop/revocation. Removed repeated run counters/active checks, config equality and native receipt arithmetic. |
+| Required across operations | `play()` owns ordering, selected-candidate judgment validation, prompt-size preflight, the one-slot budget requirement, a fresh post-CAS observation and continuity with the judgment's session/map/tic/revision. It calls `decide` once and never retries an ambiguous mutation. Its initial PNG rehash remains necessary because the file is reread after executor validation. [`doom-tools.ts`](src/doom-tools.ts) retains pose range checks/conversion, host-derived query location, candidate validation and unverified-memory labeling; the duplicate pose range check in `play()` is removed. |
+| Nice-to-have / overly strict | Full equality of frames, telemetry, facing probes, previous actions, counters, PNG hashes, configurations and entire run snapshots is unnecessary for this one-step flow. A passive capture may change capture counters. Same session/map/tic retains the simulation checkpoint; revision and browser admission handle configuration. Removed final-accounting readback and resulting-image rereads, since neither controls another dispatch. |
+
+The decision parser is not a complete independent native verifier: for example,
+terminal prefix bounds and before/after cumulative arithmetic are not all checked
+by that parser. Those guarantees come from the trusted controller/native pipeline.
+This experiment now reports that evidence instead of recreating a verifier. No
+lower-layer defect blocked this simplification; independent verification would be
+a different scope. Static/offline checks do not establish live native correctness.
 
 Offline verification, from this directory with existing dependencies:
 
@@ -83,9 +106,9 @@ shared executor through an injected fake HTTP transport.
    malformed evidence or failed inference must result in no claim/decision.
 4. Inspect the compact result, browser receipts and Console/Network: at most one
    Decisions invocation, matching requested/reported/verified tics or an explicit
-   terminal prefix/uncertainty, final accounting where available, and acknowledged
-   detach. Record evidence without credentials. A model may decline guidance even
-   with candidates; that is a valid outcome.
+   terminal prefix/uncertainty and acknowledged detach. Record evidence without
+   credentials. A model may decline guidance even with candidates; that is a
+   valid outcome.
 5. On uncertainty, stop and inspect the browser; use Stop Agent to release possible
    ownership. Do not rerun automatically. A new live attempt needs fresh explicit
    operator authorization and a deliberately renewed process budget.

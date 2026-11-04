@@ -15,10 +15,8 @@ test("host query precedes inference; model receives exact verified bytes and com
 		"startRun",
 		"observe",
 		"decide",
-		"getConfig",
 	]);
 	assert.equal(result.outcome, "completed");
-	assert.equal(result.accounting, "verified");
 	assert.equal(result.promptChanged, false);
 	assert.deepEqual(result.tics, { requested: 6, reported: 6, verified: 6 });
 	const input = f.state.modelInput as Parameters<typeof f.model.doGenerate>[0];
@@ -63,15 +61,13 @@ test("valid landmark selection preserves base and substitution through CAS, then
 		"observe",
 		"memory",
 		"model",
-		"getPrompt",
 		"startRun",
 		"setPrompt",
 		"observe",
 		"decide",
-		"getConfig",
 	]);
 	assert.equal(result.promptChanged, true);
-	assert.equal(result.promptCAS, "acknowledged");
+	assert.deepEqual(result.judgment, f.state.judgment);
 	assert.ok(
 		f.state.instructions.startsWith(f.base.configuration.instructionTemplate),
 	);
@@ -108,43 +104,26 @@ for (const status of ["empty", "unavailable", "lookup_failed"] as const) {
 	});
 }
 
-for (const fault of [
-	"bytes",
-	"header",
-	"map",
-	"telemetry",
-	"page",
-	"epoch",
-] as const) {
-	test(`invalid initial ${fault} prevents inference and gameplay`, async (t) => {
-		const f = await fixture(t);
-		const observe = f.client.observe;
-		f.client.observe = async () => {
-			const o = await observe();
-			if (fault === "bytes")
-				await writeFile(o.pngPath, Buffer.from("tampered"));
-			if (fault === "header") {
-				f.png.writeUInt32BE(1, 16);
-				await writeFile(o.pngPath, f.png);
-				o.pngSha256 = (await import("node:crypto"))
-					.createHash("sha256")
-					.update(f.png)
-					.digest("hex");
-			}
-			if (fault === "map") o.mapIdentity.mapKey = "wrong";
-			if (fault === "telemetry") o.telemetry.angle = -1;
-			if (fault === "page") o.pageId = f.lease.ownerId;
-			if (fault === "epoch") o.epoch = f.lease.ownerId;
-			return o;
-		};
-		await assert.rejects(
-			play(f.client, f.tools, f.provider, f.options),
-			PlaybackError,
-		);
-		assert.equal(f.state.modelCalls, 0);
-		assert.deepEqual(f.events, ["observe"]);
-	});
-}
+test("changed materialized PNG prevents inference and gameplay", async (t) => {
+	const f = await fixture(t);
+	const observe = f.client.observe;
+	f.client.observe = async () => {
+		const o = await observe();
+		await writeFile(o.pngPath, "tampered");
+		return o;
+	};
+	await assert.rejects(
+		play(f.client, f.tools, f.provider, f.options),
+		(error) => {
+			assert.ok(error instanceof PlaybackError);
+			assert.equal(error.decisionMayHaveBeenSent, false);
+			assert.match(String(error.cause), /PNG changed/);
+			return true;
+		},
+	);
+	assert.equal(f.state.modelCalls, 0);
+	assert.deepEqual(f.events, ["observe"]);
+});
 
 for (const judgment of [
 	{
@@ -214,16 +193,17 @@ for (const operation of ["startRun", "setPrompt", "decide"] as const) {
 			play(f.client, f.tools, f.provider, f.options),
 			(error: unknown) => {
 				assert.ok(error instanceof PlaybackError);
+				assert.equal(error.decisionMayHaveBeenSent, operation === "decide");
 				assert.equal(
-					error.result?.[
-						operation === "startRun"
-							? "claim"
-							: operation === "setPrompt"
-								? "promptCAS"
-								: "decision"
-					],
-					"uncertain",
+					error.stage,
+					operation === "startRun"
+						? "start-run"
+						: operation === "setPrompt"
+							? "prompt-cas"
+							: "decision",
 				);
+				assert.match(String(error.cause), /response lost/);
+				assert.deepEqual(error.judgment, f.state.judgment);
 				return true;
 			},
 		);
@@ -238,14 +218,11 @@ for (const operation of ["startRun", "setPrompt", "decide"] as const) {
 for (const fault of [
 	"revision",
 	"session",
-	"page",
 	"map",
-	"pose",
 	"tic",
-	"image",
-	"run",
+	"observation-id",
 ] as const) {
-	test(`fresh dispatch ${fault} mismatch prevents decide`, async (t) => {
+	test(`judgment continuity: fresh ${fault} mismatch prevents decide`, async (t) => {
 		const f = await fixture(t);
 		const original = f.client.observe;
 		f.client.observe = async () => {
@@ -253,12 +230,9 @@ for (const fault of [
 			if (f.state.observeCalls > 1) {
 				if (fault === "revision") o.revision++;
 				if (fault === "session") o.sessionId = f.lease.ownerId;
-				if (fault === "page") o.pageId = f.lease.ownerId;
-				if (fault === "map") o.mapIdentity.mapKey = "wrong";
-				if (fault === "pose") o.telemetry.x++;
+				if (fault === "map") o.mapIdentity.mapKey = "another-verified-map";
 				if (fault === "tic") o.tic++;
-				if (fault === "image") await writeFile(o.pngPath, "tampered");
-				if (fault === "run" && o.run) o.run = { ...o.run, limit: 3 };
+				if (fault === "observation-id") o.observationId = f.base.observationId;
 			}
 			return o;
 		};
@@ -270,43 +244,27 @@ for (const fault of [
 	});
 }
 
-for (const fault of [
-	"correlation",
-	"tics",
-	"session",
-	"png",
-	"accounting",
-	"terminal-prefix",
-] as const) {
-	test(`invalid resulting ${fault} stops after one dispatch`, async (t) => {
-		const f = await fixture(t);
-		const decide = f.client.decide;
-		f.client.decide = async (input) => {
-			const receipt = await decide(input);
-			assert.ok(receipt.observation && receipt.pngPath && f.state.run);
-			if (fault === "correlation") receipt.commandId = f.lease.ownerId;
-			if (fault === "tics") receipt.requestedTics = 7;
-			if (fault === "session" && receipt.observation)
-				receipt.observation.sessionId = f.lease.ownerId;
-			if (fault === "png") await writeFile(receipt.pngPath, "tampered");
-			if (fault === "accounting") f.state.run.sdkInvoked = 0;
-			if (fault === "terminal-prefix") {
-				receipt.outcome = "terminal";
-				receipt.observation.phase = "terminal";
-				receipt.verifiedTics = 7;
-				receipt.reportedTics = 7;
-			}
-			return receipt;
-		};
-		await assert.rejects(
-			play(f.client, f.tools, f.provider, f.options),
-			PlaybackError,
-		);
-		assert.equal(f.events.filter((event) => event === "decide").length, 1);
-	});
-}
+test("fresh observation does not require full snapshot equality or reread its PNG", async (t) => {
+	const f = await fixture(t);
+	const original = f.client.observe;
+	f.client.observe = async () => {
+		const o = await original();
+		if (f.state.observeCalls > 1) {
+			// Valid passive capture metadata may vary without advancing simulation.
+			o.counters.render++;
+			o.counters.frame++;
+			o.pngPath = "/unused-fresh-observation.png";
+		}
+		return o;
+	};
+	assert.equal(
+		(await play(f.client, f.tools, f.provider, f.options)).outcome,
+		"completed",
+	);
+	assert.equal(f.events.filter((event) => event === "decide").length, 1);
+});
 
-test("a verified terminal prefix is reported with unavailable final accounting", async (t) => {
+test("a terminal prefix is reported directly without final accounting", async (t) => {
 	const f = await fixture(t);
 	const decide = f.client.decide;
 	f.client.decide = async (input) => {
@@ -324,7 +282,6 @@ test("a verified terminal prefix is reported with unavailable final accounting",
 	};
 	const result = await play(f.client, f.tools, f.provider, f.options);
 	assert.equal(result.outcome, "terminal");
-	assert.equal(result.accounting, "unavailable");
 	assert.deepEqual(result.tics, { requested: 6, reported: 2, verified: 2 });
 });
 
@@ -345,22 +302,30 @@ test("uncertain retired receipt is diagnostic and cannot trigger replay", async 
 		};
 	};
 	const result = await play(f.client, f.tools, f.provider, f.options);
-	assert.ok(result.uncertainties.includes("native-completion-uncertain"));
+	assert.equal(result.completionUncertain, true);
 	assert.equal(f.events.filter((event) => event === "decide").length, 1);
 });
 
 test("model failure has no retry or browser mutation", async (t) => {
 	const f = await fixture(t);
 	let calls = 0;
+	const cause = Error("SECRET_MODEL_FAILURE");
 	await assert.rejects(
 		play(f.client, f.tools, f.provider, {
 			...f.options,
 			infer: async () => {
 				calls++;
-				throw Error("model failed");
+				throw cause;
 			},
 		}),
-		PlaybackError,
+		(error) => {
+			assert.ok(error instanceof PlaybackError);
+			assert.equal(error.cause, cause);
+			assert.equal(error.decisionMayHaveBeenSent, false);
+			assert.match(error.message, /No decision was sent/);
+			assert.doesNotMatch(error.message, /SECRET/);
+			return true;
+		},
 	);
 	assert.equal(calls, 1);
 	assert.deepEqual(f.events, ["observe", "memory"]);
@@ -391,14 +356,24 @@ test("file changes after verification cannot change the owned inference bytes", 
 	assert.equal(result.outcome, "completed");
 });
 
-for (const fault of [
-	"get-revision",
-	"get-instructions",
-	"claim-limit",
-	"cas-revision",
-	"cas-instructions",
-] as const) {
-	test(`${fault} acknowledgment mismatch stops before decide and is never retried`, async (t) => {
+test("broker budget greater than one stops before dispatch", async (t) => {
+	const f = await fixture(t);
+	const startRun = f.client.startRun;
+	f.client.startRun = async (input) => {
+		const ack = await startRun(input);
+		assert.ok(ack.run);
+		ack.run = { ...ack.run, limit: 3, remaining: 3 };
+		return ack;
+	};
+	await assert.rejects(
+		play(f.client, f.tools, f.provider, f.options),
+		PlaybackError,
+	);
+	assert.equal(f.events.includes("decide"), false);
+});
+
+for (const fail of [false, true]) {
+	test(`temporary guidance is removed after ${fail ? "lost CAS acknowledgment" : "success"}`, async (t) => {
 		const f = await fixture(t);
 		f.state.judgment = {
 			updatePrompt: true,
@@ -406,43 +381,19 @@ for (const fault of [
 			objective: "Explore",
 			uncertainty: "Unsure",
 		};
-		const getPrompt = f.client.getPrompt,
-			startRun = f.client.startRun,
-			setPrompt = f.client.setPrompt;
-		if (fault.startsWith("get-"))
-			f.client.getPrompt = async () => {
-				const ack = await getPrompt();
-				if (fault === "get-revision") ack.revision++;
-				else ack.instructions = "Unexpected replacement";
-				return ack;
-			};
-		if (fault === "claim-limit")
-			f.client.startRun = async (input) => {
-				const ack = await startRun(input);
-				assert.ok(ack.run);
-				ack.run = { ...ack.run, limit: 3, remaining: 3 };
-				return ack;
-			};
-		if (fault.startsWith("cas-"))
-			f.client.setPrompt = async (input) => {
-				const ack = await setPrompt(input);
-				if (fault === "cas-revision") ack.revision++;
-				else ack.instructions = "Wrong echo";
-				return ack;
-			};
-		await assert.rejects(
-			play(f.client, f.tools, f.provider, f.options),
-			PlaybackError,
-		);
-		assert.equal(f.events.includes("decide"), false);
-		assert.equal(
-			f.events.filter((event) => event === "startRun").length,
-			fault.startsWith("get-") ? 0 : 1,
-		);
-		assert.equal(
-			f.events.filter((event) => event === "setPrompt").length,
-			fault.startsWith("cas-") ? 1 : 0,
-		);
+		let path = "";
+		const setPrompt = f.client.setPrompt;
+		f.client.setPrompt = async (input) => {
+			path = input.instructionsFile;
+			const ack = await setPrompt(input);
+			if (fail) throw new Error("response lost");
+			return ack;
+		};
+		const running = play(f.client, f.tools, f.provider, f.options);
+		if (fail) await assert.rejects(running, PlaybackError);
+		else await running;
+		assert.ok(path);
+		await assert.rejects(readFile(path), { code: "ENOENT" });
 	});
 }
 

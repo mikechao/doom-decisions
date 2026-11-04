@@ -84,6 +84,7 @@ async function broker(
 		faults?: Partial<Record<Operation, Fault>>;
 		blocked?: Operation;
 		attachRejection?: string;
+		mutateResponse?: (op: Operation, body: Record<string, unknown>) => void;
 	} = {},
 ) {
 	t.mock.method(globalThis, "fetch", async () => {
@@ -371,7 +372,20 @@ async function broker(
 	};
 	return {
 		create: (root = temporaryRoot) =>
-			createDoomClient({ transport, temporaryRoot: root }),
+			createDoomClient({
+				transport: options.mutateResponse
+					? async (url, init) => {
+							const response = await transport(url, init);
+							const body = (await response.json()) as Record<string, unknown>;
+							options.mutateResponse?.(
+								String(url).split("/").at(-1) as Operation,
+								body,
+							);
+							return Response.json(body, { status: response.status });
+						}
+					: transport,
+				temporaryRoot: root,
+			}),
 		temporaryRoot,
 		calls,
 		commands,
@@ -858,18 +872,15 @@ const offlinePlayback: typeof import("../src/doom-play-agent.ts").play = async (
 			uncertainty: "synthetic",
 		},
 		promptChanged: false,
-		runId: null,
-		claim: "not-attempted",
-		promptCAS: "not-attempted",
-		decision: "not-attempted",
-		outcome: null,
+		runId: randomUUID(),
+		outcome: "not-admitted",
 		reason: null,
 		action: null,
-		sdkInvoked: null,
+		sdkInvoked: false,
+		completionUncertain: false,
 		cumulativeTics: null,
-		tics: null,
-		accounting: "not-read",
-		uncertainties: [],
+		tics: { requested: null, reported: null, verified: null },
+		warnings: [],
 	};
 };
 
@@ -970,3 +981,64 @@ test("main does not claim lease release when detach acknowledgment fails", async
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);
 	assert.equal(messages.includes("Doom lease detached:"), false);
 });
+
+for (const fault of [
+	"map-identity",
+	"png-hash",
+	"prompt-echo",
+	"cas-revision",
+	"receipt-correlation",
+	"receipt-tics",
+] as const) {
+	test(`DoomClient's shared executor owns ${fault} rejection`, async (t) => {
+		const op =
+			fault.startsWith("prompt") || fault === "cas-revision"
+				? "set-prompt"
+				: fault.startsWith("receipt")
+					? "decide"
+					: "observe";
+		const fake = await broker(t, {
+			mutateResponse: (operation, body) => {
+				if (operation !== op) return;
+				if (op === "observe") {
+					const observation = body.observation as AgentObserveResult;
+					if (fault === "map-identity")
+						observation.mapIdentity.mapKey = "wrong";
+					else observation.pngSha256 = "0".repeat(64);
+				} else if (op === "set-prompt") {
+					const prompt = body.prompt as {
+						revision: number;
+						instructions: string;
+					};
+					if (fault === "prompt-echo") prompt.instructions = "Wrong echo";
+					else prompt.revision++;
+				} else {
+					const receipt = body.decision as {
+						beforeObservationId: string;
+						verifiedTics: number;
+					};
+					if (fault === "receipt-correlation")
+						receipt.beforeObservationId = randomUUID();
+					else receipt.verifiedTics = 5;
+				}
+			},
+		});
+		const client = fake.create();
+		await client.attach();
+		const scope = { sessionId: fake.sessionId, runId: fake.runId, revision: 0 };
+		const instructionsFile = join(fake.temporaryRoot, "guidance.txt");
+		await writeFile(instructionsFile, "Explore {{tics}}.");
+		const request =
+			op === "observe"
+				? client.observe()
+				: op === "set-prompt"
+					? client.setPrompt({ ...scope, instructionsFile })
+					: client.decide({
+							observationId: fake.observation.observationId,
+							scope,
+						});
+		await assert.rejects(request);
+		assert.deepEqual(fake.calls, ["attach", op]);
+		await client.detach();
+	});
+}

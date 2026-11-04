@@ -63,7 +63,9 @@ export function createDoomTools(dependencies: DoomToolDependencies = {}) {
 	const lookup = dependencies.lookupMemory ?? findNearbyMemory;
 	return {
 		// Host-only capability. No model tool or model-supplied query arguments.
-		async findMemory(observation: AgentObserveResult) {
+		async findMemory(
+			observation: Pick<AgentObserveResult, "mapIdentity" | "telemetry">,
+		) {
 			const pose = z
 				.strictObject({
 					x: z.number().int().min(-2147483648).max(2147483648),
