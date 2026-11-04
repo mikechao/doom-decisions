@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'node:url';
 import { initializeDoomClient } from './doom-client.ts';
+import { createDoomTools } from './doom-tools.ts';
 
 async function runOAuthSmoke() {
   const { generateText, tool, stepCountIs } = await import('ai');
@@ -47,10 +48,13 @@ export async function main(args: readonly string[] = process.argv.slice(2)) {
   const doomClient = await initializeDoomClient();
   try {
     const observation = await doomClient.observe();
+    const doomTools = createDoomTools();
+    console.log('Doom attach mode: passive observation only; no model inference or tool execution.');
     console.log('Doom observation:', {
       mapSlot: observation.mapIdentity.mapSlot,
       tic: observation.tic,
     });
+    console.log('Doom tools composed:', Object.keys(doomTools));
   } finally {
     await doomClient.detach();
   }
