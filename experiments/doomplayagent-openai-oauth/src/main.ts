@@ -1,24 +1,23 @@
-import { generateText, tool, stepCountIs } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
-import { createOpenAIOAuthTransport } from '@openai-oauth/core';
-import { openaiCredentials } from '@openai-oauth/local';
-import { z } from 'zod';
+import { pathToFileURL } from 'node:url';
+import { initializeDoomClient } from './doom-client.ts';
 
-// 1. Load ~/.codex/auth.json credentials & create an in-process OAuth transport
-const credentials = openaiCredentials();
-const transport = createOpenAIOAuthTransport({
-  auth: () => credentials.getSession(),
-});
+async function runOAuthSmoke() {
+  const { generateText, tool, stepCountIs } = await import('ai');
+  const { createOpenAI } = await import('@ai-sdk/openai');
+  const { createOpenAIOAuthTransport } = await import('@openai-oauth/core');
+  const { openaiCredentials } = await import('@openai-oauth/local');
+  const { z } = await import('zod');
 
-// 2. Initialize the official @ai-sdk/openai provider with the OAuth transport
-const codexProvider = createOpenAI({
-  apiKey: 'openai-oauth', // Placeholder string required by the SDK constructor
-  baseURL: transport.baseURL,
-  fetch: transport.fetch,
-});
+  const credentials = openaiCredentials();
+  const transport = createOpenAIOAuthTransport({
+    auth: () => credentials.getSession(),
+  });
+  const codexProvider = createOpenAI({
+    apiKey: 'openai-oauth', // Placeholder string required by the SDK constructor
+    baseURL: transport.baseURL,
+    fetch: transport.fetch,
+  });
 
-// 3. Call generateText with native AI SDK tools
-async function main() {
   const result = await generateText({
     model: codexProvider('gpt-6-luna'),
     tools: {
@@ -40,4 +39,28 @@ async function main() {
   console.log('Usage:', result.usage);
 }
 
-main();
+export async function main(args: readonly string[] = process.argv.slice(2)) {
+  if (args.length === 0) return runOAuthSmoke();
+  if (args.length !== 1 || args[0] !== '--attach-doom')
+    throw new Error('Usage: main.ts [--attach-doom]');
+
+  const doomClient = await initializeDoomClient();
+  try {
+    const observation = await doomClient.observe();
+    console.log('Doom observation:', {
+      mapSlot: observation.mapIdentity.mapSlot,
+      tic: observation.tic,
+    });
+  } finally {
+    await doomClient.detach();
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error: unknown) => {
+    // Doom errors are bounded locally; OAuth errors may contain sensitive details.
+    const doomOnly = process.argv.length === 3 && process.argv[2] === '--attach-doom';
+    console.error(doomOnly && error instanceof Error ? error.message : 'Experiment failed.');
+    process.exitCode = 1;
+  });
+}
