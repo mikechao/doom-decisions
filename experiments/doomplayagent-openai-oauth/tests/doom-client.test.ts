@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import type { AgentObserveResult } from '../../../app/src/agent-control.ts';
 import { createAgentMapIdentity } from '../../../app/src/agent-observation.ts';
+import type { AgentOperation } from '../../../scripts/doom-agent-client.ts';
 import { DoomAttachError, type DoomClient } from '../src/doom-client.ts';
 
-type Operation = 'attach' | 'observe' | 'detach';
+type Operation = AgentOperation['op'];
 type Fault = 'rejected' | 'transport' | 'transport-code' | 'lost' | 'malformed' | 'invalid';
 
 function deferred() {
@@ -33,7 +34,9 @@ test('imports and synchronous factory are inert and expose a frozen client', asy
 
   assert.equal(typeof (client as unknown as { then?: unknown }).then, 'undefined', 'factory returns synchronously');
   assert.equal(Object.isFrozen(client), true);
-  assert.deepEqual(Object.keys(client).sort(), ['attach', 'detach', 'observe']);
+  assert.deepEqual(Object.keys(client).sort(), [
+    'attach', 'decide', 'detach', 'getConfig', 'getPrompt', 'observe', 'setConfig', 'setPrompt', 'startRun',
+  ]);
   assert.equal(typeof createDoomClient, 'function');
   assert.equal(typeof main, 'function');
   assert.deepEqual(await readdir(temporaryRoot), []);
@@ -65,7 +68,8 @@ async function broker(
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-client-test-'));
   t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
   const pageId = randomUUID(), epoch = randomUUID();
-  const calls: string[] = [];
+  const calls: Operation[] = [];
+  const commands: Array<{ op: Operation; command: Record<string, unknown> }> = [];
   const pendingStarted = deferred();
   const pendingRelease = deferred();
   let ownerId: string | undefined;
@@ -91,15 +95,35 @@ async function broker(
       includeReadyWeapon: false, includeAmmo: false, includeHealth: false,
       includeFacingProbe: false, includePreviousAction: false },
   };
+  const configuration = {
+    instructionTemplate: 'Synthetic {{tics}}.', tics: 6,
+    includeReadyWeapon: false, includeAmmo: false, includeHealth: false,
+    includeFacingProbe: false, includePreviousAction: false,
+  };
+  const sessionId = observation.sessionId;
+  const baseRun = { runId: randomUUID(), active: true, limit: 3, reserved: 0, sdkInvoked: 0, remaining: 3 };
+  const decisionObservation = (() => {
+    const { revision: _revision, configuration: _configuration, run: _run, ...base } = observation;
+    return {
+      ...base,
+      observationId: randomUUID(),
+      tic: 44,
+      frame: { ...base.frame, tic: 44 },
+      counters: { ...base.counters, gametic: 44, leveltime: 44 },
+    };
+  })();
   const transport: typeof fetch = async (url, init) => {
     const op = String(url).split('/').at(-1);
-    assert.ok(op === 'attach' || op === 'observe' || op === 'detach', 'No gameplay operation');
+    assert.ok(['attach', 'observe', 'detach', 'get-config', 'get-prompt', 'start-run',
+      'set-config', 'set-prompt', 'decide'].includes(String(op)));
+    const operation = op as Operation;
     assert.equal(String(url), `http://127.0.0.1:5174/__doom_agent/${op}`);
     assert.equal(init?.method, 'POST');
     const command = JSON.parse(String(init?.body));
-    calls.push(op);
-    const fault = options.faults?.[op];
-    if (op === 'attach') {
+    calls.push(operation);
+    commands.push({ op: operation, command });
+    const fault = options.faults?.[operation];
+    if (operation === 'attach') {
       assert.deepEqual(Object.keys(command), ['ownerId']);
       if (fault === 'transport') throw new Error('SECRET_TRANSPORT_SENTINEL');
       if (fault === 'transport-code') throw new Error('no-ready-page');
@@ -108,12 +132,24 @@ async function broker(
       if (fault === 'rejected') return Response.json({ error: 'lease-revoked' }, { status: 409 });
       ownerId = command.ownerId;
     } else {
-      assert.deepEqual(Object.keys(command).sort(), ['commandId', 'epoch', 'ownerId', 'pageId']);
+      const expectedFields = {
+        observe: ['commandId', 'epoch', 'ownerId', 'pageId'],
+        detach: ['commandId', 'epoch', 'ownerId', 'pageId'],
+        'get-config': ['commandId', 'epoch', 'ownerId', 'pageId', 'sessionId'],
+        'get-prompt': ['commandId', 'epoch', 'ownerId', 'pageId', 'sessionId'],
+        'start-run': ['commandId', 'epoch', 'observationId', 'ownerId', 'pageId', 'revision', 'sessionId'],
+        'set-config': ['commandId', 'configuration', 'epoch', 'ownerId', 'pageId', 'revision', 'runId', 'sessionId'],
+        'set-prompt': ['commandId', 'epoch', 'instructions', 'ownerId', 'pageId', 'revision', 'runId', 'sessionId'],
+        decide: ['commandId', 'epoch', 'observationId', 'ownerId', 'pageId', 'revision', 'runId', 'sessionId'],
+        attach: [],
+      } satisfies Record<Operation, string[]>;
+      assert.deepEqual(Object.keys(command).sort(), expectedFields[operation]);
+      assert.ok(typeof command.commandId === 'string');
       assert.equal(command.ownerId, ownerId);
       assert.equal(command.pageId, pageId);
       assert.equal(command.epoch, epoch);
     }
-    if (op === options.blocked) {
+    if (operation === options.blocked) {
       pendingStarted.resolve();
       await pendingRelease.promise;
     }
@@ -122,17 +158,49 @@ async function broker(
     if (fault === 'lost') throw new Error('SECRET_LOST_RESPONSE_SENTINEL');
     if (fault === 'rejected') return Response.json({ error: 'lease-revoked' }, { status: 409 });
     if (fault === 'malformed') return new Response('{broken json', { status: 200 });
-    if (op === 'attach')
+    if (operation === 'attach')
       return Response.json({ pageId, epoch, ownerId: fault === 'invalid' ? randomUUID() : ownerId });
-    if (op === 'detach') return Response.json({ ...command, released: fault !== 'invalid' });
-    return Response.json({ pageId, epoch,
-      commandId: fault === 'invalid' ? randomUUID() : command.commandId, observation });
+    if (operation === 'detach') return Response.json({ ...command, released: fault !== 'invalid' });
+    const correlation = { pageId, epoch, commandId: fault === 'invalid' ? randomUUID() : command.commandId };
+    if (operation === 'observe') return Response.json({ ...correlation, observation });
+    if (operation === 'get-config') return Response.json({ ...correlation, config: {
+      sessionId: command.sessionId, revision: 4, configuration, run: null,
+    } });
+    if (operation === 'get-prompt') return Response.json({ ...correlation, prompt: {
+      sessionId: command.sessionId, revision: 4, instructions: 'Synthetic instructions.', run: null,
+    } });
+    if (operation === 'start-run') return Response.json({ ...correlation, config: {
+      sessionId: command.sessionId, revision: command.revision, configuration,
+      run: baseRun,
+    } });
+    if (operation === 'set-config') return Response.json({ ...correlation, config: {
+      sessionId: command.sessionId, revision: Number(command.revision) + 1,
+      configuration: command.configuration,
+      run: { ...baseRun, runId: command.runId },
+    } });
+    if (operation === 'set-prompt') return Response.json({ ...correlation, prompt: {
+      sessionId: command.sessionId, revision: Number(command.revision) + 1,
+      instructions: command.instructions,
+      run: { ...baseRun, runId: command.runId },
+    } });
+    return Response.json({ ...correlation, decision: {
+      outcome: 'completed', reason: null, beforeObservationId: command.observationId,
+      sdkInvoked: true, action: 'turn_left', requestedTics: 6, reportedTics: 6,
+      verifiedTics: 6, cumulativeTics: 44, completionUncertain: false,
+      requestIdentity: { provider: 'OpenRouter', requestedModel: 'openai/gpt-6-luna-decisions' },
+      responseMetadata: { reportedModel: null, usage: { input: null, output: null, total: null } },
+      observation: decisionObservation,
+    } });
   };
   return {
     create: (root = temporaryRoot) => createDoomClient({ transport, temporaryRoot: root }),
     temporaryRoot,
     calls,
+    commands,
     observation,
+    sessionId,
+    runId: baseRun.runId,
+    configuration,
     png,
     pendingStarted: pendingStarted.promise,
     releasePending: () => pendingRelease.resolve(),
@@ -144,7 +212,117 @@ test('unattached observe and detach fail without dispatch', async (t) => {
   const client = fake.create();
   await assert.rejects(client.observe(), /not attached/);
   await assert.rejects(client.detach(), /not attached/);
+  const sessionId = fake.sessionId;
+  const unavailable = [
+    () => client.getConfig(sessionId),
+    () => client.getPrompt(sessionId),
+    () => client.startRun({ observationId: fake.observation.observationId, sessionId, revision: 0 }),
+    () => client.setConfig({ sessionId, runId: fake.runId, revision: 0, configFile: '/missing/config.json' }),
+    () => client.setPrompt({ sessionId, runId: fake.runId, revision: 0, instructionsFile: '/missing/instructions.txt' }),
+    () => client.decide({ observationId: fake.observation.observationId,
+      scope: { sessionId, runId: fake.runId, revision: 0 } }),
+  ];
+  for (const call of unavailable) await assert.rejects(call(), /not attached/);
   assert.deepEqual(fake.calls, []);
+});
+
+test('all typed operations use the held lease and return parsed results', async (t) => {
+  const fake = await broker(t);
+  const client: DoomClient = fake.create();
+  const sessionId = fake.sessionId;
+  const runId = fake.runId;
+  const configFile = join(fake.temporaryRoot, 'settings.json');
+  const instructionsFile = join(fake.temporaryRoot, 'instructions.txt');
+  await writeFile(configFile, JSON.stringify(fake.configuration));
+  await writeFile(instructionsFile, 'Use the nearest doorway.');
+
+  const lease = await client.attach();
+  const config = await client.getConfig(sessionId);
+  assert.equal(config.sessionId, sessionId);
+  assert.equal(config.revision, 4);
+  assert.deepEqual(config.configuration, fake.configuration);
+  assert.equal(config.run, null);
+
+  const prompt = await client.getPrompt(sessionId);
+  assert.equal(prompt.sessionId, sessionId);
+  assert.equal(prompt.revision, 4);
+  assert.equal(prompt.instructions, 'Synthetic instructions.');
+  assert.equal(prompt.run, null);
+
+  const observationId = fake.observation.observationId;
+  const started = await client.startRun({ observationId, sessionId, revision: 7 });
+  assert.equal(started.sessionId, sessionId);
+  assert.equal(started.revision, 7);
+  assert.deepEqual(started.run, {
+    runId, active: true, limit: 3, reserved: 0, sdkInvoked: 0, remaining: 3,
+  });
+
+  const configured = await client.setConfig({ sessionId, runId, revision: 7, configFile });
+  assert.equal(configured.revision, 8);
+  assert.deepEqual(configured.configuration, fake.configuration);
+  assert.equal(configured.run?.runId, runId);
+
+  const prompted = await client.setPrompt({ sessionId, runId, revision: 8, instructionsFile });
+  assert.equal(prompted.revision, 9);
+  assert.equal(prompted.instructions, 'Use the nearest doorway.');
+  assert.equal(prompted.run?.runId, runId);
+
+  const decisionId = randomUUID();
+  const decision = await client.decide({ observationId: decisionId,
+    scope: { sessionId, runId, revision: 9 } });
+  assert.deepEqual({
+    outcome: decision.outcome, reason: decision.reason,
+    beforeObservationId: decision.beforeObservationId, sdkInvoked: decision.sdkInvoked,
+    action: decision.action, requestedTics: decision.requestedTics,
+    reportedTics: decision.reportedTics, verifiedTics: decision.verifiedTics,
+    cumulativeTics: decision.cumulativeTics, completionUncertain: decision.completionUncertain,
+    requestIdentity: decision.requestIdentity, responseMetadata: decision.responseMetadata,
+  }, {
+    outcome: 'completed', reason: null, beforeObservationId: decisionId, sdkInvoked: true,
+    action: 'turn_left', requestedTics: 6, reportedTics: 6, verifiedTics: 6,
+    cumulativeTics: 44, completionUncertain: false,
+    requestIdentity: { provider: 'OpenRouter', requestedModel: 'openai/gpt-6-luna-decisions' },
+    responseMetadata: { reportedModel: null, usage: { input: null, output: null, total: null } },
+  });
+  assert.equal(decision.observation?.tic, 44);
+  assert.ok(decision.pngPath);
+  assert.deepEqual(await readFile(decision.pngPath), fake.png);
+
+  const requests = fake.commands.filter(({ op }) => op !== 'attach');
+  assert.deepEqual(requests.map(({ op }) => op), [
+    'get-config', 'get-prompt', 'start-run', 'set-config', 'set-prompt', 'decide',
+  ]);
+  for (const { command } of requests) {
+    assert.equal(command.pageId, lease.pageId);
+    assert.equal(command.ownerId, lease.ownerId);
+    assert.equal(command.epoch, lease.epoch);
+    assert.equal(Object.hasOwn(command, 'leaseFile'), false);
+  }
+  assert.equal(requests[0].command.sessionId, sessionId);
+  assert.equal(requests[1].command.sessionId, sessionId);
+  assert.deepEqual({ observationId: requests[2].command.observationId,
+    sessionId: requests[2].command.sessionId, revision: requests[2].command.revision },
+  { observationId, sessionId, revision: 7 });
+  assert.deepEqual(requests[3].command.configuration, fake.configuration,
+    'the shared executor reads the supplied config file');
+  assert.equal(requests[4].command.instructions, 'Use the nearest doorway.',
+    'the shared executor reads the supplied instructions file');
+  assert.deepEqual({ observationId: requests[5].command.observationId,
+    sessionId: requests[5].command.sessionId, runId: requests[5].command.runId,
+    revision: requests[5].command.revision },
+  { observationId: decisionId, sessionId, runId, revision: 9 });
+  assert.equal((await client.detach()).released, true);
+  const countAfterDetach = fake.calls.length;
+  const closed = [
+    () => client.getConfig(sessionId),
+    () => client.getPrompt(sessionId),
+    () => client.startRun({ observationId, sessionId, revision: 0 }),
+    () => client.setConfig({ sessionId, runId, revision: 0, configFile }),
+    () => client.setPrompt({ sessionId, runId, revision: 0, instructionsFile }),
+    () => client.decide({ observationId, scope: { sessionId, runId, revision: 0 } }),
+  ];
+  for (const call of closed) await assert.rejects(call(), /closed/);
+  assert.equal(fake.calls.length, countAfterDetach, 'closed calls do not dispatch');
 });
 
 test('attach, observe, and detach use the acknowledged lease and materialize the PNG', async (t) => {
@@ -286,6 +464,42 @@ test('overlapping attach and observation operations do not dispatch', async (t) 
   await observation;
   assert.equal((await observing.detach()).released, true);
   assert.deepEqual(observeFake.calls, ['attach', 'observe', 'detach']);
+});
+
+test('overlapping typed operations are rejected without a second dispatch', async (t) => {
+  const fake = await broker(t, { blocked: 'get-config' });
+  const client = fake.create();
+  await client.attach();
+  const request = client.getConfig(fake.sessionId);
+  await fake.pendingStarted;
+  await assert.rejects(client.getPrompt(fake.sessionId), /busy/);
+  await assert.rejects(client.startRun({ observationId: fake.observation.observationId,
+    sessionId: fake.sessionId, revision: 0 }), /busy/);
+  await assert.rejects(client.detach(), /busy/);
+  assert.deepEqual(fake.calls, ['attach', 'get-config']);
+  fake.releasePending();
+  assert.equal((await request).sessionId, fake.sessionId);
+  assert.equal((await client.detach()).released, true);
+  assert.deepEqual(fake.calls, ['attach', 'get-config', 'detach']);
+});
+
+test('uncertain mutation is safely surfaced once and explicit detach remains available', async (t) => {
+  const fake = await broker(t, { faults: { 'set-prompt': 'lost' } });
+  const client = fake.create();
+  const instructionsFile = join(fake.temporaryRoot, 'uncertain-instructions.txt');
+  await writeFile(instructionsFile, 'Try the western corridor.');
+  await client.attach();
+  await assert.rejects(client.setPrompt({ sessionId: fake.sessionId, runId: fake.runId,
+    revision: 0, instructionsFile }), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.message,
+      'Doom setPrompt unconfirmed; outcome may be unknown. No retry was made.');
+    assert.doesNotMatch(error.message, /SECRET_|stack|response body|Try the western corridor/);
+    return true;
+  });
+  assert.deepEqual(fake.calls, ['attach', 'set-prompt']);
+  assert.equal((await client.detach()).released, true);
+  assert.deepEqual(fake.calls, ['attach', 'set-prompt', 'detach']);
 });
 
 test('overlapping detach and calls after detach do not dispatch', async (t) => {

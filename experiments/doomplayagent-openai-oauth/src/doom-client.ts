@@ -1,14 +1,30 @@
 import {
   executeAgentOperation,
+  type AgentOperation,
   type AgentClientOptions,
   type AttachedLease,
+  type ConfigResult,
   type DetachedLease,
+  type MaterializedDecision,
   type MaterializedObserve,
+  type PromptResult,
 } from '../../../scripts/doom-agent-client.ts';
+import type { AgentScope } from '../../../app/src/agent-control.ts';
+
+type StartRunInput = Omit<Extract<AgentOperation, { op: 'start-run' }>, 'op' | 'leaseFile'>;
+type SetConfigInput = Omit<Extract<AgentOperation, { op: 'set-config' }>, 'op' | 'leaseFile'>;
+type SetPromptInput = Omit<Extract<AgentOperation, { op: 'set-prompt' }>, 'op' | 'leaseFile'>;
+type DecideInput = { observationId: string; scope: AgentScope };
 
 export type DoomClient = Readonly<{
   attach(): Promise<AttachedLease>;
   observe(): Promise<MaterializedObserve>;
+  getConfig(sessionId: string): Promise<ConfigResult>;
+  getPrompt(sessionId: string): Promise<PromptResult>;
+  startRun(input: StartRunInput): Promise<ConfigResult>;
+  setConfig(input: SetConfigInput): Promise<ConfigResult>;
+  setPrompt(input: SetPromptInput): Promise<PromptResult>;
+  decide(input: DecideInput): Promise<MaterializedDecision>;
   detach(): Promise<DetachedLease>;
 }>;
 
@@ -50,7 +66,7 @@ function knownBrokerCode(value: unknown): DoomAttachErrorCode | undefined {
     : undefined;
 }
 
-type State = 'new' | 'attaching' | 'ready' | 'observing' | 'detaching' |
+type State = 'new' | 'attaching' | 'ready' | 'observing' | 'operating' | 'detaching' |
   'attach-failed' | 'detached' | 'detach-failed';
 
 export function createDoomClient(options: AgentClientOptions = {}): DoomClient {
@@ -64,10 +80,36 @@ export function createDoomClient(options: AgentClientOptions = {}): DoomClient {
     if (state === 'detach-failed')
       throw new Error(`Doom detach unconfirmed; client is closed. ${recovery}`);
     if (state === 'new') throw new Error('Doom client is not attached.');
-    if (state === 'attaching' || state === 'observing' || state === 'detaching')
+    if (state === 'attaching' || state === 'observing' || state === 'operating' || state === 'detaching')
       throw new Error('Doom client is busy.');
     if (state === 'detached') throw new Error('Doom client is closed.');
     return lease!;
+  }
+
+  async function operate<T>(
+    name: string,
+    operation: (leaseFile: string, options: AgentClientOptions) => Promise<T>,
+  ): Promise<T> {
+    const attached = requireReady();
+    state = 'operating';
+    let dispatched = false;
+    try {
+      const underlyingTransport = clientOptions.transport ?? fetch;
+      const operationOptions: AgentClientOptions = {
+        ...clientOptions,
+        transport: async (input, init) => {
+          dispatched = true;
+          return underlyingTransport(input, init);
+        },
+      };
+      return await operation(attached.leaseFile, operationOptions);
+    } catch {
+      throw new Error(dispatched
+        ? `Doom ${name} unconfirmed; outcome may be unknown. No retry was made.`
+        : `Doom ${name} failed before dispatch. No retry was made.`);
+    } finally {
+      state = 'ready';
+    }
   }
 
   return Object.freeze({
@@ -76,7 +118,7 @@ export function createDoomClient(options: AgentClientOptions = {}): DoomClient {
         throw new DoomAttachError(null);
       if (state === 'detach-failed')
         throw new Error(`Doom detach unconfirmed; client is closed. ${recovery}`);
-      if (state === 'attaching' || state === 'observing' || state === 'detaching')
+      if (state === 'attaching' || state === 'observing' || state === 'operating' || state === 'detaching')
         throw new Error('Doom client is busy.');
       if (state === 'ready') throw new Error('Doom client is already attached.');
       if (state !== 'new') throw new Error('Doom client is closed.');
@@ -118,6 +160,47 @@ export function createDoomClient(options: AgentClientOptions = {}): DoomClient {
       } finally {
         state = 'ready';
       }
+    },
+    getConfig(sessionId: string): Promise<ConfigResult> {
+      return operate('getConfig', (leaseFile, operationOptions) =>
+        executeAgentOperation({ op: 'get-config', sessionId, leaseFile }, operationOptions));
+    },
+    getPrompt(sessionId: string): Promise<PromptResult> {
+      return operate('getPrompt', (leaseFile, operationOptions) =>
+        executeAgentOperation({ op: 'get-prompt', sessionId, leaseFile }, operationOptions));
+    },
+    startRun(input: StartRunInput): Promise<ConfigResult> {
+      return operate('startRun', (leaseFile, operationOptions) =>
+        executeAgentOperation({
+          op: 'start-run', observationId: input.observationId, sessionId: input.sessionId,
+          revision: input.revision, leaseFile,
+        }, operationOptions));
+    },
+    setConfig(input: SetConfigInput): Promise<ConfigResult> {
+      return operate('setConfig', (leaseFile, operationOptions) =>
+        executeAgentOperation({
+          op: 'set-config', sessionId: input.sessionId, runId: input.runId,
+          revision: input.revision, configFile: input.configFile, leaseFile,
+        }, operationOptions));
+    },
+    setPrompt(input: SetPromptInput): Promise<PromptResult> {
+      return operate('setPrompt', (leaseFile, operationOptions) =>
+        executeAgentOperation({
+          op: 'set-prompt', sessionId: input.sessionId, runId: input.runId,
+          revision: input.revision, instructionsFile: input.instructionsFile, leaseFile,
+        }, operationOptions));
+    },
+    decide(input: DecideInput): Promise<MaterializedDecision> {
+      return operate('decide', (leaseFile, operationOptions) =>
+        executeAgentOperation({
+          op: 'decide', observationId: input.observationId,
+          scope: {
+            sessionId: input.scope.sessionId,
+            runId: input.scope.runId,
+            revision: input.scope.revision,
+          },
+          leaseFile,
+        }, operationOptions));
     },
     async detach(): Promise<DetachedLease> {
       const attached = requireReady();
