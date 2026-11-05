@@ -165,37 +165,20 @@ export class PlaybackError extends Error {
 	}
 }
 
-/** One host-authorized decision, no retries or subsequent decision slots. */
-export async function play(
+/** Hand one validated navigation judgment to the existing decision pipeline. */
+async function executeOneDecision(
 	doomClient: DoomClient,
-	doomTools: DoomTools,
-	openAIProvider: OpenAIProvider,
-	options: PlayOptions,
-): Promise<PlayResult> {
-	let stage = "observation";
+	before: MaterializedObserve,
+	{ judgment, target }: ReturnType<typeof validateJudgment>,
+) {
+	let stage = "guidance";
 	let decisionMayHaveBeenSent = false;
 	let directory: string | undefined;
 	const warnings: string[] = [];
-	let judgment: Judgment | null = null;
 	try {
-		const before = await doomClient.observe();
-		const image = await reasoningImage(before);
-		stage = "landmarks";
-		const memory = await doomTools.findMemory(before);
-		stage = "judgment";
-		const assessment = validateJudgment(
-			await (options.infer ?? interpretObservation)(
-				openAIProvider.responses(options.modelId),
-				{ image, state: modelState(before), memory },
-			),
-			memory,
-		);
-		judgment = assessment.judgment;
-		const { target } = assessment;
 		// Prepare the bounded amendment before claiming the nonrefundable run.
 		let instructionsFile: string | undefined;
 		if (target) {
-			stage = "guidance";
 			const instructions = composeGuidance(
 				before.configuration.instructionTemplate,
 				target,
@@ -215,7 +198,7 @@ export async function play(
 			revision: before.revision,
 		});
 		// The broker chooses the budget. This experiment requires one slot;
-		// active/fresh claim, session and revision are enforced below play().
+		// the browser/executor enforce active/fresh claim, session and revision.
 		if (started.run?.limit !== 1)
 			throw new Error(
 				"The one-decision experiment requires a run budget of 1.",
@@ -256,8 +239,6 @@ export async function play(
 		// The executor parsed/correlated the receipt and verified its resulting
 		// PNG. No second action depends on it; report it without another readback.
 		return {
-			memoryStatus: memory.status,
-			candidateCount: memory.candidates.length,
 			judgment,
 			promptChanged: instructionsFile !== undefined,
 			runId: scope.runId,
@@ -289,5 +270,43 @@ export async function play(
 			await rm(directory, { recursive: true, force: true }).catch(() => {
 				warnings.push("temporary-prompt-cleanup-failed");
 			});
+	}
+}
+
+/** One host-authorized decision, no retries or subsequent decision slots. */
+export async function play(
+	doomClient: DoomClient,
+	doomTools: DoomTools,
+	openAIProvider: OpenAIProvider,
+	options: PlayOptions,
+): Promise<PlayResult> {
+	let stage = "observation";
+	try {
+		const observation = await doomClient.observe();
+		const image = await reasoningImage(observation);
+		stage = "landmarks";
+		const memory = await doomTools.findMemory(observation);
+		stage = "judgment";
+		const assessment = validateJudgment(
+			await (options.infer ?? interpretObservation)(
+				openAIProvider.responses(options.modelId),
+				{ image, state: modelState(observation), memory },
+			),
+			memory,
+		);
+		const decision = await executeOneDecision(
+			doomClient,
+			observation,
+			assessment,
+		);
+		return {
+			memoryStatus: memory.status,
+			candidateCount: memory.candidates.length,
+			...decision,
+		};
+	} catch (cause) {
+		// The handoff already records its stage, judgment and dispatch uncertainty.
+		if (cause instanceof PlaybackError) throw cause;
+		throw new PlaybackError(stage, false, [], null, cause);
 	}
 }

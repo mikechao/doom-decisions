@@ -12,6 +12,10 @@ Decisions provider/model. OAuth model availability and structured-output/image
 support remain unverified against a live account. There is no automatic fallback
 or model retry.
 
+`play()` owns observation, landmark lookup and navigation judgment. Its private
+`executeOneDecision()` helper owns the handoff: prompt composition and temporary
+file cleanup, run claiming, revision CAS, fresh observation and one decision.
+
 The host sequence is:
 
 1. `main.ts` composes the provider/tools/client, attaches once, awaits `play()`,
@@ -65,7 +69,7 @@ independent security boundary.
 | --- | --- |
 | Already guaranteed below `play()` | [`executeAgentOperation`](../../scripts/doom-agent-client.ts) validates wire commands, lease/page/epoch/command correlation, calls `parseAgentObserveResult`, `parseAgentConfigResult`, `parseAgentPromptResult` and `parseAgentDecisionResult`, and verifies PNG bytes/hashes before materializing. It checks settings session/run correlation, exact submitted prompt echo and revision + 1, start-run active/revision acknowledgment, and decision `beforeObservationId`. Removed duplicate envelopes, parsers, path/header checks, CAS echoes and receipt correlation. `DoomClient` delegates these guarantees rather than implementing DTO parsing itself; its own responsibility is lease lifecycle and rejecting overlapping calls. |
 | Already guaranteed by browser/controller | [`startAgentRun`, `agentConfig`/`agentPrompt`, `agentNext`](../../app/src/session-controller.ts) enforce one-shot claim, session/run/revision CAS, fresh observation admission and nonrefundable reservations. `decide` fences one SDK create; `runOneDecision`, `action` and `captureAgentObservation` verify native stepping, resulting frame and Canvas linkage. [`agent-bridge.mjs`](../../app/agent-bridge.mjs) issues the process budget once and rejects duplicate commands; [`agent-browser.ts`](../../app/src/agent-browser.ts) also rejects duplicates and fences Stop/revocation. Removed repeated run counters/active checks, config equality and native receipt arithmetic. |
-| Required across operations | `play()` owns ordering, selected-candidate judgment validation, prompt-size preflight, the one-slot budget requirement, a fresh post-CAS observation and continuity with the judgment's session/map/tic/revision. It calls `decide` once and never retries an ambiguous mutation. Its initial PNG rehash remains necessary because the file is reread after executor validation. [`doom-tools.ts`](src/doom-tools.ts) retains pose range checks/conversion, host-derived query location, candidate validation and unverified-memory labeling; the duplicate pose range check in `play()` is removed. |
+| Required across operations | `play()` owns the initial PNG rehash and selected-candidate judgment validation. Its private `executeOneDecision()` helper owns prompt-size preflight, the one-slot budget requirement, a fresh post-CAS observation and continuity with the judgment's session/map/tic/revision. It calls `decide` once and never retries an ambiguous mutation. The initial PNG rehash remains necessary because the file is reread after executor validation. [`doom-tools.ts`](src/doom-tools.ts) retains pose range checks/conversion, host-derived query location, candidate validation and unverified-memory labeling; the duplicate pose range check in `play()` is removed. |
 | Nice-to-have / overly strict | Full equality of frames, telemetry, facing probes, previous actions, counters, PNG hashes, configurations and entire run snapshots is unnecessary for this one-step flow. A passive capture may change capture counters. Same session/map/tic retains the simulation checkpoint; revision and browser admission handle configuration. Removed final-accounting readback and resulting-image rereads, since neither controls another dispatch. |
 
 The decision parser is not a complete independent native verifier: for example,
