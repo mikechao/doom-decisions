@@ -123,20 +123,14 @@ if (
 			console.error(error.message);
 			for (const failure of error.errors) {
 				if (failure instanceof PlaybackError)
-					console.error(failure.message, {
-						judgment: failure.judgment,
-						warnings: failure.warnings,
-					});
+					console.error(failure.message, { judgment: failure.judgment });
 				else
 					console.error(
 						"Doom operation or cleanup unconfirmed. Use Stop Agent before another attach.",
 					);
 			}
 		} else if (error instanceof PlaybackError)
-			console.error(error.message, {
-				judgment: error.judgment,
-				warnings: error.warnings,
-			});
+			console.error(error.message, { judgment: error.judgment });
 		else if (error instanceof Error && error.message === usage)
 			console.error(usage);
 		else if (args.length === 0 && safeDoomMessage && error instanceof Error)

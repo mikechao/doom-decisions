@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import fs, { readFile, writeFile } from "node:fs/promises";
-import { syncBuiltinESMExports } from "node:module";
+import { readFile, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { PlaybackError, play } from "../src/doom-play-agent.ts";
 import { createDoomTools } from "../src/doom-tools.ts";
@@ -51,14 +50,6 @@ test("host query precedes inference; model receives exact verified bytes and com
 
 test("valid landmark selection preserves base and substitution through CAS, then decides once", async (t) => {
 	const f = await fixture(t);
-	const allocation = t.mock.method(fs, "mkdtemp", async () => {
-		throw new Error("play must not allocate temporary prompt files");
-	});
-	syncBuiltinESMExports();
-	t.after(() => {
-		allocation.mock.restore();
-		syncBuiltinESMExports();
-	});
 	f.state.judgment = {
 		updatePrompt: true,
 		targetNoteId: f.note.noteId,
@@ -76,8 +67,6 @@ test("valid landmark selection preserves base and substitution through CAS, then
 		"decide",
 	]);
 	assert.equal(result.promptChanged, true);
-	assert.equal(allocation.mock.callCount(), 0);
-	assert.deepEqual(result.warnings, []);
 	assert.deepEqual(result.judgment, f.state.judgment);
 	assert.ok(
 		f.state.instructions.startsWith(f.base.configuration.instructionTemplate),

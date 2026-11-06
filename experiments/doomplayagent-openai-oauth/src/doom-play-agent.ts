@@ -133,17 +133,14 @@ export type PlayResult = {
 		reported: number | null;
 		verified: number | null;
 	};
-	warnings: string[];
 };
 export class PlaybackError extends Error {
 	readonly stage: string;
 	readonly decisionMayHaveBeenSent: boolean;
-	readonly warnings: string[];
 	readonly judgment: Judgment | null;
 	constructor(
 		stage: string,
 		decisionMayHaveBeenSent: boolean,
-		warnings: string[],
 		judgment: Judgment | null,
 		cause: unknown,
 	) {
@@ -154,7 +151,6 @@ export class PlaybackError extends Error {
 		this.name = "PlaybackError";
 		this.stage = stage;
 		this.decisionMayHaveBeenSent = decisionMayHaveBeenSent;
-		this.warnings = warnings;
 		this.judgment = judgment;
 	}
 }
@@ -167,7 +163,6 @@ async function executeOneDecision(
 ) {
 	let stage = "guidance";
 	let decisionMayHaveBeenSent = false;
-	const warnings: string[] = [];
 	try {
 		// Prepare the bounded amendment before claiming the nonrefundable run.
 		const instructions = target
@@ -236,18 +231,11 @@ async function executeOneDecision(
 				reported: receipt.reportedTics,
 				verified: receipt.verifiedTics,
 			},
-			warnings,
 		};
 	} catch (cause) {
 		// Preserve debugging causes for callers; main prints only this bounded
 		// message, never raw model/transport errors that could contain credentials.
-		throw new PlaybackError(
-			stage,
-			decisionMayHaveBeenSent,
-			warnings,
-			judgment,
-			cause,
-		);
+		throw new PlaybackError(stage, decisionMayHaveBeenSent, judgment, cause);
 	}
 }
 
@@ -283,6 +271,6 @@ export async function play(
 	} catch (cause) {
 		// The handoff already records its stage, judgment and dispatch uncertainty.
 		if (cause instanceof PlaybackError) throw cause;
-		throw new PlaybackError(stage, false, [], null, cause);
+		throw new PlaybackError(stage, false, null, cause);
 	}
 }

@@ -13,8 +13,8 @@ support remain unverified against a live account. There is no automatic fallback
 or model retry.
 
 `play()` owns observation, landmark lookup and navigation judgment. Its private
-`executeOneDecision()` helper owns the handoff: prompt composition and temporary
-file cleanup, run claiming, revision CAS, fresh observation and one decision.
+`executeOneDecision()` helper owns the handoff: prompt composition, run claiming,
+revision CAS, fresh observation and one decision.
 
 The host sequence is:
 

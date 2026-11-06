@@ -691,7 +691,7 @@ test("all typed operations use the held lease and return parsed results", async 
 	assert.equal(
 		requests[4].command.instructions,
 		"Use the nearest doorway.",
-		"the shared executor reads the supplied instructions file",
+		"the shared executor preserves the supplied instructions string",
 	);
 	assert.deepEqual(
 		{
@@ -993,7 +993,6 @@ const offlinePlayback: typeof import("../src/doom-play-agent.ts").play = async (
 		completionUncertain: false,
 		cumulativeTics: null,
 		tics: { requested: null, reported: null, verified: null },
-		warnings: [],
 	};
 };
 
