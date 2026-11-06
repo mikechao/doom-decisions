@@ -29,7 +29,9 @@ export type PlayOptions = {
 	modelId: string;
 };
 
-async function reasoningImage(observation: MaterializedObserve) {
+async function readVerifiedPng(
+	observation: MaterializedObserve,
+): Promise<Buffer> {
 	// The executor validated the PNG before writing it. We read it again, so
 	// bind the exact owned inference bytes to that validated digest (file TOCTOU).
 	const image = await readFile(observation.pngPath);
@@ -39,6 +41,7 @@ async function reasoningImage(observation: MaterializedObserve) {
 		throw new Error("Materialized Doom PNG changed before inference.");
 	return image;
 }
+
 function modelState(o: Omit<AgentObserveResult, "png">) {
 	return {
 		map: { mapSlot: o.mapIdentity.mapSlot },
@@ -249,7 +252,7 @@ export async function play(
 	let stage = "observation";
 	try {
 		const observation = await doomClient.observe();
-		const image = await reasoningImage(observation);
+		const image = await readVerifiedPng(observation);
 		stage = "landmarks";
 		const memory = await doomTools.findMemory(observation);
 		stage = "judgment";
