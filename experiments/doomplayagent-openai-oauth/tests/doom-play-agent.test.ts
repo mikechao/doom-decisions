@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import fs, { readFile, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import test from "node:test";
 import { PlaybackError, play } from "../src/doom-play-agent.ts";
 import { createDoomTools } from "../src/doom-tools.ts";
@@ -50,6 +51,14 @@ test("host query precedes inference; model receives exact verified bytes and com
 
 test("valid landmark selection preserves base and substitution through CAS, then decides once", async (t) => {
 	const f = await fixture(t);
+	const allocation = t.mock.method(fs, "mkdtemp", async () => {
+		throw new Error("play must not allocate temporary prompt files");
+	});
+	syncBuiltinESMExports();
+	t.after(() => {
+		allocation.mock.restore();
+		syncBuiltinESMExports();
+	});
 	f.state.judgment = {
 		updatePrompt: true,
 		targetNoteId: f.note.noteId,
@@ -67,6 +76,8 @@ test("valid landmark selection preserves base and substitution through CAS, then
 		"decide",
 	]);
 	assert.equal(result.promptChanged, true);
+	assert.equal(allocation.mock.callCount(), 0);
+	assert.deepEqual(result.warnings, []);
 	assert.deepEqual(result.judgment, f.state.judgment);
 	assert.ok(
 		f.state.instructions.startsWith(f.base.configuration.instructionTemplate),
@@ -371,31 +382,6 @@ test("broker budget greater than one stops before dispatch", async (t) => {
 	);
 	assert.equal(f.events.includes("decide"), false);
 });
-
-for (const fail of [false, true]) {
-	test(`temporary guidance is removed after ${fail ? "lost CAS acknowledgment" : "success"}`, async (t) => {
-		const f = await fixture(t);
-		f.state.judgment = {
-			updatePrompt: true,
-			targetNoteId: f.note.noteId,
-			objective: "Explore",
-			uncertainty: "Unsure",
-		};
-		let path = "";
-		const setPrompt = f.client.setPrompt;
-		f.client.setPrompt = async (input) => {
-			path = input.instructionsFile;
-			const ack = await setPrompt(input);
-			if (fail) throw new Error("response lost");
-			return ack;
-		};
-		const running = play(f.client, f.tools, f.provider, f.options);
-		if (fail) await assert.rejects(running, PlaybackError);
-		else await running;
-		assert.ok(path);
-		await assert.rejects(readFile(path), { code: "ENOENT" });
-	});
-}
 
 test("oversized navigation amendment fails before run claim", async (t) => {
 	const f = await fixture(t);

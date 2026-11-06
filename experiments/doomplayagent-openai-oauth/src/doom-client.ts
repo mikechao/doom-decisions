@@ -19,10 +19,7 @@ type SetConfigInput = Omit<
 	Extract<AgentOperation, { op: "set-config" }>,
 	"op" | "leaseFile"
 >;
-type SetPromptInput = Omit<
-	Extract<AgentOperation, { op: "set-prompt" }>,
-	"op" | "leaseFile"
->;
+type SetPromptInput = AgentScope & { instructions: string };
 type DecideInput = { observationId: string; scope: AgentScope };
 
 export type DoomClient = Readonly<{
@@ -258,7 +255,7 @@ export function createDoomClient(options: AgentClientOptions = {}): DoomClient {
 						sessionId: input.sessionId,
 						runId: input.runId,
 						revision: input.revision,
-						instructionsFile: input.instructionsFile,
+						instructions: input.instructions,
 						leaseFile,
 					},
 					operationOptions,

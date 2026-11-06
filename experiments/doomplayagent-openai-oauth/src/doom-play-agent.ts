@@ -1,7 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import type { OpenAIProvider } from "@ai-sdk/openai";
 import { generateText, type LanguageModel, Output } from "ai";
 import { z } from "zod";
@@ -173,23 +171,12 @@ async function executeOneDecision(
 ) {
 	let stage = "guidance";
 	let decisionMayHaveBeenSent = false;
-	let directory: string | undefined;
 	const warnings: string[] = [];
 	try {
 		// Prepare the bounded amendment before claiming the nonrefundable run.
-		let instructionsFile: string | undefined;
-		if (target) {
-			const instructions = composeGuidance(
-				before.configuration.instructionTemplate,
-				target,
-			);
-			directory = await mkdtemp(join(tmpdir(), "doom-one-step-"));
-			instructionsFile = join(directory, "instructions.txt");
-			await writeFile(instructionsFile, instructions, {
-				mode: 0o600,
-				flag: "wx",
-			});
-		}
+		const instructions = target
+			? composeGuidance(before.configuration.instructionTemplate, target)
+			: undefined;
 
 		stage = "start-run";
 		const started = await doomClient.startRun({
@@ -208,11 +195,11 @@ async function executeOneDecision(
 			runId: started.run.runId,
 			revision: started.revision,
 		};
-		if (instructionsFile) {
+		if (instructions !== undefined) {
 			stage = "prompt-cas";
 			const changed = await doomClient.setPrompt({
 				...scope,
-				instructionsFile,
+				instructions,
 			});
 			scope.revision = changed.revision;
 		}
@@ -240,7 +227,7 @@ async function executeOneDecision(
 		// PNG. No second action depends on it; report it without another readback.
 		return {
 			judgment,
-			promptChanged: instructionsFile !== undefined,
+			promptChanged: instructions !== undefined,
 			runId: scope.runId,
 			outcome: receipt.outcome,
 			reason: receipt.reason,
@@ -265,11 +252,6 @@ async function executeOneDecision(
 			judgment,
 			cause,
 		);
-	} finally {
-		if (directory)
-			await rm(directory, { recursive: true, force: true }).catch(() => {
-				warnings.push("temporary-prompt-cleanup-failed");
-			});
 	}
 }
 

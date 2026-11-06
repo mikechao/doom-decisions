@@ -6,7 +6,10 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import type { AgentObserveResult } from "../../../app/src/agent-control.ts";
 import { createAgentMapIdentity } from "../../../app/src/agent-observation.ts";
-import type { AgentOperation } from "../../../scripts/doom-agent-client.ts";
+import {
+	type AgentOperation,
+	executeAgentOperation,
+} from "../../../scripts/doom-agent-client.ts";
 import { DoomAttachError, type DoomClient } from "../src/doom-client.ts";
 
 type Operation = AgentOperation["op"];
@@ -387,6 +390,7 @@ async function broker(
 				temporaryRoot: root,
 			}),
 		temporaryRoot,
+		transport,
 		calls,
 		commands,
 		observation,
@@ -398,6 +402,116 @@ async function broker(
 		releasePending: () => pendingRelease.resolve(),
 	};
 }
+
+for (const instructions of [
+	" \tExplore for {{tics}} tics.\r\n  Preserve spacing.\t \n",
+	"  尋找出口 — café 🛡️ {{tics}}.\n",
+	"界".repeat(16000),
+]) {
+	test(`string and file prompt sources converge exactly, length ${instructions.length}`, async (t) => {
+		const fake = await broker(t);
+		const client = fake.create();
+		const lease = await client.attach();
+		const scope = {
+			leaseFile: lease.leaseFile,
+			sessionId: fake.sessionId,
+			runId: fake.runId,
+			revision: 7,
+		};
+		const instructionsFile = join(fake.temporaryRoot, "instructions.txt");
+		await writeFile(instructionsFile, instructions);
+		const fromFile = await executeAgentOperation(
+			{ op: "set-prompt", ...scope, instructionsFile },
+			{
+				transport: async (url, init) => {
+					const response = await fake.transport(url, init);
+					// Acknowledgment must use the submitted snapshot, not a reread.
+					await writeFile(instructionsFile, "Changed after submission.");
+					return response;
+				},
+			},
+		);
+		const fromString = await client.setPrompt({ ...scope, instructions });
+		const { commandId: fileId, ...fileCommand } = fake.commands[1].command;
+		const { commandId: stringId, ...stringCommand } = fake.commands[2].command;
+		assert.notEqual(fileId, stringId);
+		assert.deepEqual(stringCommand, fileCommand);
+		assert.equal(JSON.stringify(stringCommand), JSON.stringify(fileCommand));
+		assert.equal(stringCommand.instructions, instructions);
+		assert.equal(fromFile.instructions, instructions);
+		assert.equal(fromString.instructions, instructions);
+		assert.equal(fromString.revision, scope.revision + 1);
+		assert.equal(fromString.run?.runId, scope.runId);
+		assert.deepEqual(fake.calls, ["attach", "set-prompt", "set-prompt"]);
+	});
+}
+
+test("invalid prompt sources and file constraints reject before transport", async (t) => {
+	const fake = await broker(t);
+	const lease = await fake.create().attach();
+	const scope = {
+		leaseFile: lease.leaseFile,
+		sessionId: fake.sessionId,
+		runId: fake.runId,
+		revision: 0,
+	};
+	const instructionsFile = join(fake.temporaryRoot, "instructions.txt");
+	await writeFile(instructionsFile, "Explore {{tics}}.");
+	for (const source of [
+		{},
+		{ instructions: "Explore", instructionsFile },
+		{ instructions: "Explore", instructionsFile: undefined },
+		{ instructions: undefined, instructionsFile },
+		{ instructions: undefined },
+		{ instructions: null },
+		{ instructions: 123 },
+		{ instructions: "" },
+		{ instructions: " \t\r\n" },
+		{ instructions: "x".repeat(16001) },
+		{ instructionsFile: undefined },
+		{ instructionsFile: 123 },
+		{ instructionsFile: "relative.txt" },
+		{ instructionsFile: `file://${instructionsFile}` },
+		{ instructionsFile: join(fake.temporaryRoot, ".env") },
+		{ instructionsFile: join(fake.temporaryRoot, ".env.agent.local") },
+	]) {
+		await assert.rejects(
+			executeAgentOperation(
+				{ op: "set-prompt", ...scope, ...source } as Extract<
+					AgentOperation,
+					{ op: "set-prompt" }
+				>,
+				{ transport: fake.transport },
+			),
+			/Invalid (command|settings file)\./,
+		);
+	}
+	await assert.rejects(
+		executeAgentOperation(
+			{
+				op: "set-prompt",
+				...scope,
+				instructionsFile: join(fake.temporaryRoot, "missing.txt"),
+			},
+			{ transport: fake.transport },
+		),
+		{ code: "ENOENT" },
+	);
+	for (const [length, error] of [
+		[64000, /Invalid command\./],
+		[64001, /Invalid settings file\./],
+	] as const) {
+		await writeFile(instructionsFile, "x".repeat(length));
+		await assert.rejects(
+			executeAgentOperation(
+				{ op: "set-prompt", ...scope, instructionsFile },
+				{ transport: fake.transport },
+			),
+			error,
+		);
+	}
+	assert.deepEqual(fake.calls, ["attach"]);
+});
 
 test("unattached observe and detach fail without dispatch", async (t) => {
 	const fake = await broker(t);
@@ -426,7 +540,7 @@ test("unattached observe and detach fail without dispatch", async (t) => {
 				sessionId,
 				runId: fake.runId,
 				revision: 0,
-				instructionsFile: "/missing/instructions.txt",
+				instructions: "Explore {{tics}}.",
 			}),
 		() =>
 			client.decide({
@@ -444,9 +558,7 @@ test("all typed operations use the held lease and return parsed results", async 
 	const sessionId = fake.sessionId;
 	const runId = fake.runId;
 	const configFile = join(fake.temporaryRoot, "settings.json");
-	const instructionsFile = join(fake.temporaryRoot, "instructions.txt");
 	await writeFile(configFile, JSON.stringify(fake.configuration));
-	await writeFile(instructionsFile, "Use the nearest doorway.");
 
 	const lease = await client.attach();
 	const config = await client.getConfig(sessionId);
@@ -492,7 +604,7 @@ test("all typed operations use the held lease and return parsed results", async 
 		sessionId,
 		runId,
 		revision: 8,
-		instructionsFile,
+		instructions: "Use the nearest doorway.",
 	});
 	assert.equal(prompted.revision, 9);
 	assert.equal(prompted.instructions, "Use the nearest doorway.");
@@ -597,7 +709,13 @@ test("all typed operations use the held lease and return parsed results", async 
 		() => client.getPrompt(sessionId),
 		() => client.startRun({ observationId, sessionId, revision: 0 }),
 		() => client.setConfig({ sessionId, runId, revision: 0, configFile }),
-		() => client.setPrompt({ sessionId, runId, revision: 0, instructionsFile }),
+		() =>
+			client.setPrompt({
+				sessionId,
+				runId,
+				revision: 0,
+				instructions: "Explore {{tics}}.",
+			}),
 		() =>
 			client.decide({
 				observationId,
@@ -795,18 +913,13 @@ test("overlapping typed operations are rejected without a second dispatch", asyn
 test("uncertain mutation is safely surfaced once and explicit detach remains available", async (t) => {
 	const fake = await broker(t, { faults: { "set-prompt": "lost" } });
 	const client = fake.create();
-	const instructionsFile = join(
-		fake.temporaryRoot,
-		"uncertain-instructions.txt",
-	);
-	await writeFile(instructionsFile, "Try the western corridor.");
 	await client.attach();
 	await assert.rejects(
 		client.setPrompt({
 			sessionId: fake.sessionId,
 			runId: fake.runId,
 			revision: 0,
-			instructionsFile,
+			instructions: "Try the western corridor.",
 		}),
 		(error: unknown) => {
 			assert.ok(error instanceof Error);
@@ -1026,13 +1139,11 @@ for (const fault of [
 		const client = fake.create();
 		await client.attach();
 		const scope = { sessionId: fake.sessionId, runId: fake.runId, revision: 0 };
-		const instructionsFile = join(fake.temporaryRoot, "guidance.txt");
-		await writeFile(instructionsFile, "Explore {{tics}}.");
 		const request =
 			op === "observe"
 				? client.observe()
 				: op === "set-prompt"
-					? client.setPrompt({ ...scope, instructionsFile })
+					? client.setPrompt({ ...scope, instructions: "Explore {{tics}}." })
 					: client.decide({
 							observationId: fake.observation.observationId,
 							scope,

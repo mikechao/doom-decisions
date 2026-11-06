@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PlaybackError } from "../src/doom-play-agent.ts";
 import { main } from "../src/main.ts";
@@ -80,7 +79,7 @@ test("both playback and detach failures remain available in the AggregateError",
 	assert.deepEqual(f.events, ["attach", "detach"]);
 });
 
-test("main cleans temporary guidance and detaches after an uncertain real playback transaction", async (t) => {
+test("main detaches after an uncertain real playback transaction", async (t) => {
 	const f = await fixture(t);
 	t.mock.method(console, "log", () => {});
 	f.state.judgment = {
@@ -89,23 +88,11 @@ test("main cleans temporary guidance and detaches after an uncertain real playba
 		objective: "Explore",
 		uncertainty: "Unsure",
 	};
-	let instructionsFile = "";
-	const setPrompt = f.client.setPrompt;
-	f.client.setPrompt = async (input) => {
-		instructionsFile = input.instructionsFile;
-		return setPrompt(input);
-	};
 	const decide = f.client.decide;
 	const cause = new Error("lost decision acknowledgment");
 	f.client.decide = async (input) => {
 		await decide(input);
 		throw cause;
-	};
-	const detach = f.client.detach;
-	f.client.detach = async () => {
-		assert.ok(instructionsFile);
-		await assert.rejects(readFile(instructionsFile), { code: "ENOENT" });
-		return detach();
 	};
 	await assert.rejects(
 		main(() => f.client, {

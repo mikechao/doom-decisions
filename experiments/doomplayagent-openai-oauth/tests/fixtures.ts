@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
@@ -185,7 +185,7 @@ export async function fixture(t: TestContext) {
 				input.runId !== state.run?.runId
 			)
 				throw new Error("stale CAS");
-			state.instructions = await readFile(input.instructionsFile, "utf8");
+			state.instructions = input.instructions;
 			state.configuration = {
 				...state.configuration,
 				instructionTemplate: state.instructions,

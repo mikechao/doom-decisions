@@ -33,7 +33,7 @@ The host sequence is:
    retain anchor-only Decisions guidance: the model selects a landmark, while
    free objective prose cannot introduce button presses or duration instructions.
 5. Optionally compose bounded guidance from the initial validated template and
-   selected anchor. Prepare a private temporary file before claiming the run.
+   selected anchor in memory before claiming the run.
    No extra `getPrompt` is needed: revision CAS protects that template snapshot.
 6. Claim the run using the initial observation/session/revision. Require the
    broker-selected budget to be exactly one. Optionally `setPrompt` using the
@@ -51,10 +51,10 @@ errors are conservatively unconfirmed: the client has only textual pre/post-send
 errors, so `play()` does not infer dispatch certainty from error-message parsing.
 The failure stage identifies a possibly unacknowledged run/prompt mutation;
 original causes remain available to programmatic callers. CLI output uses only
-bounded host messages, judgment diagnostics and cleanup warnings, never raw
-model/transport exceptions. Temporary guidance is removed in `finally`; cleanup
-failure is a warning and does not hide the primary failure. Playback and detach
-failures remain separate members of an `AggregateError` when both fail.
+bounded host messages and judgment diagnostics, never raw model/transport
+exceptions. Prompt updates pass strings directly to the shared executor; no
+temporary prompt file is created. Playback and detach failures remain separate
+members of an `AggregateError` when both fail.
 
 There is no second action slot, config write, autonomous loop or subagent. The
 lease-owned prompt amendment is not restored through another mutation; the flow
@@ -90,8 +90,10 @@ node --experimental-strip-types --test tests/*.test.ts
 Tests use fake Doom clients/transports, fake model responses, fake memory and
 temporary files. PNG fixtures exercise protocol header/hash checks, not decoding
 or native rendering. These checks do not use OAuth credentials, an actual memory
-DB, a browser, Doom/WASM or a paid API. The legacy client tests still verify the
-shared executor through an injected fake HTTP transport.
+DB, a browser, Doom/WASM or a paid API. The client tests verify string/file prompt
+convergence and the shared executor through an injected fake HTTP transport.
+Existing agent, CLI and MCP callers retain absolute-file prompt inputs and the
+same validated wire command.
 
 ## Suggested live smoke, requiring separate operator authorization
 

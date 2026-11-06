@@ -45,7 +45,7 @@ export type AgentOperation =
   | ({ op: 'get-config' | 'get-prompt'; sessionId: string } & FileLease)
   | ({ op: 'start-run'; observationId: string; sessionId: string; revision: number } & FileLease)
   | ({ op: 'set-config'; configFile: string } & FileLease & AgentScope)
-  | ({ op: 'set-prompt'; instructionsFile: string } & FileLease & AgentScope)
+  | ({ op: 'set-prompt'; instructions?: string; instructionsFile?: string } & FileLease & AgentScope)
   | ({ op: 'decide'; observationId: string; scope?: AgentScope } & FileLease);
 
 export type AgentClientOptions = { transport?: typeof fetch; temporaryRoot?: string };
@@ -187,9 +187,18 @@ export async function executeAgentOperation(
   if (input.op === 'set-config' || input.op === 'set-prompt')
     Object.assign(command, { sessionId: input.sessionId, runId: input.runId, revision: input.revision });
   if (input.op === 'decide' && input.scope) Object.assign(command, input.scope);
-  if (input.op === 'set-config' || input.op === 'set-prompt') {
+  if (
+    input.op === 'set-prompt' &&
+    Object.hasOwn(input, 'instructions') === Object.hasOwn(input, 'instructionsFile')
+  )
+    throw Error('Invalid command.');
+  if (input.op === 'set-prompt' && Object.hasOwn(input, 'instructions')) {
+    if (typeof input.instructions !== 'string') throw Error('Invalid command.');
+    command.instructions = input.instructions;
+  } else if (input.op === 'set-config' || input.op === 'set-prompt') {
     const file = input.op === 'set-config' ? input.configFile : input.instructionsFile;
-    if (!isAbsolute(file) || /(^|\/)\.env[^/]*$/.test(file)) throw Error('Invalid settings file.');
+    if (typeof file !== 'string' || !isAbsolute(file) || /(^|\/)\.env[^/]*$/.test(file))
+      throw Error('Invalid settings file.');
     const bytes = await readFile(file);
     if (bytes.length > maxAgentInstructions * 4 + (input.op === 'set-config' ? 1024 : 0))
       throw Error('Invalid settings file.');
