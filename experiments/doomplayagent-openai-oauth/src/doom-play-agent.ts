@@ -27,10 +27,6 @@ export type InterpretationInput = {
 };
 export type PlayOptions = {
 	modelId: string;
-	infer?: (
-		model: LanguageModel,
-		input: InterpretationInput,
-	) => Promise<unknown>;
 };
 
 async function reasoningImage(observation: MaterializedObserve) {
@@ -269,13 +265,11 @@ export async function play(
 		stage = "landmarks";
 		const memory = await doomTools.findMemory(observation);
 		stage = "judgment";
-		const assessment = validateJudgment(
-			await (options.infer ?? interpretObservation)(
-				openAIProvider.responses(options.modelId),
-				{ image, state: modelState(observation), memory },
-			),
-			memory,
+		const judgment = await interpretObservation(
+			openAIProvider.responses(options.modelId),
+			{ image, state: modelState(observation), memory },
 		);
+		const assessment = validateJudgment(judgment, memory);
 		const decision = await executeOneDecision(
 			doomClient,
 			observation,

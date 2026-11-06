@@ -319,26 +319,23 @@ test("uncertain retired receipt is diagnostic and cannot trigger replay", async 
 
 test("model failure has no retry or browser mutation", async (t) => {
 	const f = await fixture(t);
-	let calls = 0;
 	const cause = Error("SECRET_MODEL_FAILURE");
+	const generate = t.mock.method(f.model, "doGenerate", async () => {
+		throw cause;
+	});
 	await assert.rejects(
-		play(f.client, f.tools, f.provider, {
-			...f.options,
-			infer: async () => {
-				calls++;
-				throw cause;
-			},
-		}),
+		play(f.client, f.tools, f.provider, f.options),
 		(error) => {
 			assert.ok(error instanceof PlaybackError);
 			assert.equal(error.cause, cause);
+			assert.equal(error.stage, "judgment");
 			assert.equal(error.decisionMayHaveBeenSent, false);
 			assert.match(error.message, /No decision was sent/);
 			assert.doesNotMatch(error.message, /SECRET/);
 			return true;
 		},
 	);
-	assert.equal(calls, 1);
+	assert.equal(generate.mock.callCount(), 1);
 	assert.deepEqual(f.events, ["observe", "memory"]);
 });
 
@@ -352,19 +349,25 @@ test("file changes after verification cannot change the owned inference bytes", 
 		return o;
 	};
 	const findMemory = f.tools.findMemory;
+	let changedPath = "";
 	f.tools.findMemory = async (observation) => {
-		await writeFile(path, "changed later");
+		changedPath = path;
+		await writeFile(changedPath, "changed later");
 		return findMemory(observation);
 	};
-	const result = await play(f.client, f.tools, f.provider, {
-		...f.options,
-		infer: async (_model, input) => {
-			assert.deepEqual(input.image, f.png);
-			assert.equal((await readFile(path)).toString(), "changed later");
-			return noUpdate;
-		},
-	});
+	const result = await play(f.client, f.tools, f.provider, f.options);
 	assert.equal(result.outcome, "completed");
+	const input = f.state.modelInput as Parameters<typeof f.model.doGenerate>[0];
+	const user = input.prompt.find((message) => message.role === "user");
+	assert.ok(user);
+	const image = user.content.find((part) => part.type === "file");
+	assert.ok(
+		image &&
+			image.data.type === "data" &&
+			image.data.data instanceof Uint8Array,
+	);
+	assert.deepEqual(Buffer.from(image.data.data), f.png);
+	assert.equal((await readFile(changedPath)).toString(), "changed later");
 });
 
 test("broker budget greater than one stops before dispatch", async (t) => {
