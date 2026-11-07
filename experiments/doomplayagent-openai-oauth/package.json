@@ -10,14 +10,15 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "ai": "^7.0.159",
     "@ai-sdk/openai": "^4.0.0",
     "@openai-oauth/core": "^2.0.0",
     "@openai-oauth/local": "^2.0.0",
+    "ai": "^7.0.159",
+    "consola": "3.4.2",
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "typescript": "^7.0.2",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "typescript": "^7.0.2"
   }
 }

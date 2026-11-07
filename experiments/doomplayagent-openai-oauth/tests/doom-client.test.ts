@@ -967,7 +967,6 @@ test("main awaits offline playback and then detaches", async (t) => {
 	await main(() => fake.create(), { playback: offlinePlayback });
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);
 	assert.ok(messages.includes("Doom one-decision result:"));
-	assert.ok(messages.includes("Doom lease detached:"));
 });
 
 // Legacy transport tests inject playback so they never invoke real memory/model.
@@ -1067,30 +1066,34 @@ test("main detaches after observation failure and reports release only after ack
 	const { main } = await import("../src/main.ts");
 	const fake = await broker(t, { faults: { observe: "rejected" } });
 	const messages: string[] = [];
-	t.mock.method(console, "log", (message?: unknown) =>
-		messages.push(String(message)),
-	);
+	t.mock.method(process.stderr, "write", (chunk: unknown) => {
+		messages.push(String(chunk));
+		return true;
+	});
 	await assert.rejects(
 		main(() => fake.create(), { playback: offlinePlayback }),
 		/Doom observation unconfirmed/,
 	);
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);
-	assert.ok(messages.includes("Doom lease detached:"));
+	assert.match(messages.join(""), /\[doom\] Lease detached/);
 });
 
 test("main does not claim lease release when detach acknowledgment fails", async (t) => {
 	const { main } = await import("../src/main.ts");
 	const fake = await broker(t, { faults: { detach: "lost" } });
 	const messages: string[] = [];
-	t.mock.method(console, "log", (message?: unknown) =>
-		messages.push(String(message)),
-	);
+	t.mock.method(console, "log", () => {});
+	t.mock.method(process.stderr, "write", (chunk: unknown) => {
+		messages.push(String(chunk));
+		return true;
+	});
 	await assert.rejects(
 		main(() => fake.create(), { playback: offlinePlayback }),
 		/Doom detach unconfirmed/,
 	);
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);
-	assert.equal(messages.includes("Doom lease detached:"), false);
+	assert.doesNotMatch(messages.join(""), /Lease detached/);
+	assert.match(messages.join(""), /Detach unconfirmed/);
 });
 
 for (const fault of [

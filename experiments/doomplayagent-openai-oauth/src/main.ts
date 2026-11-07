@@ -9,6 +9,7 @@ import {
 } from "./doom-client.ts";
 import { PlaybackError, type PlayResult, play } from "./doom-play-agent.ts";
 import { createDoomTools, type DoomTools } from "./doom-tools.ts";
+import { progress } from "./progress.ts";
 import { createOAuthProvider } from "./provider.ts";
 
 const usage =
@@ -65,14 +66,12 @@ export async function main(
 	let result!: PlayResult;
 	try {
 		try {
-			console.log("Attaching to Doom...");
 			await doomClient.attach();
 		} catch (error) {
+			progress.withTag("doom").info("Attach unconfirmed");
 			throw safeAttachError(error);
 		}
 		attached = true;
-		console.log("Doom attached successfully.");
-		console.log("Starting Doom play...");
 		result = await (dependencies.playback ?? play)(
 			doomClient,
 			doomTools,
@@ -89,8 +88,15 @@ export async function main(
 		if (attached) {
 			try {
 				const detached = await doomClient.detach();
-				console.log("Doom lease detached:", { released: detached.released });
+				progress
+					.withTag("doom")
+					.info(
+						detached.released
+							? "Lease detached"
+							: "Detach acknowledged; lease not released",
+					);
 			} catch (detachError) {
+				progress.withTag("doom").info("Detach unconfirmed; client closed");
 				cleanupFailed = true;
 				cleanupError = detachError;
 			}

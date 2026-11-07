@@ -69,6 +69,15 @@ There is no second action slot, config write, autonomous loop or subagent. The
 lease-owned prompt amendment is not restored through another mutation; the flow
 ends by detaching.
 
+Tagged progress milestones use `consola/basic` on stderr; the existing final
+result stays on stdout. Progress includes lookup status and returned count (not
+an active total), the host objective, interpretation status, acknowledged guidance,
+the decision receipt and detach outcome. Landmark labels use the first 12 hex
+characters of SHA-256 of the note ID; no note prose or model prose enters progress.
+Missing receipt fields appear as `unknown`, and uncertain completion stays explicit.
+Progress is best-effort: a synchronous write failure or stderr stream error disables
+further progress for the process without interrupting gameplay or detach cleanup.
+
 Free exploration preserves whatever base template the lease inherited from the
 human settings; it does not reset a customized template to the default exploration
 instructions. Likewise, prompt wording about the next decision has no automatic
@@ -100,7 +109,7 @@ Offline verification, from this directory with existing dependencies:
 ```sh
 npm run typecheck
 node --experimental-strip-types --test tests/*.test.ts
-../../app/node_modules/.bin/biome check src/main.ts src/provider.ts src/doom-play-agent.ts src/doom-tools.ts tests
+../../app/node_modules/.bin/biome check src/main.ts src/provider.ts src/doom-play-agent.ts src/doom-tools.ts src/progress.ts tests
 ```
 
 Tests use fake Doom clients/transports, fake model responses, fake tools for agent

@@ -11,6 +11,7 @@ import type { AgentDecisionResult } from "../../../app/src/agent-observation.ts"
 import type { MaterializedObserve } from "../../../scripts/doom-agent-client.ts";
 import type { DoomClient } from "./doom-client.ts";
 import type { DoomMemoryCandidate, DoomTools } from "./doom-tools.ts";
+import { progress } from "./progress.ts";
 
 const judgmentSchema = z.strictObject({
 	interpretation: z.string().trim().min(1).max(300),
@@ -208,6 +209,9 @@ async function executeOneDecision(
 				instructions,
 			});
 			scope.revision = changed.revision;
+			progress.withTag("decision").info("Landmark guidance acknowledged");
+		} else {
+			progress.withTag("decision").info("Base prompt unchanged");
 		}
 
 		stage = "dispatch-observation";
@@ -229,6 +233,11 @@ async function executeOneDecision(
 			observationId: ready.observationId,
 			scope,
 		});
+		progress
+			.withTag("decision")
+			.info(
+				`Action: ${receipt.action ?? "none"}; outcome: ${receipt.outcome}; requested ${receipt.requestedTics ?? "unknown"}, verified ${receipt.verifiedTics ?? "unknown"} tics${receipt.completionUncertain ? "; completion uncertain" : ""}`,
+			);
 		// The executor parsed/correlated the receipt and verified its resulting
 		// PNG. No second action depends on it; report it without another readback.
 		return {
@@ -249,6 +258,11 @@ async function executeOneDecision(
 			},
 		};
 	} catch (cause) {
+		progress
+			.withTag("decision")
+			.info(
+				`Stopped at ${stage}; ${decisionMayHaveBeenSent ? "decision outcome unconfirmed" : "no decision sent"}; no retry`,
+			);
 		// Preserve debugging causes for callers; main prints only this bounded
 		// message, never raw model/transport errors that could contain credentials.
 		throw new PlaybackError(
@@ -272,12 +286,32 @@ export async function play(
 	let navigationObjective: NavigationObjective | null = null;
 	try {
 		const observation = await doomClient.observe();
+		progress
+			.withTag("doom")
+			.info(
+				`Attached; observed ${observation.mapIdentity.mapSlot} at tic ${observation.tic}`,
+			);
 		const image = await readVerifiedPng(observation);
 		stage = "landmarks";
 		const memory = await doomTools.findActiveLandmarks(observation);
+		progress
+			.withTag("navigation")
+			.info(
+				`Active-landmark lookup: ${memory.status}; ${memory.candidates.length} returned${memory.hasMore ? "; more available" : ""}`,
+			);
 		const selection = selectNavigationObjective(memory);
 		navigationObjective = selection.navigationObjective;
+		// An opaque fingerprint identifies the advisory note without printing
+		// arbitrary historical data or implying its observer pose is a destination.
+		progress
+			.withTag("navigation")
+			.info(
+				navigationObjective.kind === "landmark"
+					? `Objective: landmark note#${createHash("sha256").update(navigationObjective.noteId).digest("hex").slice(0, 12)} (revision ${navigationObjective.revision})`
+					: "Objective: free explore",
+			);
 		stage = "judgment";
+		progress.withTag("reasoning").info("Interpreting current observation");
 		const judgment = await interpretObservation(
 			openAIProvider.responses(options.modelId),
 			{
@@ -287,6 +321,7 @@ export async function play(
 				landmark: selection.target,
 			},
 		);
+		progress.withTag("reasoning").info("Interpretation completed");
 		const decision = await executeOneDecision(doomClient, observation, {
 			...selection,
 			judgment,
@@ -299,6 +334,10 @@ export async function play(
 	} catch (cause) {
 		// The handoff already records its stage, judgment and dispatch uncertainty.
 		if (cause instanceof PlaybackError) throw cause;
+		if (stage === "judgment")
+			progress
+				.withTag("reasoning")
+				.info("Interpretation failed; no decision sent");
 		throw new PlaybackError(stage, false, null, cause, navigationObjective);
 	}
 }
