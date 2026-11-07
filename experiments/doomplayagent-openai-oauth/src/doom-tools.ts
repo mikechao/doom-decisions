@@ -32,13 +32,9 @@ export type DoomMemoryLookupResult = Readonly<{
 	caution: string;
 	candidates: readonly DoomMemoryCandidate[];
 }>;
-export type DoomToolDependencies = Readonly<{
-	lookupMemory?: (query: NearbyMemoryQuery) => Promise<DoomMemoryLookupResult>;
-}>;
 
 type MemoryModule = {
 	findMemory(input: unknown): Promise<DoomMemoryLookupResult>;
-	memoryFindSchema: { parse(input: unknown): unknown };
 	memoryDatabasePath(): string;
 };
 const memoryModulePath = "../../../app/doom-memory.mjs";
@@ -56,14 +52,13 @@ async function findNearbyMemory(query: NearbyMemoryQuery) {
 			return { available: false, caution, candidates: [] };
 		throw error;
 	}
-	return memory.findMemory(memory.memoryFindSchema.parse(query));
+	return memory.findMemory(query);
 }
 
-export function createDoomTools(dependencies: DoomToolDependencies = {}) {
-	const lookup = dependencies.lookupMemory ?? findNearbyMemory;
+export function createDoomTools() {
 	return {
 		// Host-only capability. No model tool or model-supplied query arguments.
-		async findMemory(
+		async findNearbyLandmarks(
 			observation: Pick<AgentObserveResult, "mapIdentity" | "telemetry">,
 		) {
 			const pose = z
@@ -77,6 +72,9 @@ export function createDoomTools(dependencies: DoomToolDependencies = {}) {
 					y: observation.telemetry.y,
 					angle: observation.telemetry.angle,
 				});
+			// Match the conversion required before memory lookups and writes in
+			// .agents/skills/doom-decisions/SKILL.md (Advisory navigation memory):
+			// raw 16.16 coordinates to map units, unsigned angle to degrees.
 			const query: NearbyMemoryQuery = Object.freeze({
 				mode: "nearby",
 				mapNamespace: observation.mapIdentity.mapKey,
@@ -88,7 +86,7 @@ export function createDoomTools(dependencies: DoomToolDependencies = {}) {
 			});
 			let raw: DoomMemoryLookupResult;
 			try {
-				raw = await lookup(query);
+				raw = await findNearbyMemory(query);
 			} catch {
 				return {
 					status: "lookup_failed" as const,

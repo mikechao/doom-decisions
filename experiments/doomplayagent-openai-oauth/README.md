@@ -87,10 +87,11 @@ node --experimental-strip-types --test tests/*.test.ts
 ../../app/node_modules/.bin/biome check src/main.ts src/provider.ts src/doom-play-agent.ts src/doom-tools.ts tests
 ```
 
-Tests use fake Doom clients/transports, fake model responses, fake memory and
-temporary files. PNG fixtures exercise protocol header/hash checks, not decoding
-or native rendering. These checks do not use OAuth credentials, an actual memory
-DB, a browser, Doom/WASM or a paid API. The client tests verify string/file prompt
+Tests use fake Doom clients/transports, fake model responses, fake tools for agent
+tests, and isolated temporary SQLite databases for real memory lookup tests.
+PNG fixtures exercise protocol header/hash checks, not decoding or native
+rendering. These checks do not use OAuth credentials, the historical memory DB,
+a browser, Doom/WASM or a paid API. The client tests verify string/file prompt
 convergence and the shared executor through an injected fake HTTP transport.
 Existing agent, CLI and MCP callers retain absolute-file prompt inputs and the
 same validated wire command.

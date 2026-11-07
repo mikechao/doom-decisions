@@ -19,7 +19,7 @@ const judgmentSchema = z.strictObject({
 	uncertainty: z.string().trim().min(1).max(300),
 });
 export type Judgment = z.infer<typeof judgmentSchema>;
-type Memory = Awaited<ReturnType<DoomTools["findMemory"]>>;
+type Memory = Awaited<ReturnType<DoomTools["findNearbyLandmarks"]>>;
 export type InterpretationInput = {
 	image: Buffer;
 	state: ReturnType<typeof modelState>;
@@ -254,7 +254,7 @@ export async function play(
 		const observation = await doomClient.observe();
 		const image = await readVerifiedPng(observation);
 		stage = "landmarks";
-		const memory = await doomTools.findMemory(observation);
+		const memory = await doomTools.findNearbyLandmarks(observation);
 		stage = "judgment";
 		const judgment = await interpretObservation(
 			openAIProvider.responses(options.modelId),

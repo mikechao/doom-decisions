@@ -12,11 +12,7 @@ import type {
 import { createAgentMapIdentity } from "../../../app/src/agent-observation.ts";
 import type { MaterializedDecision } from "../../../scripts/doom-agent-client.ts";
 import type { DoomClient } from "../src/doom-client.ts";
-import {
-	createDoomTools,
-	type DoomMemoryCandidate,
-	type NearbyMemoryQuery,
-} from "../src/doom-tools.ts";
+import type { DoomMemoryCandidate, DoomTools } from "../src/doom-tools.ts";
 
 export const noUpdate = {
 	updatePrompt: false,
@@ -99,7 +95,7 @@ export async function fixture(t: TestContext) {
 		run: null as AgentRunState | null,
 		judgment: noUpdate as unknown,
 		candidates: [note],
-		queries: [] as NearbyMemoryQuery[],
+		memoryObservations: [] as Parameters<DoomTools["findNearbyLandmarks"]>[0][],
 		modelCalls: 0,
 		modelInput: null as unknown,
 		instructions: "",
@@ -273,13 +269,26 @@ export async function fixture(t: TestContext) {
 		},
 	};
 	const provider = { responses: () => model } as unknown as OpenAIProvider;
-	const tools = createDoomTools({
-		lookupMemory: async (query) => {
+	const tools: DoomTools = {
+		async findNearbyLandmarks(observation) {
 			events.push("memory");
-			state.queries.push(query);
-			return { caution: "Synthetic only", candidates: state.candidates };
+			state.memoryObservations.push(structuredClone(observation));
+			return {
+				status: state.candidates.length ? "found" : "empty",
+				caution: "Synthetic unverified notes only",
+				query: {
+					mode: "nearby",
+					mapNamespace: base.mapIdentity.mapKey,
+					x: 2,
+					y: -3,
+					headingDeg: 90,
+					radius: 128,
+					limit: 3,
+				},
+				candidates: structuredClone(state.candidates),
+			};
 		},
-	});
+	};
 	return {
 		root,
 		lease,

@@ -2,10 +2,9 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { PlaybackError, play } from "../src/doom-play-agent.ts";
-import { createDoomTools } from "../src/doom-tools.ts";
 import { fixture, noUpdate } from "./fixtures.ts";
 
-test("host query precedes inference; model receives exact verified bytes and compact state", async (t) => {
+test("landmark lookup receives verified observation before inference; model receives exact bytes and compact state", async (t) => {
 	const f = await fixture(t);
 	const result = await play(f.client, f.tools, f.provider, f.options);
 	assert.deepEqual(f.events, [
@@ -37,15 +36,12 @@ test("host query precedes inference; model receives exact verified bytes and com
 	);
 	assert.equal(input.tools?.length ?? 0, 0);
 	assert.equal(input.responseFormat?.type, "json");
-	assert.deepEqual(f.state.queries[0], {
-		mode: "nearby",
-		mapNamespace: f.base.mapIdentity.mapKey,
-		x: 2,
-		y: -3,
-		headingDeg: 90,
-		radius: 128,
-		limit: 3,
-	});
+	assert.equal(f.state.memoryObservations.length, 1);
+	assert.deepEqual(
+		f.state.memoryObservations[0].mapIdentity,
+		f.base.mapIdentity,
+	);
+	assert.deepEqual(f.state.memoryObservations[0].telemetry, f.base.telemetry);
 });
 
 test("valid landmark selection preserves base and substitution through CAS, then decides once", async (t) => {
@@ -86,17 +82,13 @@ test("valid landmark selection preserves base and substitution through CAS, then
 for (const status of ["empty", "unavailable", "lookup_failed"] as const) {
 	test(`${status} memory permits one decision with valid no-update judgment`, async (t) => {
 		const f = await fixture(t);
-		const tools = createDoomTools({
-			lookupMemory: async () => {
-				if (status === "lookup_failed") throw Error("unavailable");
-				return {
-					available: status !== "unavailable",
-					caution: "test",
-					candidates: [],
-				};
-			},
+		const findNearbyLandmarks = f.tools.findNearbyLandmarks;
+		f.tools.findNearbyLandmarks = async (observation) => ({
+			...(await findNearbyLandmarks(observation)),
+			status,
+			candidates: [],
 		});
-		const result = await play(f.client, tools, f.provider, f.options);
+		const result = await play(f.client, f.tools, f.provider, f.options);
 		assert.equal(result.memoryStatus, status);
 		assert.equal(result.promptChanged, false);
 		assert.equal(f.events.filter((event) => event === "decide").length, 1);
@@ -163,9 +155,12 @@ test("no candidates cannot authorize a fabricated landmark amendment", async (t)
 	assert.equal(f.events.includes("startRun"), false);
 });
 
-test("malformed landmark evidence prevents inference and run claim", async (t) => {
+test("landmark tool rejection prevents inference and run claim", async (t) => {
 	const f = await fixture(t);
-	f.state.candidates[0].mapNamespace = "wrong";
+	f.tools.findNearbyLandmarks = async () => {
+		f.events.push("memory");
+		throw Error("Invalid landmark evidence.");
+	};
 	await assert.rejects(
 		play(f.client, f.tools, f.provider, f.options),
 		PlaybackError,
@@ -337,12 +332,12 @@ test("file changes after verification cannot change the owned inference bytes", 
 		path = o.pngPath;
 		return o;
 	};
-	const findMemory = f.tools.findMemory;
+	const findNearbyLandmarks = f.tools.findNearbyLandmarks;
 	let changedPath = "";
-	f.tools.findMemory = async (observation) => {
+	f.tools.findNearbyLandmarks = async (observation) => {
 		changedPath = path;
 		await writeFile(changedPath, "changed later");
-		return findMemory(observation);
+		return findNearbyLandmarks(observation);
 	};
 	const result = await play(f.client, f.tools, f.provider, f.options);
 	assert.equal(result.outcome, "completed");
