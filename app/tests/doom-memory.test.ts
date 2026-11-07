@@ -15,8 +15,8 @@ import { memoryDatabasePath } from '../doom-memory.mjs';
 
 const serverPath = fileURLToPath(new URL('../agent-mcp.mjs', import.meta.url));
 const mapNamespace = 'unverified:shareware-doom1-e1m1';
-const a = { mapNamespace, x: 1095.593, y: -2969.434, headingDeg: 319.921875 };
-const d = { mapNamespace, x: 1123.944, y: -2981.558, headingDeg: 19.6875 };
+const a = { mapNamespace, x: 71761920, y: -194576384, angle: 0xf0000000 };
+const d = { mapNamespace, x: 73662464, y: -195428352, angle: 0x10000000 };
 const seed = {
   operation: 'create', requestId: 'seed-a', ...a,
   source: 'Run A, decision 22, tic 133; docs/navigation/doom1-e1m1-session-01a179df.md; archived Codex visual interpretation',
@@ -30,9 +30,41 @@ const activeQuery = {
 };
 const activeSeed = {
   ...seed, mapNamespace: activeQuery.mapNamespace, requestId: 'landmark',
-  x: 211, y: 0, headingDeg: 90,
+  x: 211, y: 0, angle: 90,
   isLandmark: true, isActiveExploration: true,
 };
+
+it('round-trips raw telemetry unchanged and rejects fractional, out-of-range and degree-field inputs', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'doom-memory-raw-'));
+  const database = join(directory, 'memory.sqlite');
+  try {
+    await withServer(database, directory, async client => {
+      for (const invalid of [
+        { x: -2147483649 }, { x: 2147483648 }, { x: 1.5 },
+        { y: -2147483649 }, { y: 2147483648 }, { y: -1.5 },
+        { angle: -1 }, { angle: 4294967296 }, { angle: 0.5 },
+        { headingDeg: 90 },
+      ]) {
+        await rejects(client, 'doom_memory_find', { ...a, ...invalid });
+        await rejects(client, 'doom_memory_record', { ...seed, ...invalid });
+      }
+      assert.equal(existsSync(database), false);
+      const raw = { x: -2147483648, y: 2147483647, angle: 0xffffffff };
+      const created = await invoke(client, 'doom_memory_record', { ...seed, ...raw });
+      const found = await invoke(client, 'doom_memory_find', { ...a, ...raw });
+      assert.equal(found.candidates.length, 1);
+      assert.equal(found.candidates[0].noteId, created.noteId);
+      assert.deepEqual(found.candidates[0].anchor, raw);
+      assert.equal(found.candidates[0].distance, 0);
+      assert.equal(found.candidates[0].angleDifference, 0);
+      const { DatabaseSync } = await import('node:sqlite');
+      const db = new DatabaseSync(database, { readOnly: true });
+      try {
+        assert.deepEqual({ ...db.prepare('SELECT x, y, angle FROM notes').get() }, raw);
+      } finally { db.close(); }
+    });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}, 10000);
 
 async function withServer(databasePath, directory, work) {
   const preload = join(directory, 'no-network.mjs');
@@ -127,7 +159,7 @@ it('finds and reconciles one advisory regional note across three independent MCP
       const note = foundA.candidates[0];
       assert.equal(foundA.candidates.length, 1);
       assert.equal(note.noteId, created.noteId);
-      assert.equal(note.distance, 0); assert.equal(note.headingDifferenceDeg, 0);
+      assert.equal(note.distance, 0); assert.equal(note.angleDifference, 0);
       assert.equal(note.source, seed.source); assert.equal(note.hypothesis, seed.hypothesis);
       assert.equal(note.nextQuestion, seed.nextQuestion);
       assert.equal(note.mapNamespace, mapNamespace); assert.equal(note.status, 'unverified');
@@ -139,20 +171,20 @@ it('finds and reconciles one advisory regional note across three independent MCP
       const foundD = await invoke(client, 'doom_memory_find', d);
       assert.equal(foundD.candidates.length, 1);
       assert.equal(foundD.candidates[0].noteId, created.noteId);
-      assert.ok(Math.abs(foundD.candidates[0].distance - 30.8) < 0.1);
-      assert.equal(foundD.candidates[0].headingDifferenceDeg, 59.765625);
+      assert.ok(foundD.candidates[0].distance === Math.hypot(a.x - d.x, a.y - d.y));
+      assert.equal(foundD.candidates[0].angleDifference, 0x20000000);
       assert.equal(foundD.candidates[0].status, 'unverified');
-      console.info(JSON.stringify({ a: { distance: note.distance, headingDifferenceDeg: note.headingDifferenceDeg },
-        d: { distance: foundD.candidates[0].distance, headingDifferenceDeg: foundD.candidates[0].headingDifferenceDeg },
+      console.info(JSON.stringify({ a: { distance: note.distance, angleDifference: note.angleDifference },
+        d: { distance: foundD.candidates[0].distance, angleDifference: foundD.candidates[0].angleDifference },
         status: note.status }));
 
       for (const query of [
-        { ...a, x: a.x + 128 },
-        { ...a, x: a.x + 64, y: a.y + 64 },
+        { ...a, x: a.x + 8388608 },
+        { ...a, x: a.x + 4194304, y: a.y + 4194304 },
         { ...a, mapNamespace: 'unverified:freedoom-e1m1' },
       ]) assert.deepEqual((await invoke(client, 'doom_memory_find', query)).candidates, []);
-      assert.equal((await invoke(client, 'doom_memory_find', { ...a, x: a.x + 64 })).candidates.length, 1);
-      for (const invalid of [{ radius: 0 }, { radius: 1025 }, { limit: 11 }, { headingDeg: 360 }, { x: 32769 }, { status: 'verified_traversed' }])
+      assert.equal((await invoke(client, 'doom_memory_find', { ...a, x: a.x + 4194304 })).candidates.length, 1);
+      for (const invalid of [{ radius: 0 }, { radius: 67108865 }, { limit: 11 }, { angle: 4294967296 }, { x: 2147483648 }, { status: 'verified_traversed' }])
         await rejects(client, 'doom_memory_find', { ...a, ...invalid });
 
       const replay = await invoke(client, 'doom_memory_record', seed);
@@ -229,12 +261,12 @@ it('discovers a distant active landmark and its evidence across three independen
       const note = found.candidates[0];
       assert.equal(note.noteId, created.noteId);
       assert.equal(note.revision, 1);
-      assert.deepEqual(note.anchor, { x: 211, y: 0, headingDeg: 90 });
+      assert.deepEqual(note.anchor, { x: 211, y: 0, angle: 90 });
       assert.equal(note.isLandmark, true); assert.equal(note.isActiveExploration, true);
-      assert.equal('distance' in note, false); assert.equal('headingDifferenceDeg' in note, false);
+      assert.equal('distance' in note, false); assert.equal('angleDifference' in note, false);
       assert.deepEqual(note.entries, []);
       const nearby = await invoke(client, 'doom_memory_find', {
-        mapNamespace: activeQuery.mapNamespace, x: 0, y: 0, headingDeg: 0, radius: 128,
+        mapNamespace: activeQuery.mapNamespace, x: 0, y: 0, angle: 0, radius: 128,
       });
       assert.deepEqual(nearby.candidates, []);
       const appended = await invoke(client, 'doom_memory_record', {
@@ -284,7 +316,7 @@ it('validates flag pairs in MCP and SQLite and preserves atomic revisioned trans
       const { DatabaseSync } = await import('node:sqlite');
       const db = new DatabaseSync(database);
       try {
-        assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2);
+        assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
         assert.equal(db.prepare('PRAGMA application_id').get().application_id, 0x444f4f4d);
         for (const table of ['notes', 'entries']) {
           assert.deepEqual({ ...db.prepare(`SELECT is_landmark, is_active_exploration FROM ${table}`).get() },
@@ -329,7 +361,7 @@ it('validates flag pairs in MCP and SQLite and preserves atomic revisioned trans
         assert.deepEqual(active.candidates.map(candidate => candidate.noteId), effective.isActiveExploration ? [created.noteId] : []);
         assert.equal(note.hypothesis, seed.hypothesis); assert.equal(note.nextQuestion, seed.nextQuestion);
         assert.equal(note.source, seed.source);
-        assert.deepEqual(note.anchor, { x: a.x, y: a.y, headingDeg: a.headingDeg });
+        assert.deepEqual(note.anchor, { x: a.x, y: a.y, angle: a.angle });
         assert.deepEqual(note.entries.map(entry => entry.revision), Array.from({ length: index + 1 }, (_, i) => i + 2));
         assert.deepEqual(note.entries.map(entry => [entry.isLandmark, entry.isActiveExploration]),
           transitions.slice(0, index + 1).map((pair, i) => {
@@ -372,11 +404,11 @@ it('bounds active discovery by exact namespace and deterministic creation order 
   const database = join(directory, 'memory.sqlite');
   try {
     await withServer(database, directory, async client => {
-      const anchors = [[0, 0, 359], [0, 0, 5], [10, 0, 1], [300, 0, 1]];
+      const anchors = [[0, 0, 0xffffffff], [0, 0, 5], [10, 0, 1], [300, 0, 1]];
       const notes = [];
-      for (const [index, [x, y, headingDeg]] of anchors.entries())
+      for (const [index, [x, y, angle]] of anchors.entries())
         notes.push(await invoke(client, 'doom_memory_record', {
-          ...activeSeed, requestId: `ordered-${index}`, x, y, headingDeg,
+          ...activeSeed, requestId: `ordered-${index}`, x, y, angle,
         }));
       await invoke(client, 'doom_memory_record', { ...activeSeed, requestId: 'inactive', x: 500, isActiveExploration: false });
       await invoke(client, 'doom_memory_record', { ...activeSeed, requestId: 'ordinary', x: 600, isLandmark: false, isActiveExploration: false });
@@ -402,12 +434,12 @@ it('bounds active discovery by exact namespace and deterministic creation order 
       assert.deepEqual((await invoke(client, 'doom_memory_find', { ...activeQuery, mapNamespace: otherNamespace })).candidates.map(note => note.noteId), [foreign.noteId]);
       const missing = await invoke(client, 'doom_memory_find', { ...activeQuery, mapNamespace: 'absent' });
       assert.deepEqual(missing.candidates, []); assert.equal(missing.hasMore, false);
-      for (const invalid of [{ x: 0 }, { y: 0 }, { headingDeg: 0 }, { radius: 128 }, { limit: 0 }, { limit: 11 }, { limit: 1.5 }, { mapNamespace: '' }, { mode: 'all' }])
+      for (const invalid of [{ x: 0 }, { y: 0 }, { angle: 0 }, { radius: 128 }, { limit: 0 }, { limit: 11 }, { limit: 1.5 }, { mapNamespace: '' }, { mode: 'all' }])
         await rejects(client, 'doom_memory_find', { ...activeQuery, ...invalid });
-      const nearbyQuery = { mapNamespace: activeQuery.mapNamespace, x: 0, y: 0, headingDeg: 1, radius: 128 };
+      const nearbyQuery = { mapNamespace: activeQuery.mapNamespace, x: 0, y: 0, angle: 1, radius: 128 };
       const nearby = await invoke(client, 'doom_memory_find', nearbyQuery);
       assert.deepEqual(nearby.candidates.map(note => note.noteId), notes.slice(0, 3).map(note => note.noteId));
-      assert.deepEqual(nearby.candidates.map(note => note.headingDifferenceDeg), [2, 4, 0]);
+      assert.deepEqual(nearby.candidates.map(note => note.angleDifference), [2, 4, 0]);
       assert.deepEqual(await invoke(client, 'doom_memory_find', { ...nearbyQuery, mode: 'nearby' }), nearby);
     });
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -486,17 +518,22 @@ it('keeps path selection explicit and module-relative, and rejects unsupported s
         PRAGMA user_version = 1;
       `);
     } finally { legacy.close(); }
-    const before = await readFile(legacyPath);
-    await withServer(legacyPath, directory, async client => {
-      await rejects(client, 'doom_memory_find', a, 'memory-schema-unsupported');
-      await rejects(client, 'doom_memory_find', activeQuery, 'memory-schema-unsupported');
-      await rejects(client, 'doom_memory_record', seed, 'memory-schema-unsupported');
-      await rejects(client, 'doom_memory_record', {
-        operation: 'append', requestId: 'old-append', noteId: '11111111-1111-4111-8111-111111111111',
-        expectedRevision: 1, source: 'Offline rejection test', assessment: 'Must not be stored',
-      }, 'memory-schema-unsupported');
-    });
-    assert.deepEqual(await readFile(legacyPath), before, 'Version-1 schema, records and bytes must stay unchanged');
+    for (const version of [1, 2]) {
+      const legacyVersion = new DatabaseSync(legacyPath);
+      try { legacyVersion.exec(`PRAGMA user_version = ${version}`); }
+      finally { legacyVersion.close(); }
+      const before = await readFile(legacyPath);
+      await withServer(legacyPath, directory, async client => {
+        await rejects(client, 'doom_memory_find', a, 'memory-schema-unsupported');
+        await rejects(client, 'doom_memory_find', activeQuery, 'memory-schema-unsupported');
+        await rejects(client, 'doom_memory_record', seed, 'memory-schema-unsupported');
+        await rejects(client, 'doom_memory_record', {
+          operation: 'append', requestId: 'old-append', noteId: '11111111-1111-4111-8111-111111111111',
+          expectedRevision: 1, source: 'Offline rejection test', assessment: 'Must not be stored',
+        }, 'memory-schema-unsupported');
+      });
+      assert.deepEqual(await readFile(legacyPath), before, `Version-${version} schema, records and bytes must stay unchanged`);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

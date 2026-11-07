@@ -154,12 +154,12 @@ initializes storage; append against absent storage fails. Built-in `node:sqlite`
 loads lazily and can emit Node 22.20.0's experimental warning to stderr only when
 used. Module import, tool listing and gameplay-only use do not load it.
 
-Schema v2 keeps the same application ID and default `.local/doom-memory.sqlite`
-filename. Version-1 and foreign databases return `memory-schema-unsupported`
+Schema v3 stores raw telemetry and keeps the same application ID and default
+`.local/doom-memory.sqlite` filename. Version-1, version-2 and foreign databases return `memory-schema-unsupported`
 without changing their contents/version. There is no automatic deletion or migration.
-For the one-time fresh-memory rollout, after reviewing the change: stop the
-MCP/agent process, remove the existing `.local/doom-memory.sqlite` file, then restart.
-The first valid create lazily initializes v2; a missing-database lookup still writes nothing.
+To start fresh while preserving an older database, stop the MCP/agent process,
+set `DOOM_MEMORY_DB` to a new absolute file path, then restart.
+The first valid create lazily initializes v3; a missing-database lookup still writes nothing.
 
 There are two tables: `notes` stores the immutable original claim, namespace,
 observer anchor, source, next question and creation date, plus its current revision
@@ -180,13 +180,18 @@ Tool arguments (all objects reject unknown fields):
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
-| `doom_memory_find` nearby | `mode?: "nearby", mapNamespace, x, y, headingDeg, radius? = 64, limit? = 3` | `caution, candidates[]` with ID, revision, source, observer anchor, original hypothesis/question, creation date, `unverified` status, both flags, distance, circular heading difference and ordered assessments with flag snapshots |
+| `doom_memory_find` nearby | `mode?: "nearby", mapNamespace, x, y, angle, radius? = 4194304, limit? = 3` | `caution, candidates[]` with ID, revision, source, observer anchor, original hypothesis/question, creation date, `unverified` status, both flags, raw distance, circular `angleDifference` and ordered assessments with flag snapshots |
 | `doom_memory_find` active | `mode: "active-landmarks", mapNamespace, limit? = 3` | `mode, mapNamespace, caution, candidates[], hasMore`; same note/history fields, without distance/heading delta |
-| `doom_memory_record` create | `operation: "create", requestId, mapNamespace, x, y, headingDeg, hypothesis, nextQuestion?, source, isLandmark? = false, isActiveExploration? = false` | `noteId, revision: 1, status: "unverified", replayed` |
+| `doom_memory_record` create | `operation: "create", requestId, mapNamespace, x, y, angle, hypothesis, nextQuestion?, source, isLandmark? = false, isActiveExploration? = false` | `noteId, revision: 1, status: "unverified", replayed` |
 | `doom_memory_record` append | `operation: "append", requestId, noteId, expectedRevision, assessment, source, flags?: {isLandmark, isActiveExploration}` | `noteId, revision, status: "unverified", replayed` |
 
-Coordinates are Doom units in [-32768, 32768], heading is degrees in [0, 360),
-radius is positive and at most 1024, and limit is an integer from 1 through 10.
+Pass observation `telemetry.x`, `telemetry.y` and `telemetry.angle` unchanged for
+both lookup and create. XY are signed 16.16 integers in [-2147483648, 2147483647];
+angle is an unsigned integer in [0, 4294967295]. Anchors retain those raw values.
+Radius is a positive integer in raw XY units, default 4194304 (64 map units),
+maximum 67108864 (1024 map units). Returned distance uses raw XY units and
+`angleDifference` uses raw circular angle units, with a full turn of 4294967296.
+Limit is an integer from 1 through 10. No pose conversion occurs on save or lookup.
 Namespace/request IDs are nonblank text up to 128 characters; source/next
 question up to 512; hypothesis/assessment up to 2000. Note IDs are UUIDs.
 Namespace matching is exact after trimming surrounding whitespace. Lookup filters
@@ -202,16 +207,16 @@ Ordered assessments retain disagreements and proposed next experiments; the late
 free-text suggestion is advisory, never proof. Selection stays in Codex session
 context and does not change a note's active flag.
 
-For example, call `doom_memory_find` offline with:
+For a synthetic raw pose, call `doom_memory_find` offline with:
 
 ```json
-{"mapNamespace":"unverified:shareware-doom1-e1m1","x":1095.593,"y":-2969.434,"headingDeg":319.921875}
+{"mapNamespace":"synthetic:example","x":131072,"y":-196608,"angle":1073741824}
 ```
 
 To explicitly create a note, call `doom_memory_record` with:
 
 ```json
-{"operation":"create","requestId":"pool-recess-1","mapNamespace":"unverified:shareware-doom1-e1m1","x":1095.593,"y":-2969.434,"headingDeg":319.921875,"hypothesis":"The apparent tan-column recess might continue beyond the pool room; traversal remains unestablished.","nextQuestion":"Does a clearer view show continuous player-width floor beyond the wall end?","source":"Run A, decision 22, tic 133; docs/navigation/doom1-e1m1-session-01a179df.md; archived Codex interpretation"}
+{"operation":"create","requestId":"example-1","mapNamespace":"synthetic:example","x":131072,"y":-196608,"angle":1073741824,"hypothesis":"A possible doorway; traversal remains unestablished.","nextQuestion":"Does a clearer view show continuous player-width floor?","source":"Synthetic example; no gameplay evidence"}
 ```
 
 Append using the returned `noteId`, its revision, a new request ID, required source
@@ -236,10 +241,10 @@ data or complete provider payloads in this notebook.
 
 Proximity establishes neither the same viewpoint nor map identity, passability
 or navigation success. `unverified:shareware-doom1-e1m1` is a caller-chosen label,
-not an authenticated IWAD key. A lookup at Run D #14's pose `(1123.944, -2981.558)`
-and `19.6875°` can return A's note about 30.8 units away with a 59.8° heading
-difference. That is regional context, not recognition of the same view or proof
-that A's recess is D's separate human-described continuation.
+not an authenticated IWAD key. A nearby note provides regional context, not
+recognition of the same view or proof that two described openings connect.
+Historical degree/map-unit examples describe the old format and cannot be
+passed to schema v3 unchanged.
 
 PNG storage/retrieval is deliberately unsupported in Milestone 1. The retained
 [A note](navigation/doom1-e1m1-session-01a179df.md) links its historical PNG, which
@@ -249,7 +254,7 @@ alone does not display or authenticate its pixels. No D screenshot is retained h
 
 `app/tests/doom-memory.test.ts` exercises actual stdio MCP child processes against
 isolated temporary databases with fail-on-use fetch. It checks missing-storage
-lookups, A/D regional retrieval, namespace/radius exclusions, three-process
+lookups, raw-pose round trips, circular-angle ranking, namespace/radius exclusions, three-process
 persistence, active discovery without pose/known IDs, flag transitions/snapshots,
 idempotency, competing revision writes, storage invariants, deterministic bounds,
 locking and byte-preserving old/foreign-schema rejection. These are offline persistence

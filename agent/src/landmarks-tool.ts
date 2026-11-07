@@ -20,9 +20,9 @@ export function loadSavedContext() {
   if (createHash('sha256').update(png).digest('hex') !== observation.pngSha256) throw new Error('INVALID_SAVED_PNG');
   const query = memoryFindSchema.parse({
     mode: 'nearby', mapNamespace: observation.mapIdentity.mapKey,
-    x: observation.telemetry.x / 65536, y: observation.telemetry.y / 65536,
-    headingDeg: observation.telemetry.angle * 360 / 4294967296,
-    radius: 1024, limit: 3,
+    x: observation.telemetry.x, y: observation.telemetry.y,
+    angle: observation.telemetry.angle,
+    radius: 67108864, limit: 3,
   });
   if (query.mode !== 'nearby') throw new Error('INVALID_QUERY');
   return {
@@ -47,18 +47,22 @@ export function verifySnapshot(path = snapshotPath) {
     const rows = db.prepare('PRAGMA integrity_check').all();
     if (rows.length !== 1 || rows[0].integrity_check !== 'ok') throw new Error('SNAPSHOT_INTEGRITY');
     if (db.prepare('PRAGMA application_id').get()?.application_id !== 0x444f4f4d ||
-        db.prepare('PRAGMA user_version').get()?.user_version !== 2) throw new Error('SNAPSHOT_SCHEMA');
-    return { integrity: 'ok', readOnly: true, schemaVersion: 2 };
+        db.prepare('PRAGMA user_version').get()?.user_version !== 3) throw new Error('SNAPSHOT_SCHEMA');
+    return { integrity: 'ok', readOnly: true, schemaVersion: 3 };
   } finally { db.close(); }
 }
 
-const pose = z.strictObject({ x: z.number(), y: z.number(), headingDeg: z.number() });
+const pose = z.strictObject({
+  x: z.number().int().min(-2147483648).max(2147483647),
+  y: z.number().int().min(-2147483648).max(2147483647),
+  angle: z.number().int().min(0).max(0xffffffff),
+});
 const rawNote = z.object({
   noteId: z.string().uuid(), revision: z.number().int().positive(), mapNamespace: z.string(),
   anchor: pose, source: z.string().min(1).max(512), hypothesis: z.string().min(1).max(2000),
   nextQuestion: z.string().max(512).nullable(), createdAt: z.string(), status: z.literal('unverified'),
   isLandmark: z.boolean(), isActiveExploration: z.boolean(),
-  distance: z.number().nonnegative(), headingDifferenceDeg: z.number().nonnegative(),
+  distance: z.number().nonnegative(), angleDifference: z.number().nonnegative(),
   entries: z.array(z.object({
     revision: z.number().int().positive(), source: z.string().max(512), assessment: z.string().max(2000),
     createdAt: z.string(), isLandmark: z.boolean(), isActiveExploration: z.boolean(),

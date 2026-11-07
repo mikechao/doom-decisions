@@ -19,17 +19,17 @@ const mapIdentity = createAgentMapIdentity('a'.repeat(64), 1, 1);
 const context: SavedContext = {
   observationId: '11111111-1111-4111-8111-111111111111', sessionId: '22222222-2222-4222-8222-222222222222',
   tic: 1, mapIdentity,
-  query: { mode: 'nearby', mapNamespace: mapIdentity.mapKey, x: 10, y: 20, headingDeg: 90, radius: 64, limit: 3 },
+  query: { mode: 'nearby', mapNamespace: mapIdentity.mapKey, x: 10, y: 20, angle: 90, radius: 64, limit: 3 },
 };
 const noteId = '33333333-3333-4333-8333-333333333333';
 const otherId = '44444444-4444-4444-8444-444444444444';
 const found: LandmarkResult = {
   status: 'found', advisoryStatus: 'unverified', caution: 'Synthetic advisory only.', context,
   scope: 'Nearby top 3 before landmark filtering; not an exhaustive map search.',
-  candidates: [{ noteId, revision: 1, mapNamespace: mapIdentity.mapKey, anchor: { x: 10, y: 20, headingDeg: 90 },
+  candidates: [{ noteId, revision: 1, mapNamespace: mapIdentity.mapKey, anchor: { x: 10, y: 20, angle: 90 },
     source: 'Synthetic historical source', summary: 'An earlier observer asked about orientation.', summaryTruncated: false,
     status: 'unverified', createdAt: '2026-01-01', isLandmark: true, isActiveExploration: false,
-    distance: 0, headingDifferenceDeg: 0, nextQuestion: null, latestAssessment: null }],
+    distance: 0, angleDifference: 0, nextQuestion: null, latestAssessment: null }],
 };
 
 function decode(value: unknown) {

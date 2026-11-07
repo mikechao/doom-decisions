@@ -85,7 +85,7 @@ export async function fixture(t: TestContext) {
 		mapNamespace: base.mapIdentity.mapKey,
 		status: "unverified",
 		isLandmark: true,
-		anchor: { x: 4, y: -3, headingDeg: 90 },
+		anchor: { x: 262144, y: -196608, angle: 0x40000000 },
 		hypothesis: "There may be a doorway nearby.",
 	};
 	const events: string[] = [];
@@ -279,10 +279,10 @@ export async function fixture(t: TestContext) {
 				query: {
 					mode: "nearby",
 					mapNamespace: base.mapIdentity.mapKey,
-					x: 2,
-					y: -3,
-					headingDeg: 90,
-					radius: 128,
+					x: 131072,
+					y: -196608,
+					angle: 0x40000000,
+					radius: 8388608,
 					limit: 3,
 				},
 				candidates: structuredClone(state.candidates),

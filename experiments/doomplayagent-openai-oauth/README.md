@@ -24,8 +24,9 @@ The host sequence is:
    hash those owned bytes against the validated digest before submitting them
    to inference. Later file changes cannot change the inference image.
 3. Query nearby historical landmarks using the verified map key and pose:
-   16.16 coordinates become world units; unsigned angle becomes degrees;
-   radius 128, limit 3. The model cannot select the query location. Existing
+   raw 16.16 coordinates and unsigned angle pass through unchanged;
+   radius 8388608 (128 map units), limit 3. Memory schema v3 stores raw poses;
+   older databases are rejected without migration. The model cannot select the query location. Existing
    storage opens read-only; unavailable, failed and empty results stay distinct.
 4. Ask the model for one advisory judgment. Validate its shape and selected
    candidate ID. Declining guidance still permits the one authorized decision.

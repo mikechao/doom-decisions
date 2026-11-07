@@ -261,7 +261,8 @@ required when effective instructions already express the intent
 
 If both memory tools were available at startup and remain enabled, the first
 healthy post-claim checkpoint requires two separately inspected reads: active
-landmarks (`limit: 3`, no pose), then nearby notes (`radius: 128`, `limit: 3`).
+landmarks (`limit: 3`, no pose), then nearby notes (`radius: 8388608`, `limit: 3`;
+128 map units in raw 16.16 coordinates). Memory poses use raw telemetry XY and angle.
 Later lookups are event-driven, at most one per eligible checkpoint. Codex uses
 only the current verified observation's `mapIdentity.mapKey` as namespace; it
 converts raw observer pose as `x/65536`, `y/65536`,

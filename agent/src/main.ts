@@ -135,8 +135,8 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
         observationId: observation.observationId, sessionId: observation.sessionId, tic: observation.tic,
         mapIdentity: structuredClone(observation.mapIdentity),
         query: { mode: 'nearby', mapNamespace: observation.mapIdentity.mapKey,
-          x: observation.telemetry.x / 65536, y: observation.telemetry.y / 65536,
-          headingDeg: observation.telemetry.angle * 360 / 4294967296, radius: 128, limit: 3 },
+          x: observation.telemetry.x, y: observation.telemetry.y,
+          angle: observation.telemetry.angle, radius: 8388608, limit: 3 },
       };
       report.source = { observationId: context.observationId, sessionId: context.sessionId, tic: context.tic,
         mapKey: context.mapIdentity.mapKey, pngSha256: observation.pngSha256, imageBytes: image.length };

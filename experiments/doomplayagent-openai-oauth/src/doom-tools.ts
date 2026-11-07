@@ -7,8 +7,8 @@ export type NearbyMemoryQuery = Readonly<{
 	mapNamespace: string;
 	x: number;
 	y: number;
-	headingDeg: number;
-	radius: 128;
+	angle: number;
+	radius: 8388608;
 	limit: 3;
 }>;
 
@@ -20,9 +20,9 @@ const candidateSchema = z.object({
 	status: z.literal("unverified"),
 	isLandmark: z.boolean(),
 	anchor: z.object({
-		x: z.number().min(-32768).max(32768),
-		y: z.number().min(-32768).max(32768),
-		headingDeg: z.number().min(0).lt(360),
+		x: z.number().int().min(-2147483648).max(2147483647),
+		y: z.number().int().min(-2147483648).max(2147483647),
+		angle: z.number().int().min(0).max(0xffffffff),
 	}),
 	hypothesis: z.string().trim().min(1).max(2000),
 });
@@ -63,8 +63,8 @@ export function createDoomTools() {
 		) {
 			const pose = z
 				.strictObject({
-					x: z.number().int().min(-2147483648).max(2147483648),
-					y: z.number().int().min(-2147483648).max(2147483648),
+					x: z.number().int().min(-2147483648).max(2147483647),
+					y: z.number().int().min(-2147483648).max(2147483647),
 					angle: z.number().int().min(0).max(0xffffffff),
 				})
 				.parse({
@@ -72,16 +72,15 @@ export function createDoomTools() {
 					y: observation.telemetry.y,
 					angle: observation.telemetry.angle,
 				});
-			// Match the conversion required before memory lookups and writes in
-			// .agents/skills/doom-decisions/SKILL.md (Advisory navigation memory):
-			// raw 16.16 coordinates to map units, unsigned angle to degrees.
+			// Use raw telemetry for lookup and recording, as specified in
+			// .agents/skills/doom-decisions/SKILL.md (Advisory navigation memory).
 			const query: NearbyMemoryQuery = Object.freeze({
 				mode: "nearby",
 				mapNamespace: observation.mapIdentity.mapKey,
-				x: pose.x / 65536,
-				y: pose.y / 65536,
-				headingDeg: (pose.angle * 360) / 4294967296,
-				radius: 128,
+				x: pose.x,
+				y: pose.y,
+				angle: pose.angle,
+				radius: 8388608,
 				limit: 3,
 			});
 			let raw: DoomMemoryLookupResult;

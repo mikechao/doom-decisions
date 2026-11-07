@@ -25,7 +25,7 @@ const foreignIdentity = createAgentMapIdentity('b'.repeat(64), 1, 1);
 const context: SavedContext = {
   observationId: '11111111-1111-4111-8111-111111111111', sessionId: '22222222-2222-4222-8222-222222222222', tic: 1,
   mapIdentity: identity,
-  query: { mode: 'nearby', mapNamespace: identity.mapKey, x: 10, y: 20, headingDeg: 359, radius: 64, limit: 3 },
+  query: { mode: 'nearby', mapNamespace: identity.mapKey, x: 10, y: 20, angle: 0xffffffff, radius: 64, limit: 3 },
 };
 
 async function withFixture(work: (path: string) => Promise<void>) {
@@ -40,7 +40,7 @@ async function withFixture(work: (path: string) => Promise<void>) {
       isLandmark: true, isActiveExploration: true };
     const { mode, radius, limit, ...record } = seed;
     const first = await recordMemory({ ...record, requestId: 'fixture-one' });
-    await recordMemory({ ...record, requestId: 'fixture-two', x: 12, headingDeg: 1 });
+    await recordMemory({ ...record, requestId: 'fixture-two', x: 12, angle: 1 });
     await recordMemory({ ...record, requestId: 'foreign', mapNamespace: foreignIdentity.mapKey });
     await recordMemory({ ...record, requestId: 'ordinary-note', x: 11, isLandmark: false, isActiveExploration: false });
     await recordMemory({ operation: 'append', noteId: first.noteId, expectedRevision: 1, requestId: 'assessment',
@@ -70,7 +70,7 @@ function decode(value: unknown) {
 test('fixed fixture: existing findMemory ranking, namespace isolation and read-only retrieval', async () => {
   await withFixture(async path => {
     const before = readFileSync(path);
-    assert.deepEqual(verifySnapshot(path), { integrity: 'ok', readOnly: true, schemaVersion: 2 });
+    assert.deepEqual(verifySnapshot(path), { integrity: 'ok', readOnly: true, schemaVersion: 3 });
     const direct = await findMemory(context.query);
     const result = await lookupLandmarks(context, path);
     assert.equal(result.status, 'found');
@@ -78,7 +78,7 @@ test('fixed fixture: existing findMemory ranking, namespace isolation and read-o
     assert.deepEqual(result.candidates.map(n => n.noteId), direct.candidates.filter((n: { isLandmark: boolean }) => n.isLandmark).map((n: { noteId: string }) => n.noteId));
     assert.ok(result.candidates.every(n => n.mapNamespace === identity.mapKey && n.status === 'unverified'));
     assert.equal(result.candidates[0].distance, 0);
-    assert.equal(result.candidates[1].headingDifferenceDeg, 2);
+    assert.equal(result.candidates[1].angleDifference, 2);
     assert.equal(result.candidates[0].latestAssessment?.revision, 2);
     const foreign = await lookupLandmarks({ ...context, mapIdentity: foreignIdentity,
       query: { ...context.query, mapNamespace: foreignIdentity.mapKey } }, path);
@@ -267,7 +267,7 @@ test('local snapshot integration: real saved observation → findMemory → MCP 
     const saved = loadSavedContext();
     assert.equal(saved.mapIdentity.mapKey, 'doom-map:v1:iwad-sha256:1d7d43be501e67d927e415e0b8f3e29c3bf33075e859721816f652a526cac771:E1M1');
     assert.equal(saved.observationId, 'd4ba38e3-6e53-474e-b77d-0053a43e0dd8');
-    assert.deepEqual([saved.query.x, saved.query.y, saved.query.headingDeg], [1056, -3616, 90]);
+    assert.deepEqual([saved.query.x, saved.query.y, saved.query.angle], [69206016, -237043712, 1073741824]);
     const direct = await findMemory(saved.query);
     const receipts: LandmarkReceipt[] = [];
     const envelope = await createLandmarksTool(saved, receipts, new AbortController()).execute({});

@@ -5,9 +5,10 @@ import { fileURLToPath } from 'node:url';
 import * as z from 'zod/v4';
 
 const text = (max) => z.string().trim().min(1).max(max);
-const coordinate = z.number().min(-32768).max(32768);
-const heading = z.number().min(0).lt(360);
-const pose = { x: coordinate, y: coordinate, headingDeg: heading };
+// Match native telemetry exactly: signed 16.16 XY and unsigned binary angle.
+const coordinate = z.number().int().min(-2147483648).max(2147483647);
+const angle = z.number().int().min(0).max(0xffffffff);
+const pose = { x: coordinate, y: coordinate, angle };
 const request = { requestId: text(128), source: text(512) };
 const limit = z.number().int().min(1).max(10).default(3);
 const validFlags = (flags) => !flags.isActiveExploration || flags.isLandmark;
@@ -20,7 +21,8 @@ export const memoryFindSchema = z.union([
     mode: z.literal('nearby').optional(),
     mapNamespace: text(128),
     ...pose,
-    radius: z.number().positive().max(1024).default(64),
+    // Raw fixed-point radius; default 64 map units, maximum 1024.
+    radius: z.number().int().positive().max(67108864).default(4194304),
     limit,
   }),
   z.strictObject({
@@ -57,7 +59,7 @@ export const memoryRecordSchema = z.discriminatedUnion('operation', [
 ]);
 
 const applicationId = 0x444f4f4d;
-const schemaVersion = 2;
+const schemaVersion = 3;
 const caution =
   'Advisory, unverified memory. Source text does not authenticate claims or IWAD identity. Proximity does not prove the same viewpoint, map identity, passability or navigation success.';
 const errors = new Set([
@@ -120,7 +122,9 @@ function initialize(db) {
     CREATE TABLE notes (
       note_id TEXT PRIMARY KEY,
       map_namespace TEXT NOT NULL,
-      x REAL NOT NULL, y REAL NOT NULL, heading_deg REAL NOT NULL,
+      x INTEGER NOT NULL CHECK (x BETWEEN -2147483648 AND 2147483647),
+      y INTEGER NOT NULL CHECK (y BETWEEN -2147483648 AND 2147483647),
+      angle INTEGER NOT NULL CHECK (angle BETWEEN 0 AND 4294967295),
       hypothesis TEXT NOT NULL, next_question TEXT,
       source TEXT NOT NULL, created_at TEXT NOT NULL,
       revision INTEGER NOT NULL CHECK (revision >= 1),
@@ -185,7 +189,7 @@ function noteFromRow(row) {
     noteId: row.note_id,
     revision: row.revision,
     mapNamespace: row.map_namespace,
-    anchor: { x: row.x, y: row.y, headingDeg: row.heading_deg },
+    anchor: { x: row.x, y: row.y, angle: row.angle },
     source: row.source,
     hypothesis: row.hypothesis,
     nextQuestion: row.next_question,
@@ -238,25 +242,25 @@ export async function findMemory(input) {
           hasMore: rows.length > query.limit,
         };
       }
-      const { mapNamespace, x, y, headingDeg, radius, limit } = query;
+      const { mapNamespace, x, y, angle, radius, limit } = query;
       const rows = db
         .prepare(`SELECT * FROM notes WHERE map_namespace = ?
           AND x BETWEEN ? AND ? AND y BETWEEN ? AND ?`)
         .all(mapNamespace, x - radius, x + radius, y - radius, y + radius);
       const candidates = rows
         .map((row) => {
-          const difference = Math.abs(row.heading_deg - headingDeg);
+          const difference = Math.abs(row.angle - angle);
           return {
             ...noteFromRow(row),
             distance: Math.hypot(row.x - x, row.y - y),
-            headingDifferenceDeg: Math.min(difference, 360 - difference),
+            angleDifference: Math.min(difference, 4294967296 - difference),
           };
         })
         .filter((note) => note.distance <= radius)
         .sort(
           (a, b) =>
             a.distance - b.distance ||
-            a.headingDifferenceDeg - b.headingDifferenceDeg ||
+            a.angleDifference - b.angleDifference ||
             (a.noteId < b.noteId ? -1 : a.noteId > b.noteId ? 1 : 0),
         )
         .slice(0, limit)
@@ -314,7 +318,7 @@ export async function recordMemory(input) {
           record.mapNamespace,
           record.x,
           record.y,
-          record.headingDeg,
+          record.angle,
           record.hypothesis,
           record.nextQuestion ?? null,
           record.source,

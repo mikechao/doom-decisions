@@ -142,9 +142,9 @@ function fixture(attributed = false) {
       if (attributed) {
         result.status = 'found';
         result.candidates.push({ noteId, revision: 2, mapNamespace: context.mapIdentity.mapKey,
-          anchor: { x: -123, y: 456, headingDeg: 90 }, source: 'Host historical attribution', summary: 'A historical question.',
+          anchor: { x: -123 * 65536, y: 456 * 65536, angle: 1073741824 }, source: 'Host historical attribution', summary: 'A historical question.',
           summaryTruncated: false, nextQuestion: null, latestAssessment: null, status: 'unverified', createdAt: '2026-01-01',
-          isLandmark: true, isActiveExploration: true, distance: 0, headingDifferenceDeg: 0 });
+          isLandmark: true, isActiveExploration: true, distance: 0, angleDifference: 0 });
       }
       return result;
     },
@@ -174,7 +174,7 @@ test('live main: typed attach → one verified PNG → real SDK nested agents �
       assert.equal(report.result?.historicalMemory?.source ?? null, attributed ? 'Host historical attribution' : null);
       assert.deepEqual(f.contexts[0], { observationId: f.observation.observationId, sessionId: f.observation.sessionId,
         tic: 43, mapIdentity: identity,
-        query: { mode: 'nearby', mapNamespace: identity.mapKey, x: -123, y: 456, headingDeg: 90, radius: 128, limit: 3 } });
+        query: { mode: 'nearby', mapNamespace: identity.mapKey, x: -123 * 65536, y: 456 * 65536, angle: 1073741824, radius: 8388608, limit: 3 } });
       assert.equal(report.source?.pngSha256, hash(image));
       assert.deepEqual(f.owners.map(owner => owner.cleanups), [1, 1]);
       assert.deepEqual(f.removed, f.directories);
@@ -299,7 +299,7 @@ test('late parent output cannot become accepted advice after cancellation', asyn
 
 test('host landmark callback rejects cross-IWAD candidates even with a matching context', async () => {
   const context: SavedContext = { observationId: randomUUID(), sessionId: randomUUID(), tic: 43, mapIdentity: identity,
-    query: { mode: 'nearby', mapNamespace: identity.mapKey, x: 0, y: 0, headingDeg: 0, radius: 128, limit: 3 } };
+    query: { mode: 'nearby', mapNamespace: identity.mapKey, x: 0, y: 0, angle: 0, radius: 8388608, limit: 3 } };
   const f = fixture(true);
   try {
     const result = await f.ports.lookup(context);

@@ -41,21 +41,22 @@ async function memoryFixture(t: TestContext) {
 	};
 }
 
-test("real lookup converts pose and bounds nearby results by map, radius and limit", async (t) => {
+test("real lookup preserves raw pose and bounds nearby results by map, radius and limit", async (t) => {
 	const f = await memoryFixture(t);
 	const expected = [];
-	for (const x of [4, 5, 6, 7]) expected.push(await f.seed({ x }));
-	await f.seed({ x: 200 });
-	await f.seed({ mapNamespace: "another-map", x: 2 });
+	for (const x of [262144, 327680, 393216, 458752])
+		expected.push(await f.seed({ x }));
+	await f.seed({ x: 13107200 });
+	await f.seed({ mapNamespace: "another-map", x: 131072 });
 	const before = await readFile(f.database);
 	const result = await f.tools.findNearbyLandmarks(f.base);
 	assert.deepEqual(result.query, {
 		mode: "nearby",
 		mapNamespace: f.base.mapIdentity.mapKey,
-		x: 2,
-		y: -3,
-		headingDeg: 90,
-		radius: 128,
+		x: 131072,
+		y: -196608,
+		angle: 0x40000000,
+		radius: 8388608,
 		limit: 3,
 	});
 	assert.equal(Object.isFrozen(result.query), true);

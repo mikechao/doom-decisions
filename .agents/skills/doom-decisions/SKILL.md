@@ -300,10 +300,13 @@ Before any memory operation, require both optional native tools to have been
 available at startup and memory to remain enabled for this invocation; otherwise
 skip. Keep this in conversation context; never rediscover tools or re-enable memory
 during the invocation.
-The observation has raw `telemetry.x/y` (signed 16.16) and unsigned
-`telemetry.angle`, not converted pose fields. Pass `x = telemetry.x / 65536`,
-`y = telemetry.y / 65536`, `headingDeg = telemetry.angle * 360 / 4294967296`.
-Do not convert an already converted note anchor again.
+Use raw observation values for both memory lookups and creates:
+`x = telemetry.x`, `y = telemetry.y`, `angle = telemetry.angle`.
+Coordinates remain signed 16.16 integers and angle remains an unsigned 32-bit
+integer. Do not divide coordinates or convert angles to degrees. Stored anchors
+use the same raw representation. Radius and returned distance also use raw XY
+units: `8388608` is a radius of 128 map units. Memory requires schema v3;
+older databases are rejected without migration or modification.
 
 **Namespace first.** Before every memory lookup or record, use only the current
 verified observation's `mapIdentity.mapKey` as `mapNamespace`. The DTO parser
@@ -328,13 +331,13 @@ claim and fresh active-run observation/image inspection, call `doom_memory_find`
 with `{mode: "active-landmarks", mapNamespace, limit: 3}` using the current verified
 mapKey, without pose/radius. Inspect that result before separately calling and
 inspecting the existing nearby query:
-`{mapNamespace, x, y, headingDeg, radius: 128, limit: 3}`.
+`{mapNamespace, x, y, angle, radius: 8388608, limit: 3}`.
 These two bounded startup reads are the sole exception to one lookup per checkpoint;
 recheck memory capability and termination rules before the second call.
 Active results have no distance/heading delta; `hasMore: true` means the returned
 subset is incomplete. Creation-time/ID ordering is deterministic, not priority.
-The tool's optional `radius` still defaults to 64 Doom units for callers that
-omit it; this play-skill lookup passes 128 explicitly. No historical session ID
+The tool's optional `radius` defaults to `4194304` (64 map units) for callers that
+omit it; this play-skill lookup passes `8388608` (128 map units). No historical session ID
 or note ID is needed. Later lookups are event-driven: material movement into a new region,
 return to a landmark, credible looping/stall evidence, or to refresh a possibly
 stale note for a worthwhile append, not unconditionally each decision. Keep a
@@ -409,7 +412,7 @@ assessment, source, flags?}`. Optional `flags` must contain the complete boolean
 `{isLandmark, isActiveExploration}`; omission preserves both. During active play, if
 the retained revision may be stale, defer until a fresh lookup is due. For a
 genuinely different location or hypothesis, even nearby, use
-`{operation: "create", requestId, mapNamespace, x, y, headingDeg, hypothesis,
+`{operation: "create", requestId, mapNamespace, x, y, angle, hypothesis,
 nextQuestion?, source, isLandmark?, isActiveExploration?}`. Create flags default false;
 active exploration requires a landmark, and impossible pairs are rejected.
 Anchor the observer's verified pose, never invented target/staircase coordinates.
