@@ -14,10 +14,8 @@ import type { MaterializedDecision } from "../../../scripts/doom-agent-client.ts
 import type { DoomClient } from "../src/doom-client.ts";
 import type { DoomMemoryCandidate, DoomTools } from "../src/doom-tools.ts";
 
-export const noUpdate = {
-	updatePrompt: false,
-	targetNoteId: null,
-	objective: null,
+export const sceneJudgment = {
+	interpretation: "Assess the visible scene while pursuing the host objective.",
 	uncertainty: "No verified route.",
 };
 export async function fixture(t: TestContext) {
@@ -82,23 +80,27 @@ export async function fixture(t: TestContext) {
 	};
 	const note: DoomMemoryCandidate = {
 		noteId: randomUUID(),
+		revision: 2,
 		mapNamespace: base.mapIdentity.mapKey,
 		status: "unverified",
 		isLandmark: true,
+		isActiveExploration: true,
 		anchor: { x: 262144, y: -196608, angle: 0x40000000 },
 		hypothesis: "There may be a doorway nearby.",
+		nextQuestion: "Can a clearer view test the doorway hypothesis?",
 	};
 	const events: string[] = [];
 	const state = {
 		revision: base.revision,
 		configuration: structuredClone(base.configuration),
 		run: null as AgentRunState | null,
-		judgment: noUpdate as unknown,
+		judgment: sceneJudgment as unknown,
 		candidates: [note],
-		memoryObservations: [] as Parameters<DoomTools["findNearbyLandmarks"]>[0][],
+		memoryObservations: [] as Parameters<DoomTools["findActiveLandmarks"]>[0][],
 		modelCalls: 0,
 		modelInput: null as unknown,
 		instructions: "",
+		decisionTemplates: [] as string[],
 		observeCalls: 0,
 		lastId: base.observationId,
 	};
@@ -201,6 +203,7 @@ export async function fixture(t: TestContext) {
 				input.scope.runId !== state.run?.runId
 			)
 				throw new Error("stale decision");
+			state.decisionTemplates.push(state.configuration.instructionTemplate);
 			state.run = {
 				...state.run,
 				active: false,
@@ -270,22 +273,19 @@ export async function fixture(t: TestContext) {
 	};
 	const provider = { responses: () => model } as unknown as OpenAIProvider;
 	const tools: DoomTools = {
-		async findNearbyLandmarks(observation) {
+		async findActiveLandmarks(observation) {
 			events.push("memory");
 			state.memoryObservations.push(structuredClone(observation));
 			return {
 				status: state.candidates.length ? "found" : "empty",
 				caution: "Synthetic unverified notes only",
 				query: {
-					mode: "nearby",
+					mode: "active-landmarks",
 					mapNamespace: base.mapIdentity.mapKey,
-					x: 131072,
-					y: -196608,
-					angle: 0x40000000,
-					radius: 8388608,
 					limit: 3,
 				},
 				candidates: structuredClone(state.candidates),
+				hasMore: false,
 			};
 		},
 	};

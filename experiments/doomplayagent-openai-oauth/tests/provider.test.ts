@@ -22,7 +22,7 @@ test("Responses model construction does not invoke auth or fetch", async (t) => 
 test("offline OAuth transport preserves Responses schema and exact inline image", async (t) => {
 	const { createOAuthProvider } = await import("../src/provider.ts");
 	const { play } = await import("../src/doom-play-agent.ts");
-	const { fixture, noUpdate } = await import("./fixtures.ts");
+	const { fixture, sceneJudgment } = await import("./fixtures.ts");
 	const f = await fixture(t);
 	let responseCalls = 0;
 	t.mock.method(
@@ -47,8 +47,8 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 			assert.equal(body.text.format.type, "json_schema");
 			assert.equal(body.text.format.schema.additionalProperties, false);
 			assert.equal(
-				body.text.format.schema.properties.updatePrompt.type,
-				"boolean",
+				body.text.format.schema.properties.interpretation.type,
+				"string",
 			);
 			const user = body.input.find(
 				(message: { role: string }) => message.role === "user",
@@ -75,7 +75,7 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 						content: [
 							{
 								type: "output_text",
-								text: JSON.stringify(noUpdate),
+								text: JSON.stringify(sceneJudgment),
 								annotations: [],
 							},
 						],

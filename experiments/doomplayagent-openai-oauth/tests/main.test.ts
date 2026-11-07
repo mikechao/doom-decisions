@@ -18,6 +18,7 @@ test("main constructs dependencies, attaches once, awaits one complete play, the
 		"memory",
 		"model",
 		"startRun",
+		"setPrompt",
 		"observe",
 		"decide",
 		"detach",
@@ -82,12 +83,6 @@ test("both playback and detach failures remain available in the AggregateError",
 test("main detaches after an uncertain real playback transaction", async (t) => {
 	const f = await fixture(t);
 	t.mock.method(console, "log", () => {});
-	f.state.judgment = {
-		updatePrompt: true,
-		targetNoteId: f.note.noteId,
-		objective: "Explore",
-		uncertainty: "Unsure",
-	};
 	const decide = f.client.decide;
 	const cause = new Error("lost decision acknowledgment");
 	f.client.decide = async (input) => {
@@ -103,6 +98,11 @@ test("main detaches after an uncertain real playback transaction", async (t) => 
 			assert.ok(error instanceof PlaybackError);
 			assert.equal(error.cause, cause);
 			assert.equal(error.decisionMayHaveBeenSent, true);
+			assert.deepEqual(error.navigationObjective, {
+				kind: "landmark",
+				noteId: f.note.noteId,
+				revision: f.note.revision,
+			});
 			return true;
 		},
 	);

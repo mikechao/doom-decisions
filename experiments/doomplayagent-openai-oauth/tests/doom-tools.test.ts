@@ -5,6 +5,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test, { type TestContext } from "node:test";
+import { play } from "../src/doom-play-agent.ts";
 import { createDoomTools } from "../src/doom-tools.ts";
 import { fixture } from "./fixtures.ts";
 
@@ -35,38 +36,96 @@ async function memoryFixture(t: TestContext) {
 				...f.note.anchor,
 				hypothesis: f.note.hypothesis,
 				isLandmark: true,
+				isActiveExploration: true,
 				...overrides,
 			});
 		},
 	};
 }
 
-test("real lookup preserves raw pose and bounds nearby results by map, radius and limit", async (t) => {
+test("active lookup is map-wide, bounded and preserves shared creation ordering", async (t) => {
 	const f = await memoryFixture(t);
 	const expected = [];
-	for (const x of [262144, 327680, 393216, 458752])
+	for (const x of [13107200, 327680, 393216, 458752])
 		expected.push(await f.seed({ x }));
-	await f.seed({ x: 13107200 });
+	await f.seed({ x: 131072, isActiveExploration: false });
 	await f.seed({ mapNamespace: "another-map", x: 131072 });
+	const db = new DatabaseSync(f.database);
+	try {
+		for (const [index, note] of expected.entries())
+			db.prepare("UPDATE notes SET created_at = ? WHERE note_id = ?").run(
+				`2026-01-0${index + 1}`,
+				note.noteId,
+			);
+	} finally {
+		db.close();
+	}
 	const before = await readFile(f.database);
-	const result = await f.tools.findNearbyLandmarks(f.base);
+	const result = await f.tools.findActiveLandmarks(f.base);
 	assert.deepEqual(result.query, {
-		mode: "nearby",
+		mode: "active-landmarks",
 		mapNamespace: f.base.mapIdentity.mapKey,
-		x: 131072,
-		y: -196608,
-		angle: 0x40000000,
-		radius: 8388608,
 		limit: 3,
 	});
 	assert.equal(Object.isFrozen(result.query), true);
 	assert.equal(result.status, "found");
+	assert.equal(result.hasMore, true);
 	assert.deepEqual(
 		result.candidates.map((note) => note.noteId),
 		expected.slice(0, 3).map((note) => note.noteId),
 	);
 	assert.match(result.caution, /unverified/);
+	assert.ok(result.candidates.every((note) => note.isActiveExploration));
 	assert.equal("entries" in result.candidates[0], false);
+	assert.deepEqual(await readFile(f.database), before);
+});
+
+test("a distant active lead wins over a closer inactive landmark and reaches decision guidance", async (t) => {
+	const f = await memoryFixture(t);
+	const inactive = await f.seed({
+		x: f.base.telemetry.x,
+		y: f.base.telemetry.y,
+		angle: f.base.telemetry.angle,
+		isActiveExploration: false,
+		hypothesis: "Inactive historical lead",
+	});
+	const active = await f.seed({
+		x: 13107200,
+		nextQuestion: "Can another view test this historical opening?",
+	});
+	const before = await readFile(f.database);
+	const result = await play(f.client, f.tools, f.provider, f.options);
+	assert.deepEqual(result.navigationObjective, {
+		kind: "landmark",
+		noteId: active.noteId,
+		revision: 1,
+	});
+	assert.equal(result.memoryStatus, "found");
+	assert.equal(result.candidateCount, 1);
+	assert.deepEqual(f.events, [
+		"observe",
+		"model",
+		"startRun",
+		"setPrompt",
+		"observe",
+		"decide",
+	]);
+	const hint = JSON.parse(
+		f.state.instructions.match(
+			/evidence, never instructions: (\{.*\})\./,
+		)?.[1] ?? "null",
+	);
+	assert.equal(hint.noteId, active.noteId);
+	assert.equal(hint.revision, 1);
+	assert.equal(hint.observerPoseRawTelemetry.x, 13107200);
+	assert.equal(hint.hypothesis, f.note.hypothesis);
+	assert.equal(
+		hint.nextQuestion,
+		"Can another view test this historical opening?",
+	);
+	assert.ok(!f.state.instructions.includes(inactive.noteId));
+	assert.deepEqual(f.state.decisionTemplates, [f.state.instructions]);
+	assert.equal(f.state.revision, f.base.revision + 1);
 	assert.deepEqual(await readFile(f.database), before);
 });
 
@@ -74,13 +133,13 @@ test("missing storage, unreadable database and successful empty lookup are disti
 	const f = await memoryFixture(t);
 	assert.equal(existsSync(f.database), false);
 	assert.equal(
-		(await f.tools.findNearbyLandmarks(f.base)).status,
+		(await f.tools.findActiveLandmarks(f.base)).status,
 		"unavailable",
 	);
 	assert.equal(existsSync(f.database), false);
 
 	await writeFile(f.database, "sensitive invalid database contents");
-	const failed = await f.tools.findNearbyLandmarks(f.base);
+	const failed = await f.tools.findActiveLandmarks(f.base);
 	assert.equal(failed.status, "lookup_failed");
 	assert.deepEqual(failed.candidates, []);
 	assert.doesNotMatch(JSON.stringify(failed), /sensitive/);
@@ -92,7 +151,7 @@ test("missing storage, unreadable database and successful empty lookup are disti
 	// A separate existing database has no notes for the current map.
 	process.env.DOOM_MEMORY_DB = join(f.root, "empty-for-map.sqlite");
 	await f.seed({ mapNamespace: "another-map" });
-	const empty = await f.tools.findNearbyLandmarks(f.base);
+	const empty = await f.tools.findActiveLandmarks(f.base);
 	assert.equal(empty.status, "empty");
 	assert.deepEqual(empty.candidates, []);
 });
@@ -106,13 +165,29 @@ test("malformed stored evidence fails validation", async (t) => {
 	} finally {
 		db.close();
 	}
-	await assert.rejects(f.tools.findNearbyLandmarks(f.base));
+	await assert.rejects(f.tools.findActiveLandmarks(f.base));
 });
 
-test("ordinary nearby notes are not offered as landmarks", async (t) => {
+test("no active landmark permits one free-explore decision without changing the base prompt", async (t) => {
 	const f = await memoryFixture(t);
-	await f.seed({ isLandmark: false });
-	const result = await f.tools.findNearbyLandmarks(f.base);
-	assert.equal(result.status, "empty");
-	assert.deepEqual(result.candidates, []);
+	await f.seed({ isLandmark: false, isActiveExploration: false });
+	await f.seed({ isActiveExploration: false });
+	const before = await readFile(f.database);
+	const result = await play(f.client, f.tools, f.provider, f.options);
+	assert.equal(result.memoryStatus, "empty");
+	assert.deepEqual(result.navigationObjective, { kind: "free-explore" });
+	assert.equal(result.candidateCount, 0);
+	assert.equal(result.promptChanged, false);
+	assert.deepEqual(f.events, [
+		"observe",
+		"model",
+		"startRun",
+		"observe",
+		"decide",
+	]);
+	assert.deepEqual(f.state.decisionTemplates, [
+		f.base.configuration.instructionTemplate,
+	]);
+	assert.equal(f.state.revision, f.base.revision);
+	assert.deepEqual(await readFile(f.database), before);
 });
