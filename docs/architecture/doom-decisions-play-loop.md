@@ -264,9 +264,9 @@ healthy post-claim checkpoint requires two separately inspected reads: active
 landmarks (`limit: 3`, no pose), then nearby notes (`radius: 8388608`, `limit: 3`;
 128 map units in raw 16.16 coordinates). Memory poses use raw telemetry XY and angle.
 Later lookups are event-driven, at most one per eligible checkpoint. Codex uses
-only the current verified observation's `mapIdentity.mapKey` as namespace; it
-converts raw observer pose as `x/65536`, `y/65536`,
-`angle * 360 / 4294967296`. The canonical E1M1 key combines accepted raw IWAD
+only the current verified observation's `mapIdentity.mapKey` as namespace; for
+both memory lookups and creates it passes `x = telemetry.x`, `y = telemetry.y`,
+and `angle = telemetry.angle` unchanged. The canonical E1M1 key combines accepted raw IWAD
 SHA-256 and slot, excludes session ID and can retrieve previous-session history
 after a fresh lookup. DTOs verify key derivation; the notebook itself only accepts
 a bounded caller-supplied namespace string. Namespace/session/ownership matching
