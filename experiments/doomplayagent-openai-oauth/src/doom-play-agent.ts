@@ -309,7 +309,11 @@ export async function play(
 			image,
 			state: modelState(observation),
 		});
-		progress.withTag("perception").info("Scene perception completed");
+		progress.withTag("perception").info("Scene perception completed\n" + [
+			`Description: ${perception.description}`,
+			`Visible features: ${perception.features.join(", ")}`,
+			`Uncertainty: ${perception.uncertainty}`,
+		].join("\n"));
 		const decision = await executeOneDecision(doomClient, observation, {
 			...selection,
 			perception,
