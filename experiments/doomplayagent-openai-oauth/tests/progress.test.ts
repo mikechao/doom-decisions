@@ -18,7 +18,7 @@ function capture(t: TestContext) {
 	return { stderr, stdout };
 }
 
-test("milestones use stderr, preserve final stdout and omit advisory/model data", async (t) => {
+test("milestones log perception to stderr, preserve final stdout and omit advisory data", async (t) => {
 	const f = await fixture(t);
 	const { stderr, stdout } = capture(t);
 	const find = f.tools.findActiveLandmarks;
@@ -36,16 +36,33 @@ test("milestones use stderr, preserve final stdout and omit advisory/model data"
 		assert.match(stderr.join(""), /guidance acknowledged/);
 		return decide(input);
 	};
-	await main(() => f.client, {
+	const result = await main(() => f.client, {
 		makeTools: () => f.tools,
 		makeProvider: () => f.provider,
 	});
+	assert.equal(result.outcome, "completed");
+	assert.equal(f.events.filter((event) => event === "decide").length, 1);
 	const output = stderr.join("");
 	assert.match(output, /\[doom\] Attached; observed E1M1 at tic 43/);
 	assert.match(output, /lookup: found; 1 returned; more available/);
 	assert.match(output, /Objective: landmark note#[0-9a-f]{12} \(revision 2\)/);
 	assert.ok(
 		output.indexOf("Perceiving") < output.indexOf("Scene perception completed"),
+	);
+	assert.ok(
+		output.includes(
+			`Description: ${JSON.stringify(scenePerception.description)}`,
+		),
+	);
+	assert.ok(
+		output.includes(
+			`Visible features: ${scenePerception.features.map((feature) => JSON.stringify(feature)).join(", ")}`,
+		),
+	);
+	assert.ok(
+		output.includes(
+			`Uncertainty: ${JSON.stringify(scenePerception.uncertainty)}`,
+		),
 	);
 	assert.match(output, /outcome: completed; requested 6, verified 6 tics/);
 	assert.match(output, /\[doom\] Lease detached/);
@@ -54,7 +71,6 @@ test("milestones use stderr, preserve final stdout and omit advisory/model data"
 		f.note.hypothesis,
 		f.note.nextQuestion,
 		f.base.configuration.instructionTemplate,
-		scenePerception.description,
 		f.root,
 	]) {
 		assert.ok(!output.includes(secret ?? ""));
@@ -65,6 +81,40 @@ test("milestones use stderr, preserve final stdout and omit advisory/model data"
 		stdout.join(""),
 		/\[doom\]|\[navigation\]|\[perception\]|\[decision\]/,
 	);
+});
+
+test("perception newlines and ANSI escapes are quoted in stderr without changing results", async (t) => {
+	const f = await fixture(t);
+	const { stderr, stdout } = capture(t);
+	const perception = {
+		description: "A room.\u001b[31mRED\u001b[0m\n[forged]",
+		features: ["door\u001b[31m\n[forged]"],
+		uncertainty: "identity unclear\r\n[forged]",
+	};
+	f.state.perception = perception;
+
+	const result = await play(f.client, f.tools, f.provider);
+	const output = stderr.join("");
+
+	assert.equal(result.perception.description, perception.description);
+	assert.deepEqual(result.perception.features, perception.features);
+	assert.equal(result.perception.uncertainty, perception.uncertainty);
+	assert.ok(
+		output.includes(`Description: ${JSON.stringify(perception.description)}`),
+	);
+	assert.ok(
+		output.includes(
+			`Visible features: ${perception.features.map((feature) => JSON.stringify(feature)).join(", ")}`,
+		),
+	);
+	assert.ok(
+		output.includes(`Uncertainty: ${JSON.stringify(perception.uncertainty)}`),
+	);
+	assert.ok(!output.includes("\u001b"));
+	assert.doesNotMatch(output, /^\[forged\]/m);
+	assert.equal(stdout.join(""), "");
+	assert.equal(result.outcome, "completed");
+	assert.equal(f.events.filter((event) => event === "decide").length, 1);
 });
 
 for (const status of ["empty", "unavailable", "lookup_failed"] as const) {

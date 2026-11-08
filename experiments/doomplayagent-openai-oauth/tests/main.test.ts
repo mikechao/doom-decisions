@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { PlaybackError } from "../src/doom-play-agent.ts";
 import { main } from "../src/main.ts";
-import { fixture } from "./fixtures.ts";
+import { fixture, scenePerception } from "./fixtures.ts";
 
 for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 	test(`reasoning model selection through main preserves ${modelId === undefined ? "the default" : modelId === "" ? "an empty override" : "an explicit override"}`, async (t) => {
@@ -30,6 +30,7 @@ for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 			result.perception.description,
 			"A stone corridor is visible ahead.",
 		);
+		assert.deepEqual(result.perception.features, scenePerception.features);
 		assert.equal(result.perception.usage.totalTokens, 0);
 		assert.equal(f.events.filter((event) => event === "decide").length, 1);
 	});
@@ -47,6 +48,7 @@ test("main constructs dependencies, attaches once, awaits one complete play, the
 		result.perception.description,
 		"A stone corridor is visible ahead.",
 	);
+	assert.deepEqual(result.perception.features, scenePerception.features);
 	assert.equal(result.perception.usage.totalTokens, 0);
 	assert.deepEqual(f.events, [
 		"attach",
@@ -139,6 +141,7 @@ test("main detaches after an uncertain real playback transaction", async (t) => 
 				error.perception?.description,
 				"A stone corridor is visible ahead.",
 			);
+			assert.deepEqual(error.perception?.features, scenePerception.features);
 			assert.equal(error.perception?.usage.totalTokens, 0);
 			assert.deepEqual(error.navigationObjective, {
 				kind: "landmark",

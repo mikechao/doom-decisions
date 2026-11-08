@@ -66,8 +66,13 @@ export async function perceiveScene(
 				reasoningEffort: "xhigh",
 			},
 		},
-		instructions:
-			"Describe the visible Doom scene using the verified screenshot and state. Note visible geometry, doors or passages, obstacles, enemies, items, distinctive landmarks, and other relevant features. Separate observed facts from uncertainty. Do not infer unseen rooms, confirmed reachability, or routes from one image. Do not recommend actions, select objectives, or propose control or configuration changes. This is diagnostic scene perception only.",
+		instructions: [
+			"Describe only the visible Doom scene using the verified screenshot and compact game state.",
+			"Write description as one concise, complete sentence, preferably 200 characters or fewer.",
+			"Populate features with up to eight distinct, independently useful details that are clearly visible, such as room geometry, floor or wall appearance, platforms, doors or openings, enemies, pickups, and notable colors or objects. Keep each entry brief and grounded; use an empty array only if no detail is confidently recognizable.",
+			'Use uncertainty only for ambiguity in visible evidence, such as unclear object identity or what lies beyond an opening; if none is material, say "None." Do not guess specific objects, unseen geometry, reachability, or routes from one image.',
+			"Do not recommend actions, select objectives, or propose control or configuration changes. This is diagnostic scene perception only.",
+		].join(" "),
 		messages: [
 			{
 				role: "user",
@@ -309,11 +314,15 @@ export async function play(
 			image,
 			state: modelState(observation),
 		});
-		progress.withTag("perception").info("Scene perception completed\n" + [
-			`Description: ${perception.description}`,
-			`Visible features: ${perception.features.join(", ")}`,
-			`Uncertainty: ${perception.uncertainty}`,
-		].join("\n"));
+		progress
+			.withTag("perception")
+			.info(
+				`Scene perception completed\n${[
+					`Description: ${JSON.stringify(perception.description)}`,
+					`Visible features: ${perception.features.map((feature) => JSON.stringify(feature)).join(", ")}`,
+					`Uncertainty: ${JSON.stringify(perception.uncertainty)}`,
+				].join("\n")}`,
+			);
 		const decision = await executeOneDecision(doomClient, observation, {
 			...selection,
 			perception,

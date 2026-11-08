@@ -155,6 +155,20 @@ test("host selection preserves base and substitution through CAS, then decides o
 	assert.equal(f.state.revision, f.base.revision + 1);
 });
 
+test("an empty feature list remains valid and reaches the play result", async (t) => {
+	const f = await fixture(t);
+	f.state.perception = {
+		...scenePerception,
+		features: [],
+	};
+
+	const result = await play(f.client, f.tools, f.provider);
+
+	assert.deepEqual(result.perception.features, []);
+	assert.equal(result.outcome, "completed");
+	assert.equal(f.events.filter((event) => event === "decide").length, 1);
+});
+
 for (const status of ["empty", "unavailable", "lookup_failed"] as const) {
 	test(`${status} active memory reports free exploration and preserves the base prompt`, async (t) => {
 		const f = await fixture(t);

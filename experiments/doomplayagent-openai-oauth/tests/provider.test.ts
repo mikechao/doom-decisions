@@ -56,25 +56,55 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 				body.text.format.schema.properties.description.type,
 				"string",
 			);
+			assert.equal(
+				body.text.format.schema.properties.description.maxLength,
+				300,
+			);
 			assert.equal(body.text.format.schema.properties.features.type, "array");
+			assert.equal(body.text.format.schema.properties.features.maxItems, 8);
+			assert.equal(
+				body.text.format.schema.properties.features.minItems,
+				undefined,
+			);
+			assert.equal(
+				body.text.format.schema.properties.features.items.maxLength,
+				120,
+			);
 			assert.equal(
 				body.text.format.schema.properties.uncertainty.type,
 				"string",
 			);
+			assert.equal(
+				body.text.format.schema.properties.uncertainty.maxLength,
+				300,
+			);
+			assert.equal(body.text.format.schema.properties.uncertainty.minLength, 1);
 			const system = body.input.find(
 				(message: { role: string }) => message.role === "system",
 			);
 			assert.match(system.content, /visible Doom scene/i);
+			assert.match(system.content, /one concise, complete sentence/i);
+			assert.match(system.content, /200 characters or fewer/i);
+			assert.match(
+				system.content,
+				/up to eight distinct, independently useful details/i,
+			);
+			assert.match(
+				system.content,
+				/empty array only if no detail is confidently recognizable/i,
+			);
+			assert.match(system.content, /if none is material, say "None\."/i);
 			for (const requestedFeature of [
-				"geometry",
-				"doors or passages",
-				"obstacles",
+				"room geometry",
+				"floor or wall appearance",
+				"platforms",
+				"doors or openings",
 				"enemies",
-				"items",
-				"distinctive landmarks",
+				"pickups",
+				"notable colors or objects",
 				"uncertainty",
-				"unseen rooms",
-				"confirmed reachability",
+				"unseen geometry",
+				"reachability",
 				"routes",
 				"recommend actions",
 				"configuration changes",
@@ -145,6 +175,7 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 	}));
 	const result = await play(f.client, f.tools, provider);
 	assert.equal(result.outcome, "completed");
+	assert.deepEqual(result.perception.features, scenePerception.features);
 	assert.equal(responseCalls, 1);
 	assert.equal(f.events.filter((event) => event === "decide").length, 1);
 });
