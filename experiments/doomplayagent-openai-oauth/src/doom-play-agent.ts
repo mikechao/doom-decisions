@@ -24,6 +24,10 @@ export type NavigationObjective =
 	| { kind: "free-explore" }
 	| { kind: "landmark"; noteId: string; revision: number };
 type Memory = Awaited<ReturnType<DoomTools["findActiveLandmarks"]>>;
+type NavigationSelection = {
+	navigationObjective: NavigationObjective;
+	target: DoomMemoryCandidate | null;
+};
 export type InterpretationInput = {
 	image: Buffer;
 	state: ReturnType<typeof modelState>;
@@ -90,10 +94,7 @@ export async function interpretObservation(
 	};
 }
 
-function selectNavigationObjective(memory: Memory): {
-	navigationObjective: NavigationObjective;
-	target: DoomMemoryCandidate | null;
-} {
+function selectNavigationObjective(memory: Memory): NavigationSelection {
 	// The tool returns only active landmarks in shared creation-time/ID order.
 	// This initial tie policy makes no claim about proximity or usefulness.
 	const target = memory.candidates[0] ?? null;
