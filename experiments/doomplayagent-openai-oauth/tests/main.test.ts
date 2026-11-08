@@ -26,6 +26,11 @@ for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 		]);
 		assert.equal(f.state.modelCalls, 1);
 		assert.equal(result.outcome, "completed");
+		assert.equal(
+			result.perception.description,
+			"A stone corridor is visible ahead.",
+		);
+		assert.equal(result.perception.usage.totalTokens, 0);
 		assert.equal(f.events.filter((event) => event === "decide").length, 1);
 	});
 }
@@ -38,6 +43,11 @@ test("main constructs dependencies, attaches once, awaits one complete play, the
 		makeProvider: () => f.provider,
 	});
 	assert.equal(result.outcome, "completed");
+	assert.equal(
+		result.perception.description,
+		"A stone corridor is visible ahead.",
+	);
+	assert.equal(result.perception.usage.totalTokens, 0);
 	assert.deepEqual(f.events, [
 		"attach",
 		"observe",
@@ -125,6 +135,11 @@ test("main detaches after an uncertain real playback transaction", async (t) => 
 			assert.ok(error instanceof PlaybackError);
 			assert.equal(error.cause, cause);
 			assert.equal(error.decisionMayHaveBeenSent, true);
+			assert.equal(
+				error.perception?.description,
+				"A stone corridor is visible ahead.",
+			);
+			assert.equal(error.perception?.usage.totalTokens, 0);
 			assert.deepEqual(error.navigationObjective, {
 				kind: "landmark",
 				noteId: f.note.noteId,

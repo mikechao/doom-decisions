@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { PlaybackError, play } from "../src/doom-play-agent.ts";
 import { main } from "../src/main.ts";
-import { fixture, sceneJudgment } from "./fixtures.ts";
+import { fixture, scenePerception } from "./fixtures.ts";
 
 function capture(t: TestContext) {
 	const stderr: string[] = [];
@@ -45,7 +45,7 @@ test("milestones use stderr, preserve final stdout and omit advisory/model data"
 	assert.match(output, /lookup: found; 1 returned; more available/);
 	assert.match(output, /Objective: landmark note#[0-9a-f]{12} \(revision 2\)/);
 	assert.ok(
-		output.indexOf("Interpreting") < output.indexOf("Interpretation completed"),
+		output.indexOf("Perceiving") < output.indexOf("Scene perception completed"),
 	);
 	assert.match(output, /outcome: completed; requested 6, verified 6 tics/);
 	assert.match(output, /\[doom\] Lease detached/);
@@ -54,7 +54,7 @@ test("milestones use stderr, preserve final stdout and omit advisory/model data"
 		f.note.hypothesis,
 		f.note.nextQuestion,
 		f.base.configuration.instructionTemplate,
-		sceneJudgment.interpretation,
+		scenePerception.description,
 		f.root,
 	]) {
 		assert.ok(!output.includes(secret ?? ""));
@@ -63,7 +63,7 @@ test("milestones use stderr, preserve final stdout and omit advisory/model data"
 	assert.match(stdout.join(""), /^Doom one-decision result:/);
 	assert.doesNotMatch(
 		stdout.join(""),
-		/\[doom\]|\[navigation\]|\[reasoning\]|\[decision\]/,
+		/\[doom\]|\[navigation\]|\[perception\]|\[decision\]/,
 	);
 });
 

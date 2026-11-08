@@ -22,7 +22,7 @@ test("Responses model construction does not invoke auth or fetch", async (t) => 
 test("offline OAuth transport preserves Responses schema and exact inline image", async (t) => {
 	const { createOAuthProvider } = await import("../src/provider.ts");
 	const { play } = await import("../src/doom-play-agent.ts");
-	const { fixture, sceneJudgment } = await import("./fixtures.ts");
+	const { fixture, scenePerception } = await import("./fixtures.ts");
 	const f = await fixture(t);
 	const previous = process.env.DOOM_REASONING_MODEL;
 	process.env.DOOM_REASONING_MODEL = "synthetic";
@@ -53,11 +53,55 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 			assert.equal(body.text.format.type, "json_schema");
 			assert.equal(body.text.format.schema.additionalProperties, false);
 			assert.equal(
-				body.text.format.schema.properties.interpretation.type,
+				body.text.format.schema.properties.description.type,
 				"string",
 			);
+			assert.equal(body.text.format.schema.properties.features.type, "array");
+			assert.equal(
+				body.text.format.schema.properties.uncertainty.type,
+				"string",
+			);
+			const system = body.input.find(
+				(message: { role: string }) => message.role === "system",
+			);
+			assert.match(system.content, /visible Doom scene/i);
+			for (const requestedFeature of [
+				"geometry",
+				"doors or passages",
+				"obstacles",
+				"enemies",
+				"items",
+				"distinctive landmarks",
+				"uncertainty",
+				"unseen rooms",
+				"confirmed reachability",
+				"routes",
+				"recommend actions",
+				"configuration changes",
+			])
+				assert.ok(system.content.includes(requestedFeature));
 			const user = body.input.find(
 				(message: { role: string }) => message.role === "user",
+			);
+			const promptText = user.content.find(
+				(part: { type: string }) => part.type === "input_text",
+			);
+			assert.deepEqual(JSON.parse(promptText.text), {
+				state: {
+					map: { mapSlot: f.base.mapIdentity.mapSlot },
+					tic: f.base.tic,
+					phase: f.base.phase,
+					telemetry: f.base.telemetry,
+					facingProbe: f.base.facingProbe,
+					previousAction: null,
+				},
+			});
+			assert.doesNotMatch(
+				JSON.stringify({
+					instructions: system.content,
+					promptText: promptText.text,
+				}),
+				/There may be a doorway nearby|Can a clearer view|navigationObjective|historicalLandmark/,
 			);
 			const image = user.content.find(
 				(part: { type: string }) => part.type === "input_image",
@@ -81,7 +125,7 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 						content: [
 							{
 								type: "output_text",
-								text: JSON.stringify(sceneJudgment),
+								text: JSON.stringify(scenePerception),
 								annotations: [],
 							},
 						],

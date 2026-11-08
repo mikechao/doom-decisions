@@ -14,9 +14,10 @@ import type { MaterializedDecision } from "../../../scripts/doom-agent-client.ts
 import type { DoomClient } from "../src/doom-client.ts";
 import type { DoomMemoryCandidate, DoomTools } from "../src/doom-tools.ts";
 
-export const sceneJudgment = {
-	interpretation: "Assess the visible scene while pursuing the host objective.",
-	uncertainty: "No verified route.",
+export const scenePerception = {
+	description: "A stone corridor is visible ahead.",
+	features: ["A doorway is visible at the far end."],
+	uncertainty: "The image does not establish what lies beyond the doorway.",
 };
 export async function fixture(t: TestContext) {
 	t.mock.method(globalThis, "fetch", async () => {
@@ -94,7 +95,7 @@ export async function fixture(t: TestContext) {
 		revision: base.revision,
 		configuration: structuredClone(base.configuration),
 		run: null as AgentRunState | null,
-		judgment: sceneJudgment as unknown,
+		perception: scenePerception as unknown,
 		candidates: [note],
 		memoryObservations: [] as Parameters<DoomTools["findActiveLandmarks"]>[0][],
 		modelCalls: 0,
@@ -258,7 +259,7 @@ export async function fixture(t: TestContext) {
 			state.modelCalls++;
 			state.modelInput = input;
 			return {
-				content: [{ type: "text", text: JSON.stringify(state.judgment) }],
+				content: [{ type: "text", text: JSON.stringify(state.perception) }],
 				finishReason: { unified: "stop", raw: "stop" },
 				usage: {
 					inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },

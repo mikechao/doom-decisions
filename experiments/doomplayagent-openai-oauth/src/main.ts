@@ -128,7 +128,7 @@ if (
 				if (failure instanceof PlaybackError)
 					console.error(failure.message, {
 						navigationObjective: failure.navigationObjective,
-						judgment: failure.judgment,
+						perception: failure.perception,
 					});
 				else
 					console.error(
@@ -138,7 +138,7 @@ if (
 		} else if (error instanceof PlaybackError)
 			console.error(error.message, {
 				navigationObjective: error.navigationObjective,
-				judgment: error.judgment,
+				perception: error.perception,
 			});
 		else if (error instanceof Error && error.message === usage)
 			console.error(usage);
