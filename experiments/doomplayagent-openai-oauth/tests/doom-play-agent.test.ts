@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import test from "node:test";
-import { PlaybackError, type Judgment, play } from "../src/doom-play-agent.ts";
+import { type Judgment, PlaybackError, play } from "../src/doom-play-agent.ts";
 import { fixture, sceneJudgment } from "./fixtures.ts";
 
 // The fake model reports zero raw token counts; the SDK normalizes these to
