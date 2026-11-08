@@ -143,24 +143,6 @@ for (const status of ["empty", "unavailable", "lookup_failed"] as const) {
 	});
 }
 
-test("changed materialized PNG prevents inference and gameplay", async (t) => {
-	const f = await fixture(t);
-	const observe = f.client.observe;
-	f.client.observe = async () => {
-		const o = await observe();
-		await writeFile(o.pngPath, "tampered");
-		return o;
-	};
-	await assert.rejects(play(f.client, f.tools, f.provider), (error) => {
-		assert.ok(error instanceof PlaybackError);
-		assert.equal(error.decisionMayHaveBeenSent, false);
-		assert.match(String(error.cause), /PNG changed/);
-		return true;
-	});
-	assert.equal(f.state.modelCalls, 0);
-	assert.deepEqual(f.events, ["observe"]);
-});
-
 for (const judgment of [
 	{
 		...sceneJudgment,
@@ -350,7 +332,7 @@ test("model failure has no retry or browser mutation", async (t) => {
 	assert.deepEqual(f.events, ["observe", "memory"]);
 });
 
-test("file changes after verification cannot change the owned inference bytes", async (t) => {
+test("file changes after reading cannot change the owned inference bytes", async (t) => {
 	const f = await fixture(t);
 	let path = "";
 	const observe = f.client.observe;

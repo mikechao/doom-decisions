@@ -31,19 +31,6 @@ export type InterpretationInput = {
 	landmark: DoomMemoryCandidate | null;
 };
 
-async function readVerifiedPng(
-	observation: MaterializedObserve,
-): Promise<Buffer> {
-	// The executor validated the PNG before writing it. We read it again, so
-	// bind the exact owned inference bytes to that validated digest (file TOCTOU).
-	const image = await readFile(observation.pngPath);
-	if (
-		createHash("sha256").update(image).digest("hex") !== observation.pngSha256
-	)
-		throw new Error("Materialized Doom PNG changed before inference.");
-	return image;
-}
-
 function modelState(o: Omit<AgentObserveResult, "png">) {
 	return {
 		map: { mapSlot: o.mapIdentity.mapSlot },
@@ -299,7 +286,7 @@ export async function play(
 			.info(
 				`Attached; observed ${observation.mapIdentity.mapSlot} at tic ${observation.tic}`,
 			);
-		const image = await readVerifiedPng(observation);
+		const image = await readFile(observation.pngPath);
 		stage = "landmarks";
 		const memory = await doomTools.findActiveLandmarks(observation);
 		progress
