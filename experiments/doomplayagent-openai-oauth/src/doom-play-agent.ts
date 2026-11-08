@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { OpenAIProvider } from "@ai-sdk/openai";
-import { generateText, type LanguageModel, Output } from "ai";
+import { generateText, type LanguageModel, type LanguageModelUsage, Output } from "ai";
 import { z } from "zod";
 import {
 	type AgentObserveResult,
@@ -17,7 +17,9 @@ const judgmentSchema = z.strictObject({
 	interpretation: z.string().trim().min(1).max(300),
 	uncertainty: z.string().trim().min(1).max(300),
 });
-export type Judgment = z.infer<typeof judgmentSchema>;
+export type Judgment = z.infer<typeof judgmentSchema> & {
+	usage: LanguageModelUsage;
+};
 export type NavigationObjective =
 	| { kind: "free-explore" }
 	| { kind: "landmark"; noteId: string; revision: number };
@@ -91,7 +93,10 @@ export async function interpretObservation(
 	});
 	if (result.finishReason !== "stop")
 		throw new Error("Navigation judgment did not finish.");
-	return result.output;
+	return {
+		...result.output,
+		usage: result.usage,
+	};
 }
 
 function selectNavigationObjective(memory: Memory): {
