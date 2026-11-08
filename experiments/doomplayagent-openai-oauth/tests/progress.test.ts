@@ -77,7 +77,7 @@ for (const status of ["empty", "unavailable", "lookup_failed"] as const) {
 			status,
 			candidates: [],
 		});
-		await play(f.client, f.tools, f.provider, f.options);
+		await play(f.client, f.tools, f.provider);
 		const output = stderr.join("");
 		assert.ok(output.includes(`lookup: ${status}; 0 returned`));
 		assert.match(output, /Objective: free explore/);
@@ -101,10 +101,7 @@ for (const operation of ["setPrompt", "decide"] as const) {
 				throw Error("SECRET /private/raw-error");
 			},
 		});
-		await assert.rejects(
-			play(f.client, f.tools, f.provider, f.options),
-			PlaybackError,
-		);
+		await assert.rejects(play(f.client, f.tools, f.provider), PlaybackError);
 		const output = stderr.join("");
 		assert.doesNotMatch(output, /Action:|SECRET|raw-error/);
 		if (operation === "setPrompt")

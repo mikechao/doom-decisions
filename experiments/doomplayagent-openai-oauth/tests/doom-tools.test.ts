@@ -94,7 +94,7 @@ test("a distant active lead wins over a closer inactive landmark and reaches dec
 		nextQuestion: "Can another view test this historical opening?",
 	});
 	const before = await readFile(f.database);
-	const result = await play(f.client, f.tools, f.provider, f.options);
+	const result = await play(f.client, f.tools, f.provider);
 	assert.deepEqual(result.navigationObjective, {
 		kind: "landmark",
 		noteId: active.noteId,
@@ -173,7 +173,7 @@ test("no active landmark permits one free-explore decision without changing the 
 	await f.seed({ isLandmark: false, isActiveExploration: false });
 	await f.seed({ isActiveExploration: false });
 	const before = await readFile(f.database);
-	const result = await play(f.client, f.tools, f.provider, f.options);
+	const result = await play(f.client, f.tools, f.provider);
 	assert.equal(result.memoryStatus, "empty");
 	assert.deepEqual(result.navigationObjective, { kind: "free-explore" });
 	assert.equal(result.candidateCount, 0);

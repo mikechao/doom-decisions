@@ -76,9 +76,6 @@ export async function main(
 			doomClient,
 			doomTools,
 			provider,
-			{
-				modelId: process.env.DOOM_REASONING_MODEL ?? "gpt-6-luna",
-			},
 		);
 		console.log("Doom one-decision result:", result);
 	} catch (error) {

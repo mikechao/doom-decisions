@@ -24,6 +24,12 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 	const { play } = await import("../src/doom-play-agent.ts");
 	const { fixture, sceneJudgment } = await import("./fixtures.ts");
 	const f = await fixture(t);
+	const previous = process.env.DOOM_REASONING_MODEL;
+	process.env.DOOM_REASONING_MODEL = "synthetic";
+	t.after(() => {
+		if (previous === undefined) delete process.env.DOOM_REASONING_MODEL;
+		else process.env.DOOM_REASONING_MODEL = previous;
+	});
 	let responseCalls = 0;
 	t.mock.method(
 		globalThis,
@@ -93,7 +99,7 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 		accessToken: "synthetic-offline-token",
 		accountId: "synthetic-offline-account",
 	}));
-	const result = await play(f.client, f.tools, provider, f.options);
+	const result = await play(f.client, f.tools, provider);
 	assert.equal(result.outcome, "completed");
 	assert.equal(responseCalls, 1);
 	assert.equal(f.events.filter((event) => event === "decide").length, 1);

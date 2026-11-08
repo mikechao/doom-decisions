@@ -301,6 +301,5 @@ export async function fixture(t: TestContext) {
 		model,
 		provider,
 		tools,
-		options: { modelId: "synthetic" },
 	};
 }

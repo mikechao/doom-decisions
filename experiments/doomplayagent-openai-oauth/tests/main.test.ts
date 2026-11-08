@@ -4,6 +4,32 @@ import { PlaybackError } from "../src/doom-play-agent.ts";
 import { main } from "../src/main.ts";
 import { fixture } from "./fixtures.ts";
 
+for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
+	test(`reasoning model selection through main preserves ${modelId === undefined ? "the default" : modelId === "" ? "an empty override" : "an explicit override"}`, async (t) => {
+		const f = await fixture(t);
+		const previous = process.env.DOOM_REASONING_MODEL;
+		t.after(() => {
+			if (previous === undefined) delete process.env.DOOM_REASONING_MODEL;
+			else process.env.DOOM_REASONING_MODEL = previous;
+		});
+		if (modelId === undefined) delete process.env.DOOM_REASONING_MODEL;
+		else process.env.DOOM_REASONING_MODEL = modelId;
+		const responses = t.mock.method(f.provider, "responses");
+		t.mock.method(console, "log", () => {});
+		const result = await main(() => f.client, {
+			makeTools: () => f.tools,
+			makeProvider: () => f.provider,
+		});
+		assert.equal(responses.mock.callCount(), 1);
+		assert.deepEqual(responses.mock.calls[0].arguments, [
+			modelId ?? "gpt-6-luna",
+		]);
+		assert.equal(f.state.modelCalls, 1);
+		assert.equal(result.outcome, "completed");
+		assert.equal(f.events.filter((event) => event === "decide").length, 1);
+	});
+}
+
 test("main constructs dependencies, attaches once, awaits one complete play, then detaches", async (t) => {
 	const f = await fixture(t);
 	t.mock.method(console, "log", () => {});
@@ -40,7 +66,8 @@ test("main does not detach while playback is pending", async (t) => {
 	const running = main(() => f.client, {
 		makeTools: () => f.tools,
 		makeProvider: () => f.provider,
-		playback: async () => {
+		playback: async (...args) => {
+			assert.deepEqual(args, [f.client, f.tools, f.provider]);
 			entered();
 			await pending;
 			throw failure;

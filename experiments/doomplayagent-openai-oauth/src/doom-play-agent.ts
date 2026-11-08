@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { OpenAIProvider } from "@ai-sdk/openai";
-import { generateText, type LanguageModel, type LanguageModelUsage, Output } from "ai";
+import { generateText, type LanguageModelUsage, Output } from "ai";
 import { z } from "zod";
 import {
 	type AgentObserveResult,
@@ -29,9 +29,6 @@ export type InterpretationInput = {
 	state: ReturnType<typeof modelState>;
 	navigationObjective: NavigationObjective;
 	landmark: DoomMemoryCandidate | null;
-};
-export type PlayOptions = {
-	modelId: string;
 };
 
 async function readVerifiedPng(
@@ -63,9 +60,11 @@ function modelState(o: Omit<AgentObserveResult, "png">) {
 }
 
 export async function interpretObservation(
-	model: LanguageModel,
+	openAIProvider: OpenAIProvider,
 	input: InterpretationInput,
 ): Promise<Judgment> {
+	const modelId = process.env.DOOM_REASONING_MODEL ?? "gpt-6-luna";
+	const model = openAIProvider.responses(modelId);
 	const result = await generateText({
 		model,
 		maxRetries: 0,
@@ -285,7 +284,6 @@ export async function play(
 	doomClient: DoomClient,
 	doomTools: DoomTools,
 	openAIProvider: OpenAIProvider,
-	options: PlayOptions,
 ): Promise<PlayResult> {
 	let stage = "observation";
 	let navigationObjective: NavigationObjective | null = null;
@@ -317,15 +315,12 @@ export async function play(
 			);
 		stage = "judgment";
 		progress.withTag("reasoning").info("Interpreting current observation");
-		const judgment = await interpretObservation(
-			openAIProvider.responses(options.modelId),
-			{
-				image,
-				state: modelState(observation),
-				navigationObjective,
-				landmark: selection.target,
-			},
-		);
+		const judgment = await interpretObservation(openAIProvider, {
+			image,
+			state: modelState(observation),
+			navigationObjective,
+			landmark: selection.target,
+		});
 		progress.withTag("reasoning").info("Interpretation completed");
 		const decision = await executeOneDecision(doomClient, observation, {
 			...selection,
