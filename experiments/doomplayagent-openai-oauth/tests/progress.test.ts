@@ -131,10 +131,10 @@ for (const status of ["empty", "unavailable", "lookup_failed"] as const) {
 		const output = stderr.join("");
 		assert.ok(output.includes(`lookup: ${status}; 0 returned`));
 		assert.match(output, /Objective: free explore/);
-		assert.match(output, /Base prompt unchanged/);
+		assert.match(output, /Navigation guidance acknowledged/);
 		assert.doesNotMatch(
 			output,
-			/guidance acknowledged|total|no active landmarks/,
+			/Base prompt unchanged|total|no active landmarks/,
 		);
 		assert.equal(stdout.length, 0);
 	});
@@ -191,7 +191,7 @@ test("uncertain receipt and detach failure stay explicit and bounded", async (t)
 	assert.doesNotMatch(output, /Lease detached|SECRET|raw-error/);
 });
 
-test("assessment strings are escaped in stderr and remain report-only", async (t) => {
+test("assessment strings stay escaped in stderr and advisory prompt JSON", async (t) => {
 	const f = await fixture(t);
 	const { stderr, stdout } = capture(t);
 	const assessment = {
@@ -219,6 +219,6 @@ test("assessment strings are escaped in stderr and remain report-only", async (t
 	assert.doesNotMatch(output, /^\[forged\]/m);
 	assert.ok(!output.includes(f.note.hypothesis));
 	assert.equal(result.navigationAssessment?.evidence, assessment.evidence);
-	assert.ok(!f.state.instructions.includes(assessment.evidence));
+	assert.ok(f.state.instructions.includes(JSON.stringify(assessment.evidence)));
 	assert.equal(stdout.length, 0);
 });

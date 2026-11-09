@@ -169,7 +169,7 @@ test("malformed stored evidence fails validation", async (t) => {
 	await assert.rejects(f.tools.findActiveLandmarks(f.base));
 });
 
-test("no active landmark permits one free-explore decision without changing the base prompt", async (t) => {
+test("no active landmark permits one perception-informed free-explore decision", async (t) => {
 	const f = await memoryFixture(t);
 	await f.seed({ isLandmark: false, isActiveExploration: false });
 	await f.seed({ isActiveExploration: false });
@@ -178,17 +178,20 @@ test("no active landmark permits one free-explore decision without changing the 
 	assert.equal(result.memoryStatus, "empty");
 	assert.deepEqual(result.navigationObjective, { kind: "free-explore" });
 	assert.equal(result.candidateCount, 0);
-	assert.equal(result.promptChanged, false);
+	assert.equal(result.promptChanged, true);
 	assert.deepEqual(f.events, [
 		"observe",
 		"model",
 		"startRun",
+		"setPrompt",
 		"observe",
 		"decide",
 	]);
-	assert.deepEqual(f.state.decisionTemplates, [
-		f.base.configuration.instructionTemplate,
-	]);
-	assert.equal(f.state.revision, f.base.revision);
+	assert.ok(
+		f.state.instructions.startsWith(f.base.configuration.instructionTemplate),
+	);
+	assert.match(f.state.instructions, /Current objective: free explore/);
+	assert.deepEqual(f.state.decisionTemplates, [f.state.instructions]);
+	assert.equal(f.state.revision, f.base.revision + 1);
 	assert.deepEqual(await readFile(f.database), before);
 });

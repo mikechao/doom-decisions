@@ -6,8 +6,8 @@ The Decisions API chooses the actual action. TypeScript selects the first-turn
 navigation objective. The separate reasoning model independently perceives the
 visible scene from the verified screenshot and compact state, returning a small
 diagnostic description, features, uncertainty and usage. It receives no
-navigation objective or historical landmark; perception does not alter gameplay
-guidance.
+navigation objective or historical landmark. The host combines perception and,
+for a landmark, a text-only navigation assessment into advisory Decisions guidance.
 
 The experiment uses the installed AI SDK 7, official `@ai-sdk/openai` Responses
 provider and existing local OAuth transport. `DOOM_REASONING_MODEL` selects the
@@ -16,9 +16,10 @@ Decisions provider/model. OAuth model availability and structured-output/image
 support remain unverified against a live account. There is no automatic fallback
 or model retry.
 
-`play()` owns observation, active-landmark lookup, objective selection and scene
-perception. Its private `executeOneDecision()` helper owns the handoff: prompt
-composition, run claiming, revision CAS, fresh observation and one decision.
+`play()` owns observation, active-landmark lookup, objective selection, scene
+perception and navigation assessment. Its private `executeOneDecision()` helper
+owns prompt composition, run claiming, revision CAS, fresh observation and one
+decision.
 
 The host sequence is:
 
@@ -41,17 +42,24 @@ The host sequence is:
    Ask the model to perceive the verified screenshot and compact verified state.
    Its strict output contains a scene description, visible features, uncertainty
    and normalized usage. The request contains no selected objective or historical
-   landmark. The model cannot select an objective or update the prompt; perception
-   stays diagnostic and does not enter gameplay guidance.
-5. For a landmark, compose bounded guidance from the initial validated template,
-   selected ID/revision, observer pose, hypothesis and optional next question
-   before claiming the run. Historical text is labeled untrusted advisory data;
-   the anchor is an observer pose, never a guaranteed reachable waypoint.
-   Free exploration leaves the existing template unchanged, without `setPrompt`.
+   landmark. The model cannot select an objective or update the prompt. For a
+   selected landmark, a second text-only inference compares perception with that
+   note and returns verdict, evidence and uncertainty. Free exploration skips it.
+5. Synchronously compose bounded guidance from the canonical base template and
+   current perception, plus the selected historical evidence and actual assessment
+   when a landmark exists, before claiming the run. Historical and model text
+   remain untrusted advisory JSON, without usage or full observations. A missing
+   visible match does not prove wrong location or unreachability; a possible match
+   does not confirm arrival. The anchor remains an observer pose, never a verified
+   destination. The current verified screenshot/state has highest game-evidence
+   authority; base survival rules and controller authorization retain priority.
+   Free exploration also receives a perception-informed amendment. Oversize
+   instructions fail before run claim, without truncation or evidence removal.
    No extra `getPrompt` is needed: revision CAS protects that template snapshot.
 6. Claim the run using the initial observation/session/revision. Require the
-   broker-selected budget to be exactly one. Optionally `setPrompt` using the
+   broker-selected budget to be exactly one. Call `setPrompt` using the
    claimed run and current revision; use the acknowledged revision afterward.
+   Both objectives report `promptChanged: true` after an acknowledged update.
 7. Observe afresh. Require a new observation ID, the same session/map/tic and
    expected revision to preserve continuity with the initial observation. Send
    `decide` once with that fresh ID and the claimed scope. Browser/controller
@@ -71,7 +79,7 @@ exceptions. Prompt updates pass strings directly to the shared executor; no
 temporary prompt file is created. Playback and detach failures remain separate
 members of an `AggregateError` when both fail.
 
-There is no second action slot, config write, autonomous loop or subagent. The
+There is no second action slot, `setConfig` call, autonomous loop or subagent. The
 lease-owned prompt amendment is not restored through another mutation; the flow
 ends by detaching.
 
@@ -79,16 +87,24 @@ Tagged progress milestones use `consola/basic` on stderr; the existing final
 result stays on stdout. Progress includes lookup status and returned count (not
 an active total), the host objective, perception status, acknowledged guidance,
 the decision receipt and detach outcome. Landmark labels use the first 12 hex
-characters of SHA-256 of the note ID; no note prose or model prose enters progress.
+characters of SHA-256 of the note ID; no note prose enters progress. Perception
+and assessment diagnostics remain JSON-escaped when logged.
 Missing receipt fields appear as `unknown`, and uncertain completion stays explicit.
 Progress is best-effort: a synchronous write failure or stderr stream error disables
 further progress for the process without interrupting gameplay or detach cleanup.
 
-Free exploration preserves whatever base template the lease inherited from the
-human settings; it does not reset a customized template to the default exploration
-instructions. Likewise, prompt wording about the next decision has no automatic
-expiry within a lease. This experiment supports one attach/play/detach transaction,
-without same-lease restoration or an objective lifecycle. Several notes may remain
+Both paths preserve the customized base template inherited from human settings.
+The supported `main()` transaction attaches a fresh lease: controller
+`attachAgent()` copies `ports.readDecisionConfiguration().instructionTemplate`,
+while `agentPrompt()` changes only the lease configuration and `stopAgent()`
+discards it ([controller](../../app/src/session-controller.ts)). Thus its initial
+observation supplies the canonical human template, not an earlier lease amendment.
+`play()` alone cannot prove that a caller has not already changed the lease prompt;
+the observation exposes only the current template, with no canonical-base field.
+The smallest safe handling for direct callers is a fresh, unmodified lease for
+each attach/play/detach transaction. Never reuse an augmented template as base.
+Prompt wording about the next decision has no automatic expiry within a lease;
+there is no restoration mutation or objective lifecycle. Several notes may remain
 active; only the first is selected, even if the bounded lookup reports `hasMore`.
 
 ## Responsibility audit
