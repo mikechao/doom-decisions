@@ -74,6 +74,8 @@ Read-only inspection and non-writing syntax/diff checks include `git status --sh
 
 ### Agent Development
 
+When changing the DoomPlayAgent execution flow, ownership boundaries, prompt composition, navigation behavior, or gameplay/error invariants in `experiments/doomplayagent-openai-oauth/`, review and update its [execution-flow baseline](experiments/doomplayagent-openai-oauth/doom-play-agent.md) in the same change so it reflects the implementation. Formatting-only and test-only changes do not require document edits.
+
 The current verified milestone is **one guarded live Doom decision**. Exactly two sequential decisions with a fresh **agent-visible post-decision screenshot** between them are the next proposed milestone, not existing behavior. The parent currently receives only the initial image; host observation and structured receipt feedback do not supply a second image. There is no arbitrary N-decision loop.
 
 For agent changes, preserve browser lease ownership, explicit decision authorization, the nonrefundable decision-attempt budget, fresh observation/image/session/map checks, compare-and-swap (CAS) and one-shot mutation protection, Stop/cancellation precedence, uncertainty handling (never replay after uncertain dispatch), and verified gameplay receipts. Prefer the smallest experiment that tests the next architectural assumption. Do not redesign safeguards for hypothetical issues or introduce new frameworks, generic schedulers, compatibility layers, or unrelated refactors.
