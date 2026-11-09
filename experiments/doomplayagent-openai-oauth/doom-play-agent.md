@@ -36,9 +36,11 @@ code behavior, not evidence of navigation improvement or landmark arrival.
    previous action's action, tics and end tic. Perception is logged after it
    completes. The scene module owns its strict output schema, input/result types
    and Responses request.
-5. Only when a landmark is selected, `assessNavigation()` makes a second,
-   text-only request comparing perception with that note's hypothesis, next
-   question and observer pose. It receives no image or unselected notes.
+5. Only when a landmark is selected, [`assessNavigation()`](src/navigation-assessment.ts)
+   makes a second, text-only request comparing perception with that note's
+   hypothesis, next question and observer pose. It receives no image or
+   unselected notes. The assessment module owns this request, its strict schema
+   and result type; `play()` decides whether to call it.
    Free exploration skips assessment and retains `navigationAssessment: null`.
    Assessment failure stops playback; it does not fall back to free exploration.
 6. `executeOneDecision()` synchronously calls `composeGuidance()` with the
@@ -77,7 +79,7 @@ evidence throws instead and stops at `landmarks` before inference or admission.
 | `selectNavigationObjective()` | Memory result → `NavigationSelection`: a `NavigationObjective` (`free-explore` or landmark note ID/revision) plus the full selected `target` or null. Host selection affects guidance, not the action directly. |
 | [`modelState()`](src/doom-play-agent.ts) | Verified observation → compact perception state. It stays in the orchestrator and is called before the perception request. |
 | [`perceiveScene()` and perception types/schema](src/scene-perception.ts) | Provider plus image/state → `ScenePerception`: description, up to eight features, uncertainty and usage. Diagnostic scene text subsequently informs gameplay guidance. |
-| `assessNavigation()` | Provider, perception and selected candidate → `NavigationAssessment`: verdict (`possible-match`, `no-visible-match`, `insufficient-evidence`), evidence, uncertainty and usage. Diagnostic comparison subsequently informs guidance. |
+| [`assessNavigation()` and `NavigationAssessment`](src/navigation-assessment.ts) | Provider, `ScenePerception` and selected `DoomMemoryCandidate` → verdict (`possible-match`, `no-visible-match`, `insufficient-evidence`), evidence, uncertainty and usage. Owns its text-only request and private strict schema; the diagnostic comparison subsequently informs guidance. |
 | `composeGuidance()` | Base template plus `DecisionGuidance` → bounded instruction string. Projects perception and, for a target, historical fields and assessment into untrusted advisory JSON; omits usage and full observations. |
 | `executeOneDecision()` | Client, original observation and guidance → decision/result fields. Owns preflight, one-slot requirement, prompt CAS, cross-observation continuity and the single `decide()` call. |
 | [`DoomClient`](src/doom-client.ts) | Owns the acknowledged lease and serializes operations by rejecting overlapping calls. Delegates protocol validation to the shared executor; makes no automatic retries. `play()` does not use its `getConfig()`, `getPrompt()` or `setConfig()` methods. |
@@ -149,9 +151,10 @@ Both reasoning helpers use `DOOM_REASONING_MODEL ?? "gpt-6-luna"`, Responses,
 strict structured-output schemas, `maxRetries: 0`, a 60-second abort signal,
 `store: false` and `reasoningEffort: "xhigh"`. The perception request and its
 schema are owned by [`scene-perception.ts`](src/scene-perception.ts); navigation
-assessment remains in [`doom-play-agent.ts`](src/doom-play-agent.ts). Both
-require finish reason `stop`. Schema, transport or finish failures abort the
-flow. No reasoning tool selects an action or mutates configuration.
+assessment request, schema and result type are owned by
+[`navigation-assessment.ts`](src/navigation-assessment.ts). Both require finish
+reason `stop`. Schema, transport or finish failures abort the flow. No reasoning
+tool selects an action or mutates configuration.
 
 ## Navigation and prompt lifecycle
 

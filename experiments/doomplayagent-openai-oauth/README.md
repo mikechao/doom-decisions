@@ -133,7 +133,7 @@ Offline verification, from this directory with existing dependencies:
 ```sh
 npm run typecheck
 node --experimental-strip-types --test tests/*.test.ts
-../../app/node_modules/.bin/biome check src/main.ts src/provider.ts src/doom-play-agent.ts src/doom-tools.ts src/progress.ts tests
+../../app/node_modules/.bin/biome check src/main.ts src/provider.ts src/doom-play-agent.ts src/navigation-assessment.ts src/doom-tools.ts src/progress.ts tests
 ```
 
 Tests use fake Doom clients/transports, fake model responses, fake tools for agent
