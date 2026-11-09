@@ -14,7 +14,8 @@ code behavior, not evidence of navigation improvement or landmark arrival.
    memory tools and OAuth-backed OpenAI provider, then attaches once. The provider
    uses `openaiCredentials().getSession()` through
    [`createOAuthProvider()`](src/provider.ts). After acknowledged attach it awaits
-   `play(client, tools, provider)` and prints the returned result.
+   `play(client, tools, provider)` and prints its compact summary, excluding the
+   programmatic `record` and its image Buffers.
 2. `play()` calls `observe()`, then reads the executor-materialized `pngPath`
    into an owned Buffer. The shared executor has parsed the observation and
    checked PNG header/hash before materializing it; `play()` does not revalidate
@@ -50,9 +51,13 @@ code behavior, not evidence of navigation improvement or landmark arrival.
    the **acknowledged revision**. It does not require full snapshot/frame/hash
    equality or reread this PNG for reasoning. Browser admission adds its own
    freshness/ownership checks.
-9. It calls `decide()` exactly once with the fresh ID and scope, logs the receipt,
-   and reports the executor-validated result. There is no final accounting call,
-   resulting-PNG reread or second perception/decision. `main()` detaches in
+9. It calls `decide()` exactly once with the fresh ID and scope, retains the full
+   executor-validated receipt, and, only when a resulting observation exists,
+   reads its materialized PNG once. It checks these newly read bytes against the
+   resulting observation's `pngSha256` before retaining the Buffer. A read or
+   digest failure is recorded separately and leaves the returned receipt intact.
+   It logs/reports the receipt outcome. There is no final accounting call or
+   second perception/decision. `main()` detaches in
    `finally` after playback settles, including on failure, if attach was acknowledged.
 
 `findActiveLandmarks()` distinguishes `found`, `empty`, `unavailable` (missing
@@ -80,6 +85,60 @@ fields: outcome/reason/action, SDK invocation and completion uncertainty,
 cumulative tics, and separate requested/reported/verified tics. A returned result
 can describe declined admission, a terminal prefix or uncertainty; it is not
 necessarily a completed action.
+
+## Passive decision record
+
+`PlayResult.record` exposes a `DecisionRecord`; failures produced by `play()`
+expose the collected partial record as `PlaybackError.record`. The constructor
+still permits a null record for errors constructed outside `play()`. `main()`
+returns the programmatic result after detach, but excludes the record from normal
+CLI output. Its error output continues to use bounded existing diagnostics.
+
+The record contains ordinal **1**, the reasoning observation and its owned
+`beforePng`, bounded landmark lookup and selected objective/target evidence,
+perception and optional assessment with usage, composed guidance, start-run and
+prompt acknowledgments, and the distinct admission observation. Stage values are
+null until available; an admission observation is recorded even when the local
+continuity check rejects it. Identity, revision and accounting remain in the
+existing DTOs; no new lease parameter, counters or authorization are introduced.
+
+`decision` distinguishes:
+
+- `not-called`: no `decide()` invocation; earlier evidence and a bounded
+  `failure` stage/message survive.
+- `unconfirmed`: the submitted input/scope is retained, but no trustworthy receipt
+  returned. No receipt or resulting image is fabricated and no retry occurs.
+- `returned`: the exact submitted input, complete receipt, nullable owned
+  `afterPng`, and a separate nullable `imageRetentionFailure` (`read-failed` or
+  `digest-mismatch`). This means a receipt returned, not that gameplay completed.
+  Terminal prefixes, retirement, declined admission, API failure and Stop retain
+  their original receipt semantics. No resulting observation means no after-image
+  and no retention failure. An image-retention failure leaves `record.failure`
+  null and does not change the receipt outcome or reject otherwise returned play.
+
+Collection is passive: control flow, guidance and model inputs never read from
+the record. Guidance is an execution snapshot, not a canonical base for a later
+decision. No after-image is sent to a reasoning model.
+
+Each plain DTO is detached with `structuredClone` when its stage returns, before
+later asynchronous work or publication. This isolates history from client/tool
+aliases and mutable legacy result/error diagnostics. The initial PNG is the
+**same Buffer already sent to perception**, without another read, copy or hash.
+The resulting image has one read plus SHA-256 comparison; mismatching bytes are
+not retained as trusted image evidence. The top-level record is frozen when
+published. `Readonly` and that freeze are shallow: callers must treat nested DTOs
+and Buffers as immutable. There is no deep-freeze or defensive Buffer-copy layer.
+
+All `pngPath` values remain ephemeral source-path provenance. The shared executor
+creates PNGs in a temporary lease directory and does not intentionally delete
+them on detach; this is not a lifetime guarantee. Owned bytes survive subsequent
+source-file changes/deletion and detach. Initial bytes are not revalidated at read
+time, so the pre-existing materialization-to-read gap remains. If executor
+materialization itself throws before `decide()` returns, the attempt remains
+unconfirmed at this boundary. Records do not supply independent native proofs,
+updated post-decision run accounting, persistence, deduplication or an archive;
+callers retain the image memory for as long as they retain the record. Raw error
+causes remain on `PlaybackError`, outside the bounded record diagnostic.
 
 Both reasoning helpers use `DOOM_REASONING_MODEL ?? "gpt-6-luna"`, Responses,
 strict structured-output schemas, `maxRetries: 0`, a 60-second abort signal,
@@ -126,7 +185,7 @@ replenishes the budget nor changes lease-owned tics.
 ## Failure boundaries and current limits
 
 `PlaybackError` carries `stage`, original `cause`, the available objective,
-perception and assessment, and `decisionMayHaveBeenSent`:
+perception and assessment, `decisionMayHaveBeenSent`, and the partial record:
 
 - **Before run admission:** `observation` (also PNG read), `landmarks`,
   `perception`, `navigation-assessment`, or `guidance` failures send no decision
@@ -161,7 +220,10 @@ does not specify its behavior or architecture.
 objective-independent perception, free-explore amendments, all assessment
 verdicts, failed assessment, oversize preflight, lost acknowledgments, continuity
 mismatches and terminal/uncertain receipt reporting.
+It also covers stage snapshots and alias isolation, exact before-image ownership,
+result-image retention/digest failure, and honest absent/unconfirmed evidence.
 [`doom-tools.test.ts`](tests/doom-tools.test.ts) covers lookup ordering, storage
 statuses and malformed evidence; [`main.test.ts`](tests/main.test.ts) covers
-attach/play/detach ordering and combined failures. These are offline fixtures,
+attach/play/detach ordering, combined failures, retained bytes after source cleanup
+and exclusion of records from CLI output. These are offline fixtures,
 not live navigation or native gameplay proof.

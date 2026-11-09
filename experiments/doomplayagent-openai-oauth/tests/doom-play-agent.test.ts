@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import test from "node:test";
 import {
 	PlaybackError,
@@ -39,6 +40,159 @@ function advisoryData(instructions: string) {
 	);
 }
 
+test("one decision retains stage snapshots, submitted scope and distinct image evidence", async (t) => {
+	const f = await fixture(t);
+	const afterPng = Buffer.concat([f.png, Buffer.from("resulting image")]);
+	const decide = f.client.decide;
+	f.client.decide = async (input) => {
+		const receipt = await decide(input);
+		assert.ok(receipt.observation && receipt.pngPath);
+		await writeFile(receipt.pngPath, afterPng);
+		receipt.observation.pngSha256 = createHash("sha256")
+			.update(afterPng)
+			.digest("hex");
+		return receipt;
+	};
+	const observations = t.mock.method(f.client, "observe");
+	const lookup = t.mock.method(f.tools, "findActiveLandmarks");
+	const started = t.mock.method(f.client, "startRun");
+	const prompted = t.mock.method(f.client, "setPrompt");
+	const decided = t.mock.method(f.client, "decide");
+	const result = await play(f.client, f.tools, f.provider);
+	const record = result.record;
+	const reasoning = await observations.mock.calls[0].result;
+	const admission = await observations.mock.calls[1].result;
+	const memory = await lookup.mock.calls[0].result;
+	const start = await started.mock.calls[0].result;
+	const prompt = await prompted.mock.calls[0].result;
+	const receipt = await decided.mock.calls[0].result;
+	assert.ok(reasoning && admission && memory && start && prompt && receipt);
+	assert.equal(record.ordinal, 1);
+	assert.deepEqual(record.reasoningObservation, reasoning);
+	assert.deepEqual(record.admissionObservation, admission);
+	assert.notEqual(reasoning.observationId, admission.observationId);
+	assert.equal(reasoning.revision + 1, admission.revision);
+	assert.equal(reasoning.tic, admission.tic);
+	assert.deepEqual(record.landmarkLookup, memory);
+	assert.deepEqual(record.selection, {
+		navigationObjective: result.navigationObjective,
+		target: f.note,
+	});
+	assert.deepEqual(record.perception, result.perception);
+	assert.deepEqual(record.navigationAssessment, result.navigationAssessment);
+	assert.deepEqual(record.runStarted, start);
+	assert.deepEqual(record.promptAcknowledged, prompt);
+	assert.equal(record.guidance, f.state.instructions);
+	assert.equal(record.guidance, prompt.instructions);
+	assert.ok(
+		record.guidance?.startsWith(reasoning.configuration.instructionTemplate),
+	);
+	assert.equal(record.decision.kind, "returned");
+	if (record.decision.kind !== "returned") throw Error("Expected receipt");
+	assert.deepEqual(record.decision.input, decided.mock.calls[0].arguments[0]);
+	assert.deepEqual(record.decision.input, {
+		observationId: admission.observationId,
+		scope: {
+			sessionId: reasoning.sessionId,
+			runId: result.runId,
+			revision: prompt.revision,
+		},
+	});
+	assert.deepEqual(record.decision.receipt, receipt);
+	assert.deepEqual(record.beforePng, f.png);
+	assert.deepEqual(record.decision.afterPng, afterPng);
+	assert.equal(record.decision.imageRetentionFailure, null);
+	assert.equal(record.failure, null);
+	assert.equal(Object.isFrozen(record), true);
+
+	// Mutable boundary aliases and legacy result fields cannot rewrite history.
+	reasoning.telemetry.health = 0;
+	admission.configuration = { ...admission.configuration, tics: 35 };
+	memory.candidates[0].anchor.x = 0;
+	if (start.run) start.run.reserved = 999;
+	prompt.instructions = "changed acknowledgment";
+	decided.mock.calls[0].arguments[0].scope.revision = 999;
+	receipt.outcome = "retired";
+	result.perception.features.push("later edit");
+	if (result.navigationAssessment)
+		result.navigationAssessment.evidence = "later edit";
+	assert.equal(record.reasoningObservation?.telemetry.health, 100);
+	assert.equal(record.admissionObservation?.configuration.tics, 6);
+	assert.equal(record.landmarkLookup?.candidates[0].anchor.x, f.note.anchor.x);
+	assert.equal(record.selection?.target?.anchor.x, f.note.anchor.x);
+	assert.equal(record.runStarted?.run?.reserved, 0);
+	assert.equal(record.promptAcknowledged?.instructions, record.guidance);
+	assert.equal(record.decision.input.scope.revision, f.base.revision + 1);
+	assert.equal(record.decision.receipt.outcome, "completed");
+	assert.deepEqual(record.perception?.features, scenePerception.features);
+	assert.equal(
+		record.navigationAssessment?.evidence,
+		navigationAssessment.evidence,
+	);
+	assert.ok(receipt.pngPath);
+	await unlink(receipt.pngPath);
+	assert.deepEqual(record.decision.afterPng, afterPng);
+});
+
+for (const fault of ["missing", "digest"] as const) {
+	test(`result image ${fault} failure preserves the completed receipt without retry`, async (t) => {
+		const f = await fixture(t);
+		const decide = f.client.decide;
+		f.client.decide = async (input) => {
+			const receipt = await decide(input);
+			assert.ok(receipt.pngPath);
+			if (fault === "missing") await unlink(receipt.pngPath);
+			else await writeFile(receipt.pngPath, "SECRET_CHANGED_IMAGE");
+			return receipt;
+		};
+		const result = await play(f.client, f.tools, f.provider);
+		assert.equal(result.outcome, "completed");
+		assert.equal(result.completionUncertain, false);
+		assert.equal(result.record.failure, null);
+		const attempt = result.record.decision;
+		assert.equal(attempt.kind, "returned");
+		if (attempt.kind !== "returned") throw Error("Expected receipt");
+		assert.equal(attempt.receipt.outcome, "completed");
+		assert.ok(attempt.receipt.observation);
+		assert.equal(attempt.afterPng, null);
+		assert.equal(
+			attempt.imageRetentionFailure?.reason,
+			fault === "missing" ? "read-failed" : "digest-mismatch",
+		);
+		assert.doesNotMatch(
+			JSON.stringify(attempt.imageRetentionFailure),
+			/SECRET|doom-play-offline/,
+		);
+		assert.equal(f.events.filter((event) => event === "decide").length, 1);
+	});
+}
+
+for (const outcome of ["not-admitted", "api-failure", "stopped"] as const) {
+	test(`${outcome} receipt has no fabricated resulting image`, async (t) => {
+		const f = await fixture(t);
+		const decide = f.client.decide;
+		f.client.decide = async (input) => ({
+			...(await decide(input)),
+			outcome,
+			observation: null,
+			pngPath: null,
+			action: null,
+			reportedTics: null,
+			verifiedTics: null,
+			cumulativeTics: null,
+		});
+		const result = await play(f.client, f.tools, f.provider);
+		const attempt = result.record.decision;
+		assert.equal(result.outcome, outcome);
+		assert.equal(attempt.kind, "returned");
+		if (attempt.kind !== "returned") throw Error("Expected receipt");
+		assert.equal(attempt.receipt.observation, null);
+		assert.equal(attempt.afterPng, null);
+		assert.equal(attempt.imageRetentionFailure, null);
+		assert.equal(f.events.filter((event) => event === "decide").length, 1);
+	});
+}
+
 test("landmark lookup precedes objective-independent perception of exact bytes and compact state", async (t) => {
 	const f = await fixture(t);
 	f.state.candidates = [];
@@ -55,6 +209,11 @@ test("landmark lookup precedes objective-independent perception of exact bytes a
 	assert.equal(result.outcome, "completed");
 	assert.equal(result.promptChanged, true);
 	assert.equal(result.navigationAssessment, null);
+	assert.deepEqual(result.record.selection, {
+		navigationObjective: { kind: "free-explore" },
+		target: null,
+	});
+	assert.equal(result.record.navigationAssessment, null);
 	assert.equal(f.state.modelCalls, 1);
 	assert.deepEqual(result.tics, { requested: 6, reported: 6, verified: 6 });
 	const input = f.state.modelInput as Parameters<typeof f.model.doGenerate>[0];
@@ -325,6 +484,31 @@ for (const operation of ["startRun", "setPrompt", "decide"] as const) {
 					noteId: f.note.noteId,
 					revision: f.note.revision,
 				});
+				const record = error.record;
+				assert.ok(record?.reasoningObservation && record.beforePng);
+				assert.equal(record.failure?.stage, error.stage);
+				assert.equal(record.failure?.message, error.message);
+				assert.ok(
+					record.guidance && record.perception && record.navigationAssessment,
+				);
+				assert.equal(record.runStarted !== null, operation !== "startRun");
+				assert.equal(
+					record.promptAcknowledged !== null,
+					operation === "decide",
+				);
+				assert.equal(
+					record.decision.kind,
+					operation === "decide" ? "unconfirmed" : "not-called",
+				);
+				if (record.decision.kind === "unconfirmed") {
+					assert.equal(
+						record.decision.input.observationId,
+						record.admissionObservation?.observationId,
+					);
+					assert.equal(record.decision.input.scope.runId, f.state.run?.runId);
+					assert.equal("receipt" in record.decision, false);
+					assert.equal("afterPng" in record.decision, false);
+				}
 				return true;
 			},
 		);
@@ -401,6 +585,12 @@ test("a terminal prefix is reported directly without final accounting", async (t
 	const result = await play(f.client, f.tools, f.provider);
 	assert.equal(result.outcome, "terminal");
 	assert.deepEqual(result.tics, { requested: 6, reported: 2, verified: 2 });
+	assert.equal(result.record.decision.kind, "returned");
+	if (result.record.decision.kind !== "returned")
+		throw Error("Expected receipt");
+	assert.equal(result.record.decision.receipt.observation?.phase, "terminal");
+	assert.deepEqual(result.record.decision.afterPng, f.png);
+	assert.equal(result.record.decision.imageRetentionFailure, null);
 });
 
 test("uncertain retired receipt is diagnostic and cannot trigger replay", async (t) => {
@@ -421,6 +611,13 @@ test("uncertain retired receipt is diagnostic and cannot trigger replay", async 
 	};
 	const result = await play(f.client, f.tools, f.provider);
 	assert.equal(result.completionUncertain, true);
+	assert.equal(result.record.decision.kind, "returned");
+	if (result.record.decision.kind !== "returned")
+		throw Error("Expected receipt");
+	assert.equal(result.record.decision.receipt.completionUncertain, true);
+	assert.equal(result.record.decision.receipt.outcome, "retired");
+	assert.equal(result.record.decision.afterPng, null);
+	assert.equal(result.record.decision.imageRetentionFailure, null);
 	assert.equal(f.events.filter((event) => event === "decide").length, 1);
 });
 
@@ -437,6 +634,15 @@ test("model failure has no retry or browser mutation", async (t) => {
 		assert.equal(error.decisionMayHaveBeenSent, false);
 		assert.match(error.message, /No decision was sent/);
 		assert.doesNotMatch(error.message, /SECRET/);
+		assert.ok(error.record?.reasoningObservation && error.record.beforePng);
+		assert.equal(error.record.landmarkLookup?.status, "found");
+		assert.equal(error.record.selection?.target?.noteId, f.note.noteId);
+		assert.equal(error.record.perception, null);
+		assert.equal(error.record.guidance, null);
+		assert.equal(error.record.runStarted, null);
+		assert.deepEqual(error.record.decision, { kind: "not-called" });
+		assert.equal(error.record.failure?.stage, "perception");
+		assert.doesNotMatch(JSON.stringify(error.record.failure), /SECRET/);
 		return true;
 	});
 	assert.equal(generate.mock.callCount(), 1);
@@ -471,8 +677,39 @@ test("file changes after reading cannot change the owned inference bytes", async
 			image.data.data instanceof Uint8Array,
 	);
 	assert.deepEqual(Buffer.from(image.data.data), f.png);
+	assert.equal(result.record.beforePng, image.data.data);
 	assert.equal((await readFile(changedPath)).toString(), "changed later");
+	await unlink(changedPath);
+	assert.deepEqual(result.record.beforePng, f.png);
 });
+
+for (const fault of ["observe", "initial-image"] as const) {
+	test(`${fault} failure publishes only evidence already collected`, async (t) => {
+		const f = await fixture(t);
+		const observe = f.client.observe;
+		f.client.observe = async () => {
+			if (fault === "observe") throw Error("SECRET_OBSERVATION_FAILURE");
+			const observation = await observe();
+			await unlink(observation.pngPath);
+			return observation;
+		};
+		await assert.rejects(play(f.client, f.tools, f.provider), (error) => {
+			assert.ok(error instanceof PlaybackError && error.record);
+			assert.equal(error.stage, "observation");
+			assert.equal(error.decisionMayHaveBeenSent, false);
+			assert.equal(
+				error.record.reasoningObservation !== null,
+				fault === "initial-image",
+			);
+			assert.equal(error.record.beforePng, null);
+			assert.equal(error.record.landmarkLookup, null);
+			assert.deepEqual(error.record.decision, { kind: "not-called" });
+			assert.equal(error.record.failure?.stage, "observation");
+			return true;
+		});
+		assert.equal(f.events.includes("startRun"), false);
+	});
+}
 
 test("broker budget greater than one stops before dispatch", async (t) => {
 	const f = await fixture(t);

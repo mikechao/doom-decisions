@@ -77,7 +77,8 @@ export async function main(
 			doomTools,
 			provider,
 		);
-		console.log("Doom one-decision result:", result);
+		const { record: _record, ...summary } = result;
+		console.log("Doom one-decision result:", summary);
 	} catch (error) {
 		failed = true;
 		playbackError = error;

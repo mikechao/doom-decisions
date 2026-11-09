@@ -8,7 +8,12 @@ import {
 	maxAgentInstructions,
 } from "../../../app/src/agent-control.ts";
 import type { AgentDecisionResult } from "../../../app/src/agent-observation.ts";
-import type { MaterializedObserve } from "../../../scripts/doom-agent-client.ts";
+import type {
+	ConfigResult,
+	MaterializedDecision,
+	MaterializedObserve,
+	PromptResult,
+} from "../../../scripts/doom-agent-client.ts";
 import type { DoomClient } from "./doom-client.ts";
 import type { DoomMemoryCandidate, DoomTools } from "./doom-tools.ts";
 import { progress } from "./progress.ts";
@@ -217,7 +222,51 @@ function composeGuidance(
 	return instructions;
 }
 
+type DecisionAttempt =
+	| { kind: "not-called" }
+	| {
+			kind: "unconfirmed";
+			input: Parameters<DoomClient["decide"]>[0];
+	  }
+	| {
+			kind: "returned";
+			input: Parameters<DoomClient["decide"]>[0];
+			receipt: MaterializedDecision;
+			afterPng: Buffer | null;
+			imageRetentionFailure: {
+				reason: "read-failed" | "digest-mismatch";
+				message: string;
+			} | null;
+	  };
+
+type DecisionEvidence = {
+	ordinal: 1;
+	reasoningObservation: MaterializedObserve | null;
+	beforePng: Buffer | null;
+	landmarkLookup: Memory | null;
+	selection: NavigationSelection | null;
+	perception: ScenePerception | null;
+	navigationAssessment: NavigationAssessment | null;
+	guidance: string | null;
+	runStarted: ConfigResult | null;
+	promptAcknowledged: PromptResult | null;
+	admissionObservation: MaterializedObserve | null;
+	decision: DecisionAttempt;
+	failure: { stage: string; message: string } | null;
+};
+
+/**
+ * Passive evidence for one attempt, including unreached/failed stages. DTOs are
+ * detached at capture; PNG Buffers transfer ownership without another copy.
+ * Readonly/freeze protect the top level only: callers must treat nested DTOs and
+ * Buffers as immutable too. No mutable control/result aliases are published. pngPath
+ * fields are ephemeral source paths; only the Buffers retain image evidence.
+ * Nothing in this record authorizes gameplay or supplies future guidance.
+ */
+export type DecisionRecord = Readonly<DecisionEvidence>;
+
 export type PlayResult = {
+	readonly record: DecisionRecord;
 	navigationObjective: NavigationObjective;
 	memoryStatus: Memory["status"];
 	candidateCount: number;
@@ -238,6 +287,7 @@ export type PlayResult = {
 	};
 };
 export class PlaybackError extends Error {
+	readonly record: DecisionRecord | null;
 	readonly stage: string;
 	readonly navigationAssessment: NavigationAssessment | null;
 	readonly decisionMayHaveBeenSent: boolean;
@@ -250,6 +300,7 @@ export class PlaybackError extends Error {
 		cause: unknown,
 		navigationObjective: NavigationObjective | null = null,
 		navigationAssessment: NavigationAssessment | null = null,
+		record: DecisionRecord | null = null,
 	) {
 		super(
 			`Doom playback stopped at ${stage}. ${decisionMayHaveBeenSent ? "Decision outcome may be unknown." : "No decision was sent."} No retry was made.`,
@@ -261,6 +312,7 @@ export class PlaybackError extends Error {
 		this.decisionMayHaveBeenSent = decisionMayHaveBeenSent;
 		this.perception = perception;
 		this.navigationObjective = navigationObjective;
+		this.record = record;
 	}
 }
 
@@ -269,6 +321,7 @@ async function executeOneDecision(
 	doomClient: DoomClient,
 	before: MaterializedObserve,
 	guidance: DecisionGuidance,
+	record: DecisionEvidence,
 ) {
 	const { perception, navigationObjective } = guidance;
 	let stage = "guidance";
@@ -281,6 +334,7 @@ async function executeOneDecision(
 			before.configuration.instructionTemplate,
 			guidance,
 		);
+		record.guidance = instructions;
 
 		stage = "start-run";
 		const started = await doomClient.startRun({
@@ -288,6 +342,7 @@ async function executeOneDecision(
 			sessionId: before.sessionId,
 			revision: before.revision,
 		});
+		record.runStarted = structuredClone(started);
 		// The broker chooses the budget. This experiment requires one slot;
 		// the browser/executor enforce active/fresh claim, session and revision.
 		if (started.run?.limit !== 1)
@@ -304,6 +359,7 @@ async function executeOneDecision(
 			...scope,
 			instructions,
 		});
+		record.promptAcknowledged = structuredClone(changed);
 		scope.revision = changed.revision;
 		progress.withTag("decision").info("Navigation guidance acknowledged");
 
@@ -311,6 +367,7 @@ async function executeOneDecision(
 		// CAS invalidates observation admission. Always observe again.
 		// Do not reread an image we won't send to a model.
 		const ready = await doomClient.observe();
+		record.admissionObservation = structuredClone(ready);
 		if (
 			ready.observationId === before.observationId ||
 			ready.sessionId !== before.sessionId ||
@@ -321,18 +378,47 @@ async function executeOneDecision(
 			throw new Error("Doom changed since the initial observation.");
 
 		stage = "decision";
+		const input = { observationId: ready.observationId, scope };
+		const submitted = structuredClone(input);
+		record.decision = { kind: "unconfirmed", input: submitted };
 		decisionMayHaveBeenSent = true;
-		const receipt = await doomClient.decide({
-			observationId: ready.observationId,
-			scope,
-		});
+		const receipt = structuredClone(await doomClient.decide(input));
+		const returned: Extract<DecisionAttempt, { kind: "returned" }> = {
+			kind: "returned",
+			input: submitted,
+			receipt,
+			afterPng: null,
+			imageRetentionFailure: null,
+		};
+		record.decision = returned;
+		// Retention is separate from gameplay: a read/hash failure must never
+		// replace this returned receipt with an unconfirmed attempt or a retry.
+		if (receipt.observation) {
+			try {
+				if (!receipt.pngPath) throw new Error("Missing resulting PNG path.");
+				const image = await readFile(receipt.pngPath);
+				if (
+					createHash("sha256").update(image).digest("hex") !==
+					receipt.observation.pngSha256
+				) {
+					returned.imageRetentionFailure = {
+						reason: "digest-mismatch",
+						message: "Resulting PNG bytes do not match the receipt digest.",
+					};
+				} else returned.afterPng = image;
+			} catch {
+				returned.imageRetentionFailure = {
+					reason: "read-failed",
+					message: "Could not read the resulting PNG for retention.",
+				};
+			}
+		}
 		progress
 			.withTag("decision")
 			.info(
 				`Action: ${receipt.action ?? "none"}; outcome: ${receipt.outcome}; requested ${receipt.requestedTics ?? "unknown"}, verified ${receipt.verifiedTics ?? "unknown"} tics${receipt.completionUncertain ? "; completion uncertain" : ""}`,
 			);
-		// The executor parsed/correlated the receipt and verified its resulting
-		// PNG. No second action depends on it; report it without another readback.
+		// No second action or inference depends on the retained result image.
 		return {
 			navigationObjective,
 			perception,
@@ -378,22 +464,41 @@ export async function play(
 	let navigationObjective: NavigationObjective | null = null;
 	let perception: ScenePerception | null = null;
 	let navigationAssessment: NavigationAssessment | null = null;
+	const record: DecisionEvidence = {
+		ordinal: 1,
+		reasoningObservation: null,
+		beforePng: null,
+		landmarkLookup: null,
+		selection: null,
+		perception: null,
+		navigationAssessment: null,
+		guidance: null,
+		runStarted: null,
+		promptAcknowledged: null,
+		admissionObservation: null,
+		decision: { kind: "not-called" },
+		failure: null,
+	};
 	try {
 		const observation = await doomClient.observe();
+		record.reasoningObservation = structuredClone(observation);
 		progress
 			.withTag("doom")
 			.info(
 				`Attached; observed ${observation.mapIdentity.mapSlot} at tic ${observation.tic}`,
 			);
 		const image = await readFile(observation.pngPath);
+		record.beforePng = image;
 		stage = "landmarks";
 		const memory = await doomTools.findActiveLandmarks(observation);
+		record.landmarkLookup = structuredClone(memory);
 		progress
 			.withTag("navigation")
 			.info(
 				`Active-landmark lookup: ${memory.status}; ${memory.candidates.length} returned${memory.hasMore ? "; more available" : ""}`,
 			);
 		const selection = selectNavigationObjective(memory);
+		record.selection = structuredClone(selection);
 		navigationObjective = selection.navigationObjective;
 		// Keep historical text readable while quoting it so it cannot forge log lines.
 		progress
@@ -413,6 +518,7 @@ export async function play(
 			image,
 			state: modelState(observation),
 		});
+		record.perception = structuredClone(perception);
 		progress
 			.withTag("perception")
 			.info(
@@ -432,18 +538,21 @@ export async function play(
 				perception,
 				selection.target,
 			);
+			record.navigationAssessment = structuredClone(navigationAssessment);
 			progress
 				.withTag("navigation")
 				.info(
 					`Assessment: ${JSON.stringify(navigationAssessment.verdict)}; evidence: ${JSON.stringify(navigationAssessment.evidence)}; uncertainty: ${JSON.stringify(navigationAssessment.uncertainty)}`,
 				);
 		}
-		const decision = await executeOneDecision(doomClient, observation, {
-			...selection,
-			perception,
-			navigationAssessment,
-		});
+		const decision = await executeOneDecision(
+			doomClient,
+			observation,
+			{ ...selection, perception, navigationAssessment },
+			record,
+		);
 		return {
+			record: Object.freeze(record),
 			memoryStatus: memory.status,
 			candidateCount: memory.candidates.length,
 			navigationAssessment,
@@ -451,7 +560,8 @@ export async function play(
 		};
 	} catch (cause) {
 		// The handoff already records its stage, perception and dispatch uncertainty.
-		if (cause instanceof PlaybackError)
+		if (cause instanceof PlaybackError) {
+			record.failure = { stage: cause.stage, message: cause.message };
 			throw new PlaybackError(
 				cause.stage,
 				cause.decisionMayHaveBeenSent,
@@ -459,7 +569,9 @@ export async function play(
 				cause.cause,
 				cause.navigationObjective,
 				navigationAssessment,
+				Object.freeze(record),
 			);
+		}
 		if (stage === "perception")
 			progress
 				.withTag("perception")
@@ -468,13 +580,17 @@ export async function play(
 			progress
 				.withTag("navigation")
 				.info("Navigation assessment failed; no decision sent");
-		throw new PlaybackError(
+		const failure = new PlaybackError(
 			stage,
 			false,
 			perception,
 			cause,
 			navigationObjective,
 			navigationAssessment,
+			record,
 		);
+		record.failure = { stage: failure.stage, message: failure.message };
+		Object.freeze(record);
+		throw failure;
 	}
 }

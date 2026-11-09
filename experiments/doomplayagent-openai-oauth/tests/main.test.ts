@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { rm } from "node:fs/promises";
 import test from "node:test";
 import { PlaybackError } from "../src/doom-play-agent.ts";
 import { main } from "../src/main.ts";
@@ -38,7 +39,13 @@ for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 
 test("main constructs dependencies, attaches once, awaits one complete play, then detaches", async (t) => {
 	const f = await fixture(t);
-	t.mock.method(console, "log", () => {});
+	const output = t.mock.method(console, "log", () => {});
+	const detach = f.client.detach;
+	f.client.detach = async () => {
+		// Retained evidence does not rely on any executor-directory lifetime.
+		await rm(f.root, { recursive: true, force: true });
+		return detach();
+	};
 	const result = await main(() => f.client, {
 		makeTools: () => f.tools,
 		makeProvider: () => f.provider,
@@ -50,6 +57,16 @@ test("main constructs dependencies, attaches once, awaits one complete play, the
 	);
 	assert.deepEqual(result.perception.features, scenePerception.features);
 	assert.equal(result.perception.usage.totalTokens, 0);
+	assert.deepEqual(result.record.beforePng, f.png);
+	assert.equal(result.record.decision.kind, "returned");
+	if (result.record.decision.kind !== "returned")
+		throw Error("Expected receipt");
+	assert.deepEqual(result.record.decision.afterPng, f.png);
+	const { record: _record, ...summary } = result;
+	assert.deepEqual(output.mock.calls[0].arguments, [
+		"Doom one-decision result:",
+		summary,
+	]);
 	assert.deepEqual(f.events, [
 		"attach",
 		"observe",
@@ -138,6 +155,7 @@ test("main detaches after an uncertain real playback transaction", async (t) => 
 			assert.ok(error instanceof PlaybackError);
 			assert.equal(error.cause, cause);
 			assert.equal(error.decisionMayHaveBeenSent, true);
+			assert.equal(error.record?.decision.kind, "unconfirmed");
 			assert.equal(
 				error.perception?.description,
 				"A stone corridor is visible ahead.",

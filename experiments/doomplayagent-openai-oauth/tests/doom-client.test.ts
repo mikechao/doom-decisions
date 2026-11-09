@@ -973,8 +973,23 @@ test("main awaits offline playback and then detaches", async (t) => {
 const offlinePlayback: typeof import("../src/doom-play-agent.ts").play = async (
 	client,
 ) => {
-	await client.observe();
+	const observed = await client.observe();
 	return {
+		record: {
+			ordinal: 1,
+			reasoningObservation: observed,
+			beforePng: null,
+			landmarkLookup: null,
+			selection: null,
+			perception: null,
+			navigationAssessment: null,
+			guidance: null,
+			runStarted: null,
+			promptAcknowledged: null,
+			admissionObservation: null,
+			decision: { kind: "not-called" },
+			failure: null,
+		},
 		memoryStatus: "empty",
 		navigationObjective: { kind: "free-explore" },
 		candidateCount: 0,

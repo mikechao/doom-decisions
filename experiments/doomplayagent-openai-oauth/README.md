@@ -65,8 +65,10 @@ The host sequence is:
    `decide` once with that fresh ID and the claimed scope. Browser/controller
    gates remain decisive.
 8. Report the executor-validated receipt directly, including terminal prefixes,
-   declined admission and native uncertainty. No final accounting call or PNG
-   reread is needed: there is no next action to authorize.
+   declined admission and native uncertainty. Retain its resulting PNG when present
+   in the passive [`DecisionRecord`](doom-play-agent.md#passive-decision-record),
+   with image-retention errors separate from gameplay. There is no final accounting
+   call or subsequent decision to authorize.
 
 A failed claim, prompt update or decision stops the sequence without retry.
 Before calling `decide`, an error means no decision was sent. During `decide`,
@@ -117,7 +119,7 @@ independent security boundary.
 | Already guaranteed below `play()` | [`executeAgentOperation`](../../scripts/doom-agent-client.ts) validates wire commands, lease/page/epoch/command correlation, calls `parseAgentObserveResult`, `parseAgentConfigResult`, `parseAgentPromptResult` and `parseAgentDecisionResult`, and verifies PNG bytes/hashes before materializing. It checks settings session/run correlation, exact submitted prompt echo and revision + 1, start-run active/revision acknowledgment, and decision `beforeObservationId`. Removed duplicate envelopes, parsers, path/header checks, CAS echoes and receipt correlation. `DoomClient` delegates these guarantees rather than implementing DTO parsing itself; its own responsibility is lease lifecycle and rejecting overlapping calls. |
 | Already guaranteed by browser/controller | [`startAgentRun`, `agentConfig`/`agentPrompt`, `agentNext`](../../app/src/session-controller.ts) enforce one-shot claim, session/run/revision CAS, fresh observation admission and nonrefundable reservations. `decide` fences one SDK create; `runOneDecision`, `action` and `captureAgentObservation` verify native stepping, resulting frame and Canvas linkage. [`agent-bridge.mjs`](../../app/agent-bridge.mjs) issues the process budget once and rejects duplicate commands; [`agent-browser.ts`](../../app/src/agent-browser.ts) also rejects duplicates and fences Stop/revocation. Removed repeated run counters/active checks, config equality and native receipt arithmetic. |
 | Required across operations | `play()` reads the executor-materialized PNG into an owned Buffer and performs deterministic first-active objective selection. Scene perception receives only that image and compact verified state; its diagnostic result and normalized usage flow through success and error results. The private `executeOneDecision()` helper owns prompt-size preflight, the one-slot budget requirement, a fresh post-CAS observation and continuity with the initial session/map/tic/revision. It calls `decide` once and never retries an ambiguous mutation. [`doom-tools.ts`](src/doom-tools.ts) owns the verified-map-key query and validates bounded active-landmark evidence, namespace isolation, raw poses and unverified-memory labeling. The AI SDK validates the strict scene-perception schema. |
-| Nice-to-have / overly strict | Full equality of frames, telemetry, facing probes, previous actions, counters, PNG hashes, configurations and entire run snapshots is unnecessary for this one-step flow. A passive capture may change capture counters. Same session/map/tic retains the simulation checkpoint; revision and browser admission handle configuration. Removed final-accounting readback and resulting-image rereads, since neither controls another dispatch. |
+| Nice-to-have / overly strict | Full equality of frames, telemetry, facing probes, previous actions, counters, PNG hashes, configurations and entire run snapshots is unnecessary for this one-step flow. A passive capture may change capture counters. Same session/map/tic retains the simulation checkpoint; revision and browser admission handle configuration. No final-accounting readback controls another dispatch. The resulting PNG is now read once solely to retain historical evidence, with retention failure separate from the receipt outcome. |
 
 The decision parser is not a complete independent native verifier: for example,
 terminal prefix bounds and before/after cumulative arithmetic are not all checked
