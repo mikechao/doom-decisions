@@ -2,11 +2,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import test from "node:test";
-import {
-	PlaybackError,
-	play,
-	type ScenePerception,
-} from "../src/doom-play-agent.ts";
+import { PlaybackError, play } from "../src/doom-play-agent.ts";
+import type { ScenePerception } from "../src/scene-perception.ts";
 import { fixture, navigationAssessment, scenePerception } from "./fixtures.ts";
 
 // The fake model reports zero raw token counts; the SDK normalizes these to

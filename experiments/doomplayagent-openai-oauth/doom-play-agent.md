@@ -28,10 +28,14 @@ code behavior, not evidence of navigation improvement or landmark arrival.
    shared creation-time/ID order, without ranking distance or usefulness.
    It logs lookup status/count, the selected note's hashed label/revision and
    JSON-quoted `hypothesis`/`nextQuestion`, or the free-explore objective.
-4. `perceiveScene()` receives only the owned PNG and `modelState(observation)`;
-   it receives no objective or historical note. The compact state includes map
-   slot, tic, phase, telemetry, facing probe and the previous action's action,
-   tics and end tic. Perception is logged after it completes.
+4. `play()` projects the verified observation through `modelState()` in
+   [`doom-play-agent.ts`](src/doom-play-agent.ts), then calls
+   [`perceiveScene()`](src/scene-perception.ts) with only the owned PNG and that
+   compact state; perception receives no objective or historical note. The
+   compact state includes map slot, tic, phase, telemetry, facing probe and the
+   previous action's action, tics and end tic. Perception is logged after it
+   completes. The scene module owns its strict output schema, input/result types
+   and Responses request.
 5. Only when a landmark is selected, `assessNavigation()` makes a second,
    text-only request comparing perception with that note's hypothesis, next
    question and observer pose. It receives no image or unselected notes.
@@ -71,7 +75,8 @@ evidence throws instead and stops at `landmarks` before inference or admission.
 | Owner / helper | Inputs, outputs and effect |
 | --- | --- |
 | `selectNavigationObjective()` | Memory result → `NavigationSelection`: a `NavigationObjective` (`free-explore` or landmark note ID/revision) plus the full selected `target` or null. Host selection affects guidance, not the action directly. |
-| `modelState()` / `perceiveScene()` | Observation → compact state; provider plus image/state → `ScenePerception`: description, up to eight features, uncertainty and usage. Diagnostic scene text subsequently informs gameplay guidance. |
+| [`modelState()`](src/doom-play-agent.ts) | Verified observation → compact perception state. It stays in the orchestrator and is called before the perception request. |
+| [`perceiveScene()` and perception types/schema](src/scene-perception.ts) | Provider plus image/state → `ScenePerception`: description, up to eight features, uncertainty and usage. Diagnostic scene text subsequently informs gameplay guidance. |
 | `assessNavigation()` | Provider, perception and selected candidate → `NavigationAssessment`: verdict (`possible-match`, `no-visible-match`, `insufficient-evidence`), evidence, uncertainty and usage. Diagnostic comparison subsequently informs guidance. |
 | `composeGuidance()` | Base template plus `DecisionGuidance` → bounded instruction string. Projects perception and, for a target, historical fields and assessment into untrusted advisory JSON; omits usage and full observations. |
 | `executeOneDecision()` | Client, original observation and guidance → decision/result fields. Owns preflight, one-slot requirement, prompt CAS, cross-observation continuity and the single `decide()` call. |
@@ -142,9 +147,11 @@ causes remain on `PlaybackError`, outside the bounded record diagnostic.
 
 Both reasoning helpers use `DOOM_REASONING_MODEL ?? "gpt-6-luna"`, Responses,
 strict structured-output schemas, `maxRetries: 0`, a 60-second abort signal,
-`store: false` and `reasoningEffort: "xhigh"`. Both require finish reason `stop`.
-Schema, transport or finish failures abort the flow. No reasoning tool selects
-an action or mutates configuration.
+`store: false` and `reasoningEffort: "xhigh"`. The perception request and its
+schema are owned by [`scene-perception.ts`](src/scene-perception.ts); navigation
+assessment remains in [`doom-play-agent.ts`](src/doom-play-agent.ts). Both
+require finish reason `stop`. Schema, transport or finish failures abort the
+flow. No reasoning tool selects an action or mutates configuration.
 
 ## Navigation and prompt lifecycle
 
