@@ -129,6 +129,7 @@ if (
 					console.error(failure.message, {
 						navigationObjective: failure.navigationObjective,
 						perception: failure.perception,
+						navigationAssessment: failure.navigationAssessment,
 					});
 				else
 					console.error(
@@ -139,6 +140,7 @@ if (
 			console.error(error.message, {
 				navigationObjective: error.navigationObjective,
 				perception: error.perception,
+				navigationAssessment: error.navigationAssessment,
 			});
 		else if (error instanceof Error && error.message === usage)
 			console.error(usage);

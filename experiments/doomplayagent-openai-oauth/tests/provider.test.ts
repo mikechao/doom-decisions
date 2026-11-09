@@ -22,7 +22,9 @@ test("Responses model construction does not invoke auth or fetch", async (t) => 
 test("offline OAuth transport preserves Responses schema and exact inline image", async (t) => {
 	const { createOAuthProvider } = await import("../src/provider.ts");
 	const { play } = await import("../src/doom-play-agent.ts");
-	const { fixture, scenePerception } = await import("./fixtures.ts");
+	const { fixture, scenePerception, navigationAssessment } = await import(
+		"./fixtures.ts"
+	);
 	const f = await fixture(t);
 	const previous = process.env.DOOM_REASONING_MODEL;
 	process.env.DOOM_REASONING_MODEL = "synthetic";
@@ -52,94 +54,111 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 			);
 			assert.equal(body.text.format.type, "json_schema");
 			assert.equal(body.text.format.schema.additionalProperties, false);
-			assert.equal(
-				body.text.format.schema.properties.description.type,
-				"string",
-			);
-			assert.equal(
-				body.text.format.schema.properties.description.maxLength,
-				300,
-			);
-			assert.equal(body.text.format.schema.properties.features.type, "array");
-			assert.equal(body.text.format.schema.properties.features.maxItems, 8);
-			assert.equal(
-				body.text.format.schema.properties.features.minItems,
-				undefined,
-			);
-			assert.equal(
-				body.text.format.schema.properties.features.items.maxLength,
-				120,
-			);
-			assert.equal(
-				body.text.format.schema.properties.uncertainty.type,
-				"string",
-			);
-			assert.equal(
-				body.text.format.schema.properties.uncertainty.maxLength,
-				300,
-			);
-			assert.equal(body.text.format.schema.properties.uncertainty.minLength, 1);
-			const system = body.input.find(
-				(message: { role: string }) => message.role === "system",
-			);
-			assert.match(system.content, /visible Doom scene/i);
-			assert.match(system.content, /one concise, complete sentence/i);
-			assert.match(system.content, /200 characters or fewer/i);
-			assert.match(
-				system.content,
-				/up to eight distinct, independently useful details/i,
-			);
-			assert.match(
-				system.content,
-				/empty array only if no detail is confidently recognizable/i,
-			);
-			assert.match(system.content, /if none is material, say "None\."/i);
-			for (const requestedFeature of [
-				"room geometry",
-				"floor or wall appearance",
-				"platforms",
-				"doors or openings",
-				"enemies",
-				"pickups",
-				"notable colors or objects",
-				"uncertainty",
-				"unseen geometry",
-				"reachability",
-				"routes",
-				"recommend actions",
-				"configuration changes",
-			])
-				assert.ok(system.content.includes(requestedFeature));
-			const user = body.input.find(
-				(message: { role: string }) => message.role === "user",
-			);
-			const promptText = user.content.find(
-				(part: { type: string }) => part.type === "input_text",
-			);
-			assert.deepEqual(JSON.parse(promptText.text), {
-				state: {
-					map: { mapSlot: f.base.mapIdentity.mapSlot },
-					tic: f.base.tic,
-					phase: f.base.phase,
-					telemetry: f.base.telemetry,
-					facingProbe: f.base.facingProbe,
-					previousAction: null,
-				},
-			});
-			assert.doesNotMatch(
-				JSON.stringify({
-					instructions: system.content,
-					promptText: promptText.text,
-				}),
-				/There may be a doorway nearby|Can a clearer view|navigationObjective|historicalLandmark/,
-			);
-			const image = user.content.find(
-				(part: { type: string }) => part.type === "input_image",
-			);
-			assert.equal(
-				image.image_url,
-				`data:image/png;base64,${f.png.toString("base64")}`,
-			);
+			if (responseCalls === 1) {
+				assert.equal(
+					body.text.format.schema.properties.description.type,
+					"string",
+				);
+				assert.equal(
+					body.text.format.schema.properties.description.maxLength,
+					300,
+				);
+				assert.equal(body.text.format.schema.properties.features.type, "array");
+				assert.equal(body.text.format.schema.properties.features.maxItems, 8);
+				assert.equal(
+					body.text.format.schema.properties.features.minItems,
+					undefined,
+				);
+				assert.equal(
+					body.text.format.schema.properties.features.items.maxLength,
+					120,
+				);
+				assert.equal(
+					body.text.format.schema.properties.uncertainty.type,
+					"string",
+				);
+				assert.equal(
+					body.text.format.schema.properties.uncertainty.maxLength,
+					300,
+				);
+				assert.equal(
+					body.text.format.schema.properties.uncertainty.minLength,
+					1,
+				);
+				const system = body.input.find(
+					(message: { role: string }) => message.role === "system",
+				);
+				assert.match(system.content, /visible Doom scene/i);
+				assert.match(system.content, /one concise, complete sentence/i);
+				assert.match(system.content, /200 characters or fewer/i);
+				assert.match(
+					system.content,
+					/up to eight distinct, independently useful details/i,
+				);
+				assert.match(
+					system.content,
+					/empty array only if no detail is confidently recognizable/i,
+				);
+				assert.match(system.content, /if none is material, say "None\."/i);
+				for (const requestedFeature of [
+					"room geometry",
+					"floor or wall appearance",
+					"platforms",
+					"doors or openings",
+					"enemies",
+					"pickups",
+					"notable colors or objects",
+					"uncertainty",
+					"unseen geometry",
+					"reachability",
+					"routes",
+					"recommend actions",
+					"configuration changes",
+				])
+					assert.ok(system.content.includes(requestedFeature));
+				const user = body.input.find(
+					(message: { role: string }) => message.role === "user",
+				);
+				const promptText = user.content.find(
+					(part: { type: string }) => part.type === "input_text",
+				);
+				assert.deepEqual(JSON.parse(promptText.text), {
+					state: {
+						map: { mapSlot: f.base.mapIdentity.mapSlot },
+						tic: f.base.tic,
+						phase: f.base.phase,
+						telemetry: f.base.telemetry,
+						facingProbe: f.base.facingProbe,
+						previousAction: null,
+					},
+				});
+				assert.doesNotMatch(
+					JSON.stringify({
+						instructions: system.content,
+						promptText: promptText.text,
+					}),
+					/There may be a doorway nearby|Can a clearer view|navigationObjective|historicalLandmark/,
+				);
+				const image = user.content.find(
+					(part: { type: string }) => part.type === "input_image",
+				);
+				assert.equal(
+					image.image_url,
+					`data:image/png;base64,${f.png.toString("base64")}`,
+				);
+			} else {
+				assert.equal(responseCalls, 2);
+				assert.deepEqual(body.text.format.schema.properties.verdict.enum, [
+					"possible-match",
+					"no-visible-match",
+					"insufficient-evidence",
+				]);
+				assert.doesNotMatch(
+					JSON.stringify(body.input),
+					/input_image|data:image/,
+				);
+				assert.match(JSON.stringify(body.input), /untrusted data/);
+			}
 			const response = {
 				id: "resp_synthetic",
 				object: "response",
@@ -155,7 +174,9 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 						content: [
 							{
 								type: "output_text",
-								text: JSON.stringify(scenePerception),
+								text: JSON.stringify(
+									responseCalls === 1 ? scenePerception : navigationAssessment,
+								),
 								annotations: [],
 							},
 						],
@@ -176,6 +197,6 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 	const result = await play(f.client, f.tools, provider);
 	assert.equal(result.outcome, "completed");
 	assert.deepEqual(result.perception.features, scenePerception.features);
-	assert.equal(responseCalls, 1);
+	assert.equal(responseCalls, 2);
 	assert.equal(f.events.filter((event) => event === "decide").length, 1);
 });

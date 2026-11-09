@@ -190,3 +190,35 @@ test("uncertain receipt and detach failure stay explicit and bounded", async (t)
 	assert.match(output, /Detach unconfirmed; client closed/);
 	assert.doesNotMatch(output, /Lease detached|SECRET|raw-error/);
 });
+
+test("assessment strings are escaped in stderr and remain report-only", async (t) => {
+	const f = await fixture(t);
+	const { stderr, stdout } = capture(t);
+	const assessment = {
+		verdict: "insufficient-evidence",
+		evidence: "Ambiguous doorway.\u001b[31m\n[forged]",
+		uncertainty: "Unknown identity.\r\n[forged]",
+	};
+	f.state.assessment = assessment;
+	const result = await play(f.client, f.tools, f.provider);
+	const output = stderr.join("");
+	assert.ok(
+		output.includes(`evidence: ${JSON.stringify(assessment.evidence)}`),
+	);
+	assert.ok(
+		output.includes(`uncertainty: ${JSON.stringify(assessment.uncertainty)}`),
+	);
+	assert.ok(
+		output.indexOf("Scene perception completed") <
+			output.indexOf("Assessment:"),
+	);
+	assert.ok(
+		output.indexOf("Assessment:") < output.indexOf("guidance acknowledged"),
+	);
+	assert.ok(!output.includes("\u001b"));
+	assert.doesNotMatch(output, /^\[forged\]/m);
+	assert.ok(!output.includes(f.note.hypothesis));
+	assert.equal(result.navigationAssessment?.evidence, assessment.evidence);
+	assert.ok(!f.state.instructions.includes(assessment.evidence));
+	assert.equal(stdout.length, 0);
+});

@@ -20,11 +20,11 @@ for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 			makeTools: () => f.tools,
 			makeProvider: () => f.provider,
 		});
-		assert.equal(responses.mock.callCount(), 1);
+		assert.equal(responses.mock.callCount(), 2);
 		assert.deepEqual(responses.mock.calls[0].arguments, [
 			modelId ?? "gpt-6-luna",
 		]);
-		assert.equal(f.state.modelCalls, 1);
+		assert.equal(f.state.modelCalls, 2);
 		assert.equal(result.outcome, "completed");
 		assert.equal(
 			result.perception.description,
@@ -55,6 +55,7 @@ test("main constructs dependencies, attaches once, awaits one complete play, the
 		"observe",
 		"memory",
 		"model",
+		"assessment",
 		"startRun",
 		"setPrompt",
 		"observe",

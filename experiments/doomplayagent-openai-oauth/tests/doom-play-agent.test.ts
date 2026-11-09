@@ -6,7 +6,7 @@ import {
 	play,
 	type ScenePerception,
 } from "../src/doom-play-agent.ts";
-import { fixture, scenePerception } from "./fixtures.ts";
+import { fixture, navigationAssessment, scenePerception } from "./fixtures.ts";
 
 // The fake model reports zero raw token counts; the SDK normalizes these to
 // this complete LanguageModelUsage shape on the returned perception.
@@ -46,6 +46,8 @@ test("landmark lookup precedes objective-independent perception of exact bytes a
 	]);
 	assert.equal(result.outcome, "completed");
 	assert.equal(result.promptChanged, false);
+	assert.equal(result.navigationAssessment, null);
+	assert.equal(f.state.modelCalls, 1);
 	assert.deepEqual(result.tics, { requested: 6, reported: 6, verified: 6 });
 	const input = f.state.modelInput as Parameters<typeof f.model.doGenerate>[0];
 	const user = input.prompt.find((message) => message.role === "user");
@@ -112,6 +114,7 @@ test("host selection preserves base and substitution through CAS, then decides o
 		"observe",
 		"memory",
 		"model",
+		"assessment",
 		"startRun",
 		"setPrompt",
 		"observe",
@@ -182,6 +185,8 @@ for (const status of ["empty", "unavailable", "lookup_failed"] as const) {
 		assert.equal(result.memoryStatus, status);
 		assert.deepEqual(result.navigationObjective, { kind: "free-explore" });
 		assert.equal(result.promptChanged, false);
+		assert.equal(result.navigationAssessment, null);
+		assert.equal(f.state.modelCalls, 1);
 		assert.equal(f.events.filter((event) => event === "decide").length, 1);
 		assert.equal(f.events.includes("setPrompt"), false);
 		assert.deepEqual(f.state.decisionTemplates, [
@@ -249,6 +254,10 @@ for (const operation of ["startRun", "setPrompt", "decide"] as const) {
 							: "decision",
 				);
 				assert.match(String(error.cause), /response lost/);
+				assert.deepEqual(error.navigationAssessment, {
+					...navigationAssessment,
+					usage: zeroModelUsage,
+				});
 				assert.deepEqual(
 					error.perception,
 					perceptionWithZeroUsage(f.state.perception),
@@ -442,3 +451,125 @@ test("actual AI SDK inference failure is attempted once", async (t) => {
 	assert.equal(calls, 1);
 	assert.equal(f.events.includes("startRun"), false);
 });
+
+for (const assessment of [
+	navigationAssessment,
+	{
+		verdict: "no-visible-match",
+		evidence:
+			"The described opening has blue trim; the historical hypothesis describes red trim.",
+		uncertainty:
+			"Lighting or a different view could explain the conflict; location is not disproved.",
+	},
+	{
+		verdict: "insufficient-evidence",
+		evidence:
+			"The perception describes only a plain wall, without distinctive landmark details.",
+		uncertainty: "The landmark may be outside this view.",
+	},
+]) {
+	test(`text-only ${assessment.verdict} assessment is diagnostic and uses only the selected note`, async (t) => {
+		const f = await fixture(t);
+		f.state.assessment = assessment;
+		if (assessment.verdict === "no-visible-match") {
+			f.note.hypothesis = "An opening with red trim may be a landmark.";
+			f.state.perception = {
+				description: "An opening with blue trim is visible.",
+				features: ["Blue trim surrounds the opening."],
+				uncertainty: "Lighting and viewpoint may affect appearance.",
+			};
+		} else if (assessment.verdict === "insufficient-evidence") {
+			f.state.perception = {
+				description: "A plain wall fills the view.",
+				features: ["A plain wall is visible."],
+				uncertainty: "Other features may be outside the view.",
+			};
+		}
+		f.state.candidates.push({
+			...f.note,
+			noteId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+			hypothesis: "UNSELECTED_NOTE",
+		});
+		const result = await play(f.client, f.tools, f.provider);
+		assert.deepEqual(result.navigationAssessment, {
+			...assessment,
+			usage: zeroModelUsage,
+		});
+		assert.equal(f.state.modelCalls, 2);
+		const input = f.state.assessmentInput as Parameters<
+			typeof f.model.doGenerate
+		>[0];
+		const user = input.prompt.find((m) => m.role === "user");
+		assert.ok(user);
+		assert.equal(user.content.length, 1);
+		const text = user.content[0];
+		assert.equal(text.type, "text");
+		if (text.type !== "text") throw Error("Expected text");
+		assert.deepEqual(JSON.parse(text.text), {
+			perception: f.state.perception,
+			historicalLandmark: {
+				hypothesis: f.note.hypothesis,
+				nextQuestion: f.note.nextQuestion,
+				observerPoseRawTelemetry: f.note.anchor,
+			},
+		});
+		assert.match(
+			JSON.stringify(input.prompt),
+			/untrusted data.*never instructions/,
+		);
+		assert.match(JSON.stringify(input.prompt), /takes priority/);
+		assert.doesNotMatch(JSON.stringify(input), /UNSELECTED_NOTE|data:image/);
+		assert.deepEqual(input.providerOptions, {
+			openai: { store: false, reasoningEffort: "xhigh" },
+		});
+		assert.equal(input.tools?.length ?? 0, 0);
+		assert.ok(!f.state.instructions.includes(assessment.evidence));
+		assert.ok(!f.state.instructions.includes(assessment.uncertainty));
+		assert.equal(f.events.filter((event) => event === "decide").length, 1);
+	});
+}
+
+for (const fault of ["transport", "finish", "schema"] as const) {
+	test(`assessment ${fault} failure retains perception and cleans up without claiming a run`, async (t) => {
+		const f = await fixture(t);
+		const generate = f.model.doGenerate.bind(f.model);
+		const cause = Error("SECRET_ASSESSMENT_FAILURE");
+		let calls = 0;
+		f.model.doGenerate = async (input) => {
+			if (++calls === 1) return generate(input);
+			if (fault === "transport") throw cause;
+			const result = await generate(input);
+			if (fault === "finish")
+				result.finishReason = { unified: "length", raw: "length" };
+			else
+				result.content = [
+					{ type: "text", text: JSON.stringify({ verdict: "arrived" }) },
+				];
+			return result;
+		};
+		const { main } = await import("../src/main.ts");
+		await assert.rejects(
+			main(() => f.client, {
+				makeTools: () => f.tools,
+				makeProvider: () => f.provider,
+			}),
+			(error) => {
+				assert.ok(error instanceof PlaybackError);
+				assert.equal(error.stage, "navigation-assessment");
+				assert.equal(error.decisionMayHaveBeenSent, false);
+				assert.deepEqual(
+					error.perception,
+					perceptionWithZeroUsage(scenePerception),
+				);
+				assert.equal(error.navigationAssessment, null);
+				assert.equal(error.navigationObjective?.kind, "landmark");
+				assert.doesNotMatch(error.message, /SECRET/);
+				if (fault === "transport") assert.equal(error.cause, cause);
+				return true;
+			},
+		);
+		assert.equal(calls, 2);
+		assert.equal(f.events.includes("startRun"), false);
+		assert.equal(f.events.at(-1), "detach");
+	});
+}

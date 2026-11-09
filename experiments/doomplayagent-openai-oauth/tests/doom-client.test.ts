@@ -978,6 +978,7 @@ const offlinePlayback: typeof import("../src/doom-play-agent.ts").play = async (
 		memoryStatus: "empty",
 		navigationObjective: { kind: "free-explore" },
 		candidateCount: 0,
+		navigationAssessment: null,
 		perception: {
 			description: "synthetic",
 			features: [],

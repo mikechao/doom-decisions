@@ -105,6 +105,7 @@ test("a distant active lead wins over a closer inactive landmark and reaches dec
 	assert.deepEqual(f.events, [
 		"observe",
 		"model",
+		"assessment",
 		"startRun",
 		"setPrompt",
 		"observe",

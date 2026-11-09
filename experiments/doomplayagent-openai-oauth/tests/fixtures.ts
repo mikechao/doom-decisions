@@ -19,6 +19,12 @@ export const scenePerception = {
 	features: ["A doorway is visible at the far end."],
 	uncertainty: "The image does not establish what lies beyond the doorway.",
 };
+export const navigationAssessment = {
+	verdict: "possible-match",
+	evidence:
+		"The visible doorway supports the doorway hypothesis; no specific conflict is described.",
+	uncertainty: "A generic doorway does not establish landmark identity.",
+};
 export async function fixture(t: TestContext) {
 	t.mock.method(globalThis, "fetch", async () => {
 		throw new Error("External network forbidden");
@@ -96,6 +102,8 @@ export async function fixture(t: TestContext) {
 		configuration: structuredClone(base.configuration),
 		run: null as AgentRunState | null,
 		perception: scenePerception as unknown,
+		assessment: navigationAssessment as unknown,
+		assessmentInput: null as unknown,
 		candidates: [note],
 		memoryObservations: [] as Parameters<DoomTools["findActiveLandmarks"]>[0][],
 		modelCalls: 0,
@@ -255,11 +263,24 @@ export async function fixture(t: TestContext) {
 		modelId: "synthetic",
 		supportedUrls: {},
 		async doGenerate(input) {
-			events.push("model");
+			const assessment = !input.prompt.some(
+				(message) =>
+					message.role === "user" &&
+					message.content.some((part) => part.type === "file"),
+			);
+			events.push(assessment ? "assessment" : "model");
 			state.modelCalls++;
-			state.modelInput = input;
+			if (assessment) state.assessmentInput = input;
+			else state.modelInput = input;
 			return {
-				content: [{ type: "text", text: JSON.stringify(state.perception) }],
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify(
+							assessment ? state.assessment : state.perception,
+						),
+					},
+				],
 				finishReason: { unified: "stop", raw: "stop" },
 				usage: {
 					inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
