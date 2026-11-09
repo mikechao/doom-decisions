@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test, { type TestContext } from "node:test";
 import { PlaybackError, play } from "../src/doom-play-agent.ts";
 import { main } from "../src/main.ts";
@@ -18,9 +19,21 @@ function capture(t: TestContext) {
 	return { stderr, stdout };
 }
 
-test("milestones log perception to stderr, preserve final stdout and omit advisory data", async (t) => {
+test("milestones log objective and perception to stderr and preserve final stdout", async (t) => {
 	const f = await fixture(t);
 	const { stderr, stdout } = capture(t);
+	const selected = {
+		...f.note,
+		hypothesis: "The selected lead describes a narrow stone arch.",
+		nextQuestion: "Can the next view show whether the arch has a blue edge?",
+	};
+	const unselected = {
+		...f.note,
+		noteId: "raw-unselected-note-id",
+		hypothesis: "Unselected candidate text must stay private.",
+		nextQuestion: "Unselected candidate question.",
+	};
+	f.state.candidates = [selected, unselected];
 	const find = f.tools.findActiveLandmarks;
 	f.tools.findActiveLandmarks = async (o) => ({
 		...(await find(o)),
@@ -44,8 +57,16 @@ test("milestones log perception to stderr, preserve final stdout and omit adviso
 	assert.equal(f.events.filter((event) => event === "decide").length, 1);
 	const output = stderr.join("");
 	assert.match(output, /\[doom\] Attached; observed E1M1 at tic 43/);
-	assert.match(output, /lookup: found; 1 returned; more available/);
-	assert.match(output, /Objective: landmark note#[0-9a-f]{12} \(revision 2\)/);
+	assert.match(output, /lookup: found; 2 returned; more available/);
+	const fingerprint = createHash("sha256")
+		.update(selected.noteId)
+		.digest("hex")
+		.slice(0, 12);
+	assert.ok(
+		output.includes(
+			`Objective: investigate historical landmark note#${fingerprint} (revision ${selected.revision})\nHypothesis: ${JSON.stringify(selected.hypothesis)}\nNext question: ${JSON.stringify(selected.nextQuestion)}`,
+		),
+	);
 	assert.ok(
 		output.indexOf("Perceiving") < output.indexOf("Scene perception completed"),
 	);
@@ -67,14 +88,23 @@ test("milestones log perception to stderr, preserve final stdout and omit adviso
 	assert.match(output, /outcome: completed; requested 6, verified 6 tics/);
 	assert.match(output, /\[doom\] Lease detached/);
 	for (const secret of [
-		f.note.noteId,
-		f.note.hypothesis,
-		f.note.nextQuestion,
+		selected.noteId,
+		JSON.stringify(selected.anchor),
+		unselected.hypothesis,
+		unselected.nextQuestion,
 		f.base.configuration.instructionTemplate,
 		f.root,
 	]) {
 		assert.ok(!output.includes(secret ?? ""));
 	}
+	assert.ok(
+		f.state.instructions.startsWith(f.base.configuration.instructionTemplate),
+	);
+	assert.ok(f.state.instructions.includes(JSON.stringify(selected.hypothesis)));
+	assert.ok(
+		f.state.instructions.includes(JSON.stringify(selected.nextQuestion)),
+	);
+	assert.deepEqual(f.state.decisionTemplates, [f.state.instructions]);
 	assert.ok(!output.includes(String.fromCharCode(27)));
 	assert.match(stdout.join(""), /^Doom one-decision result:/);
 	assert.doesNotMatch(
@@ -117,6 +147,40 @@ test("perception newlines and ANSI escapes are quoted in stderr without changing
 	assert.equal(f.events.filter((event) => event === "decide").length, 1);
 });
 
+test("historical objective newlines and ANSI escapes are quoted in stderr", async (t) => {
+	const f = await fixture(t);
+	const { stderr, stdout } = capture(t);
+	f.note.hypothesis = "A narrow arch.\n[forged]\u001b[31mRED\u001b[0m";
+	f.note.nextQuestion = "Can the edge be seen?\r\n[forged]\u001b[2J";
+
+	const result = await play(f.client, f.tools, f.provider);
+	const output = stderr.join("");
+
+	assert.ok(
+		output.includes(`Hypothesis: ${JSON.stringify(f.note.hypothesis)}`),
+	);
+	assert.ok(
+		output.includes(`Next question: ${JSON.stringify(f.note.nextQuestion)}`),
+	);
+	assert.ok(!output.includes("\u001b"));
+	assert.doesNotMatch(output, /^\[forged\]/m);
+	assert.equal(stdout.join(""), "");
+	assert.equal(result.outcome, "completed");
+	assert.equal(f.events.filter((event) => event === "decide").length, 1);
+});
+
+test("missing historical next question is reported without invention", async (t) => {
+	const f = await fixture(t);
+	const { stderr } = capture(t);
+	f.note.nextQuestion = null;
+
+	await play(f.client, f.tools, f.provider);
+
+	const output = stderr.join("");
+	assert.match(output, /Next question: \(none recorded\)/);
+	assert.doesNotMatch(output, /Next question: (?!\(none recorded\))/);
+});
+
 for (const status of ["empty", "unavailable", "lookup_failed"] as const) {
 	test(`${status} logs the distinct fallback without asserting an active total`, async (t) => {
 		const f = await fixture(t);
@@ -131,6 +195,7 @@ for (const status of ["empty", "unavailable", "lookup_failed"] as const) {
 		const output = stderr.join("");
 		assert.ok(output.includes(`lookup: ${status}; 0 returned`));
 		assert.match(output, /Objective: free explore/);
+		assert.doesNotMatch(output, /Hypothesis:|Next question:|note#[0-9a-f]{12}/);
 		assert.match(output, /Navigation guidance acknowledged/);
 		assert.doesNotMatch(
 			output,
@@ -217,7 +282,9 @@ test("assessment strings stay escaped in stderr and advisory prompt JSON", async
 	);
 	assert.ok(!output.includes("\u001b"));
 	assert.doesNotMatch(output, /^\[forged\]/m);
-	assert.ok(!output.includes(f.note.hypothesis));
+	assert.ok(
+		output.includes(`Hypothesis: ${JSON.stringify(f.note.hypothesis)}`),
+	);
 	assert.equal(result.navigationAssessment?.evidence, assessment.evidence);
 	assert.ok(f.state.instructions.includes(JSON.stringify(assessment.evidence)));
 	assert.equal(stdout.length, 0);

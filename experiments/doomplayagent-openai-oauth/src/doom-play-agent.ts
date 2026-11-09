@@ -395,13 +395,16 @@ export async function play(
 			);
 		const selection = selectNavigationObjective(memory);
 		navigationObjective = selection.navigationObjective;
-		// An opaque fingerprint identifies the advisory note without printing
-		// arbitrary historical data or implying its observer pose is a destination.
+		// Keep historical text readable while quoting it so it cannot forge log lines.
 		progress
 			.withTag("navigation")
 			.info(
-				navigationObjective.kind === "landmark"
-					? `Objective: landmark note#${createHash("sha256").update(navigationObjective.noteId).digest("hex").slice(0, 12)} (revision ${navigationObjective.revision})`
+				selection.target
+					? [
+							`Objective: investigate historical landmark note#${createHash("sha256").update(selection.target.noteId).digest("hex").slice(0, 12)} (revision ${selection.target.revision})`,
+							`Hypothesis: ${JSON.stringify(selection.target.hypothesis)}`,
+							`Next question: ${selection.target.nextQuestion === null ? "(none recorded)" : JSON.stringify(selection.target.nextQuestion)}`,
+						].join("\n")
 					: "Objective: free explore",
 			);
 		stage = "perception";
