@@ -298,7 +298,7 @@ async function broker(
 				pageId,
 				epoch,
 				ownerId: fault === "invalid" ? randomUUID() : ownerId,
-				configuredDecisionBudget: 1,
+				configuredDecisionBudget: 2,
 				budgetUnclaimedAtAttach: true,
 				...options.attachMetadata,
 			});
@@ -749,7 +749,7 @@ test("attach, observe, and detach use the acknowledged lease and materialize the
 	const lease = await client.attach();
 	assert.deepEqual(fake.calls, ["attach"]);
 	assert.ok(lease.leaseFile);
-	assert.equal(lease.configuredDecisionBudget, 1);
+	assert.equal(lease.configuredDecisionBudget, 2);
 	assert.equal(lease.budgetUnclaimedAtAttach, true);
 	assert.deepEqual(JSON.parse(await readFile(lease.leaseFile, "utf8")), {
 		pageId: lease.pageId,
@@ -1027,7 +1027,7 @@ test("main awaits offline playback and then detaches", async (t) => {
 	);
 	await main();
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);
-	assert.ok(messages.includes("Doom one-decision result:"));
+	assert.ok(messages.includes("Doom two-decision result:"));
 });
 
 // Legacy transport tests mock playback so they never invoke real memory/model.
@@ -1036,21 +1036,24 @@ const offlinePlayback: typeof import("../src/doom-play-agent.ts").play = async (
 ) => {
 	const observed = await client.observe();
 	return {
-		record: {
-			ordinal: 1,
-			reasoningObservation: observed,
-			beforePng: null,
-			landmarkLookup: null,
-			selection: null,
-			perception: null,
-			navigationAssessment: null,
-			guidance: null,
-			runStarted: null,
-			promptAcknowledged: null,
-			admissionObservation: null,
-			decision: { kind: "not-called" },
-			failure: null,
-		},
+		decisionOrdinal: 1,
+		records: [
+			{
+				ordinal: 1,
+				reasoningObservation: observed,
+				beforePng: null,
+				landmarkLookup: null,
+				selection: null,
+				perception: null,
+				navigationAssessment: null,
+				guidance: null,
+				runStarted: null,
+				promptAcknowledged: null,
+				admissionObservation: null,
+				decision: { kind: "not-called" },
+				failure: null,
+			},
+		],
 		memoryStatus: "empty",
 		navigationObjective: { kind: "free-explore" },
 		candidateCount: 0,

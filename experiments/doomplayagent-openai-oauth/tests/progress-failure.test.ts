@@ -84,7 +84,7 @@ test("broken progress channel", async (t) => {
   // Allow any asynchronous error event to run before asserting completion.
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(writes, 1);
-  assert.equal(f.events.filter((event) => event === "decide").length, 1);
+  assert.equal(f.events.filter((event) => event === "decide").length, operationFails ? 1 : 2);
   assert.equal(f.events.at(-1), "detach");
 });
 `,

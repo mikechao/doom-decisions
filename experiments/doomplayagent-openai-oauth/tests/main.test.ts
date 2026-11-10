@@ -24,11 +24,11 @@ for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 		const responses = t.mock.method(f.provider, "responses");
 		t.mock.method(console, "log", () => {});
 		const result = await main();
-		assert.equal(responses.mock.callCount(), 2);
+		assert.equal(responses.mock.callCount(), 4);
 		assert.deepEqual(responses.mock.calls[0].arguments, [
 			modelId ?? "gpt-6-luna",
 		]);
-		assert.equal(f.state.modelCalls, 2);
+		assert.equal(f.state.modelCalls, 4);
 		assert.equal(result.outcome, "completed");
 		assert.equal(
 			result.perception.description,
@@ -36,7 +36,7 @@ for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 		);
 		assert.deepEqual(result.perception.features, scenePerception.features);
 		assert.equal(result.perception.usage.totalTokens, 0);
-		assert.equal(f.events.filter((event) => event === "decide").length, 1);
+		assert.equal(f.events.filter((event) => event === "decide").length, 2);
 	});
 }
 
@@ -73,14 +73,14 @@ test("main constructs dependencies, attaches once, awaits one complete play, the
 	);
 	assert.deepEqual(result.perception.features, scenePerception.features);
 	assert.equal(result.perception.usage.totalTokens, 0);
-	assert.deepEqual(result.record.beforePng, f.png);
-	assert.equal(result.record.decision.kind, "returned");
-	if (result.record.decision.kind !== "returned")
+	assert.deepEqual(result.records[0].beforePng, f.png);
+	assert.equal(result.records[0].decision.kind, "returned");
+	if (result.records[0].decision.kind !== "returned")
 		throw Error("Expected receipt");
-	assert.deepEqual(result.record.decision.afterPng, f.png);
-	const { record: _record, ...summary } = result;
+	assert.deepEqual(result.records[0].decision.afterPng, f.state.images[1]);
+	const { records: _records, ...summary } = result;
 	assert.deepEqual(output.mock.calls[0].arguments, [
-		"Doom one-decision result:",
+		"Doom two-decision result:",
 		summary,
 	]);
 	assert.deepEqual(f.events, [
@@ -93,14 +93,21 @@ test("main constructs dependencies, attaches once, awaits one complete play, the
 		"setPrompt",
 		"observe",
 		"decide",
+		"observe",
+		"model",
+		"assessment",
+		"setPrompt",
+		"observe",
+		"decide",
 		"detach",
 	]);
 });
 
 for (const [budget, unclaimed, label] of [
 	[null, false, "absent"],
-	[1, false, "already claimed"],
-	[2, true, "mismatched"],
+	[2, false, "already claimed"],
+	[1, true, "mismatched"],
+	[3, true, "larger"],
 	[0, true, "invalid zero"],
 ] as const) {
 	test(`main rejects ${label} budget before playback and detaches`, async (t) => {
@@ -124,7 +131,7 @@ for (const [budget, unclaimed, label] of [
 			main(),
 			(error: unknown) =>
 				error instanceof Error &&
-				/Doom one-decision preflight failed/.test(error.message),
+				/Doom two-decision preflight failed/.test(error.message),
 		);
 		assert.equal(playbackCalls, 0);
 		assert.equal(responses.mock.callCount(), 0);
@@ -202,7 +209,7 @@ test("main detaches after an uncertain real playback transaction", async (t) => 
 		assert.ok(error instanceof PlaybackError);
 		assert.equal(error.cause, cause);
 		assert.equal(error.decisionMayHaveBeenSent, true);
-		assert.equal(error.record?.decision.kind, "unconfirmed");
+		assert.equal(error.records[0]?.decision.kind, "unconfirmed");
 		assert.equal(
 			error.perception?.description,
 			"A stone corridor is visible ahead.",
@@ -217,5 +224,96 @@ test("main detaches after an uncertain real playback transaction", async (t) => 
 		return true;
 	});
 	assert.equal(f.events.filter((event) => event === "decide").length, 1);
+	assert.equal(f.events.at(-1), "detach");
+});
+
+test("main waits for second decision, retains both images through detach, and prints only its summary", async (t) => {
+	const f = await fixture(t);
+	mocks.makeClient.mock.mockImplementation(() => f.client);
+	mocks.makeTools.mock.mockImplementation(() => f.tools);
+	mocks.makeProvider.mock.mockImplementation(() => f.provider);
+	const output = t.mock.method(console, "log", () => {});
+	let release!: () => void;
+	let entered!: () => void;
+	const pending = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const secondEntered = new Promise<void>((resolve) => {
+		entered = resolve;
+	});
+	const decide = f.client.decide;
+	let calls = 0;
+	f.client.decide = async (input) => {
+		const receipt = await decide(input);
+		if (++calls === 2) {
+			entered();
+			await pending;
+		}
+		return receipt;
+	};
+	const detach = f.client.detach;
+	f.client.detach = async () => {
+		await rm(f.root, { recursive: true, force: true });
+		return detach();
+	};
+	const work = main();
+	await secondEntered;
+	assert.equal(f.events.includes("detach"), false);
+	release();
+	const result = await work;
+	assert.equal(result.decisionOrdinal, 2);
+	assert.equal(result.records.length, 2);
+	for (const [i, record] of result.records.entries()) {
+		assert.deepEqual(record.beforePng, f.state.images[i]);
+		assert.equal(record.decision.kind, "returned");
+		if (record.decision.kind !== "returned") throw Error("Expected receipt");
+		assert.deepEqual(record.decision.afterPng, f.state.images[i + 1]);
+	}
+	const { records: _records, ...summary } = result;
+	assert.deepEqual(output.mock.calls[0].arguments, [
+		"Doom two-decision result:",
+		summary,
+	]);
+	assert.doesNotMatch(
+		JSON.stringify(output.mock.calls[0].arguments),
+		/records|beforePng|afterPng|pngPath|Buffer/,
+	);
+	assert.equal(f.events.at(-1), "detach");
+});
+
+test("second-slot playback and detach failures preserve both records in AggregateError", async (t) => {
+	const f = await fixture(t);
+	mocks.makeClient.mock.mockImplementation(() => f.client);
+	mocks.makeTools.mock.mockImplementation(() => f.tools);
+	mocks.makeProvider.mock.mockImplementation(() => f.provider);
+	const cause = new Error("second decision response lost");
+	const cleanup = new Error("detach response lost");
+	const decide = f.client.decide;
+	let calls = 0;
+	f.client.decide = async (input) => {
+		const receipt = await decide(input);
+		if (++calls === 2) throw cause;
+		return receipt;
+	};
+	f.client.detach = async () => {
+		f.events.push("detach");
+		throw cleanup;
+	};
+	await assert.rejects(main(), (error) => {
+		assert.ok(error instanceof AggregateError);
+		const [playback, detach] = error.errors;
+		assert.ok(playback instanceof PlaybackError);
+		assert.equal(playback.cause, cause);
+		assert.equal(playback.decisionOrdinal, 2);
+		assert.equal(playback.decisionMayHaveBeenSent, true);
+		assert.deepEqual(
+			playback.records.map((r) => r.decision.kind),
+			["returned", "unconfirmed"],
+		);
+		assert.equal(detach, cleanup);
+		return true;
+	});
+	assert.equal(calls, 2);
+	assert.equal(f.events.filter((e) => e === "startRun").length, 1);
 	assert.equal(f.events.at(-1), "detach");
 });

@@ -54,7 +54,7 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 			);
 			assert.equal(body.text.format.type, "json_schema");
 			assert.equal(body.text.format.schema.additionalProperties, false);
-			if (responseCalls === 1) {
+			if (responseCalls % 2 === 1) {
 				assert.equal(
 					body.text.format.schema.properties.description.type,
 					"string",
@@ -125,11 +125,15 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 				assert.deepEqual(JSON.parse(promptText.text), {
 					state: {
 						map: { mapSlot: f.base.mapIdentity.mapSlot },
-						tic: f.base.tic,
+						tic: f.base.tic + (responseCalls === 3 ? 6 : 0),
 						phase: f.base.phase,
-						telemetry: f.base.telemetry,
+						telemetry:
+							responseCalls === 3 ? f.state.after?.telemetry : f.base.telemetry,
 						facingProbe: f.base.facingProbe,
-						previousAction: null,
+						previousAction:
+							responseCalls === 3
+								? { action: "forward", tics: 6, endTic: f.base.tic + 6 }
+								: null,
 					},
 				});
 				assert.doesNotMatch(
@@ -144,10 +148,10 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 				);
 				assert.equal(
 					image.image_url,
-					`data:image/png;base64,${f.png.toString("base64")}`,
+					`data:image/png;base64,${f.state.images[responseCalls === 3 ? 1 : 0].toString("base64")}`,
 				);
 			} else {
-				assert.equal(responseCalls, 2);
+				assert.ok(responseCalls === 2 || responseCalls === 4);
 				assert.deepEqual(body.text.format.schema.properties.verdict.enum, [
 					"possible-match",
 					"no-visible-match",
@@ -175,7 +179,9 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 							{
 								type: "output_text",
 								text: JSON.stringify(
-									responseCalls === 1 ? scenePerception : navigationAssessment,
+									responseCalls % 2 === 1
+										? scenePerception
+										: navigationAssessment,
 								),
 								annotations: [],
 							},
@@ -197,6 +203,6 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 	const result = await play(f.client, f.tools, provider);
 	assert.equal(result.outcome, "completed");
 	assert.deepEqual(result.perception.features, scenePerception.features);
-	assert.equal(responseCalls, 2);
-	assert.equal(f.events.filter((event) => event === "decide").length, 1);
+	assert.equal(responseCalls, 4);
+	assert.equal(f.events.filter((event) => event === "decide").length, 2);
 });

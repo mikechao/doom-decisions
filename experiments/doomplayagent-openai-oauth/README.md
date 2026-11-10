@@ -1,9 +1,9 @@
-# One Doom decision experiment
+# Two informed Doom decisions experiment
 
-Running `src/main.ts` with no arguments now authorizes **one** guarded gameplay
-request. It is no longer a passive observation command. Do not run it as a check.
-The Decisions API chooses the actual action. TypeScript selects the first-turn
-navigation objective. The separate reasoning model independently perceives the
+Running `src/main.ts` with no arguments now authorizes **up to two** guarded gameplay
+requests in one broker-authorized run. Do not run it as a check.
+The Decisions API chooses the actual action. TypeScript selects the navigation
+objective once. The separate reasoning model independently perceives the
 visible scene from the verified screenshot and compact state, returning a small
 diagnostic description, features, uncertainty and usage. It receives no
 navigation objective or historical landmark. The host combines perception and,
@@ -16,86 +16,62 @@ Decisions provider/model. OAuth model availability and structured-output/image
 support remain unverified against a live account. There is no automatic fallback
 or model retry.
 
-`play()` owns observation, active-landmark lookup, objective selection, scene
-perception and navigation assessment. Its private `executeOneDecision()` helper
-owns prompt composition, run claiming, revision CAS, fresh observation and one
-decision.
+`play()` coordinates a fixed two-slot run. Its once-only work is the initial
+observation/base capture, map-wide active-landmark lookup (limit 3), deterministic
+first-active selection and nonrefundable run claim. Missing, failed and empty
+storage results remain distinct and permit free exploration; malformed evidence
+stops. Existing memory access remains read-only with no migration or writes.
 
-The host sequence is:
+For each decision, `prepareDecision()` perceives that decision's fresh owned PNG
+and compact current state, optionally assesses the same selected target, and
+composes guidance from the original canonical base. Perception receives no
+objective/history; assessment is text-only. Historical and model text remain
+untrusted advisory JSON. First guidance must fit before claim; second guidance
+must fit before its CAS/decision. No guidance accumulates across slots.
 
-1. `main.ts` composes the provider/tools/client, attaches once, awaits `play()`,
-   and detaches in `finally`. `DoomClient` owns the acknowledged lease.
-2. Obtain the executor-validated observation. Read its materialized PNG into an
-   owned Buffer for inference. The executor checks the PNG header and supplied
-   digest before writing; file changes after this read cannot change the inference image.
-3. Query map-wide `active-landmarks` using the verified map key, limit 3;
-   no pose/radius restriction can hide a distant active lead. Memory schema v3
-   stores raw poses; older databases are rejected without migration. The model
-   cannot select the query namespace. Existing storage opens read-only;
-   unavailable, failed and empty results stay distinct.
-4. Select a `NavigationObjective`: the first active landmark's ID/revision in the
-   shared creation-time/ID order, or `free-explore` for no active result. This is a
-   deterministic tie policy, not a closest/best ranking. Active means unfinished
-   historical exploration, not ownership or verified current geometry. Failed,
-   unavailable and successfully empty lookups remain distinct in `memoryStatus`;
-   all three retain the existing free-exploration fallback.
-   Ask the model to perceive the verified screenshot and compact verified state.
-   Its strict output contains a scene description, visible features, uncertainty
-   and normalized usage. The request contains no selected objective or historical
-   landmark. The model cannot select an objective or update the prompt. For a
-   selected landmark, a second text-only inference compares perception with that
-   note and returns verdict, evidence and uncertainty. Free exploration skips it.
-5. Synchronously compose bounded guidance from the canonical base template and
-   current perception, plus the selected historical evidence and actual assessment
-   when a landmark exists, before claiming the run. Historical and model text
-   remain untrusted advisory JSON, without usage or full observations. A missing
-   visible match does not prove wrong location or unreachability; a possible match
-   does not confirm arrival. The anchor remains an observer pose, never a verified
-   destination. The current verified screenshot/state has highest game-evidence
-   authority; base survival rules and controller authorization retain priority.
-   Free exploration also receives a perception-informed amendment. Oversize
-   instructions fail before run claim, without truncation or evidence removal.
-   No extra `getPrompt` is needed: revision CAS protects that template snapshot.
-6. Claim the run using the initial observation/session/revision. Require the
-   broker-selected budget to be exactly one. Call `setPrompt` using the
-   claimed run and current revision; use the acknowledged revision afterward.
-   Both objectives report `promptChanged: true` after an acknowledged update.
-7. Observe afresh. Require a new observation ID, the same session/map/tic and
-   expected revision to preserve continuity with the initial observation. Send
-   `decide` once with that fresh ID and the claimed scope. Browser/controller
-   gates remain decisive.
-8. Report the executor-validated receipt directly, including terminal prefixes,
-   declined admission and native uncertainty. Retain its resulting PNG when present
-   in the passive [`DecisionRecord`](doom-play-agent.md#passive-decision-record),
-   with image-retention errors separate from gameplay. There is no final accounting
-   call or subsequent decision to authorize.
+`main()` attaches once and requires advisory attach metadata reporting exactly
+budget 2 and unclaimed status. `play()` then claims once using the first verified
+observation/session/revision and verifies the actual active two-slot allowance.
+Each `executeOneDecision()` performs prompt CAS, takes a distinct admission
+observation at the expected session/map/tic/revision/run, and invokes `decide()`
+once. No prompt files, config mutation, replacement run or retry are used.
 
-A failed claim, prompt update or decision stops the sequence without retry.
-Before calling `decide`, an error means no decision was sent. During `decide`,
-errors are conservatively unconfirmed: the client has only textual pre/post-send
-errors, so `play()` does not infer dispatch certainty from error-message parsing.
-The failure stage identifies a possibly unacknowledged run/prompt mutation;
-original causes remain available to programmatic callers. CLI output uses only
-bounded host messages and objective/perception diagnostics, never raw model/transport
-exceptions. Prompt updates pass strings directly to the shared executor; no
-temporary prompt file is created. Playback and detach failures remain separate
-members of an `AggregateError` when both fail.
+Only a completed, certain first receipt with a ready verified ending observation
+permits a fresh standalone reasoning observation for slot #2. It supplies current
+accounting as well as a new image; it must match the ending checkpoint and show
+one remaining slot in the same active run. After fresh reasoning, CAS/admission
+recheck scope and continuity before the second invocation. There is no third
+slot or post-second inference. See [execution flow](doom-play-agent.md).
 
-There is no second action slot, `setConfig` call, autonomous loop or subagent. The
-lease-owned prompt amendment is not restored through another mutation; the flow
-ends by detaching.
+`PlayResult.records` contains ordered passive evidence for ordinals 1 and 2.
+`decisionOrdinal` identifies which returned decision the flat summary describes;
+SDK/tic/outcome fields are not run aggregates. A noncontinuable first receipt
+returns one record and ordinal 1. Second observation/preparation/dispatch failure
+throws `PlaybackError` with the completed first record plus a partial second,
+its ordinal/stage, original cause and a dispatch flag scoped to that failing slot.
+A throwing decision is unconfirmed; no receipt is fabricated.
+
+Records retain owned before/after image bytes independently of temporary paths.
+Result-image read/hash failure is separate from gameplay and does not itself
+block fresh second reasoning. All records/Buffers are excluded from normal CLI
+output. Errors print bounded ordinal-aware diagnostics, not raw transport causes.
+Playback and detach failures remain separate `AggregateError` members.
+
+There is no arbitrary-N loop, re-selection, completion planner, landmark retirement,
+reflection or persistence. The lease prompt is not restored through another
+mutation; `main()` detaches in `finally` after playback settles.
 
 Tagged progress milestones use `consola/basic` on stderr; the existing final
 result stays on stdout. Progress includes lookup status and returned count (not
 an active total), the host objective, perception status, acknowledged guidance,
 the decision receipt and detach outcome. Landmark labels use the first 12 hex
-characters of SHA-256 of the note ID; no note prose enters progress. Perception
-and assessment diagnostics remain JSON-escaped when logged.
+characters of SHA-256 of the note ID; selected historical prose is JSON-quoted.
+Perception and assessment diagnostics remain JSON-escaped when logged.
 Missing receipt fields appear as `unknown`, and uncertain completion stays explicit.
 Progress is best-effort: a synchronous write failure or stderr stream error disables
 further progress for the process without interrupting gameplay or detach cleanup.
 
-Both paths preserve the customized base template inherited from human settings.
+Both decisions preserve the customized base template inherited from human settings.
 The supported `main()` transaction attaches a fresh lease: controller
 `attachAgent()` copies `ports.readDecisionConfiguration().instructionTemplate`,
 while `agentPrompt()` changes only the lease configuration and `stopAgent()`
@@ -112,21 +88,23 @@ active; only the first is selected, even if the bounded lookup reports `hasMore`
 ## Responsibility audit
 
 This experiment trusts the existing executor/browser stack; it is not an
-independent security boundary.
+independent native verifier. Shared protocol, broker, controller and root agent
+code are unchanged. The executor owns held-lease envelope/DTO/image validation and
+prompt acknowledgment checks; the controller owns lease/Stop/CAS/native authority.
 
-| Ownership | Actual enforcement and simplification |
-| --- | --- |
-| Already guaranteed below `play()` | [`executeAgentOperation`](../../scripts/doom-agent-client.ts) validates wire commands, lease/page/epoch/command correlation, calls `parseAgentObserveResult`, `parseAgentConfigResult`, `parseAgentPromptResult` and `parseAgentDecisionResult`, and verifies PNG bytes/hashes before materializing. It checks settings session/run correlation, exact submitted prompt echo and revision + 1, start-run active/revision acknowledgment, and decision `beforeObservationId`. Removed duplicate envelopes, parsers, path/header checks, CAS echoes and receipt correlation. `DoomClient` delegates these guarantees rather than implementing DTO parsing itself; its own responsibility is lease lifecycle and rejecting overlapping calls. |
-| Already guaranteed by browser/controller | [`startAgentRun`, `agentConfig`/`agentPrompt`, `agentNext`](../../app/src/session-controller.ts) enforce one-shot claim, session/run/revision CAS, fresh observation admission and nonrefundable reservations. `decide` fences one SDK create; `runOneDecision`, `action` and `captureAgentObservation` verify native stepping, resulting frame and Canvas linkage. [`agent-bridge.mjs`](../../app/agent-bridge.mjs) issues the process budget once and rejects duplicate commands; [`agent-browser.ts`](../../app/src/agent-browser.ts) also rejects duplicates and fences Stop/revocation. Removed repeated run counters/active checks, config equality and native receipt arithmetic. |
-| Required across operations | `play()` reads the executor-materialized PNG into an owned Buffer and performs deterministic first-active objective selection. Scene perception receives only that image and compact verified state; its diagnostic result and normalized usage flow through success and error results. The private `executeOneDecision()` helper owns prompt-size preflight, the one-slot budget requirement, a fresh post-CAS observation and continuity with the initial session/map/tic/revision. It calls `decide` once and never retries an ambiguous mutation. [`doom-tools.ts`](src/doom-tools.ts) owns the verified-map-key query and validates bounded active-landmark evidence, namespace isolation, raw poses and unverified-memory labeling. The AI SDK validates the strict scene-perception schema. |
-| Nice-to-have / overly strict | Full equality of frames, telemetry, facing probes, previous actions, counters, PNG hashes, configurations and entire run snapshots is unnecessary for this one-step flow. A passive capture may change capture counters. Same session/map/tic retains the simulation checkpoint; revision and browser admission handle configuration. No final-accounting readback controls another dispatch. The resulting PNG is now read once solely to retain historical evidence, with retention failure separate from the receipt outcome. |
+`play()` owns one lookup/selection and canonical-base capture, the sole two-slot
+claim, and explicit conditional second preparation. `prepareDecision()` repeats
+perception, optional assessment and bounded prompt composition.
+`executeOneDecision()` repeats CAS, admission observation/checks, one invocation
+and image retention. Live scope/receipt variables drive continuation; records are
+passive snapshots. Full passive capture/frame/PNG equality is not required.
 
-The decision parser is not a complete independent native verifier: for example,
-terminal prefix bounds and before/after cumulative arithmetic are not all checked
-by that parser. Those guarantees come from the trusted controller/native pipeline.
-This experiment now reports that evidence instead of recreating a verifier. No
-lower-layer defect blocked this simplification; independent verification would be
-a different scope. Static/offline checks do not establish live native correctness.
+The second reasoning observation must match receipt #1's ending session/map/tic
+and carried revision, and expose the same active run with limit 2, reserved 1,
+SDK-invoked 1, remaining 1. The post-CAS admission observation rechecks those
+conditions at the acknowledged revision. These snapshots never replace final
+browser admission. A completed action alone does not establish current lease
+validity. No extra config read or native receipt arithmetic is added.
 
 Offline verification, from this directory with existing dependencies:
 
@@ -153,26 +131,26 @@ same validated wire command.
 
 ## Suggested live smoke, requiring separate operator authorization
 
-1. Approve browser/game-asset use, OAuth/model inference, read-only access to the
-   intended memory DB, and exactly one Decisions API attempt. Choose an
-   OAuth-accessible Responses model; it must support image input and structured
-   output. The default has not been live-certified by this change.
-2. Set `AGENT_DECISION_BUDGET=1` in the root app's ignored `app/.env.agent.local`.
+1. Separately approve browser/game-asset use, OAuth/reasoning inference, read-only
+   access to the intended memory DB, and at most two Decisions API attempts.
+   The reasoning model must support images and structured output. No live proof
+   has been collected for this two-decision change.
+2. Set `AGENT_DECISION_BUDGET=2` in the root app's ignored `app/.env.agent.local`.
    Start a fresh authorized `dev:agent` process and manually open its page at
    `http://127.0.0.1:5174`. Wait for verified E1M1 readiness. Do not grant a
-   separate browser run or start Continuous Mode. Use the existing local OAuth
-   setup; never paste keys or tokens into prompts, output or artifacts.
+   separate browser run or start Continuous Mode. Use existing local OAuth setup;
+   never put credentials in prompts, output or artifacts.
 3. From this directory, run once:
    `DOOM_REASONING_MODEL=<approved-model> node --experimental-strip-types src/main.ts`.
-   Memory absence/lookup failure may continue with free exploration and a valid
-   scene perception; malformed output or failed inference must result in
-   no claim/decision.
-4. Inspect the compact result, browser receipts and Console/Network: at most one
-   Decisions invocation, matching requested/reported/verified tics or an explicit
-   terminal prefix/uncertainty and acknowledged detach. Record evidence without
-   credentials. Confirm the result's `navigationObjective` matches the first
-   active note and revision, and its historical guidance reaches the Decisions
-   request. Without an active note, confirm the base prompt is unchanged.
-5. On uncertainty, stop and inspect the browser; use Stop Agent to release possible
-   ownership. Do not rerun automatically. A new live attempt needs fresh explicit
-   operator authorization and a deliberately renewed process budget.
+   Missing memory may use free exploration; malformed evidence or failed inference
+   stops without fallback/retry. First preparation failure must not claim a run.
+4. Inspect receipts and Console/Network: one claim, two sequential decisions only
+   when the first is completed and the fresh checkpoint/accounting permit it,
+   a fresh reasoning image/pass between them, same objective/target, and two prompt
+   amendments from the original base. Retain programmatic records if inspecting
+   images; normal CLI output excludes them. Check final summary ordinal, exact
+   tic/uncertainty outcomes and acknowledged detach. Do not call a terminal prefix
+   a completed level transition.
+5. On uncertainty, stop and inspect; use Stop Agent to release possible ownership.
+   Never rerun automatically. Another attempt needs fresh operator authorization
+   and deliberately renewed process budget.

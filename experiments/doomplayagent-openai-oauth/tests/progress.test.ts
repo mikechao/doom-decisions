@@ -47,7 +47,8 @@ test("milestones log objective and perception to stderr and preserve final stdou
 	});
 	const setPrompt = f.client.setPrompt;
 	f.client.setPrompt = async (input) => {
-		assert.doesNotMatch(stderr.join(""), /guidance acknowledged/);
+		if (f.state.decisionTemplates.length === 0)
+			assert.doesNotMatch(stderr.join(""), /guidance acknowledged/);
 		return setPrompt(input);
 	};
 	const decide = f.client.decide;
@@ -57,7 +58,7 @@ test("milestones log objective and perception to stderr and preserve final stdou
 	};
 	const result = await main();
 	assert.equal(result.outcome, "completed");
-	assert.equal(f.events.filter((event) => event === "decide").length, 1);
+	assert.equal(f.events.filter((event) => event === "decide").length, 2);
 	const output = stderr.join("");
 	assert.match(output, /\[doom\] Attached; observed E1M1 at tic 43/);
 	assert.match(output, /lookup: found; 2 returned; more available/);
@@ -107,9 +108,12 @@ test("milestones log objective and perception to stderr and preserve final stdou
 	assert.ok(
 		f.state.instructions.includes(JSON.stringify(selected.nextQuestion)),
 	);
-	assert.deepEqual(f.state.decisionTemplates, [f.state.instructions]);
+	assert.deepEqual(f.state.decisionTemplates, [
+		f.state.instructions,
+		f.state.instructions,
+	]);
 	assert.ok(!output.includes(String.fromCharCode(27)));
-	assert.match(stdout.join(""), /^Doom one-decision result:/);
+	assert.match(stdout.join(""), /^Doom two-decision result:/);
 	assert.doesNotMatch(
 		stdout.join(""),
 		/\[doom\]|\[navigation\]|\[perception\]|\[decision\]/,
@@ -147,7 +151,7 @@ test("perception newlines and ANSI escapes are quoted in stderr without changing
 	assert.doesNotMatch(output, /^\[forged\]/m);
 	assert.equal(stdout.join(""), "");
 	assert.equal(result.outcome, "completed");
-	assert.equal(f.events.filter((event) => event === "decide").length, 1);
+	assert.equal(f.events.filter((event) => event === "decide").length, 2);
 });
 
 test("historical objective newlines and ANSI escapes are quoted in stderr", async (t) => {
@@ -169,7 +173,7 @@ test("historical objective newlines and ANSI escapes are quoted in stderr", asyn
 	assert.doesNotMatch(output, /^\[forged\]/m);
 	assert.equal(stdout.join(""), "");
 	assert.equal(result.outcome, "completed");
-	assert.equal(f.events.filter((event) => event === "decide").length, 1);
+	assert.equal(f.events.filter((event) => event === "decide").length, 2);
 });
 
 test("missing historical next question is reported without invention", async (t) => {

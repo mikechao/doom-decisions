@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import type { OpenAIProvider } from "@ai-sdk/openai";
 import {
 	type AgentObserveResult,
+	type AgentScope,
 	maxAgentInstructions,
 } from "../../../app/src/agent-control.ts";
 import type { AgentDecisionResult } from "../../../app/src/agent-observation.ts";
@@ -128,7 +129,7 @@ type DecisionAttempt =
 	  };
 
 type DecisionEvidence = {
-	ordinal: 1;
+	ordinal: 1 | 2;
 	reasoningObservation: MaterializedObserve | null;
 	beforePng: Buffer | null;
 	landmarkLookup: Memory | null;
@@ -154,7 +155,8 @@ type DecisionEvidence = {
 export type DecisionRecord = Readonly<DecisionEvidence>;
 
 export type PlayResult = {
-	readonly record: DecisionRecord;
+	readonly records: DecisionRecord[];
+	decisionOrdinal: 1 | 2;
 	navigationObjective: NavigationObjective;
 	memoryStatus: Memory["status"];
 	candidateCount: number;
@@ -175,7 +177,8 @@ export type PlayResult = {
 	};
 };
 export class PlaybackError extends Error {
-	readonly record: DecisionRecord | null;
+	readonly records: DecisionRecord[];
+	readonly decisionOrdinal: 1 | 2;
 	readonly stage: string;
 	readonly navigationAssessment: NavigationAssessment | null;
 	readonly decisionMayHaveBeenSent: boolean;
@@ -188,10 +191,11 @@ export class PlaybackError extends Error {
 		cause: unknown,
 		navigationObjective: NavigationObjective | null = null,
 		navigationAssessment: NavigationAssessment | null = null,
-		record: DecisionRecord | null = null,
+		records: DecisionRecord[] = [],
+		decisionOrdinal: 1 | 2 = 1,
 	) {
 		super(
-			`Doom playback stopped at ${stage}. ${decisionMayHaveBeenSent ? "Decision outcome may be unknown." : "No decision was sent."} No retry was made.`,
+			`Doom playback stopped at ${stage} for decision #${decisionOrdinal}. ${decisionMayHaveBeenSent ? `Decision #${decisionOrdinal} outcome may be unknown.` : `Decision #${decisionOrdinal} was not sent.`} No retry was made.`,
 			{ cause },
 		);
 		this.name = "PlaybackError";
@@ -200,160 +204,14 @@ export class PlaybackError extends Error {
 		this.decisionMayHaveBeenSent = decisionMayHaveBeenSent;
 		this.perception = perception;
 		this.navigationObjective = navigationObjective;
-		this.record = record;
+		this.records = records;
+		this.decisionOrdinal = decisionOrdinal;
 	}
 }
 
-/** Hand the host-selected objective to the existing decision pipeline. */
-async function executeOneDecision(
-	doomClient: DoomClient,
-	before: MaterializedObserve,
-	guidance: DecisionGuidance,
-	record: DecisionEvidence,
-) {
-	const { perception, navigationObjective } = guidance;
-	let stage = "guidance";
-	let decisionMayHaveBeenSent = false;
-	try {
-		// Prepare the bounded amendment before claiming the nonrefundable run.
-		// main() supplies a fresh lease copied from human settings, not an earlier
-		// amendment. Direct callers must also use a fresh, unmodified lease.
-		const instructions = composeGuidance(
-			before.configuration.instructionTemplate,
-			guidance,
-		);
-		record.guidance = instructions;
-
-		stage = "start-run";
-		const started = await doomClient.startRun({
-			observationId: before.observationId,
-			sessionId: before.sessionId,
-			revision: before.revision,
-		});
-		record.runStarted = structuredClone(started);
-		// The broker chooses the budget. This experiment requires one slot;
-		// the browser/executor enforce active/fresh claim, session and revision.
-		if (started.run?.limit !== 1)
-			throw new Error(
-				"The one-decision experiment requires a run budget of 1.",
-			);
-		const scope = {
-			sessionId: before.sessionId,
-			runId: started.run.runId,
-			revision: started.revision,
-		};
-		stage = "prompt-cas";
-		const changed = await doomClient.setPrompt({
-			...scope,
-			instructions,
-		});
-		record.promptAcknowledged = structuredClone(changed);
-		scope.revision = changed.revision;
-		progress.withTag("decision").info("Navigation guidance acknowledged");
-
-		stage = "dispatch-observation";
-		// CAS invalidates observation admission. Always observe again.
-		// Do not reread an image we won't send to a model.
-		const ready = await doomClient.observe();
-		record.admissionObservation = structuredClone(ready);
-		if (
-			ready.observationId === before.observationId ||
-			ready.sessionId !== before.sessionId ||
-			ready.mapIdentity.mapKey !== before.mapIdentity.mapKey ||
-			ready.tic !== before.tic ||
-			ready.revision !== scope.revision
-		)
-			throw new Error("Doom changed since the initial observation.");
-
-		stage = "decision";
-		const input = { observationId: ready.observationId, scope };
-		const submitted = structuredClone(input);
-		record.decision = { kind: "unconfirmed", input: submitted };
-		decisionMayHaveBeenSent = true;
-		const receipt = structuredClone(await doomClient.decide(input));
-		const returned: Extract<DecisionAttempt, { kind: "returned" }> = {
-			kind: "returned",
-			input: submitted,
-			receipt,
-			afterPng: null,
-			imageRetentionFailure: null,
-		};
-		record.decision = returned;
-		// Retention is separate from gameplay: a read/hash failure must never
-		// replace this returned receipt with an unconfirmed attempt or a retry.
-		if (receipt.observation) {
-			try {
-				if (!receipt.pngPath) throw new Error("Missing resulting PNG path.");
-				const image = await readFile(receipt.pngPath);
-				if (
-					createHash("sha256").update(image).digest("hex") !==
-					receipt.observation.pngSha256
-				) {
-					returned.imageRetentionFailure = {
-						reason: "digest-mismatch",
-						message: "Resulting PNG bytes do not match the receipt digest.",
-					};
-				} else returned.afterPng = image;
-			} catch {
-				returned.imageRetentionFailure = {
-					reason: "read-failed",
-					message: "Could not read the resulting PNG for retention.",
-				};
-			}
-		}
-		progress
-			.withTag("decision")
-			.info(
-				`Action: ${receipt.action ?? "none"}; outcome: ${receipt.outcome}; requested ${receipt.requestedTics ?? "unknown"}, verified ${receipt.verifiedTics ?? "unknown"} tics${receipt.completionUncertain ? "; completion uncertain" : ""}`,
-			);
-		// No second action or inference depends on the retained result image.
-		return {
-			navigationObjective,
-			perception,
-			promptChanged: true,
-			runId: scope.runId,
-			outcome: receipt.outcome,
-			reason: receipt.reason,
-			action: receipt.action,
-			sdkInvoked: receipt.sdkInvoked,
-			completionUncertain: receipt.completionUncertain,
-			cumulativeTics: receipt.cumulativeTics,
-			tics: {
-				requested: receipt.requestedTics,
-				reported: receipt.reportedTics,
-				verified: receipt.verifiedTics,
-			},
-		};
-	} catch (cause) {
-		progress
-			.withTag("decision")
-			.info(
-				`Stopped at ${stage}; ${decisionMayHaveBeenSent ? "decision outcome unconfirmed" : "no decision sent"}; no retry`,
-			);
-		// Preserve debugging causes for callers; main prints only this bounded
-		// message, never raw model/transport errors that could contain credentials.
-		throw new PlaybackError(
-			stage,
-			decisionMayHaveBeenSent,
-			perception,
-			cause,
-			navigationObjective,
-		);
-	}
-}
-
-/** One host-authorized decision, no retries or subsequent decision slots. */
-export async function play(
-	doomClient: DoomClient,
-	doomTools: DoomTools,
-	openAIProvider: OpenAIProvider,
-): Promise<PlayResult> {
-	let stage = "observation";
-	let navigationObjective: NavigationObjective | null = null;
-	let perception: ScenePerception | null = null;
-	let navigationAssessment: NavigationAssessment | null = null;
-	const record: DecisionEvidence = {
-		ordinal: 1,
+function newRecord(ordinal: 1 | 2): DecisionEvidence {
+	return {
+		ordinal,
 		reasoningObservation: null,
 		beforePng: null,
 		landmarkLookup: null,
@@ -367,40 +225,60 @@ export async function play(
 		decision: { kind: "not-called" },
 		failure: null,
 	};
+}
+
+// Compare simulation checkpoints, not passive-render counters or image bytes.
+function checkCheckpoint(
+	next: MaterializedObserve,
+	before: Pick<
+		MaterializedObserve,
+		"observationId" | "sessionId" | "mapIdentity" | "tic"
+	>,
+) {
+	if (
+		next.phase !== "ready" ||
+		next.observationId === before.observationId ||
+		next.sessionId !== before.sessionId ||
+		next.mapIdentity.mapKey !== before.mapIdentity.mapKey ||
+		next.tic !== before.tic
+	)
+		throw new Error("Doom changed since the reasoning checkpoint.");
+}
+
+function checkRun(
+	checkpoint: Pick<MaterializedObserve, "sessionId" | "revision" | "run">,
+	scope: AgentScope,
+	used: 0 | 1,
+) {
+	const run = checkpoint.run;
+	if (
+		checkpoint.sessionId !== scope.sessionId ||
+		checkpoint.revision !== scope.revision ||
+		!run?.active ||
+		run.runId !== scope.runId ||
+		run.limit !== 2 ||
+		run.reserved !== used ||
+		run.sdkInvoked !== used ||
+		run.remaining !== 2 - used
+	)
+		throw new Error(
+			"The two-decision run checkpoint is unavailable or changed.",
+		);
+}
+
+async function prepareDecision(
+	openAIProvider: OpenAIProvider,
+	observation: MaterializedObserve,
+	image: Buffer,
+	selection: NavigationSelection,
+	canonicalBase: string,
+	ordinal: 1 | 2,
+	record: DecisionEvidence,
+) {
+	let stage = "perception";
+	let perception: ScenePerception | null = null;
+	let navigationAssessment: NavigationAssessment | null = null;
 	try {
-		const observation = await doomClient.observe();
-		record.reasoningObservation = structuredClone(observation);
-		progress
-			.withTag("doom")
-			.info(
-				`Attached; observed ${observation.mapIdentity.mapSlot} at tic ${observation.tic}`,
-			);
-		const image = await readFile(observation.pngPath);
-		record.beforePng = image;
-		stage = "landmarks";
-		const memory = await doomTools.findActiveLandmarks(observation);
-		record.landmarkLookup = structuredClone(memory);
-		progress
-			.withTag("navigation")
-			.info(
-				`Active-landmark lookup: ${memory.status}; ${memory.candidates.length} returned${memory.hasMore ? "; more available" : ""}`,
-			);
-		const selection = selectNavigationObjective(memory);
-		record.selection = structuredClone(selection);
-		navigationObjective = selection.navigationObjective;
-		// Keep historical text readable while quoting it so it cannot forge log lines.
-		progress
-			.withTag("navigation")
-			.info(
-				selection.target
-					? [
-							`Objective: investigate historical landmark note#${createHash("sha256").update(selection.target.noteId).digest("hex").slice(0, 12)} (revision ${selection.target.revision})`,
-							`Hypothesis: ${JSON.stringify(selection.target.hypothesis)}`,
-							`Next question: ${selection.target.nextQuestion === null ? "(none recorded)" : JSON.stringify(selection.target.nextQuestion)}`,
-						].join("\n")
-					: "Objective: free explore",
-			);
-		stage = "perception";
 		progress.withTag("perception").info("Perceiving current scene");
 		perception = await perceiveScene(openAIProvider, {
 			image,
@@ -433,52 +311,284 @@ export async function play(
 					`Assessment: ${JSON.stringify(navigationAssessment.verdict)}; evidence: ${JSON.stringify(navigationAssessment.evidence)}; uncertainty: ${JSON.stringify(navigationAssessment.uncertainty)}`,
 				);
 		}
-		const decision = await executeOneDecision(
-			doomClient,
-			observation,
-			{ ...selection, perception, navigationAssessment },
-			record,
-		);
-		return {
-			record: Object.freeze(record),
-			memoryStatus: memory.status,
-			candidateCount: memory.candidates.length,
-			navigationAssessment,
-			...decision,
-		};
+		stage = "guidance";
+		const guidance = { ...selection, perception, navigationAssessment };
+		const instructions = composeGuidance(canonicalBase, guidance);
+		record.guidance = instructions;
+		return { ...guidance, instructions };
 	} catch (cause) {
-		// The handoff already records its stage, perception and dispatch uncertainty.
-		if (cause instanceof PlaybackError) {
-			record.failure = { stage: cause.stage, message: cause.message };
-			throw new PlaybackError(
-				cause.stage,
-				cause.decisionMayHaveBeenSent,
-				cause.perception,
-				cause.cause,
-				cause.navigationObjective,
-				navigationAssessment,
-				Object.freeze(record),
-			);
-		}
-		if (stage === "perception")
+		if (stage === "perception" || stage === "navigation-assessment")
 			progress
-				.withTag("perception")
-				.info("Scene perception failed; no decision sent");
-		if (stage === "navigation-assessment")
-			progress
-				.withTag("navigation")
-				.info("Navigation assessment failed; no decision sent");
-		const failure = new PlaybackError(
+				.withTag(stage === "perception" ? "perception" : "navigation")
+				.info(
+					`${stage === "perception" ? "Scene perception" : "Navigation assessment"} failed; decision #${ordinal} not sent`,
+				);
+		throw new PlaybackError(
 			stage,
 			false,
 			perception,
 			cause,
-			navigationObjective,
+			selection.navigationObjective,
 			navigationAssessment,
+			[],
+			ordinal,
+		);
+	}
+}
+
+/** Hand the host-selected objective to the existing decision pipeline. */
+async function executeOneDecision(
+	doomClient: DoomClient,
+	before: MaterializedObserve,
+	guidance: DecisionGuidance & { instructions: string },
+	initialScope: AgentScope,
+	ordinal: 1 | 2,
+	record: DecisionEvidence,
+) {
+	const { perception, navigationObjective, instructions } = guidance;
+	const scope = { ...initialScope };
+	let stage = "prompt-cas";
+	let decisionMayHaveBeenSent = false;
+	try {
+		const changed = await doomClient.setPrompt({
+			...scope,
+			instructions,
+		});
+		record.promptAcknowledged = structuredClone(changed);
+		scope.revision = changed.revision;
+		progress.withTag("decision").info("Navigation guidance acknowledged");
+
+		stage = "dispatch-observation";
+		// CAS invalidates observation admission. Always observe again.
+		// Do not reread an image we won't send to a model.
+		const ready = await doomClient.observe();
+		record.admissionObservation = structuredClone(ready);
+		checkCheckpoint(ready, before);
+		checkRun(ready, scope, ordinal === 1 ? 0 : 1);
+
+		stage = "decision";
+		const input = { observationId: ready.observationId, scope };
+		const submitted = structuredClone(input);
+		record.decision = { kind: "unconfirmed", input: submitted };
+		decisionMayHaveBeenSent = true;
+		// Own live receipt state separately from both client aliases and passive evidence.
+		const receipt = structuredClone(await doomClient.decide(input));
+		const returned: Extract<DecisionAttempt, { kind: "returned" }> = {
+			kind: "returned",
+			input: submitted,
+			receipt: structuredClone(receipt),
+			afterPng: null,
+			imageRetentionFailure: null,
+		};
+		record.decision = returned;
+		// Retention is separate from gameplay: a read/hash failure must never
+		// replace this returned receipt with an unconfirmed attempt or a retry.
+		if (receipt.observation) {
+			try {
+				if (!receipt.pngPath) throw new Error("Missing resulting PNG path.");
+				const image = await readFile(receipt.pngPath);
+				if (
+					createHash("sha256").update(image).digest("hex") !==
+					receipt.observation.pngSha256
+				) {
+					returned.imageRetentionFailure = {
+						reason: "digest-mismatch",
+						message: "Resulting PNG bytes do not match the receipt digest.",
+					};
+				} else returned.afterPng = image;
+			} catch {
+				returned.imageRetentionFailure = {
+					reason: "read-failed",
+					message: "Could not read the resulting PNG for retention.",
+				};
+			}
+		}
+		progress
+			.withTag("decision")
+			.info(
+				`Action: ${receipt.action ?? "none"}; outcome: ${receipt.outcome}; requested ${receipt.requestedTics ?? "unknown"}, verified ${receipt.verifiedTics ?? "unknown"} tics${receipt.completionUncertain ? "; completion uncertain" : ""}`,
+			);
+		return { receipt, scope };
+	} catch (cause) {
+		progress
+			.withTag("decision")
+			.info(
+				`Stopped at ${stage} for decision #${ordinal}; ${decisionMayHaveBeenSent ? "decision outcome unconfirmed" : "no decision sent"}; no retry`,
+			);
+		// Preserve debugging causes for callers; main prints only this bounded
+		// message, never raw model/transport errors that could contain credentials.
+		throw new PlaybackError(
+			stage,
+			decisionMayHaveBeenSent,
+			perception,
+			cause,
+			navigationObjective,
+			guidance.navigationAssessment,
+			[],
+			ordinal,
+		);
+	}
+}
+
+/** Two fixed slots in one broker-authorized run; no retries or re-selection. */
+export async function play(
+	doomClient: DoomClient,
+	doomTools: DoomTools,
+	openAIProvider: OpenAIProvider,
+): Promise<PlayResult> {
+	let stage = "observation";
+	let ordinal: 1 | 2 = 1;
+	let navigationObjective: NavigationObjective | null = null;
+	let prepared: Awaited<ReturnType<typeof prepareDecision>> | null = null;
+	let record = newRecord(1);
+	const records: DecisionRecord[] = [];
+	try {
+		const observation = await doomClient.observe();
+		const canonicalBase = observation.configuration.instructionTemplate;
+		record.reasoningObservation = structuredClone(observation);
+		progress
+			.withTag("doom")
+			.info(
+				`Attached; observed ${observation.mapIdentity.mapSlot} at tic ${observation.tic}`,
+			);
+		const image = await readFile(observation.pngPath);
+		record.beforePng = image;
+		stage = "landmarks";
+		const memory = await doomTools.findActiveLandmarks(observation);
+		record.landmarkLookup = structuredClone(memory);
+		progress
+			.withTag("navigation")
+			.info(
+				`Active-landmark lookup: ${memory.status}; ${memory.candidates.length} returned${memory.hasMore ? "; more available" : ""}`,
+			);
+		const selection = selectNavigationObjective(memory);
+		record.selection = structuredClone(selection);
+		navigationObjective = selection.navigationObjective;
+		// Keep historical text readable while quoting it so it cannot forge log lines.
+		progress
+			.withTag("navigation")
+			.info(
+				selection.target
+					? [
+							`Objective: investigate historical landmark note#${createHash("sha256").update(selection.target.noteId).digest("hex").slice(0, 12)} (revision ${selection.target.revision})`,
+							`Hypothesis: ${JSON.stringify(selection.target.hypothesis)}`,
+							`Next question: ${selection.target.nextQuestion === null ? "(none recorded)" : JSON.stringify(selection.target.nextQuestion)}`,
+						].join("\n")
+					: "Objective: free explore",
+			);
+		prepared = await prepareDecision(
+			openAIProvider,
+			observation,
+			image,
+			selection,
+			canonicalBase,
+			1,
 			record,
 		);
+		stage = "start-run";
+		const started = await doomClient.startRun({
+			observationId: observation.observationId,
+			sessionId: observation.sessionId,
+			revision: observation.revision,
+		});
+		record.runStarted = structuredClone(started);
+		const scope = {
+			sessionId: observation.sessionId,
+			runId: started.run?.runId ?? "",
+			revision: observation.revision,
+		};
+		// The executor checks claim correlation; verify the actual two-slot allowance.
+		checkRun(started, scope, 0);
+		let decision = await executeOneDecision(
+			doomClient,
+			observation,
+			prepared,
+			scope,
+			1,
+			record,
+		);
+		records.push(Object.freeze(record));
+		const first = decision.receipt;
+		if (
+			first.outcome === "completed" &&
+			!first.completionUncertain &&
+			first.sdkInvoked &&
+			first.reason === null &&
+			first.action !== null &&
+			first.observation?.phase === "ready"
+		) {
+			ordinal = 2;
+			record = newRecord(2);
+			record.selection = structuredClone(selection);
+			prepared = null;
+			stage = "observation";
+			const before2 = await doomClient.observe();
+			record.reasoningObservation = structuredClone(before2);
+			stage = "continuation-check";
+			checkCheckpoint(before2, first.observation);
+			checkRun(before2, decision.scope, 1);
+			stage = "observation";
+			const image2 = await readFile(before2.pngPath);
+			record.beforePng = image2;
+			prepared = await prepareDecision(
+				openAIProvider,
+				before2,
+				image2,
+				selection,
+				canonicalBase,
+				2,
+				record,
+			);
+			decision = await executeOneDecision(
+				doomClient,
+				before2,
+				prepared,
+				decision.scope,
+				2,
+				record,
+			);
+			records.push(Object.freeze(record));
+		}
+		const receipt = decision.receipt;
+		return {
+			records,
+			decisionOrdinal: ordinal,
+			navigationObjective: selection.navigationObjective,
+			memoryStatus: memory.status,
+			candidateCount: memory.candidates.length,
+			perception: prepared.perception,
+			navigationAssessment: prepared.navigationAssessment,
+			promptChanged: true,
+			runId: decision.scope.runId,
+			outcome: receipt.outcome,
+			reason: receipt.reason,
+			action: receipt.action,
+			sdkInvoked: receipt.sdkInvoked,
+			completionUncertain: receipt.completionUncertain,
+			cumulativeTics: receipt.cumulativeTics,
+			tics: {
+				requested: receipt.requestedTics,
+				reported: receipt.reportedTics,
+				verified: receipt.verifiedTics,
+			},
+		};
+	} catch (cause) {
+		const failure = new PlaybackError(
+			cause instanceof PlaybackError ? cause.stage : stage,
+			cause instanceof PlaybackError ? cause.decisionMayHaveBeenSent : false,
+			cause instanceof PlaybackError
+				? cause.perception
+				: (prepared?.perception ?? null),
+			cause instanceof PlaybackError ? cause.cause : cause,
+			navigationObjective,
+			cause instanceof PlaybackError
+				? cause.navigationAssessment
+				: (prepared?.navigationAssessment ?? null),
+			records,
+			ordinal,
+		);
 		record.failure = { stage: failure.stage, message: failure.message };
-		Object.freeze(record);
+		records.push(Object.freeze(record));
 		throw failure;
 	}
 }

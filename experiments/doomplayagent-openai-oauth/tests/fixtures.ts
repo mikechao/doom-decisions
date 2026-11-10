@@ -9,7 +9,10 @@ import type {
 	AgentObserveResult,
 	AgentRunState,
 } from "../../../app/src/agent-control.ts";
-import { createAgentMapIdentity } from "../../../app/src/agent-observation.ts";
+import {
+	type AgentObservation,
+	createAgentMapIdentity,
+} from "../../../app/src/agent-observation.ts";
 import type {
 	AttachedLease,
 	MaterializedDecision,
@@ -38,7 +41,7 @@ export async function fixture(t: TestContext) {
 		pageId: randomUUID(),
 		epoch: randomUUID(),
 		ownerId: randomUUID(),
-		configuredDecisionBudget: 1,
+		configuredDecisionBudget: 2,
 		budgetUnclaimedAtAttach: true,
 		leaseFile: join(root, "lease.json"),
 	};
@@ -112,10 +115,19 @@ export async function fixture(t: TestContext) {
 		candidates: [note],
 		memoryObservations: [] as Parameters<DoomTools["findActiveLandmarks"]>[0][],
 		modelCalls: 0,
+		modelInputs: [] as Parameters<
+			Extract<LanguageModel, { specificationVersion: "v4" }>["doGenerate"]
+		>[0][],
+		assessmentInputs: [] as Parameters<
+			Extract<LanguageModel, { specificationVersion: "v4" }>["doGenerate"]
+		>[0][],
+		after: null as AgentObservation | null,
+		images: [png],
 		modelInput: null as unknown,
 		instructions: "",
 		decisionTemplates: [] as string[],
 		observeCalls: 0,
+		captureCount: 0,
 		lastId: base.observationId,
 	};
 	const correlation = () => ({
@@ -138,7 +150,7 @@ export async function fixture(t: TestContext) {
 		const { png: _png, ...rest } = o;
 		const c = correlation();
 		const pngPath = join(root, `${c.commandId}.png`);
-		await writeFile(pngPath, png);
+		await writeFile(pngPath, Buffer.from(o.png.slice(22), "base64"));
 		return { ...c, ...rest, pngPath };
 	}
 	const client = {
@@ -152,13 +164,17 @@ export async function fixture(t: TestContext) {
 		},
 		async observe() {
 			events.push("observe");
-			const o = structuredClone(base);
+			const o = {
+				...structuredClone(state.after ?? base),
+				revision: state.revision,
+				configuration: structuredClone(state.configuration),
+				run: structuredClone(state.run),
+			};
 			o.observationId = state.observeCalls++
 				? randomUUID()
 				: base.observationId;
-			o.revision = state.revision;
-			o.configuration = structuredClone(state.configuration);
-			o.run = structuredClone(state.run);
+			o.counters.render = base.counters.render + ++state.captureCount;
+			o.counters.frame = base.counters.frame + state.captureCount;
 			state.lastId = o.observationId;
 			return materialize(o);
 		},
@@ -182,10 +198,10 @@ export async function fixture(t: TestContext) {
 			state.run = {
 				runId: randomUUID(),
 				active: true,
-				limit: 1,
+				limit: 2,
 				reserved: 0,
 				sdkInvoked: 0,
-				remaining: 1,
+				remaining: 2,
 			};
 			return config();
 		},
@@ -194,7 +210,8 @@ export async function fixture(t: TestContext) {
 			if (
 				input.sessionId !== base.sessionId ||
 				input.revision !== state.revision ||
-				input.runId !== state.run?.runId
+				input.runId !== state.run?.runId ||
+				!state.run?.active
 			)
 				throw new Error("stale CAS");
 			state.instructions = input.instructions;
@@ -203,6 +220,7 @@ export async function fixture(t: TestContext) {
 				instructionTemplate: state.instructions,
 			};
 			state.revision++;
+			state.lastId = ""; // CAS invalidates the former admission observation.
 			return prompt();
 		},
 		async setConfig() {
@@ -214,31 +232,58 @@ export async function fixture(t: TestContext) {
 				input.observationId !== state.lastId ||
 				input.scope.sessionId !== base.sessionId ||
 				input.scope.revision !== state.revision ||
-				input.scope.runId !== state.run?.runId
+				input.scope.runId !== state.run?.runId ||
+				!state.run?.active ||
+				state.run.remaining === 0
 			)
 				throw new Error("stale decision");
 			state.decisionTemplates.push(state.configuration.instructionTemplate);
+			const reserved = state.run.reserved + 1;
 			state.run = {
 				...state.run,
-				active: false,
-				reserved: 1,
-				sdkInvoked: 1,
-				remaining: 0,
+				active: reserved < 2,
+				reserved,
+				sdkInvoked: reserved,
+				remaining: 2 - reserved,
 			};
+
 			const {
 				revision: _r,
 				configuration: _c,
 				run: _run,
 				png: _png,
 				...after
-			} = structuredClone(base);
+			} = {
+				...structuredClone(state.after ?? base),
+				revision: state.revision,
+				configuration: state.configuration,
+				run: state.run,
+			};
 			after.observationId = randomUUID();
 			after.tic += state.configuration.tics;
 			after.frame.tic = after.tic;
 			after.counters.gametic = after.tic;
 			after.counters.leveltime = after.tic;
+			after.counters.render = base.counters.render + ++state.captureCount;
+			after.counters.frame = base.counters.frame + state.captureCount;
+			state.lastId = ""; // An admitted observation cannot be replayed.
+			after.telemetry.x += 65536;
+			after.previousAction = {
+				action: "forward",
+				tics: state.configuration.tics,
+				endTic: after.tic,
+				text: "Synthetic forward action.",
+			};
+			const resultPng = Buffer.concat([png, Buffer.from(`tic ${after.tic}`)]);
+			state.images.push(resultPng);
+			after.pngSha256 = createHash("sha256").update(resultPng).digest("hex");
+			after.frame.nativeSha256 = after.frame.canvasSha256 = after.pngSha256;
+			state.after = {
+				...structuredClone(after),
+				png: `data:image/png;base64,${resultPng.toString("base64")}`,
+			};
 			const pngPath = join(root, `${input.observationId}.png`);
-			await writeFile(pngPath, png);
+			await writeFile(pngPath, resultPng);
 			return {
 				...correlation(),
 				commandId: input.observationId,
@@ -275,8 +320,13 @@ export async function fixture(t: TestContext) {
 			);
 			events.push(assessment ? "assessment" : "model");
 			state.modelCalls++;
-			if (assessment) state.assessmentInput = input;
-			else state.modelInput = input;
+			if (assessment) {
+				state.assessmentInput = input;
+				state.assessmentInputs.push(input);
+			} else {
+				state.modelInput = input;
+				state.modelInputs.push(input);
+			}
 			return {
 				content: [
 					{
