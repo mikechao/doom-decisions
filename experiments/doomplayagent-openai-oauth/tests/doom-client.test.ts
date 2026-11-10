@@ -87,6 +87,7 @@ async function broker(
 		faults?: Partial<Record<Operation, Fault>>;
 		blocked?: Operation;
 		attachRejection?: string;
+		attachMetadata?: Record<string, unknown>;
 		mutateResponse?: (op: Operation, body: Record<string, unknown>) => void;
 	} = {},
 ) {
@@ -288,6 +289,9 @@ async function broker(
 				pageId,
 				epoch,
 				ownerId: fault === "invalid" ? randomUUID() : ownerId,
+				configuredDecisionBudget: 1,
+				budgetUnclaimedAtAttach: true,
+				...options.attachMetadata,
 			});
 		if (operation === "detach")
 			return Response.json({ ...command, released: fault !== "invalid" });
@@ -736,6 +740,13 @@ test("attach, observe, and detach use the acknowledged lease and materialize the
 	const lease = await client.attach();
 	assert.deepEqual(fake.calls, ["attach"]);
 	assert.ok(lease.leaseFile);
+	assert.equal(lease.configuredDecisionBudget, 1);
+	assert.equal(lease.budgetUnclaimedAtAttach, true);
+	assert.deepEqual(JSON.parse(await readFile(lease.leaseFile, "utf8")), {
+		pageId: lease.pageId,
+		ownerId: lease.ownerId,
+		epoch: lease.epoch,
+	});
 
 	const observed = await client.observe();
 	const { png: _png, ...metadata } = fake.observation;
@@ -759,6 +770,43 @@ test("attach, observe, and detach use the acknowledged lease and materialize the
 	await assert.rejects(client.detach(), /closed/);
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);
 });
+
+test("attach returns budget metadata as information without adding request authority", async (t) => {
+	const fake = await broker(t, {
+		attachMetadata: {
+			configuredDecisionBudget: 2,
+			budgetUnclaimedAtAttach: false,
+		},
+	});
+	const client = fake.create();
+	const lease = await client.attach();
+	assert.equal(lease.configuredDecisionBudget, 2);
+	assert.equal(lease.budgetUnclaimedAtAttach, false);
+	assert.deepEqual(fake.commands[0], { op: "attach", command: { ownerId: lease.ownerId } });
+});
+
+for (const [label, attachMetadata] of [
+	["missing configured allowance", { configuredDecisionBudget: undefined }],
+	["missing unclaimed snapshot", { budgetUnclaimedAtAttach: undefined }],
+	["string configured allowance", { configuredDecisionBudget: "1" }],
+	["zero configured allowance", { configuredDecisionBudget: 0 }],
+	["non-boolean availability", { budgetUnclaimedAtAttach: "true" }],
+	[
+		"unclaimed without a configured allowance",
+		{ configuredDecisionBudget: null, budgetUnclaimedAtAttach: true },
+	],
+] as const) {
+	test(`attach fails closed for ${label} metadata without claiming success`, async (t) => {
+		const fake = await broker(t, { attachMetadata });
+		const client = fake.create();
+		await assert.rejects(client.attach(), {
+			message:
+				"Doom attach unconfirmed; ownership may be held. Use Stop Agent in the browser before another attach. No retry was made.",
+		});
+		await assert.rejects(client.detach(), /ownership may be held/);
+		assert.deepEqual(fake.calls, ["attach"]);
+	});
+}
 
 for (const fault of [
 	"transport",

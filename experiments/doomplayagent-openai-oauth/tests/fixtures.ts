@@ -10,7 +10,10 @@ import type {
 	AgentRunState,
 } from "../../../app/src/agent-control.ts";
 import { createAgentMapIdentity } from "../../../app/src/agent-observation.ts";
-import type { MaterializedDecision } from "../../../scripts/doom-agent-client.ts";
+import type {
+	AttachedLease,
+	MaterializedDecision,
+} from "../../../scripts/doom-agent-client.ts";
 import type { DoomClient } from "../src/doom-client.ts";
 import type { DoomMemoryCandidate, DoomTools } from "../src/doom-tools.ts";
 
@@ -31,10 +34,12 @@ export async function fixture(t: TestContext) {
 	});
 	const root = await mkdtemp(join(tmpdir(), "doom-play-offline-"));
 	t.after(() => rm(root, { recursive: true, force: true }));
-	const lease = {
+	const lease: AttachedLease = {
 		pageId: randomUUID(),
 		epoch: randomUUID(),
 		ownerId: randomUUID(),
+		configuredDecisionBudget: 1,
+		budgetUnclaimedAtAttach: true,
 		leaseFile: join(root, "lease.json"),
 	};
 	// Synthetic header exercises the same PNG admission as the shared protocol.

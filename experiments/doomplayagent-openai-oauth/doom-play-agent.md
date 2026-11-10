@@ -14,8 +14,12 @@ code behavior, not evidence of navigation improvement or landmark arrival.
    memory tools and OAuth-backed OpenAI provider, then attaches once. The provider
    uses `openaiCredentials().getSession()` through
    [`createOAuthProvider()`](src/provider.ts). After acknowledged attach it awaits
-   `play(client, tools, provider)` and prints its compact summary, excluding the
-   programmatic `record` and its image Buffers.
+   a broker-budget preflight before calling `play(client, tools, provider)`. The
+   current CLI proceeds only when the configured budget is exactly 1 and the broker
+   reported it unclaimed at attach. This is an informational snapshot, not a run
+   claim; an acknowledged attach is still detached in `finally` if preflight fails.
+   It then prints its compact summary, excluding the programmatic `record` and its
+   image Buffers.
 2. `play()` calls `observe()`, then reads the executor-materialized `pngPath`
    into an owned Buffer. The shared executor has parsed the observation and
    checked PNG header/hash before materializing it; `play()` does not revalidate
@@ -49,6 +53,8 @@ code behavior, not evidence of navigation improvement or landmark arrival.
    the nonrefundable `startRun()`.
 7. `startRun()` submits the original observation ID, session and revision.
    The broker chooses the budget; this helper requires `started.run.limit === 1`.
+   The attach snapshot does not replace this nonrefundable broker claim or its
+   actual-run-limit check; the snapshot may become stale after attach.
    It forms a session/run/revision scope, calls `setPrompt()` with the composed
    string for **both landmark and free-explore cases**, then adopts the
    acknowledged revision. No prompt file or `getPrompt()` call is used.
@@ -82,7 +88,7 @@ evidence throws instead and stops at `landmarks` before inference or admission.
 | [`assessNavigation()` and `NavigationAssessment`](src/navigation-assessment.ts) | Provider, `ScenePerception` and selected `DoomMemoryCandidate` → verdict (`possible-match`, `no-visible-match`, `insufficient-evidence`), evidence, uncertainty and usage. Owns its text-only request and private strict schema; the diagnostic comparison subsequently informs guidance. |
 | `composeGuidance()` | Base template plus `DecisionGuidance` → bounded instruction string. Projects perception and, for a target, historical fields and assessment into untrusted advisory JSON; omits usage and full observations. |
 | `executeOneDecision()` | Client, original observation and guidance → decision/result fields. Owns preflight, one-slot requirement, prompt CAS, cross-observation continuity and the single `decide()` call. |
-| [`DoomClient`](src/doom-client.ts) | Owns the acknowledged lease and serializes operations by rejecting overlapping calls. Delegates protocol validation to the shared executor; makes no automatic retries. `play()` does not use its `getConfig()`, `getPrompt()` or `setConfig()` methods. |
+| [`DoomClient`](src/doom-client.ts) | Owns the acknowledged lease and serializes operations by rejecting overlapping calls. `attach()` returns broker-reported configured budget and unclaimed-at-attach metadata separately from identity; neither is persisted to `lease.json` or authorizes gameplay. Missing metadata is an unconfirmed attach, not a zero/false report. Delegates protocol validation to the shared executor; makes no automatic retries. `play()` does not use its `getConfig()`, `getPrompt()` or `setConfig()` methods. |
 | [`executeAgentOperation()`](../../scripts/doom-agent-client.ts) | Validates wire commands and page/epoch/command correlation, parses observations/settings/receipts, checks PNG bytes/hash, and materializes images. Checks setting session/run correlation, exact prompt echo and revision + 1; checks active start-run acknowledgment at the submitted revision and decision `beforeObservationId`. |
 | [Browser controller](../../app/src/session-controller.ts) | `startAgentRun`, `agentPrompt`/`agentConfig`, and `agentNext` enforce lease/session/run ownership, one-shot claim, revision CAS, readiness, freshness and nonrefundable decision reservations. The existing gameplay pipeline owns Stop fences, native dispatch and receipt/frame verification. The experiment is not an independent native verifier. |
 
@@ -200,6 +206,10 @@ perception and assessment, `decisionMayHaveBeenSent`, and the partial record:
 - **Before run admission:** `observation` (also PNG read), `landmarks`,
   `perception`, `navigation-assessment`, or `guidance` failures send no decision
   and never call `startRun()`.
+- **Attach preflight:** `main()` stops before `play()` when the broker reports no
+  configured budget, a non-unclaimed snapshot, or a limit other than 1. The
+  snapshot is advisory; `startRun()` remains authoritative for any run that
+  proceeds, and can still fail if the broker state changes after attach.
 - **Claim/admitted run before decision:** `start-run` (including wrong budget),
   `prompt-cas`, or `dispatch-observation` failure sends no decision. A lost claim
   or prompt acknowledgment can still leave that mutation applied. The claim

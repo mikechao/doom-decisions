@@ -21,7 +21,7 @@ import type { AgentObserveResult } from '../../app/src/agent-control.ts';
 import { createGuardedDecision, createTwoGuardedDecisions, decisionLedger, type DecisionPorts } from '../src/guarded-decision.ts';
 import { consumeDoomStream, maxDecisionOutputCharacters, validateDecisionOutput, validateParentOutput } from '../src/doom-play-agent.ts';
 import { DoomStreamError } from '../src/agent-stream.ts';
-import { liveObserve } from '../src/live-observation.ts';
+import { liveObserve, parseAttachedLease } from '../src/live-observation.ts';
 import { createAgentMapIdentity } from '../../app/src/agent-observation.ts';
 import { main, reportExitCode, runMain, writeMainReport, type MainPorts } from '../src/main.ts';
 import { createOperatorConsole, displayGuidance } from '../src/operator-console.ts';
@@ -106,7 +106,8 @@ function fixture(attributed = false) {
     const op = String(url).split('/').at(-1)!;
     operations.push(op);
     const command = JSON.parse(String(init?.body));
-    if (op === 'attach') return Response.json({ pageId: ids.pageId, epoch: ids.epoch, ownerId: command.ownerId });
+    if (op === 'attach') return Response.json({ pageId: ids.pageId, epoch: ids.epoch, ownerId: command.ownerId,
+      configuredDecisionBudget: 1, budgetUnclaimedAtAttach: true });
     if (op === 'detach') return Response.json({ ...command, released: true });
     assert.equal(op, 'observe', 'No gameplay, settings, revoke or Stop operation is allowed');
     assert.equal(command.pageId, ids.pageId); assert.equal(command.epoch, ids.epoch);
@@ -1087,7 +1088,7 @@ test('explicit authorization required by CLI and callback, independently of agen
   assert.deepEqual(modes, [false, true]);
   const f = decisionFixture();
   try {
-    const lease = await f.ports.attach(f.abort.signal);
+    const lease = parseAttachedLease(await f.ports.attach(f.abort.signal));
     const { observation } = await liveObserve(await f.ports.observe(lease.leaseFile, f.abort.signal), lease, f.ports.readPng, f.abort.signal);
     const ledger = decisionLedger();
     const tool = createGuardedDecision(false, lease, observation, f.ports.decision!, ledger, f.abort.signal);
@@ -1130,7 +1131,7 @@ test('cancellation fences late claim/CAS/decide settlements and parent continuat
 test('input rejection leaves admission unused; concurrent redelivery consumes only one mutation attempt', async () => {
   const f = decisionFixture();
   try {
-    const lease = await f.ports.attach(f.abort.signal);
+    const lease = parseAttachedLease(await f.ports.attach(f.abort.signal));
     const { observation } = await liveObserve(await f.ports.observe(lease.leaseFile, f.abort.signal), lease, f.ports.readPng, f.abort.signal);
     const ledger = decisionLedger();
     const tool = createGuardedDecision(true, lease, observation, f.ports.decision!, ledger, f.abort.signal);
@@ -1538,7 +1539,7 @@ test('native second-call admission requires exact forwarded image-bearing predec
   for (const fault of ['none', 'overlap', 'missing', 'json-only', 'changed-image', 'duplicate-id', 'third', 'unrelated']) await t.test(fault, async () => {
     const f = decisionFixture({ two: true });
     try {
-      const lease = await f.ports.attach(f.abort.signal);
+      const lease = parseAttachedLease(await f.ports.attach(f.abort.signal));
       const { observation } = await liveObserve(await f.ports.observe(lease.leaseFile, f.abort.signal), lease, f.ports.readPng, f.abort.signal);
       const first = decisionLedger(), second = decisionLedger(), calls: HostCall[] = [];
       const callback = createTwoGuardedDecisions(lease, observation, f.ports.decision!, first, second, f.abort.signal);

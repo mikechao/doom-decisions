@@ -114,6 +114,8 @@ function harness(allowance) {
   return { broker, request, transport, send, post, browser };
 }
 
+const leaseIdentity = ({ pageId, ownerId, epoch }) => ({ pageId, ownerId, epoch });
+
 // Existing in-memory protocol and fake SDK, with a configured process allowance.
 async function budgetSession(options = {}, allowance = createAgentAllowance('3'), network = {}) {
   const game = fixture({ pngFor, ...options });
@@ -126,7 +128,9 @@ async function budgetSession(options = {}, allowance = createAgentAllowance('3')
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-agent-budget-'));
   cleanups.push(() => rm(temporaryRoot, { recursive: true, force: true }));
   const cli = args => runAgentCli(args, { transport: h.transport, temporaryRoot });
-  const { leaseFile, ...lease } = await cli(['attach']);
+  const attachment = await cli(['attach']);
+  const { leaseFile } = attachment;
+  const lease = { pageId: attachment.pageId, ownerId: attachment.ownerId, epoch: attachment.epoch };
   const base = ['--lease', leaseFile];
   const observe = () => cli(['observe', ...base]);
   const observation = await observe();
@@ -135,7 +139,7 @@ async function budgetSession(options = {}, allowance = createAgentAllowance('3')
   const start = () => cli(['start-run', ...base, '--observation', observation.observationId, '--session', observation.sessionId, '--revision', '0']);
   const decide = (current, config) => cli(['decide', ...base, '--observation', current.observationId,
     '--session', config.sessionId, '--run', config.run.runId, '--revision', String(config.revision)]);
-  return { game, h, page, allowance, cli, base, lease, observe, observation, get, command, start, decide };
+  return { game, h, page, allowance, cli, base, lease, attachment, observe, observation, get, command, start, decide };
 }
 
 it('snapshots only the configured positive safe-integer cap, including absence and errors, once per process/root', async () => {
@@ -155,6 +159,29 @@ it('snapshots only the configured positive safe-integer cap, including absence a
       assert.equal(processAgentAllowance(root, () => { assert.fail('No reread after snapshot'); }), state);
     }
     assert.equal(reads, 1);
+  }
+});
+
+it('reports configured allowance separately from its unclaimed-at-attach snapshot', async () => {
+  for (const [value, status, expectedLimit, expectedUnclaimed] of [
+    ['3', 'unclaimed', 3, true],
+    [undefined, 'unclaimed', null, false],
+    ['2', 'issued', 2, false],
+    ['2', 'closed', 2, false],
+  ]) {
+    const allowance = createAgentAllowance(value);
+    allowance.status = status;
+    const h = harness(allowance);
+    const page = h.browser();
+    await page.ready;
+    const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-agent-attach-'));
+    cleanups.push(() => rm(temporaryRoot, { recursive: true, force: true }));
+    const attachment = await runAgentCli(['attach'], { transport: h.transport, temporaryRoot });
+    const identity = { pageId: attachment.pageId, ownerId: attachment.ownerId, epoch: attachment.epoch };
+    assert.equal(attachment.configuredDecisionBudget, expectedLimit);
+    assert.equal(attachment.budgetUnclaimedAtAttach, expectedUnclaimed);
+    assert.deepEqual(JSON.parse(await readFile(attachment.leaseFile, 'utf8')), identity);
+    assert.deepEqual(Object.keys(identity).sort(), ['epoch', 'ownerId', 'pageId']);
   }
 });
 
@@ -185,6 +212,9 @@ console.log(JSON.stringify({limit: state.limit, status: state.status}));`;
 
 it('CLI start-run claims three controller reservations without Allow and cannot replenish or choose a limit', async () => {
   const s = await budgetSession();
+  assert.equal(s.attachment.configuredDecisionBudget, 3);
+  assert.equal(s.attachment.budgetUnclaimedAtAttach, true);
+  assert.deepEqual(Object.keys(s.command).sort(), ['commandId', 'epoch', 'observationId', 'ownerId', 'pageId', 'revision', 'sessionId']);
   assert.equal(s.page.allow, undefined); assert.equal(s.page.allowRun, undefined);
   assert.equal(s.page.states.at(-1), 'attached');
   assert.equal((await s.get()).run, null); assert.equal(s.allowance.status, 'unclaimed');
@@ -321,7 +351,7 @@ it('issues once for concurrent start commands and closes an ambiguously delivere
   const page = replacement.browser(fresh => s.game.controller.observe(fresh), { controller: s.game.controller });
   await page.ready;
   assert.equal(page.states.at(-1), 'run-unavailable');
-  const lease = await replacement.post('attach', { ownerId: randomUUID() });
+  const lease = leaseIdentity(await replacement.post('attach', { ownerId: randomUUID() }));
   const observed = (await replacement.post('observe', { ...lease, commandId: randomUUID() })).observation;
   assert.equal(page.legacyGrant(), false); assert.equal(page.legacyRun(), false);
   await assert.rejects(replacement.post('start-run', { ...lease, commandId: randomUUID(), observationId: observed.observationId, sessionId: observed.sessionId, revision: 0 }), /budget-closed/);
@@ -350,7 +380,7 @@ it.each(['disconnect', 'deadline'])('burns issuance when the start result is los
   assert.equal(s.game.sdkCalls, 0);
   const next = harness(s.allowance);
   const page = next.browser(); await page.ready;
-  const lease = await next.post('attach', { ownerId: randomUUID() });
+  const lease = leaseIdentity(await next.post('attach', { ownerId: randomUUID() }));
   await assert.rejects(next.post('start-run', { ...s.command, ...lease, commandId: randomUUID() }), /budget-closed/);
   assert.equal(page.legacyRun(), false);
 });
@@ -472,9 +502,12 @@ it('detaches only the exact owner, closes an unclaimed allowance and requires a 
   const replacement = s.h.browser(); await replacement.ready;
   assert.equal(replacement.states.at(-1), 'run-unavailable');
   const next = await s.h.post('attach', { ownerId: randomUUID() });
+  assert.equal(next.configuredDecisionBudget, 1);
+  assert.equal(next.budgetUnclaimedAtAttach, false);
+  const nextLease = { pageId: next.pageId, ownerId: next.ownerId, epoch: next.epoch };
   await assert.rejects(s.h.post('detach', command), /lease-revoked/);
-  assert.equal((await s.h.post('observe', { ...next, commandId: randomUUID() })).epoch, next.epoch);
-  await assert.rejects(s.h.post('start-run', { ...next, commandId: randomUUID(),
+  assert.equal((await s.h.post('observe', { ...nextLease, commandId: randomUUID() })).epoch, next.epoch);
+  await assert.rejects(s.h.post('start-run', { ...nextLease, commandId: randomUUID(),
     sessionId: s.observation.sessionId, observationId: s.observation.observationId, revision: 0 }), /budget-closed/);
 });
 
@@ -545,7 +578,7 @@ it('fences delayed observations and duplicates, and never transfers a lease to a
   const gate = deferred(); let fresh;
   const page = h.browser(async check => { fresh = check; await gate.promise; check(); return agentObserveResult(); });
   await page.ready;
-  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const lease = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
   const command = { ...lease, commandId: randomUUID() };
   const pending = h.send('observe', command).result.promise;
   await checkpoint(() => !!fresh);
@@ -625,7 +658,7 @@ it('Stop aborts an in-flight result before notification; aborted/incomplete bodi
     });
     try {
       await page.ready;
-      const lease = await h.post('attach', { ownerId: randomUUID() });
+      const lease = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
       const cli = h.send('observe', { ...lease, commandId: randomUUID() });
       let cliSettled = false;
       void cli.result.promise.then(() => { cliSettled = true; });
@@ -677,7 +710,7 @@ it.each(['stop', 'detach'])('rechecks a fully delivered late upload after %s, bu
     });
     try {
       await page.ready;
-      const lease = await h.post('attach', { ownerId: randomUUID() });
+      const lease = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
       const command = { ...lease, commandId: randomUUID() };
       const end = async () => {
         if (cause === 'stop') page.stop();
@@ -709,11 +742,11 @@ it.each(['stop', 'detach'])('rechecks a fully delivered late upload after %s, bu
 it('invalidates disconnected pages and rejects old commands after a fresh page registers', async () => {
   const h = harness();
   const page = h.browser(); await page.ready;
-  const old = await h.post('attach', { ownerId: randomUUID() });
+  const old = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
   h.broker.close();
   assert.equal(page.states.at(-1), 'stopped');
   const replacement = h.browser(); await replacement.ready;
-  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const lease = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
   assert.notEqual(lease.pageId, old.pageId);
   await assert.rejects(h.post('observe', { ...old, commandId: randomUUID() }), /lease-revoked/);
 });
@@ -724,7 +757,7 @@ it('remembers Stop between commands without restoring settings, allowance or acc
   const h = harness();
   const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
   await page.ready;
-  const old = await h.post('attach', { ownerId: randomUUID() });
+  const old = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
   const observation = (await h.post('observe', { ...old, commandId: randomUUID() })).observation;
   assert.equal(page.legacyRun(), true);
   const config = game.controller.agentConfig(old.epoch, observation.sessionId, () => {});
@@ -740,6 +773,7 @@ it('remembers Stop between commands without restoring settings, allowance or acc
   assert.equal(replacement.states.at(-1), 'run-unavailable');
   const next = await h.post('attach', { ownerId: randomUUID() });
   assert.notEqual(next.epoch, old.epoch);
+  const nextLease = { pageId: next.pageId, ownerId: next.ownerId, epoch: next.epoch };
   for (const [op, fields] of [
     ['observe', {}], ['decide', { ...scope, observationId: randomUUID() }],
     ['get-prompt', { sessionId: scope.sessionId }], ['get-config', { sessionId: scope.sessionId }],
@@ -748,7 +782,7 @@ it('remembers Stop between commands without restoring settings, allowance or acc
   ]) await assert.rejects(h.post(op, { ...command, ...fields }), /agent-stopped/);
   for (const key of ['ownerId', 'epoch', 'pageId'])
     await assert.rejects(h.post('observe', { ...command, [key]: randomUUID() }), /lease-revoked/);
-  assert.equal((await h.post('observe', { ...next, commandId: randomUUID() })).epoch, next.epoch);
+  assert.equal((await h.post('observe', { ...nextLease, commandId: randomUUID() })).epoch, next.epoch);
   assert.equal(game.sdkCalls, 0); assert.equal(game.gameCalls, 0);
 });
 it.each(['rejected', 'timeout', 'disconnect-first'])('failed Stop reason delivery (%s) stays generic, including late delivery', async failure => {
@@ -764,7 +798,7 @@ it.each(['rejected', 'timeout', 'disconnect-first'])('failed Stop reason deliver
     },
   });
   await page.ready;
-  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const lease = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
   const command = { ...lease, commandId: randomUUID() };
   const pending = h.send('observe', command).result.promise;
   await checkpoint(() => !!fresh);
@@ -788,7 +822,7 @@ it('requires a validated page token and intentional reason before attributing St
     return send();
   } });
   await page.ready;
-  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const lease = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
   for (const data of [
     { ...registration, pageToken: randomUUID(), reason: 'user-requested' },
     { ...registration, reason: 'disconnect' },
@@ -802,7 +836,7 @@ it('keeps a broker deadline generic for pending and subsequent commands', async 
   const h = harness(); const captured = deferred(), release = deferred();
   const page = h.browser(async fresh => { captured.resolve(); await release.promise; fresh(); return agentObserveResult(); });
   await page.ready;
-  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const lease = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
   vi.useFakeTimers();
   const command = { ...lease, commandId: randomUUID() };
   const pending = h.send('observe', command).result.promise;
@@ -913,7 +947,9 @@ it.each([
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'doom-agent-terminal-'));
   cleanups.push(() => rm(temporaryRoot, { recursive: true, force: true }));
   const cli = args => runAgentCli(args, { transport: h.transport, temporaryRoot });
-  const { leaseFile, ...lease } = await cli(['attach']);
+  const attachment = await cli(['attach']);
+  const { leaseFile } = attachment;
+  const lease = { pageId: attachment.pageId, ownerId: attachment.ownerId, epoch: attachment.epoch };
   const base = ['--lease', leaseFile];
   let before = await cli(['observe', ...base]);
   if (budget) await cli(['start-run', ...base, '--observation', before.observationId, '--session', before.sessionId, '--revision', '0']);
@@ -1000,7 +1036,7 @@ it.each(['stop', 'detach', 'disconnect', 'second-page'].flatMap(interruption => 
     close(send) { assert.equal(controllerStopped, true); send(); },
   });
   await page.ready;
-  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const lease = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
   const observed = await h.post('observe', { ...lease, commandId: randomUUID() });
   if (budget) await h.post('start-run', { ...lease, commandId: randomUUID(), observationId: observed.observation.observationId, sessionId: observed.observation.sessionId, revision: 0 });
   else assert.equal(bounded ? page.legacyRun() : page.legacyGrant(), true);
@@ -1195,7 +1231,7 @@ it('strict prompt and bounded command shapes reject extra fields and fence forei
   const h = harness();
   const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
   await page.ready;
-  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const lease = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
   const observed = await h.post('observe', { ...lease, commandId: randomUUID() });
   page.legacyRun();
   const sessionId = observed.observation.sessionId;
@@ -1242,7 +1278,7 @@ it('keeps legacy controller grants fenced without browser grant entry points', a
   const h = harness();
   const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
   await page.ready;
-  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const lease = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
   assert.equal(page.legacyGrant(), false, 'Attach alone is insufficient');
   await h.post('observe', { ...lease, commandId: randomUUID() });
   assert.equal(page.legacyGrant(), true);
@@ -1329,7 +1365,7 @@ it('strict config command/result schemas reject missing, extra and nonboolean fi
   const game = fixture({ pngFor }); cleanups.push(() => game.dispose()); await game.prepare();
   const h = harness(); const page = h.browser(fresh => game.controller.observe(fresh), { controller: game.controller });
   await page.ready;
-  const lease = await h.post('attach', { ownerId: randomUUID() });
+  const lease = leaseIdentity(await h.post('attach', { ownerId: randomUUID() }));
   const observed = await h.post('observe', { ...lease, commandId: randomUUID() }); page.legacyRun();
   const sessionId = observed.observation.sessionId;
   const get = async () => (await h.post('get-config', { ...lease, commandId: randomUUID(), sessionId })).config;

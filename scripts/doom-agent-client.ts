@@ -8,6 +8,7 @@ import {
   parseAgentObserveResult,
   parseAgentPromptResult,
   promptErrors,
+  validAgentLimit,
   validAgentCommand,
   type AgentConfigResult,
   type AgentObserveResult,
@@ -25,7 +26,11 @@ import {
 } from '../app/src/agent-observation.ts';
 
 type LeaseIdentity = { pageId: string; ownerId: string; epoch: string };
-export type AttachedLease = LeaseIdentity & { leaseFile: string };
+export type AttachedLease = LeaseIdentity & {
+  configuredDecisionBudget: number | null;
+  budgetUnclaimedAtAttach: boolean;
+  leaseFile: string;
+};
 export type DetachedLease = LeaseIdentity & { commandId: string; released: true };
 type FileLease = { leaseFile: string };
 type Correlation = { pageId: string; epoch: string; commandId: string };
@@ -83,6 +88,36 @@ function leaseValue(value: unknown): LeaseIdentity {
     throw Error('Invalid agent lease.');
   // Preserve the admitted file's property order in the wire command.
   return { ...data, pageId: data.pageId, ownerId: data.ownerId, epoch: data.epoch };
+}
+
+function attachedLeaseValue(value: unknown, expectedOwnerId: string) {
+  const data = object(value);
+  // Missing metadata is a protocol mismatch, not an absent allowance. Fail closed
+  // so main never treats an older broker response as a safe preflight result.
+  if (
+    Object.keys(data).sort().join(',') !==
+    'budgetUnclaimedAtAttach,configuredDecisionBudget,epoch,ownerId,pageId'
+  )
+    throw Error('Invalid agent attach acknowledgment.');
+  const lease = leaseValue({
+    pageId: data.pageId,
+    ownerId: data.ownerId,
+    epoch: data.epoch,
+  });
+  const configuredDecisionBudget = data.configuredDecisionBudget;
+  const budgetUnclaimedAtAttach = data.budgetUnclaimedAtAttach;
+  if (
+    lease.ownerId !== expectedOwnerId ||
+    !(configuredDecisionBudget === null || validAgentLimit(configuredDecisionBudget)) ||
+    typeof budgetUnclaimedAtAttach !== 'boolean' ||
+    (budgetUnclaimedAtAttach && configuredDecisionBudget === null)
+  )
+    throw Error('Invalid agent attach acknowledgment.');
+  return {
+    ...lease,
+    configuredDecisionBudget,
+    budgetUnclaimedAtAttach,
+  };
 }
 
 async function materialize<T extends AgentObservation>(observation: T, leaseFile: string, commandId: string) {
@@ -157,12 +192,16 @@ export async function executeAgentOperation(
   }
   if (input.op === 'attach') {
     const ownerId = randomUUID();
-    const lease = leaseValue(await post('attach', { ownerId }));
-    if (lease.ownerId !== ownerId) throw Error('Invalid agent lease.');
+    const attached = attachedLeaseValue(await post('attach', { ownerId }), ownerId);
     const directory = await mkdtemp(join(temporaryRoot, 'doom-agent-'));
     const leaseFile = join(directory, 'lease.json');
+    const lease = {
+      pageId: attached.pageId,
+      ownerId: attached.ownerId,
+      epoch: attached.epoch,
+    };
     await writeFile(leaseFile, JSON.stringify(lease), { mode: 0o600, flag: 'wx' });
-    return { ...lease, leaseFile };
+    return { ...attached, leaseFile };
   }
   if (!isAbsolute(input.leaseFile)) throw Error('Invalid agent lease.');
   const lease = leaseValue(JSON.parse(await readFile(input.leaseFile, 'utf8')));

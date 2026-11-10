@@ -20,7 +20,7 @@ import {
   createLandmarksTool, lookupLandmarks, type LandmarkReceipt, type SavedContext,
 } from './landmarks-tool.ts';
 import { createGuardedDecision, createTwoGuardedDecisions, decisionLedger, type DecisionPorts } from './guarded-decision.ts';
-import { liveObserve, parseLease, requireLive, type ReadPng } from './live-observation.ts';
+import { liveObserve, parseAttachedLease, requireLive, type Lease, type ReadPng } from './live-observation.ts';
 import { isAgentId } from '../../app/src/agent-observation.ts';
 import { createOperatorConsole } from './operator-console.ts';
 
@@ -73,7 +73,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
   const landmarks: LandmarkReceipt[] = [];
   const consults: ConsultReceipt[] = [];
   let guardedDecision: ReturnType<typeof createGuardedDecision> | ReturnType<typeof createTwoGuardedDecisions> | undefined;
-  let acknowledgedLease: AttachedLease | undefined;
+  let acknowledgedLease: Lease | undefined;
   const report = {
     outcome: 'failed', error: null as string | null,
     failureDiagnostic: null as FailureDiagnostic | null,
@@ -118,7 +118,7 @@ export async function runMain(ports: MainPorts, signal: AbortSignal, timeoutMs =
       report.lease.state = 'possibly-held'; // Set before dispatch, including lost attach acknowledgments.
       const attached = await ports.attach(abort.signal);
       abort.signal.throwIfAborted();
-      const lease = parseLease(attached);
+      const lease = parseAttachedLease(attached);
       acknowledgedLease = structuredClone(lease);
       report.lease = { state: 'held', leaseFile: lease.leaseFile };
       doomLog.info('Browser lease acknowledged');

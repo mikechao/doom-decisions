@@ -261,12 +261,17 @@ export function createAgentBridge(allowance = createAgentAllowance()) {
         ownerId: data.ownerId,
         epoch: randomUUID(),
       };
+      const budgetSnapshot = {
+        configuredDecisionBudget: allowance.limit,
+        budgetUnclaimedAtAttach:
+          allowance.limit !== null && allowance.status === 'unclaimed',
+      };
       event({
         type: 'attached',
         ...page.lease,
         budgetMode: allowance.limit !== null,
       });
-      return json(res, 200, page.lease);
+      return json(res, 200, { ...page.lease, ...budgetSnapshot });
     }
     if (
       [

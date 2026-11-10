@@ -65,13 +65,26 @@ export async function main(
 	let cleanupError: unknown;
 	let result!: PlayResult;
 	try {
+		let attachedLease: Awaited<ReturnType<DoomClient["attach"]>>;
 		try {
-			await doomClient.attach();
+			attachedLease = await doomClient.attach();
 		} catch (error) {
 			progress.withTag("doom").info("Attach unconfirmed");
 			throw safeAttachError(error);
 		}
 		attached = true;
+		if (attachedLease.configuredDecisionBudget === null)
+			throw new Error(
+				"Doom one-decision preflight failed: the broker has no configured decision budget. Set AGENT_DECISION_BUDGET=1 in app/.env.agent.local and fully restart dev:agent.",
+			);
+		if (!attachedLease.budgetUnclaimedAtAttach)
+			throw new Error(
+				"Doom one-decision preflight failed: the broker allowance was already claimed or closed at attach. Fully stop and restart dev:agent.",
+			);
+		if (attachedLease.configuredDecisionBudget !== 1)
+			throw new Error(
+				"Doom one-decision preflight failed: this CLI requires a configured budget of exactly 1. Set AGENT_DECISION_BUDGET=1 in app/.env.agent.local and fully restart dev:agent.",
+			);
 		result = await (dependencies.playback ?? play)(
 			doomClient,
 			doomTools,

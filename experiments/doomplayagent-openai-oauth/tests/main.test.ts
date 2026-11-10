@@ -81,6 +81,42 @@ test("main constructs dependencies, attaches once, awaits one complete play, the
 	]);
 });
 
+for (const [budget, unclaimed, label] of [
+	[null, false, "absent"],
+	[1, false, "already claimed"],
+	[2, true, "mismatched"],
+	[0, true, "invalid zero"],
+] as const) {
+	test(`main rejects ${label} budget before playback and detaches`, async (t) => {
+		const f = await fixture(t);
+		const attach = f.client.attach;
+		f.client.attach = async () => ({
+			...(await attach()),
+			configuredDecisionBudget: budget,
+			budgetUnclaimedAtAttach: unclaimed,
+		});
+		let playbackCalls = 0;
+		const responses = t.mock.method(f.provider, "responses");
+		await assert.rejects(
+			main(() => f.client, {
+				makeTools: () => f.tools,
+				makeProvider: () => f.provider,
+				playback: async () => {
+					playbackCalls++;
+					throw new Error("playback must not run");
+				},
+			}),
+			(error: unknown) =>
+				error instanceof Error &&
+				/Doom one-decision preflight failed/.test(error.message),
+		);
+		assert.equal(playbackCalls, 0);
+		assert.equal(responses.mock.callCount(), 0);
+		assert.equal(f.state.modelCalls, 0);
+		assert.deepEqual(f.events, ["attach", "detach"]);
+	});
+}
+
 test("main does not detach while playback is pending", async (t) => {
 	const f = await fixture(t);
 	t.mock.method(console, "log", () => {});

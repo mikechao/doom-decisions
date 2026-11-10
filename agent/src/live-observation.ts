@@ -17,13 +17,26 @@ export function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-export type Lease = AttachedLease;
+export type Lease = Pick<AttachedLease, 'pageId' | 'ownerId' | 'epoch' | 'leaseFile'>;
 export function parseLease(value: unknown): Lease {
   const data = record(value);
   requireLive(Object.keys(data).sort().join(',') === 'epoch,leaseFile,ownerId,pageId');
   requireLive([data.pageId, data.ownerId, data.epoch].every(isAgentId));
   requireLive(typeof data.leaseFile === 'string' && isAbsolute(data.leaseFile));
   return data as Lease;
+}
+
+// The shared client strictly validates the attach snapshot. Keep that advisory
+// broker metadata out of the operational lease retained by the live agent.
+export function parseAttachedLease(value: AttachedLease): Lease {
+  const data = record(value);
+  requireLive(Object.keys(data).sort().join(',') ===
+    'budgetUnclaimedAtAttach,configuredDecisionBudget,epoch,leaseFile,ownerId,pageId');
+  requireLive(data.configuredDecisionBudget === null ||
+    (typeof data.configuredDecisionBudget === 'number' && Number.isSafeInteger(data.configuredDecisionBudget) && data.configuredDecisionBudget > 0));
+  requireLive(typeof data.budgetUnclaimedAtAttach === 'boolean' &&
+    (!data.budgetUnclaimedAtAttach || data.configuredDecisionBudget !== null));
+  return parseLease({ pageId: data.pageId, ownerId: data.ownerId, epoch: data.epoch, leaseFile: data.leaseFile });
 }
 
 // The shared executor checks the HTTP command ID against its own request. These
