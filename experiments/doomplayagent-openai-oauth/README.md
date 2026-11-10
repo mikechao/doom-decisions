@@ -114,13 +114,20 @@ Records retain PNG buffers and cloned DTOs, so memory grows O(N). Keep practical
 smoke budgets small (initially N=3); safe-integer validation is not a small memory
 cap. A fresh unmodified lease is still required for direct `play()` callers.
 
-Offline verification, from this directory with existing dependencies:
+Offline verification, from `experiments/doomplayagent-openai-oauth/` with Node
+22.20.0 or newer and existing package and root app dependencies:
 
 ```sh
-npm run typecheck
-node --experimental-strip-types --experimental-test-module-mocks --test tests/*.test.ts
-../../app/node_modules/.bin/biome check src/main.ts src/provider.ts src/doom-play-agent.ts src/movement-summary.ts src/navigation-assessment.ts src/doom-tools.ts src/progress.ts tests
+npm test
+npm run check
 ```
+
+`npm test` runs the full offline `node:test` suite (`tests/*.test.ts`), including
+movement-summary tests. Prefer `npm run check` after changes: it runs `npm test`,
+`npm run typecheck`, then the existing non-writing Biome check, including
+`src/movement-summary.ts` and `tests`. It stops on any failed step and does not
+format or write source files. See `package.json` for the exact commands; use
+`npm run typecheck` to investigate TypeScript failures on its own.
 
 Tests use native Node module mocks (experimental on Node 22.20.0), registered
 before dynamically importing the zero-argument `main()` entry point. Test files
@@ -150,7 +157,7 @@ Offline verification on 2026-11-10 rechecked the initial baseline (179/179), the
 passed the focused `tests/two-decisions.test.ts tests/main.test.ts` suite (118/118)
 and full `tests/*.test.ts` suite (241/241), using
 `node --experimental-strip-types --experimental-test-module-mocks --test`.
-`npm run typecheck`, the documented non-writing Biome check above (16 files), and
+`npm run typecheck`, the then-documented non-writing Biome check (16 files), and
 `git diff --check` passed. The full suite initially found two old CLI-label
 assertions; both were corrected before the final passing run. No unrelated
 failures remained. No live gameplay, servers, OAuth or paid calls were exercised.

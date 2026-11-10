@@ -74,6 +74,8 @@ Read-only inspection and non-writing syntax/diff checks include `git status --sh
 
 ### Agent Development
 
+For `experiments/doomplayagent-openai-oauth/`, run commands from that package directory with existing dependencies. Run `npm run check` after changes as the preferred full verification gate (offline tests, TypeScript typecheck, and non-writing Biome checks); use `npm test` for a shorter test-only pass of the full offline `node:test` suite. `package.json` is the command source of truth. These scripts must not start Doom, use OAuth, paid inference or the Decisions API, or access or mutate the historical SQLite database.
+
 When changing the DoomPlayAgent execution flow, ownership boundaries, prompt composition, navigation behavior, or gameplay/error invariants in `experiments/doomplayagent-openai-oauth/`, review and update its [execution-flow baseline](experiments/doomplayagent-openai-oauth/doom-play-agent.md) in the same change so it reflects the implementation. Formatting-only and test-only changes do not require document edits.
 
 The current verified milestone is **one guarded live Doom decision**. Exactly two sequential decisions with a fresh **agent-visible post-decision screenshot** between them are the next proposed milestone, not existing behavior. The parent currently receives only the initial image; host observation and structured receipt feedback do not supply a second image. There is no arbitrary N-decision loop.
