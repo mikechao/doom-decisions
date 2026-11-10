@@ -19,7 +19,7 @@ async function memoryFixture(t: TestContext) {
 		else process.env.DOOM_MEMORY_DB = previous;
 	});
 	// Use only this test's database, never the historical memory store.
-	const modulePath = "../../../app/doom-memory.mjs";
+	const modulePath = "../../app/doom-memory.mjs";
 	const memory = (await import(modulePath)) as {
 		recordMemory(input: unknown): Promise<{ noteId: string }>;
 	};

@@ -54,6 +54,8 @@ These instructions target macOS arm64 and require Node 22.20.0 and npm; see the 
    ```
    To run the development Vite server
 
+For bounded agent-driven browser play, see [DoomPlayAgent](doom-play-agent/README.md).
+
 For linked worktrees, install the repository-local [automatic local-tool setup](docs/local-worktrees.md)
 once to copy the existing Doom toolchain and Impeccable inputs on `git worktree add`.
 

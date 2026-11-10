@@ -6,14 +6,14 @@ import {
 	type AgentScope,
 	maxAgentInstructions,
 	validAgentLimit,
-} from "../../../app/src/agent-control.ts";
-import type { AgentDecisionResult } from "../../../app/src/agent-observation.ts";
+} from "../../app/src/agent-control.ts";
+import type { AgentDecisionResult } from "../../app/src/agent-observation.ts";
 import type {
 	ConfigResult,
 	MaterializedDecision,
 	MaterializedObserve,
 	PromptResult,
-} from "../../../scripts/doom-agent-client.ts";
+} from "../../scripts/doom-agent-client.ts";
 import type { DoomClient } from "./doom-client.ts";
 import type { DoomMemoryCandidate, DoomTools } from "./doom-tools.ts";
 import { type MovementSummary, summarizeMovement } from "./movement-summary.ts";

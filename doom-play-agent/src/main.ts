@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { openaiCredentials } from "@openai-oauth/local";
-import { validAgentLimit } from "../../../app/src/agent-control.ts";
+import { validAgentLimit } from "../../app/src/agent-control.ts";
 import {
 	type AttachedLease,
 	createDoomClient,

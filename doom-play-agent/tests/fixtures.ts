@@ -8,15 +8,15 @@ import type { LanguageModel } from "ai";
 import type {
 	AgentObserveResult,
 	AgentRunState,
-} from "../../../app/src/agent-control.ts";
+} from "../../app/src/agent-control.ts";
 import {
 	type AgentObservation,
 	createAgentMapIdentity,
-} from "../../../app/src/agent-observation.ts";
+} from "../../app/src/agent-observation.ts";
 import type {
 	AttachedLease,
 	MaterializedDecision,
-} from "../../../scripts/doom-agent-client.ts";
+} from "../../scripts/doom-agent-client.ts";
 import type { DoomClient } from "../src/doom-client.ts";
 import type { DoomMemoryCandidate, DoomTools } from "../src/doom-tools.ts";
 

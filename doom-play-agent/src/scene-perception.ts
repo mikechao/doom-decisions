@@ -1,7 +1,7 @@
 import type { OpenAIProvider } from "@ai-sdk/openai";
 import { generateText, type LanguageModelUsage, Output } from "ai";
 import { z } from "zod";
-import type { AgentObserveResult } from "../../../app/src/agent-control.ts";
+import type { AgentObserveResult } from "../../app/src/agent-control.ts";
 
 const scenePerceptionSchema = z.strictObject({
 	description: z.string().trim().min(1).max(300),

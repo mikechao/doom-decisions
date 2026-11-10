@@ -1,4 +1,4 @@
-import type { AgentScope } from "../../../app/src/agent-control.ts";
+import type { AgentScope } from "../../app/src/agent-control.ts";
 import {
 	type AgentClientOptions,
 	type AgentOperation,
@@ -9,9 +9,9 @@ import {
 	type MaterializedDecision,
 	type MaterializedObserve,
 	type PromptResult,
-} from "../../../scripts/doom-agent-client.ts";
+} from "../../scripts/doom-agent-client.ts";
 
-export type { AttachedLease } from "../../../scripts/doom-agent-client.ts";
+export type { AttachedLease } from "../../scripts/doom-agent-client.ts";
 
 type StartRunInput = Omit<
 	Extract<AgentOperation, { op: "start-run" }>,

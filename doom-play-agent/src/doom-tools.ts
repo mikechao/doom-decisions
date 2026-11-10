@@ -1,8 +1,8 @@
 import { stat } from "node:fs/promises";
 import { z } from "zod";
-import type { memoryFindSchema } from "../../../app/doom-memory.mjs";
-import { findMemory, memoryDatabasePath } from "../../../app/doom-memory.mjs";
-import type { AgentObserveResult } from "../../../app/src/agent-control.ts";
+import type { memoryFindSchema } from "../../app/doom-memory.mjs";
+import { findMemory, memoryDatabasePath } from "../../app/doom-memory.mjs";
+import type { AgentObserveResult } from "../../app/src/agent-control.ts";
 
 type SharedMemoryQuery = z.infer<typeof memoryFindSchema>;
 export type ActiveLandmarkMemoryQuery = Extract<

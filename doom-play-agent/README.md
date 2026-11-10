@@ -1,4 +1,4 @@
-# Bounded informed Doom decisions experiment
+# DoomPlayAgent
 
 Running `src/main.ts` with no arguments now authorizes **up to N** guarded gameplay
 requests in one broker-authorized run, where N is its issued positive safe-integer
@@ -10,7 +10,7 @@ diagnostic description, features, uncertainty and usage. It receives no
 navigation objective or historical landmark. The host combines perception and,
 for a landmark, a text-only navigation assessment into advisory Decisions guidance.
 
-The experiment uses the installed AI SDK 7, official `@ai-sdk/openai` Responses
+DoomPlayAgent uses the installed AI SDK 7, official `@ai-sdk/openai` Responses
 provider and existing local OAuth transport. `DOOM_REASONING_MODEL` selects the
 reasoning model (default `gpt-6-luna`); this is separate from the browser's
 Decisions provider/model. An earlier separately authorized two-decision smoke test
@@ -85,7 +85,7 @@ All decisions preserve the customized base template inherited from human setting
 The supported `main()` transaction attaches a fresh lease: controller
 `attachAgent()` copies `ports.readDecisionConfiguration().instructionTemplate`,
 while `agentPrompt()` changes only the lease configuration and `stopAgent()`
-discards it ([controller](../../app/src/session-controller.ts)). Thus its initial
+discards it ([controller](../app/src/session-controller.ts)). Thus its initial
 observation supplies the canonical human template, not an earlier lease amendment.
 `play()` alone cannot prove that a caller has not already changed the lease prompt;
 the observation exposes only the current template, with no canonical-base field.
@@ -97,7 +97,7 @@ active; only the first is selected, even if the bounded lookup reports `hasMore`
 
 ## Responsibility audit
 
-This experiment trusts the existing executor/browser stack; it is not an
+DoomPlayAgent trusts the existing executor/browser stack; it is not an
 independent native verifier. Shared protocol, broker, controller and root agent
 code are unchanged. The executor owns held-lease envelope/DTO/image validation and
 prompt acknowledgment checks; the controller owns lease/Stop/CAS/native authority.
@@ -114,7 +114,7 @@ Records retain PNG buffers and cloned DTOs, so memory grows O(N). Keep practical
 smoke budgets small (initially N=3); safe-integer validation is not a small memory
 cap. A fresh unmodified lease is still required for direct `play()` callers.
 
-Offline verification, from `experiments/doomplayagent-openai-oauth/` with Node
+Offline verification, from `doom-play-agent/` with Node
 22.20.0 or newer and existing package and root app dependencies:
 
 ```sh

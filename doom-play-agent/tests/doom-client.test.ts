@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import type { OpenAIProvider } from "@ai-sdk/openai";
-import type { AgentObserveResult } from "../../../app/src/agent-control.ts";
-import { createAgentMapIdentity } from "../../../app/src/agent-observation.ts";
+import type { AgentObserveResult } from "../../app/src/agent-control.ts";
+import { createAgentMapIdentity } from "../../app/src/agent-observation.ts";
 import {
 	type AgentOperation,
 	executeAgentOperation,
-} from "../../../scripts/doom-agent-client.ts";
+} from "../../scripts/doom-agent-client.ts";
 import {
 	createDoomClient,
 	DoomAttachError,

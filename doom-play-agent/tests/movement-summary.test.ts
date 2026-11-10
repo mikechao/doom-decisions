@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test, { type TestContext } from "node:test";
-import type { MaterializedDecision } from "../../../scripts/doom-agent-client.ts";
+import type { MaterializedDecision } from "../../scripts/doom-agent-client.ts";
 import { summarizeMovement } from "../src/movement-summary.ts";
 import { fixture } from "./fixtures.ts";
 

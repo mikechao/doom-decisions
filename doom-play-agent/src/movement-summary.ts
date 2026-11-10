@@ -1,9 +1,9 @@
-import { createAgentMapIdentity } from "../../../app/src/agent-observation.ts";
-import { masks } from "../../../app/src/decision.ts";
+import { createAgentMapIdentity } from "../../app/src/agent-observation.ts";
+import { masks } from "../../app/src/decision.ts";
 import type {
 	MaterializedDecision,
 	MaterializedObserve,
-} from "../../../scripts/doom-agent-client.ts";
+} from "../../scripts/doom-agent-client.ts";
 
 export type MovementSummary =
 	| {
