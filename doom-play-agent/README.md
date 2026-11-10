@@ -3,6 +3,16 @@
 Running `src/main.ts` with no arguments now authorizes **up to N** guarded gameplay
 requests in one broker-authorized run, where N is its issued positive safe-integer
 limit. Do not run it as a check.
+
+From the repository root, start live gameplay with:
+
+```sh
+npm --prefix doom-play-agent run agent
+```
+
+This requires the normal broker/browser and credentials setup and may make paid API
+calls. It is not an offline verification command.
+
 The Decisions API chooses the actual action. TypeScript selects the navigation
 objective once. The separate reasoning model independently perceives the
 visible scene from the verified screenshot and compact state, returning a small
