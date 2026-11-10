@@ -150,6 +150,29 @@ Buffers as immutable. Paths are ephemeral provenance; owned bytes survive file
 changes/deletion/detach. Executor materialization failure before return remains
 unconfirmed. Records provide no persistence or independent native proof.
 
+Experiment A adds a passive `movement` result to each record. Before a receipt
+returns it is unavailable (`decision-not-returned`). For each returned receipt,
+`summarizeMovement()` checks completed/certain/SDK-invoked status, action and
+positive matching requested/reported/verified tics, ready checkpoints, before-ID,
+distinct admission/ending observation IDs,
+session, canonical IWAD/map identity, and start + verified = ending tic (including
+frame/gametic and cumulative-tic consistency). Native-range XY/angle checks guard
+arithmetic: signed-int32 16.16 XY and uint32 binary angle. Other outcomes, including
+terminal prefixes, or invalid/missing data yield an explicit unavailable reason.
+
+Available results use the retained post-CAS admission pose and receipt ending pose
+only: raw XY deltas, XY deltas/net magnitude in Doom units, minimal signed heading
+delta in degrees [-180, 180) (half-turn tie -180), and independent exact position/
+heading change flags. Ordinal/action/tic context remains in the enclosing record
+and receipt. Each returned decision emits one best-effort net reported pose
+diagnostic inside its decision boundaries. Diagnostic errors cannot affect receipt
+retention or continuation. This adds no observations, inference, model inputs or
+control state; existing previous-action feedback remains unchanged. Endpoint
+deltas are browser-reported diagnostics, not independent native pose attestation,
+path length, collision, exploration or landmark/exit progress. No motion threshold
+or revisit heuristic is applied. Controller/executor execution and image proofs
+remain authoritative; this helper does not repeat those proofs.
+
 Memory grows O(N) because images and DTOs remain retained. Keep practical smoke
 budgets small; the positive-safe-integer limit has no additional small memory cap.
 

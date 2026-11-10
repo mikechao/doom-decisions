@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test, { type TestContext } from "node:test";
 import { PlaybackError, play } from "../src/doom-play-agent.ts";
+import { progress } from "../src/progress.ts";
 import { fixture, scenePerception } from "./fixtures.ts";
 import { installMainMocks } from "./main-mocks.ts";
 
@@ -133,6 +134,9 @@ test("three-decision run interleaves one boundary pair with each decision", asyn
 		assert.match(decisionOutput, /Perceiving current scene/);
 		assert.match(decisionOutput, /Navigation guidance acknowledged/);
 		assert.match(decisionOutput, /Action: forward; outcome: completed/);
+		const diagnostic = `Decision ${ordinal} (forward; verified 6 tics): net reported pose deltas; distance=1 Doom units; headingDelta=0 degrees`;
+		assert.equal(decisionOutput.split(diagnostic).length - 1, 1);
+		assert.equal(result.records[ordinal - 1].movement.status, "available");
 		const instructions =
 			prompted.mock.calls[ordinal - 1].arguments[0].instructions;
 		assert.equal(result.records[ordinal - 1].guidance, instructions);
@@ -161,6 +165,70 @@ test("three-decision run interleaves one boundary pair with each decision", asyn
 		(match) => Number(match[1]),
 	);
 	assert.deepEqual(promptStarts, [1, 2, 3]);
+	assert.deepEqual(f.events, [
+		"observe",
+		"memory",
+		"model",
+		"assessment",
+		"startRun",
+		"setPrompt",
+		"observe",
+		"decide",
+		"observe",
+		"model",
+		"assessment",
+		"setPrompt",
+		"observe",
+		"decide",
+		"observe",
+		"model",
+		"assessment",
+		"setPrompt",
+		"observe",
+		"decide",
+	]);
+	for (const record of result.records) {
+		assert.doesNotMatch(
+			record.guidance ?? "",
+			/net reported pose|headingDelta|dxRaw/,
+		);
+		if (record.decision.kind !== "returned") throw Error("Expected receipt");
+		assert.equal(
+			record.decision.receipt.observation?.previousAction?.text,
+			"Synthetic forward action.",
+		);
+	}
+});
+
+test("movement logger exceptions cannot affect retention or continuation", async (t) => {
+	const f = await fixture(t, 3);
+	const withTag = progress.withTag.bind(progress);
+	let attempts = 0;
+	t.mock.method(progress, "withTag", (tag: string) => {
+		const logger = withTag(tag);
+		const info = logger.info.bind(logger);
+		t.mock.method(logger, "info", (...args: unknown[]) => {
+			if (String(args[0]).includes("net reported pose deltas")) {
+				attempts++;
+				throw Error("Synthetic diagnostic logging failure");
+			}
+			info(args[0], ...args.slice(1));
+		});
+		return logger;
+	});
+	const result = await play(f.client, f.tools, f.provider);
+	assert.equal(attempts, 3);
+	assert.equal(result.outcome, "completed");
+	assert.deepEqual(
+		result.records.map((r) => r.ordinal),
+		[1, 2, 3],
+	);
+	for (const record of result.records) {
+		assert.equal(record.movement.status, "available");
+		assert.equal(record.failure, null);
+		if (record.decision.kind !== "returned") throw Error("Expected receipt");
+		assert.ok(record.decision.afterPng);
+	}
 });
 
 test("a non-continuable second receipt ends decision 2 without starting decision 3", async (t) => {
@@ -178,6 +246,10 @@ test("a non-continuable second receipt ends decision 2 without starting decision
 
 	assert.equal(result.decisionOrdinal, 2);
 	assert.equal(result.records.length, 2);
+	assert.deepEqual(result.records[1].movement, {
+		status: "unavailable",
+		reason: "not-completed",
+	});
 	const output = stderr.join("");
 	assert.deepEqual(decisionBoundaries(output), [
 		"[info] [decision] Start of Decision 1",
@@ -185,6 +257,10 @@ test("a non-continuable second receipt ends decision 2 without starting decision
 		"[info] [decision] Start of Decision 2",
 		"[info] [decision] End of Decision 2",
 	]);
+	assert.match(
+		output,
+		/Decision 2 \(forward; verified 6 tics\): net reported pose deltas; unavailable: not-completed/,
+	);
 	assert.deepEqual(
 		Array.from(
 			output.matchAll(/Start of Decisions API Prompt for Decision (\d+)/g),
@@ -216,6 +292,10 @@ test("a third-decision exception ends its boundary and preserves the cause and r
 			["returned", "returned", "unconfirmed"],
 		);
 		assert.equal(error.records[2].failure?.stage, "decision");
+		assert.deepEqual(error.records[2].movement, {
+			status: "unavailable",
+			reason: "decision-not-returned",
+		});
 		return true;
 	});
 

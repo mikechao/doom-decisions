@@ -588,6 +588,29 @@ test("admission observations need no full snapshot equality or PNG reread", asyn
 	assert.equal(f.events.filter((event) => event === "decide").length, 2);
 });
 
+test("movement uses admission rather than reasoning and stays passive when unavailable", async (t) => {
+	const f = await fixture(t, 2);
+	const observe = f.client.observe;
+	f.client.observe = async () => {
+		const observation = await observe();
+		if (f.state.observeCalls === 2) observation.telemetry.x += 65536;
+		if (f.state.observeCalls === 4) observation.telemetry.angle = -1;
+		return observation;
+	};
+	const result = await play(f.client, f.tools, f.provider);
+	assert.equal(result.outcome, "completed");
+	assert.equal(result.records.length, 2);
+	const first = result.records[0].movement;
+	assert.equal(first.status, "available");
+	if (first.status !== "available") throw Error("Expected measurement");
+	assert.equal(first.dxRaw, 0); // Reasoning -> ending would incorrectly give +65536.
+	assert.deepEqual(result.records[1].movement, {
+		status: "unavailable",
+		reason: "invalid-pose",
+	});
+	assert.equal(result.records[1].failure, null);
+});
+
 test("a terminal prefix is reported directly without final accounting", async (t) => {
 	const f = await fixture(t);
 	const decide = f.client.decide;

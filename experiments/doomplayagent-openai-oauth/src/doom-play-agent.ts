@@ -16,6 +16,7 @@ import type {
 } from "../../../scripts/doom-agent-client.ts";
 import type { DoomClient } from "./doom-client.ts";
 import type { DoomMemoryCandidate, DoomTools } from "./doom-tools.ts";
+import { type MovementSummary, summarizeMovement } from "./movement-summary.ts";
 import {
 	assessNavigation,
 	type NavigationAssessment,
@@ -143,6 +144,7 @@ type DecisionEvidence = {
 	promptAcknowledged: PromptResult | null;
 	admissionObservation: MaterializedObserve | null;
 	decision: DecisionAttempt;
+	movement: MovementSummary;
 	failure: { stage: string; message: string } | null;
 };
 
@@ -225,6 +227,7 @@ function newRecord(ordinal: number): DecisionEvidence {
 		promptAcknowledged: null,
 		admissionObservation: null,
 		decision: { kind: "not-called" },
+		movement: { status: "unavailable", reason: "decision-not-returned" },
 		failure: null,
 	};
 }
@@ -406,6 +409,18 @@ async function executeOneDecision(
 			imageRetentionFailure: null,
 		};
 		record.decision = returned;
+		record.movement = summarizeMovement(
+			record.admissionObservation,
+			returned.receipt,
+		);
+		const movement = record.movement;
+		logDecisionBoundary(
+			`Decision ${ordinal} (${receipt.action ?? "none"}; verified ${receipt.verifiedTics ?? "unknown"} tics): net reported pose deltas; ${
+				movement.status === "available"
+					? `distance=${movement.distance} Doom units; headingDelta=${movement.headingDelta} degrees`
+					: `unavailable: ${movement.reason}`
+			}`,
+		);
 		// Retention is separate from gameplay: a read/hash failure must never
 		// replace this returned receipt with an unconfirmed attempt or a retry.
 		if (receipt.observation) {

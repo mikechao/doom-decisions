@@ -119,7 +119,7 @@ Offline verification, from this directory with existing dependencies:
 ```sh
 npm run typecheck
 node --experimental-strip-types --experimental-test-module-mocks --test tests/*.test.ts
-../../app/node_modules/.bin/biome check src/main.ts src/provider.ts src/doom-play-agent.ts src/navigation-assessment.ts src/doom-tools.ts src/progress.ts tests
+../../app/node_modules/.bin/biome check src/main.ts src/provider.ts src/doom-play-agent.ts src/movement-summary.ts src/navigation-assessment.ts src/doom-tools.ts src/progress.ts tests
 ```
 
 Tests use native Node module mocks (experimental on Node 22.20.0), registered
