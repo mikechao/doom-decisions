@@ -11,6 +11,8 @@ import {
 	type PromptResult,
 } from "../../../scripts/doom-agent-client.ts";
 
+export type { AttachedLease } from "../../../scripts/doom-agent-client.ts";
+
 type StartRunInput = Omit<
 	Extract<AgentOperation, { op: "start-run" }>,
 	"op" | "leaseFile"

@@ -3,6 +3,7 @@ import { openaiCredentials } from "@openai-oauth/local";
 import {
 	createDoomClient,
 	DoomAttachError,
+	type AttachedLease,
 	type DoomAttachErrorCode,
 	type DoomClient,
 } from "./doom-client.ts";
@@ -56,7 +57,7 @@ export async function main() {
 	let cleanupError: unknown;
 	let result!: PlayResult;
 	try {
-		let attachedLease: Awaited<ReturnType<DoomClient["attach"]>>;
+		let attachedLease: AttachedLease;
 		try {
 			attachedLease = await doomClient.attach();
 		} catch (error) {
