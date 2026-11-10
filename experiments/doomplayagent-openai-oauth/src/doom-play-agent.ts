@@ -61,6 +61,7 @@ type DecisionGuidance = NavigationSelection & {
 	perception: ScenePerception;
 	navigationAssessment: NavigationAssessment | null;
 };
+type PreparedDecision = DecisionGuidance & { instructions: string };
 
 function composeGuidance(
 	base: string,
@@ -274,7 +275,7 @@ async function prepareDecision(
 	canonicalBase: string,
 	ordinal: 1 | 2,
 	record: DecisionEvidence,
-) {
+): Promise<PreparedDecision> {
 	let stage = "perception";
 	let perception: ScenePerception | null = null;
 	let navigationAssessment: NavigationAssessment | null = null;
@@ -340,7 +341,7 @@ async function prepareDecision(
 async function executeOneDecision(
 	doomClient: DoomClient,
 	before: MaterializedObserve,
-	guidance: DecisionGuidance & { instructions: string },
+	guidance: PreparedDecision,
 	initialScope: AgentScope,
 	ordinal: 1 | 2,
 	record: DecisionEvidence,
@@ -439,7 +440,7 @@ export async function play(
 	let stage = "observation";
 	let ordinal: 1 | 2 = 1;
 	let navigationObjective: NavigationObjective | null = null;
-	let prepared: Awaited<ReturnType<typeof prepareDecision>> | null = null;
+	let prepared: PreparedDecision | null = null;
 	let record = newRecord(1);
 	const records: DecisionRecord[] = [];
 	try {
