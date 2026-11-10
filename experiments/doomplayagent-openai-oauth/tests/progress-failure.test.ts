@@ -11,17 +11,33 @@ for (const mode of ["throw", "callback-and-event"] as const) {
 				process.execPath,
 				[
 					"--experimental-strip-types",
+					"--experimental-test-module-mocks",
 					"--input-type=module",
 					"-e",
 					`
 import assert from "node:assert/strict";
 import test from "node:test";
-import { main } from ${JSON.stringify(import.meta.resolve("../src/main.ts"))};
 import { PlaybackError } from ${JSON.stringify(import.meta.resolve("../src/doom-play-agent.ts"))};
 import { fixture } from ${JSON.stringify(import.meta.resolve("./fixtures.ts"))};
 
 test("broken progress channel", async (t) => {
   const f = await fixture(t);
+  const clientModule = await import(${JSON.stringify(import.meta.resolve("../src/doom-client.ts"))});
+  t.mock.module(${JSON.stringify(import.meta.resolve("../src/doom-client.ts"))}, {
+    namedExports: { ...clientModule, createDoomClient: () => f.client },
+  });
+  t.mock.module(${JSON.stringify(import.meta.resolve("../src/doom-tools.ts"))}, {
+    namedExports: { createDoomTools: () => f.tools },
+  });
+  t.mock.module(${JSON.stringify(import.meta.resolve("../src/provider.ts"))}, {
+    namedExports: { createOAuthProvider: () => f.provider },
+  });
+  t.mock.module(${JSON.stringify(import.meta.resolve("@openai-oauth/local"))}, {
+    namedExports: { openaiCredentials: () => ({ getSession() { throw Error("Credential access forbidden"); } }) },
+  });
+  const { main } = await import(${JSON.stringify(import.meta.resolve("../src/main.ts"))});
+  // Let the experimental mock warning settle before breaking stderr.
+  await new Promise((resolve) => setImmediate(resolve));
   const outputError = Object.assign(new Error("synthetic closed pipe"), { code: "EPIPE" });
   const operationError = new Error("original operation failure");
   const detachError = new Error("original detach failure");
@@ -51,10 +67,7 @@ test("broken progress channel", async (t) => {
       throw detachError;
     };
   }
-  const running = main(() => f.client, {
-    makeTools: () => f.tools,
-    makeProvider: () => f.provider,
-  });
+  const running = main();
   if (operationFails) {
     await assert.rejects(running, (error) => {
       assert.ok(error instanceof AggregateError);

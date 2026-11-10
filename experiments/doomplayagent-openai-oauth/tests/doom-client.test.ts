@@ -4,13 +4,31 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
+import type { OpenAIProvider } from "@ai-sdk/openai";
 import type { AgentObserveResult } from "../../../app/src/agent-control.ts";
 import { createAgentMapIdentity } from "../../../app/src/agent-observation.ts";
 import {
 	type AgentOperation,
 	executeAgentOperation,
 } from "../../../scripts/doom-agent-client.ts";
-import { DoomAttachError, type DoomClient } from "../src/doom-client.ts";
+import {
+	createDoomClient,
+	DoomAttachError,
+	type DoomClient,
+} from "../src/doom-client.ts";
+import { installMainMocks } from "./main-mocks.ts";
+
+const mocks = installMainMocks();
+function configureOfflineMain(factory: () => DoomClient) {
+	mocks.makeClient.mock.mockImplementation(factory);
+	mocks.makeTools.mock.mockImplementation(() => ({
+		async findActiveLandmarks() {
+			throw Error("Memory access forbidden");
+		},
+	}));
+	mocks.makeProvider.mock.mockImplementation(() => ({}) as OpenAIProvider);
+	mocks.playback.mock.mockImplementation(offlinePlayback);
+}
 
 type Operation = AgentOperation["op"];
 type Fault =
@@ -39,7 +57,6 @@ test("imports and synchronous factory are inert and expose a frozen client", asy
 		process.argv = originalArgv;
 	});
 
-	const { createDoomClient } = await import("../src/doom-client.ts");
 	const { main } = await import("../src/main.ts");
 	const temporaryRoot = await mkdtemp(join(tmpdir(), "doom-client-inert-"));
 	t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
@@ -65,19 +82,12 @@ test("imports and synchronous factory are inert and expose a frozen client", asy
 	assert.equal(typeof createDoomClient, "function");
 	assert.equal(typeof main, "function");
 	assert.deepEqual(await readdir(temporaryRoot), []);
-	let factoryCalls = 0;
 	for (const arg of ["--unknown", "--attach-doom"]) {
 		process.argv = [process.execPath, "/inert-import.ts", arg];
-		await assert.rejects(
-			main(() => {
-				factoryCalls++;
-				return {} as DoomClient;
-			}),
-			/Usage:/,
-		);
+		await assert.rejects(main(), /Usage:/);
 	}
 	process.argv = [process.execPath, "/inert-import.ts"];
-	assert.equal(factoryCalls, 0);
+	assert.equal(mocks.makeClient.mock.callCount(), 0);
 	assert.equal(network.mock.callCount(), 0);
 });
 
@@ -94,7 +104,6 @@ async function broker(
 	t.mock.method(globalThis, "fetch", async () => {
 		throw new Error("Only the injected fake transport may be used");
 	});
-	const { createDoomClient } = await import("../src/doom-client.ts");
 	const temporaryRoot = await mkdtemp(join(tmpdir(), "doom-client-test-"));
 	t.after(() => rm(temporaryRoot, { recursive: true, force: true }));
 	const pageId = randomUUID(),
@@ -782,7 +791,10 @@ test("attach returns budget metadata as information without adding request autho
 	const lease = await client.attach();
 	assert.equal(lease.configuredDecisionBudget, 2);
 	assert.equal(lease.budgetUnclaimedAtAttach, false);
-	assert.deepEqual(fake.commands[0], { op: "attach", command: { ownerId: lease.ownerId } });
+	assert.deepEqual(fake.commands[0], {
+		op: "attach",
+		command: { ownerId: lease.ownerId },
+	});
 });
 
 for (const [label, attachMetadata] of [
@@ -1008,16 +1020,17 @@ test("overlapping detach and calls after detach do not dispatch", async (t) => {
 test("main awaits offline playback and then detaches", async (t) => {
 	const { main } = await import("../src/main.ts");
 	const fake = await broker(t);
+	configureOfflineMain(() => fake.create());
 	const messages: string[] = [];
 	t.mock.method(console, "log", (message?: unknown) =>
 		messages.push(String(message)),
 	);
-	await main(() => fake.create(), { playback: offlinePlayback });
+	await main();
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);
 	assert.ok(messages.includes("Doom one-decision result:"));
 });
 
-// Legacy transport tests inject playback so they never invoke real memory/model.
+// Legacy transport tests mock playback so they never invoke real memory/model.
 const offlinePlayback: typeof import("../src/doom-play-agent.ts").play = async (
 	client,
 ) => {
@@ -1073,22 +1086,17 @@ const offlinePlayback: typeof import("../src/doom-play-agent.ts").play = async (
 
 test("main rejects --oauth-smoke, obsolete, and unknown args inertly", async () => {
 	const { main } = await import("../src/main.ts");
-	let factoryCalls = 0;
-	const factory = () => {
-		factoryCalls++;
-		return {} as DoomClient;
-	};
 
 	const originalArgv = process.argv;
 	try {
 		for (const arg of ["--oauth-smoke", "--attach-doom", "--unknown"]) {
 			process.argv = [process.execPath, "/main-args-test.ts", arg];
-			await assert.rejects(main(factory), /Usage:/);
+			await assert.rejects(main(), /Usage:/);
 		}
 	} finally {
 		process.argv = originalArgv;
 	}
-	assert.equal(factoryCalls, 0);
+	assert.equal(mocks.makeClient.mock.callCount(), 0);
 });
 
 for (const [code, guidance] of [
@@ -1102,19 +1110,17 @@ for (const [code, guidance] of [
 	test(`main gives bounded operator guidance for ${code}`, async (t) => {
 		const { main } = await import("../src/main.ts");
 		const fake = await broker(t, { attachRejection: code });
-		await assert.rejects(
-			main(() => fake.create(), { playback: offlinePlayback }),
-			(error: unknown) => {
-				assert.ok(error instanceof DoomAttachError);
-				assert.equal(error.code, code);
-				assert.match(error.message, new RegExp(guidance));
-				assert.doesNotMatch(
-					error.message,
-					/SECRET_|sensitive raw|response body/i,
-				);
-				return true;
-			},
-		);
+		configureOfflineMain(() => fake.create());
+		await assert.rejects(main(), (error: unknown) => {
+			assert.ok(error instanceof DoomAttachError);
+			assert.equal(error.code, code);
+			assert.match(error.message, new RegExp(guidance));
+			assert.doesNotMatch(
+				error.message,
+				/SECRET_|sensitive raw|response body/i,
+			);
+			return true;
+		});
 		assert.deepEqual(fake.calls, ["attach"]);
 	});
 }
@@ -1122,35 +1128,31 @@ for (const [code, guidance] of [
 test("main keeps ambiguous attach errors unconfirmed and hides raw transport details", async (t) => {
 	const { main } = await import("../src/main.ts");
 	const fake = await broker(t, { faults: { attach: "transport" } });
-	await assert.rejects(
-		main(() => fake.create(), { playback: offlinePlayback }),
-		(error: unknown) => {
-			assert.ok(error instanceof DoomAttachError);
-			assert.equal(error.code, null);
-			assert.match(error.message, /attach unconfirmed; ownership may be held/);
-			assert.match(error.message, /npm --prefix app run dev:agent/);
-			assert.match(error.message, /http:\/\/127\.0\.0\.1:5174/);
-			assert.match(error.message, /Stop Agent/);
-			assert.match(error.message, /No automatic retry/);
-			assert.doesNotMatch(error.message, /SECRET_TRANSPORT_SENTINEL/);
-			return true;
-		},
-	);
+	configureOfflineMain(() => fake.create());
+	await assert.rejects(main(), (error: unknown) => {
+		assert.ok(error instanceof DoomAttachError);
+		assert.equal(error.code, null);
+		assert.match(error.message, /attach unconfirmed; ownership may be held/);
+		assert.match(error.message, /npm --prefix app run dev:agent/);
+		assert.match(error.message, /http:\/\/127\.0\.0\.1:5174/);
+		assert.match(error.message, /Stop Agent/);
+		assert.match(error.message, /No automatic retry/);
+		assert.doesNotMatch(error.message, /SECRET_TRANSPORT_SENTINEL/);
+		return true;
+	});
 	assert.deepEqual(fake.calls, ["attach"]);
 });
 
 test("main detaches after observation failure and reports release only after acknowledgment", async (t) => {
 	const { main } = await import("../src/main.ts");
 	const fake = await broker(t, { faults: { observe: "rejected" } });
+	configureOfflineMain(() => fake.create());
 	const messages: string[] = [];
 	t.mock.method(process.stderr, "write", (chunk: unknown) => {
 		messages.push(String(chunk));
 		return true;
 	});
-	await assert.rejects(
-		main(() => fake.create(), { playback: offlinePlayback }),
-		/Doom observation unconfirmed/,
-	);
+	await assert.rejects(main(), /Doom observation unconfirmed/);
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);
 	assert.match(messages.join(""), /\[doom\] Lease detached/);
 });
@@ -1158,16 +1160,14 @@ test("main detaches after observation failure and reports release only after ack
 test("main does not claim lease release when detach acknowledgment fails", async (t) => {
 	const { main } = await import("../src/main.ts");
 	const fake = await broker(t, { faults: { detach: "lost" } });
+	configureOfflineMain(() => fake.create());
 	const messages: string[] = [];
 	t.mock.method(console, "log", () => {});
 	t.mock.method(process.stderr, "write", (chunk: unknown) => {
 		messages.push(String(chunk));
 		return true;
 	});
-	await assert.rejects(
-		main(() => fake.create(), { playback: offlinePlayback }),
-		/Doom detach unconfirmed/,
-	);
+	await assert.rejects(main(), /Doom detach unconfirmed/);
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);
 	assert.doesNotMatch(messages.join(""), /Lease detached/);
 	assert.match(messages.join(""), /Detach unconfirmed/);

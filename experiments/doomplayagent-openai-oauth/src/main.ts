@@ -1,5 +1,4 @@
 import { pathToFileURL } from "node:url";
-import type { OpenAIProvider } from "@ai-sdk/openai";
 import { openaiCredentials } from "@openai-oauth/local";
 import {
 	createDoomClient,
@@ -8,7 +7,7 @@ import {
 	type DoomClient,
 } from "./doom-client.ts";
 import { PlaybackError, type PlayResult, play } from "./doom-play-agent.ts";
-import { createDoomTools, type DoomTools } from "./doom-tools.ts";
+import { createDoomTools } from "./doom-tools.ts";
 import { progress } from "./progress.ts";
 import { createOAuthProvider } from "./provider.ts";
 
@@ -38,26 +37,18 @@ function safeAttachError(error: unknown): DoomAttachError {
 	return new DoomAttachError(null, unconfirmedAttachGuidance);
 }
 
-type MainDependencies = {
-	playback?: typeof play;
-	makeTools?: () => DoomTools;
-	makeProvider?: () => OpenAIProvider;
-};
 function authenticatedProvider() {
 	const credentials = openaiCredentials();
 	return createOAuthProvider(() => credentials.getSession());
 }
 
-export async function main(
-	makeDoomClient: typeof createDoomClient = createDoomClient,
-	dependencies: MainDependencies = {},
-) {
+export async function main() {
 	const args = process.argv.slice(2);
 	if (args.length !== 0) throw new Error(usage);
 
-	const doomClient: DoomClient = makeDoomClient();
-	const doomTools = (dependencies.makeTools ?? createDoomTools)();
-	const provider = (dependencies.makeProvider ?? authenticatedProvider)();
+	const doomClient: DoomClient = createDoomClient();
+	const doomTools = createDoomTools();
+	const provider = authenticatedProvider();
 	let attached = false;
 	let failed = false;
 	let playbackError: unknown;
@@ -85,11 +76,7 @@ export async function main(
 			throw new Error(
 				"Doom one-decision preflight failed: this CLI requires a configured budget of exactly 1. Set AGENT_DECISION_BUDGET=1 in app/.env.agent.local and fully restart dev:agent.",
 			);
-		result = await (dependencies.playback ?? play)(
-			doomClient,
-			doomTools,
-			provider,
-		);
+		result = await play(doomClient, doomTools, provider);
 		const { record: _record, ...summary } = result;
 		console.log("Doom one-decision result:", summary);
 	} catch (error) {

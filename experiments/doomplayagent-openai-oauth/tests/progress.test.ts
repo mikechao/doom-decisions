@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test, { type TestContext } from "node:test";
 import { PlaybackError, play } from "../src/doom-play-agent.ts";
-import { main } from "../src/main.ts";
 import { fixture, scenePerception } from "./fixtures.ts";
+import { installMainMocks } from "./main-mocks.ts";
+
+const mocks = installMainMocks();
+const { main } = await import("../src/main.ts");
 
 function capture(t: TestContext) {
 	const stderr: string[] = [];
@@ -21,6 +24,9 @@ function capture(t: TestContext) {
 
 test("milestones log objective and perception to stderr and preserve final stdout", async (t) => {
 	const f = await fixture(t);
+	mocks.makeClient.mock.mockImplementation(() => f.client);
+	mocks.makeTools.mock.mockImplementation(() => f.tools);
+	mocks.makeProvider.mock.mockImplementation(() => f.provider);
 	const { stderr, stdout } = capture(t);
 	const selected = {
 		...f.note,
@@ -49,10 +55,7 @@ test("milestones log objective and perception to stderr and preserve final stdou
 		assert.match(stderr.join(""), /guidance acknowledged/);
 		return decide(input);
 	};
-	const result = await main(() => f.client, {
-		makeTools: () => f.tools,
-		makeProvider: () => f.provider,
-	});
+	const result = await main();
 	assert.equal(result.outcome, "completed");
 	assert.equal(f.events.filter((event) => event === "decide").length, 1);
 	const output = stderr.join("");
@@ -230,6 +233,9 @@ for (const operation of ["setPrompt", "decide"] as const) {
 
 test("uncertain receipt and detach failure stay explicit and bounded", async (t) => {
 	const f = await fixture(t);
+	mocks.makeClient.mock.mockImplementation(() => f.client);
+	mocks.makeTools.mock.mockImplementation(() => f.tools);
+	mocks.makeProvider.mock.mockImplementation(() => f.provider);
 	const { stderr } = capture(t);
 	const decide = f.client.decide;
 	f.client.decide = async (input) => ({
@@ -241,12 +247,7 @@ test("uncertain receipt and detach failure stay explicit and bounded", async (t)
 	f.client.detach = async () => {
 		throw Error("SECRET /private/raw-error");
 	};
-	await assert.rejects(
-		main(() => f.client, {
-			makeTools: () => f.tools,
-			makeProvider: () => f.provider,
-		}),
-	);
+	await assert.rejects(main());
 	const output = stderr.join("");
 	assert.match(
 		output,

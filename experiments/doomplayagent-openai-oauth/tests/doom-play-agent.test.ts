@@ -5,6 +5,10 @@ import test from "node:test";
 import { PlaybackError, play } from "../src/doom-play-agent.ts";
 import type { ScenePerception } from "../src/scene-perception.ts";
 import { fixture, navigationAssessment, scenePerception } from "./fixtures.ts";
+import { installMainMocks } from "./main-mocks.ts";
+
+const mocks = installMainMocks();
+const { main } = await import("../src/main.ts");
 
 // The fake model reports zero raw token counts; the SDK normalizes these to
 // this complete LanguageModelUsage shape on the returned perception.
@@ -848,6 +852,9 @@ for (const assessment of [
 for (const fault of ["transport", "finish", "schema"] as const) {
 	test(`assessment ${fault} failure retains perception and cleans up without claiming a run`, async (t) => {
 		const f = await fixture(t);
+		mocks.makeClient.mock.mockImplementation(() => f.client);
+		mocks.makeTools.mock.mockImplementation(() => f.tools);
+		mocks.makeProvider.mock.mockImplementation(() => f.provider);
 		const generate = f.model.doGenerate.bind(f.model);
 		const cause = Error("SECRET_ASSESSMENT_FAILURE");
 		let calls = 0;
@@ -863,27 +870,20 @@ for (const fault of ["transport", "finish", "schema"] as const) {
 				];
 			return result;
 		};
-		const { main } = await import("../src/main.ts");
-		await assert.rejects(
-			main(() => f.client, {
-				makeTools: () => f.tools,
-				makeProvider: () => f.provider,
-			}),
-			(error) => {
-				assert.ok(error instanceof PlaybackError);
-				assert.equal(error.stage, "navigation-assessment");
-				assert.equal(error.decisionMayHaveBeenSent, false);
-				assert.deepEqual(
-					error.perception,
-					perceptionWithZeroUsage(scenePerception),
-				);
-				assert.equal(error.navigationAssessment, null);
-				assert.equal(error.navigationObjective?.kind, "landmark");
-				assert.doesNotMatch(error.message, /SECRET/);
-				if (fault === "transport") assert.equal(error.cause, cause);
-				return true;
-			},
-		);
+		await assert.rejects(main(), (error) => {
+			assert.ok(error instanceof PlaybackError);
+			assert.equal(error.stage, "navigation-assessment");
+			assert.equal(error.decisionMayHaveBeenSent, false);
+			assert.deepEqual(
+				error.perception,
+				perceptionWithZeroUsage(scenePerception),
+			);
+			assert.equal(error.navigationAssessment, null);
+			assert.equal(error.navigationObjective?.kind, "landmark");
+			assert.doesNotMatch(error.message, /SECRET/);
+			if (fault === "transport") assert.equal(error.cause, cause);
+			return true;
+		});
 		assert.equal(calls, 2);
 		assert.equal(f.events.includes("startRun"), false);
 		assert.equal(f.events.at(-1), "detach");

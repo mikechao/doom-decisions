@@ -2,12 +2,18 @@ import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import test from "node:test";
 import { PlaybackError } from "../src/doom-play-agent.ts";
-import { main } from "../src/main.ts";
 import { fixture, scenePerception } from "./fixtures.ts";
+import { installMainMocks } from "./main-mocks.ts";
+
+const mocks = installMainMocks();
+const { main } = await import("../src/main.ts");
 
 for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 	test(`reasoning model selection through main preserves ${modelId === undefined ? "the default" : modelId === "" ? "an empty override" : "an explicit override"}`, async (t) => {
 		const f = await fixture(t);
+		mocks.makeClient.mock.mockImplementation(() => f.client);
+		mocks.makeTools.mock.mockImplementation(() => f.tools);
+		mocks.makeProvider.mock.mockImplementation(() => f.provider);
 		const previous = process.env.DOOM_REASONING_MODEL;
 		t.after(() => {
 			if (previous === undefined) delete process.env.DOOM_REASONING_MODEL;
@@ -17,10 +23,7 @@ for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 		else process.env.DOOM_REASONING_MODEL = modelId;
 		const responses = t.mock.method(f.provider, "responses");
 		t.mock.method(console, "log", () => {});
-		const result = await main(() => f.client, {
-			makeTools: () => f.tools,
-			makeProvider: () => f.provider,
-		});
+		const result = await main();
 		assert.equal(responses.mock.callCount(), 2);
 		assert.deepEqual(responses.mock.calls[0].arguments, [
 			modelId ?? "gpt-6-luna",
@@ -39,6 +42,9 @@ for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 
 test("main constructs dependencies, attaches once, awaits one complete play, then detaches", async (t) => {
 	const f = await fixture(t);
+	mocks.makeClient.mock.mockImplementation(() => f.client);
+	mocks.makeTools.mock.mockImplementation(() => f.tools);
+	mocks.makeProvider.mock.mockImplementation(() => f.provider);
 	const output = t.mock.method(console, "log", () => {});
 	const detach = f.client.detach;
 	f.client.detach = async () => {
@@ -46,10 +52,20 @@ test("main constructs dependencies, attaches once, awaits one complete play, the
 		await rm(f.root, { recursive: true, force: true });
 		return detach();
 	};
-	const result = await main(() => f.client, {
-		makeTools: () => f.tools,
-		makeProvider: () => f.provider,
-	});
+	const result = await main();
+	for (const factory of [
+		mocks.makeClient,
+		mocks.makeTools,
+		mocks.makeProvider,
+		mocks.credentials,
+	])
+		assert.equal(factory.mock.callCount(), 1);
+	assert.equal(mocks.playback.mock.callCount(), 1);
+	const [client, tools, provider] = mocks.playback.mock.calls[0].arguments;
+	assert.equal(client, f.client);
+	assert.equal(tools, f.tools);
+	assert.equal(provider, f.provider);
+	assert.equal(mocks.getSession.mock.callCount(), 0);
 	assert.equal(result.outcome, "completed");
 	assert.equal(
 		result.perception.description,
@@ -89,6 +105,9 @@ for (const [budget, unclaimed, label] of [
 ] as const) {
 	test(`main rejects ${label} budget before playback and detaches`, async (t) => {
 		const f = await fixture(t);
+		mocks.makeClient.mock.mockImplementation(() => f.client);
+		mocks.makeTools.mock.mockImplementation(() => f.tools);
+		mocks.makeProvider.mock.mockImplementation(() => f.provider);
 		const attach = f.client.attach;
 		f.client.attach = async () => ({
 			...(await attach()),
@@ -97,15 +116,12 @@ for (const [budget, unclaimed, label] of [
 		});
 		let playbackCalls = 0;
 		const responses = t.mock.method(f.provider, "responses");
+		mocks.playback.mock.mockImplementation(async () => {
+			playbackCalls++;
+			throw new Error("playback must not run");
+		});
 		await assert.rejects(
-			main(() => f.client, {
-				makeTools: () => f.tools,
-				makeProvider: () => f.provider,
-				playback: async () => {
-					playbackCalls++;
-					throw new Error("playback must not run");
-				},
-			}),
+			main(),
 			(error: unknown) =>
 				error instanceof Error &&
 				/Doom one-decision preflight failed/.test(error.message),
@@ -119,6 +135,9 @@ for (const [budget, unclaimed, label] of [
 
 test("main does not detach while playback is pending", async (t) => {
 	const f = await fixture(t);
+	mocks.makeClient.mock.mockImplementation(() => f.client);
+	mocks.makeTools.mock.mockImplementation(() => f.tools);
+	mocks.makeProvider.mock.mockImplementation(() => f.provider);
 	t.mock.method(console, "log", () => {});
 	let release!: () => void;
 	let entered!: () => void;
@@ -129,16 +148,13 @@ test("main does not detach while playback is pending", async (t) => {
 		entered = resolve;
 	});
 	const failure = new Error("synthetic playback failure");
-	const running = main(() => f.client, {
-		makeTools: () => f.tools,
-		makeProvider: () => f.provider,
-		playback: async (...args) => {
-			assert.deepEqual(args, [f.client, f.tools, f.provider]);
-			entered();
-			await pending;
-			throw failure;
-		},
+	mocks.playback.mock.mockImplementation(async (...args) => {
+		assert.deepEqual(args, [f.client, f.tools, f.provider]);
+		entered();
+		await pending;
+		throw failure;
 	});
+	const running = main();
 	await started;
 	assert.deepEqual(f.events, ["attach"]);
 	const rejected = assert.rejects(running, (error) => error === failure);
@@ -149,6 +165,9 @@ test("main does not detach while playback is pending", async (t) => {
 
 test("both playback and detach failures remain available in the AggregateError", async (t) => {
 	const f = await fixture(t);
+	mocks.makeClient.mock.mockImplementation(() => f.client);
+	mocks.makeTools.mock.mockImplementation(() => f.tools);
+	mocks.makeProvider.mock.mockImplementation(() => f.provider);
 	t.mock.method(console, "log", () => {});
 	const playbackFailure = new Error("synthetic playback");
 	const detachFailure = new Error("synthetic detach");
@@ -156,25 +175,22 @@ test("both playback and detach failures remain available in the AggregateError",
 		f.events.push("detach");
 		throw detachFailure;
 	};
-	await assert.rejects(
-		main(() => f.client, {
-			makeTools: () => f.tools,
-			makeProvider: () => f.provider,
-			playback: async () => {
-				throw playbackFailure;
-			},
-		}),
-		(error) => {
-			assert.ok(error instanceof AggregateError);
-			assert.deepEqual(error.errors, [playbackFailure, detachFailure]);
-			return true;
-		},
-	);
+	mocks.playback.mock.mockImplementation(async () => {
+		throw playbackFailure;
+	});
+	await assert.rejects(main(), (error) => {
+		assert.ok(error instanceof AggregateError);
+		assert.deepEqual(error.errors, [playbackFailure, detachFailure]);
+		return true;
+	});
 	assert.deepEqual(f.events, ["attach", "detach"]);
 });
 
 test("main detaches after an uncertain real playback transaction", async (t) => {
 	const f = await fixture(t);
+	mocks.makeClient.mock.mockImplementation(() => f.client);
+	mocks.makeTools.mock.mockImplementation(() => f.tools);
+	mocks.makeProvider.mock.mockImplementation(() => f.provider);
 	t.mock.method(console, "log", () => {});
 	const decide = f.client.decide;
 	const cause = new Error("lost decision acknowledgment");
@@ -182,30 +198,24 @@ test("main detaches after an uncertain real playback transaction", async (t) => 
 		await decide(input);
 		throw cause;
 	};
-	await assert.rejects(
-		main(() => f.client, {
-			makeTools: () => f.tools,
-			makeProvider: () => f.provider,
-		}),
-		(error) => {
-			assert.ok(error instanceof PlaybackError);
-			assert.equal(error.cause, cause);
-			assert.equal(error.decisionMayHaveBeenSent, true);
-			assert.equal(error.record?.decision.kind, "unconfirmed");
-			assert.equal(
-				error.perception?.description,
-				"A stone corridor is visible ahead.",
-			);
-			assert.deepEqual(error.perception?.features, scenePerception.features);
-			assert.equal(error.perception?.usage.totalTokens, 0);
-			assert.deepEqual(error.navigationObjective, {
-				kind: "landmark",
-				noteId: f.note.noteId,
-				revision: f.note.revision,
-			});
-			return true;
-		},
-	);
+	await assert.rejects(main(), (error) => {
+		assert.ok(error instanceof PlaybackError);
+		assert.equal(error.cause, cause);
+		assert.equal(error.decisionMayHaveBeenSent, true);
+		assert.equal(error.record?.decision.kind, "unconfirmed");
+		assert.equal(
+			error.perception?.description,
+			"A stone corridor is visible ahead.",
+		);
+		assert.deepEqual(error.perception?.features, scenePerception.features);
+		assert.equal(error.perception?.usage.totalTokens, 0);
+		assert.deepEqual(error.navigationObjective, {
+			kind: "landmark",
+			noteId: f.note.noteId,
+			revision: f.note.revision,
+		});
+		return true;
+	});
 	assert.equal(f.events.filter((event) => event === "decide").length, 1);
 	assert.equal(f.events.at(-1), "detach");
 });

@@ -132,9 +132,15 @@ Offline verification, from this directory with existing dependencies:
 
 ```sh
 npm run typecheck
-node --experimental-strip-types --test tests/*.test.ts
+node --experimental-strip-types --experimental-test-module-mocks --test tests/*.test.ts
 ../../app/node_modules/.bin/biome check src/main.ts src/provider.ts src/doom-play-agent.ts src/navigation-assessment.ts src/doom-tools.ts src/progress.ts tests
 ```
+
+Tests use native Node module mocks (experimental on Node 22.20.0), registered
+before dynamically importing the zero-argument `main()` entry point. Test files
+retain process isolation and serial cases; cached ESM bindings use resettable
+mock implementations, since restoration does not unload `main.ts`. Real playback
+remains exercised with synthetic dependencies.
 
 Tests use fake Doom clients/transports, fake model responses, fake tools for agent
 tests, and isolated temporary SQLite databases for real memory lookup tests.

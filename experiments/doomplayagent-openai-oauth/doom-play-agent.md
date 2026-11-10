@@ -10,7 +10,8 @@ code behavior, not evidence of navigation improvement or landmark arrival.
 
 ## Execution order
 
-1. [`main()`](src/main.ts) rejects arguments, constructs the client, host-only
+1. Zero-argument [`main()`](src/main.ts) rejects CLI arguments and directly
+   constructs the client, host-only
    memory tools and OAuth-backed OpenAI provider, then attaches once. The provider
    uses `openaiCredentials().getSession()` through
    [`createOAuthProvider()`](src/provider.ts). After acknowledged attach it awaits
