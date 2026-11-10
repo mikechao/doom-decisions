@@ -80,7 +80,7 @@ test("main constructs dependencies, attaches once, awaits one complete play, the
 	assert.deepEqual(result.records[0].decision.afterPng, f.state.images[1]);
 	const { records: _records, ...summary } = result;
 	assert.deepEqual(output.mock.calls[0].arguments, [
-		"Doom two-decision result:",
+		"Doom bounded-run result:",
 		summary,
 	]);
 	assert.deepEqual(f.events, [
@@ -106,8 +106,11 @@ test("main constructs dependencies, attaches once, awaits one complete play, the
 for (const [budget, unclaimed, label] of [
 	[null, false, "absent"],
 	[2, false, "already claimed"],
-	[1, true, "mismatched"],
-	[3, true, "larger"],
+	[-1, true, "negative"],
+	[1.5, true, "fractional"],
+	[Infinity, true, "infinite"],
+	[NaN, true, "NaN"],
+	[Number.MAX_SAFE_INTEGER + 1, true, "unsafe"],
 	[0, true, "invalid zero"],
 ] as const) {
 	test(`main rejects ${label} budget before playback and detaches`, async (t) => {
@@ -131,7 +134,7 @@ for (const [budget, unclaimed, label] of [
 			main(),
 			(error: unknown) =>
 				error instanceof Error &&
-				/Doom two-decision preflight failed/.test(error.message),
+				/Doom bounded-run preflight failed/.test(error.message),
 		);
 		assert.equal(playbackCalls, 0);
 		assert.equal(responses.mock.callCount(), 0);
@@ -156,7 +159,7 @@ test("main does not detach while playback is pending", async (t) => {
 	});
 	const failure = new Error("synthetic playback failure");
 	mocks.playback.mock.mockImplementation(async (...args) => {
-		assert.deepEqual(args, [f.client, f.tools, f.provider]);
+		assert.deepEqual(args, [f.client, f.tools, f.provider, 2]);
 		entered();
 		await pending;
 		throw failure;
@@ -271,7 +274,7 @@ test("main waits for second decision, retains both images through detach, and pr
 	}
 	const { records: _records, ...summary } = result;
 	assert.deepEqual(output.mock.calls[0].arguments, [
-		"Doom two-decision result:",
+		"Doom bounded-run result:",
 		summary,
 	]);
 	assert.doesNotMatch(
@@ -317,3 +320,51 @@ test("second-slot playback and detach failures preserve both records in Aggregat
 	assert.equal(f.events.filter((e) => e === "startRun").length, 1);
 	assert.equal(f.events.at(-1), "detach");
 });
+
+for (const budget of [1, 3, 5]) {
+	test(`main accepts hint ${budget}, waits through the issued run and prints no records`, async (t) => {
+		const f = await fixture(t, budget);
+		mocks.makeClient.mock.mockImplementation(() => f.client);
+		mocks.makeTools.mock.mockImplementation(() => f.tools);
+		mocks.makeProvider.mock.mockImplementation(() => f.provider);
+		const output = t.mock.method(console, "log", () => {});
+		const result = await main();
+		assert.equal(result.decisionOrdinal, budget);
+		assert.equal(result.records.length, budget);
+		assert.equal(mocks.playback.mock.calls[0].arguments[3], budget);
+		assert.equal(f.events.filter((e) => e === "attach").length, 1);
+		assert.equal(f.events.filter((e) => e === "startRun").length, 1);
+		assert.equal(f.events.at(-1), "detach");
+		assert.doesNotMatch(
+			JSON.stringify(output.mock.calls[0].arguments),
+			/records|beforePng|afterPng|pngPath|Buffer/,
+		);
+	});
+}
+
+for (const issued of [1, 5]) {
+	test(`main rejects issued ${issued} differing from attach hint 3 and detaches without dispatch`, async (t) => {
+		const f = await fixture(t, 3);
+		mocks.makeClient.mock.mockImplementation(() => f.client);
+		mocks.makeTools.mock.mockImplementation(() => f.tools);
+		mocks.makeProvider.mock.mockImplementation(() => f.provider);
+		const start = f.client.startRun;
+		f.client.startRun = async (input) => {
+			const ack = await start(input);
+			assert.ok(ack.run);
+			ack.run = { ...ack.run, limit: issued, remaining: issued };
+			return ack;
+		};
+		await assert.rejects(main(), (error) => {
+			assert.ok(error instanceof PlaybackError);
+			assert.equal(error.stage, "start-run");
+			assert.equal(error.decisionMayHaveBeenSent, false);
+			assert.equal(error.records[0].runStarted?.run?.limit, issued);
+			return true;
+		});
+		assert.equal(f.events.filter((e) => e === "startRun").length, 1);
+		assert.equal(f.events.includes("setPrompt"), false);
+		assert.equal(f.events.includes("decide"), false);
+		assert.equal(f.events.at(-1), "detach");
+	});
+}

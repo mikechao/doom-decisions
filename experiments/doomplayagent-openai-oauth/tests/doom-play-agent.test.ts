@@ -740,7 +740,7 @@ for (const fault of ["observe", "initial-image"] as const) {
 	});
 }
 
-test("broker budget greater than one stops before dispatch", async (t) => {
+test("issued budget differing from attach hint stops before dispatch", async (t) => {
 	const f = await fixture(t);
 	const startRun = f.client.startRun;
 	f.client.startRun = async (input) => {
@@ -749,7 +749,7 @@ test("broker budget greater than one stops before dispatch", async (t) => {
 		ack.run = { ...ack.run, limit: 3, remaining: 3 };
 		return ack;
 	};
-	await assert.rejects(play(f.client, f.tools, f.provider), PlaybackError);
+	await assert.rejects(play(f.client, f.tools, f.provider, 2), PlaybackError);
 	assert.equal(f.events.includes("decide"), false);
 });
 

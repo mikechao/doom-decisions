@@ -5,6 +5,7 @@ import {
 	type AgentObserveResult,
 	type AgentScope,
 	maxAgentInstructions,
+	validAgentLimit,
 } from "../../../app/src/agent-control.ts";
 import type { AgentDecisionResult } from "../../../app/src/agent-observation.ts";
 import type {
@@ -130,7 +131,7 @@ type DecisionAttempt =
 	  };
 
 type DecisionEvidence = {
-	ordinal: 1 | 2;
+	ordinal: number;
 	reasoningObservation: MaterializedObserve | null;
 	beforePng: Buffer | null;
 	landmarkLookup: Memory | null;
@@ -157,7 +158,7 @@ export type DecisionRecord = Readonly<DecisionEvidence>;
 
 export type PlayResult = {
 	readonly records: DecisionRecord[];
-	decisionOrdinal: 1 | 2;
+	decisionOrdinal: number;
 	navigationObjective: NavigationObjective;
 	memoryStatus: Memory["status"];
 	candidateCount: number;
@@ -179,7 +180,7 @@ export type PlayResult = {
 };
 export class PlaybackError extends Error {
 	readonly records: DecisionRecord[];
-	readonly decisionOrdinal: 1 | 2;
+	readonly decisionOrdinal: number;
 	readonly stage: string;
 	readonly navigationAssessment: NavigationAssessment | null;
 	readonly decisionMayHaveBeenSent: boolean;
@@ -193,7 +194,7 @@ export class PlaybackError extends Error {
 		navigationObjective: NavigationObjective | null = null,
 		navigationAssessment: NavigationAssessment | null = null,
 		records: DecisionRecord[] = [],
-		decisionOrdinal: 1 | 2 = 1,
+		decisionOrdinal: number = 1,
 	) {
 		super(
 			`Doom playback stopped at ${stage} for decision #${decisionOrdinal}. ${decisionMayHaveBeenSent ? `Decision #${decisionOrdinal} outcome may be unknown.` : `Decision #${decisionOrdinal} was not sent.`} No retry was made.`,
@@ -210,7 +211,7 @@ export class PlaybackError extends Error {
 	}
 }
 
-function newRecord(ordinal: 1 | 2): DecisionEvidence {
+function newRecord(ordinal: number): DecisionEvidence {
 	return {
 		ordinal,
 		reasoningObservation: null,
@@ -249,7 +250,8 @@ function checkCheckpoint(
 function checkRun(
 	checkpoint: Pick<MaterializedObserve, "sessionId" | "revision" | "run">,
 	scope: AgentScope,
-	used: 0 | 1,
+	limit: number,
+	used: number,
 ) {
 	const run = checkpoint.run;
 	if (
@@ -257,14 +259,12 @@ function checkRun(
 		checkpoint.revision !== scope.revision ||
 		!run?.active ||
 		run.runId !== scope.runId ||
-		run.limit !== 2 ||
+		run.limit !== limit ||
 		run.reserved !== used ||
 		run.sdkInvoked !== used ||
-		run.remaining !== 2 - used
+		run.remaining !== limit - used
 	)
-		throw new Error(
-			"The two-decision run checkpoint is unavailable or changed.",
-		);
+		throw new Error("The bounded run checkpoint is unavailable or changed.");
 }
 
 async function prepareDecision(
@@ -273,7 +273,7 @@ async function prepareDecision(
 	image: Buffer,
 	selection: NavigationSelection,
 	canonicalBase: string,
-	ordinal: 1 | 2,
+	ordinal: number,
 	record: DecisionEvidence,
 ): Promise<PreparedDecision> {
 	let stage = "perception";
@@ -343,7 +343,8 @@ async function executeOneDecision(
 	before: MaterializedObserve,
 	guidance: PreparedDecision,
 	initialScope: AgentScope,
-	ordinal: 1 | 2,
+	limit: number,
+	ordinal: number,
 	record: DecisionEvidence,
 ) {
 	const { perception, navigationObjective, instructions } = guidance;
@@ -365,7 +366,7 @@ async function executeOneDecision(
 		const ready = await doomClient.observe();
 		record.admissionObservation = structuredClone(ready);
 		checkCheckpoint(ready, before);
-		checkRun(ready, scope, ordinal === 1 ? 0 : 1);
+		checkRun(ready, scope, limit, ordinal - 1);
 
 		stage = "decision";
 		const input = { observationId: ready.observationId, scope };
@@ -431,14 +432,15 @@ async function executeOneDecision(
 	}
 }
 
-/** Two fixed slots in one broker-authorized run; no retries or re-selection. */
+/** One broker-issued bounded run; no retries or objective re-selection. */
 export async function play(
 	doomClient: DoomClient,
 	doomTools: DoomTools,
 	openAIProvider: OpenAIProvider,
+	expectedDecisionBudget?: number,
 ): Promise<PlayResult> {
 	let stage = "observation";
-	let ordinal: 1 | 2 = 1;
+	let ordinal: number = 1;
 	let navigationObjective: NavigationObjective | null = null;
 	let prepared: PreparedDecision | null = null;
 	let record = newRecord(1);
@@ -498,54 +500,66 @@ export async function play(
 			runId: started.run?.runId ?? "",
 			revision: observation.revision,
 		};
-		// The executor checks claim correlation; verify the actual two-slot allowance.
-		checkRun(started, scope, 0);
+		// The attach hint checks consistency only; the issued limit owns the bound.
+		const limit = started.run?.limit;
+		if (
+			!validAgentLimit(limit) ||
+			(expectedDecisionBudget !== undefined && limit !== expectedDecisionBudget)
+		)
+			throw new Error(
+				"The issued run limit is invalid or differs from attach metadata.",
+			);
+		checkRun(started, scope, limit, 0);
 		let decision = await executeOneDecision(
 			doomClient,
 			observation,
 			prepared,
 			scope,
+			limit,
 			1,
 			record,
 		);
 		records.push(Object.freeze(record));
-		const first = decision.receipt;
-		if (
-			first.outcome === "completed" &&
-			!first.completionUncertain &&
-			first.sdkInvoked &&
-			first.reason === null &&
-			first.action !== null &&
-			first.observation?.phase === "ready"
-		) {
-			ordinal = 2;
-			record = newRecord(2);
+		while (ordinal < limit) {
+			const previous = decision.receipt;
+			if (
+				previous.outcome !== "completed" ||
+				previous.completionUncertain ||
+				!previous.sdkInvoked ||
+				previous.reason !== null ||
+				previous.action === null ||
+				previous.observation?.phase !== "ready"
+			)
+				break;
+			ordinal++;
+			record = newRecord(ordinal);
 			record.selection = structuredClone(selection);
 			prepared = null;
 			stage = "observation";
-			const before2 = await doomClient.observe();
-			record.reasoningObservation = structuredClone(before2);
+			const before = await doomClient.observe();
+			record.reasoningObservation = structuredClone(before);
 			stage = "continuation-check";
-			checkCheckpoint(before2, first.observation);
-			checkRun(before2, decision.scope, 1);
+			checkCheckpoint(before, previous.observation);
+			checkRun(before, decision.scope, limit, ordinal - 1);
 			stage = "observation";
-			const image2 = await readFile(before2.pngPath);
-			record.beforePng = image2;
+			const image = await readFile(before.pngPath);
+			record.beforePng = image;
 			prepared = await prepareDecision(
 				openAIProvider,
-				before2,
-				image2,
+				before,
+				image,
 				selection,
 				canonicalBase,
-				2,
+				ordinal,
 				record,
 			);
 			decision = await executeOneDecision(
 				doomClient,
-				before2,
+				before,
 				prepared,
 				decision.scope,
-				2,
+				limit,
+				ordinal,
 				record,
 			);
 			records.push(Object.freeze(record));

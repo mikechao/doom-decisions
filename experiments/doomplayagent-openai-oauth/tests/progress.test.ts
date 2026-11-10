@@ -113,7 +113,7 @@ test("milestones log objective and perception to stderr and preserve final stdou
 		f.state.instructions,
 	]);
 	assert.ok(!output.includes(String.fromCharCode(27)));
-	assert.match(stdout.join(""), /^Doom two-decision result:/);
+	assert.match(stdout.join(""), /^Doom bounded-run result:/);
 	assert.doesNotMatch(
 		stdout.join(""),
 		/\[doom\]|\[navigation\]|\[perception\]|\[decision\]/,

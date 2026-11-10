@@ -1,219 +1,200 @@
 # DoomPlayAgent execution flow
 
 This is the implementation baseline for [`play()`](src/doom-play-agent.ts):
-**at most two consecutive informed decisions in one broker-authorized two-slot
-run**, with no retry or replacement run. Early failure or declined admission can
-produce fewer decisions or no gameplay. Doom runs in the browser. Responses
-reasoning models perceive/assess scenes; the browser's Decisions API selects the
-low-level action. This describes implementation, not live gameplay proof or
-navigation improvement.
+**up to N consecutive informed decisions in one broker-issued run**, with no retry
+or replacement run. N is the issued positive safe-integer limit. Early failure or
+declined admission can produce fewer decisions or no gameplay. Doom runs in the
+browser; Responses reasoning models perceive/assess scenes and the browser's
+Decisions API selects the low-level action. This describes implementation, not
+proof of navigation improvement or live N>2 gameplay.
 
 ## Execution order
 
-1. Zero-argument exported [`main()`](src/main.ts) constructs the client, host-only
-   memory tools and OAuth-backed provider, then attaches once. The provider uses
-   `openaiCredentials().getSession()` through `createOAuthProvider()`. Attach
-   preflight requires `configuredDecisionBudget === 2` and
-   `budgetUnclaimedAtAttach === true`. These are advisory snapshots, not a claim.
-   An acknowledged attach is detached in `finally`, even if preflight fails.
-2. `play()` observes once and captures the canonical base instructions immediately
-   from that clean lease. It snapshots the reasoning observation and reads its
-   materialized PNG once into an owned Buffer. The shared executor checks PNG
-   header/hash before materialization; this reasoning read does not revalidate
+1. Zero-argument exported `main()` constructs the client, host-only memory tools and
+   OAuth-backed provider, then attaches once. Attach preflight requires a positive
+   safe-integer `configuredDecisionBudget` and `budgetUnclaimedAtAttach === true`.
+   These snapshots do not claim or authorize a run. An acknowledged attach is
+   detached in `finally`, including on preflight/playback failure.
+2. `play()` obtains the initial observation and captures its canonical instruction
+   template once from the fresh unmodified lease. It snapshots the observation and
+   reads its materialized PNG once into an owned Buffer. The shared executor checks
+   PNG header/hash before materialization; this reasoning read does not revalidate
    the file. Later file changes cannot change the owned inference bytes.
-3. `findActiveLandmarks()` makes one map-wide `active-landmarks` lookup using the
-   verified map key, limit 3, without pose/radius restriction. Existing storage is
-   read-only. Bounded candidates must match the namespace and have unique IDs.
-   `selectNavigationObjective()` chooses the first candidate in shared
-   creation-time/ID order, or free exploration. This selection and its full target
-   remain the same for both decisions. There is no ranking, re-selection or write.
-   Lookup status/count, hashed note label/revision and JSON-quoted historical
-   hypothesis/next question are logged once.
-4. `prepareDecision()` calls `perceiveScene()` with this decision's own owned PNG
-   and `modelState()` projection. Perception receives no objective or historical
-   note. Compact state includes map slot, tic, phase, telemetry, facing probe and
-   previous action's action/tics/end tic. For a selected landmark only,
-   `assessNavigation()` compares this fresh perception with the same selected
-   target, text-only. Assessment failure stops; there is no fallback assessment.
-5. Preparation composes bounded guidance from the **original canonical base**,
-   selection, current perception and optional assessment. Free exploration also
-   receives scene guidance. First guidance is size-checked before any run claim.
-6. `play()` calls `startRun()` exactly once, submitting decision #1's initial
-   observation/session/revision. The executor checks claim correlation. Local
-   checks require matching session/revision and an active run with limit **2**,
-   reserved/SDK counts **0/0**, remaining **2**. The broker owns issuance and
-   chooses the limit; the attach hint never replaces this nonrefundable claim.
+3. `findActiveLandmarks()` performs one map-wide `active-landmarks` lookup with the
+   verified map key, limit 3 and no pose/radius restriction. Storage is read-only.
+   Candidates must match the namespace and have unique IDs. The first candidate in
+   creation-time/ID order becomes the target; otherwise the objective is free
+   exploration. This selection remains unchanged throughout the run.
+4. `prepareDecision()` calls `perceiveScene()` with the first owned image and compact
+   current state. Perception receives no objective or historical note. When a target
+   exists, `assessNavigation()` compares that perception with the selected target,
+   text-only. Assessment failure stops without fallback.
+5. Preparation composes guidance from the original canonical base, selection,
+   current perception and optional assessment. First guidance is size-checked
+   **before the nonrefundable run claim**.
+6. `play()` calls `startRun()` once with the initial observation/session/revision.
+   The broker chooses the run ID and limit. The executor checks correlation; local
+   checks require a valid positive safe-integer issued limit, matching session and
+   revision, active run, zero reservations/SDK invocations and remaining N.
+   `main()` supplies the attach hint as `expectedDecisionBudget`; disagreement with
+   the issued limit fails before CAS/dispatch, without refund or another claim.
+   This argument is a consistency check, not desired N. Direct callers without
+   attach metadata may omit it; the issued limit remains authoritative.
 7. `executeOneDecision()` performs prompt CAS with live session/run/revision scope,
-   records the acknowledgment and adopts its revision. It then observes again
-   for admission, requiring a distinct observation ID, ready phase, matching
-   reasoning session/map/tic, acknowledged revision and expected active run
-   accounting. It does not reread the admission PNG. Browser admission is final
-   authority and can still reject a later change.
-8. The helper calls `decide()` exactly once, records submitted input and the exact
-   executor-validated receipt, and retains a resulting PNG when present. That
-   image gets one read plus SHA-256 comparison. Retention failure stays separate
-   from the receipt and never triggers replay. Record #1 is frozen/published.
-9. Only a completed, certain first receipt with SDK invocation, selected action,
-   null reason and a ready verified ending observation permits second preparation.
-   Other returned outcomes are reported directly with one record and
-   `decisionOrdinal: 1`. The executor/parser/controller own receipt consistency
-   and native verification; this experiment does not recreate a native verifier.
-10. Before another operation, `play()` creates partial record #2 with the same
-    selection. A new standalone `observe()` supplies both the second reasoning
-    image metadata and current configuration/run accounting. It must have a new
-    ID and the same session/map key/tic as receipt #1's verified **ending**
-    observation, ready phase and carried revision. Run ID must match the issued
-    run, active, limit **2**, reserved **1**, SDK-invoked **1**, remaining **1**.
-    This is an authoritative snapshot check, not a local budget ledger.
-11. Read the second reasoning PNG once, repeat preparation with fresh perception
-    and optional assessment of the same target, and compose from the original
-    base. Repeat the CAS/admission/one-decision helper. Its admission observation
-    rechecks checkpoint/revision and the same **1/1/1** remaining-slot accounting.
-    There is no third decision, post-second inference or final accounting call.
-12. `main()` prints the compact last-decision summary, excluding **all records
-    and Buffers**, and detaches after playback settles. Playback and detach errors
-    remain separate members of `AggregateError` when both fail.
+   records its acknowledgment and adopts that revision. CAS invalidates admission,
+   so it observes again. This admission observation must have a distinct ID, ready
+   phase, the reasoning session/map/tic, acknowledged revision and expected active
+   run accounting. The admission PNG is not reread for inference.
+8. The helper calls `decide()` once. Immediately before invocation it records the
+   submitted input as unconfirmed. A returned receipt is detached and recorded;
+   its resulting PNG, when present, gets one read and SHA-256 check for retention.
+   Retention failure does not rewrite the receipt or trigger replay. The completed
+   record is frozen and published.
+9. For each ordinal k=2..N, continue only if the previous receipt is `completed`,
+   certain, SDK-invoked, has null reason, non-null action and a ready ending
+   observation. Otherwise return the exact last outcome without creating record k.
+10. Before obtaining the next reasoning observation, create partial record k with
+    the same selection and clear prior preparation. Obtain a fresh standalone
+    observation and validate the ending-checkpoint/accounting contract below.
+    Read its own PNG; never substitute the previous record's retained after-image.
+11. Repeat fresh perception, optional assessment of the same target, composition
+    from the original base, size check, CAS, admission recheck and one decision.
+    Publish the record and carry the live receipt/scope. After ordinal N there is
+    no extra observation, inference or active-run check; exhaustion legitimately
+    makes the authorization inactive.
+12. `main()` prints only the compact last-decision summary, excluding records and
+    Buffers, then detaches. Playback and detach failures remain separate members
+    of `AggregateError` when both fail.
 
-`findActiveLandmarks()` distinguishes `found`, `empty`, `unavailable` (missing
-storage), and `lookup_failed`. The latter three allow perception-informed free
-exploration. Malformed evidence instead stops at `landmarks` before inference.
-`hasMore` remains diagnostic; it never changes selection.
+Lookup statuses `empty`, `unavailable` (missing storage), and `lookup_failed` permit
+perception-informed free exploration. Malformed evidence stops at `landmarks`.
+`hasMore` stays diagnostic and never changes selection. Historical prose is
+JSON-quoted in logs; the note label uses a short SHA-256 digest of its ID.
 
 ## Helpers, data and ownership
 
 | Owner | Responsibility |
 | --- | --- |
-| `play()` | Once-only observation/base capture, lookup/selection and claim; explicit conditional second slot; live scope/receipt continuity; ordered record publication and final summary. |
-| `prepareDecision()` | Per-decision perception, optional assessment, canonical-base composition and size preflight; stage-specific reasoning failures. |
-| `executeOneDecision()` | Prompt CAS, fresh admission observation/checks, one `decide()`, result-image retention. It never claims a run. |
-| `checkCheckpoint()` / `checkRun()` | Cross-operation simulation checkpoint and exposed scope/accounting checks. No native stepping or independent receipt verifier. |
-| `newRecord()` | Nullable passive evidence initializer for ordinal 1 or 2. |
-| `modelState()` / `composeGuidance()` | Compact current state and bounded advisory projections; no previous records or unselected notes enter reasoning/guidance. |
-| [`DoomClient`](src/doom-client.ts) | Acknowledged lease lifecycle, serialized operations, no retries. `play()` does not use `getConfig()`, `getPrompt()` or `setConfig()`. |
-| [Shared executor](../../scripts/doom-agent-client.ts) | Wire validation; held-lease page/epoch/command correlation; strict observation/settings/receipt parsing; PNG validation/materialization; settings session/run correlation, exact prompt echo/revision increment, active start acknowledgment and decision `beforeObservationId`. |
-| [Browser/controller](../../app/src/session-controller.ts) | Lease/session/run ownership, one-shot issuance, CAS, readiness, nonrefundable reservations, SDK reader cleanup, Stop fences, native dispatch and resulting-frame verification. Shared code is unchanged. |
+| `play()` | Initial observation/base, lookup/selection, first preparation and sole claim; continuation loop, live scope/receipt, ordered records and final summary. |
+| `prepareDecision()` | Per-slot perception, optional assessment, canonical-base guidance and size check; stage-specific reasoning failures. |
+| `executeOneDecision()` | CAS, fresh admission/checks, one `decide()`, after-image retention. Never claims a run. |
+| `checkCheckpoint()` / `checkRun()` | Exposed checkpoint/scope/accounting checks; no independent native verifier or local authority ledger. |
+| `newRecord()` | Partial passive evidence initializer for the current numeric ordinal. |
+| `modelState()` / `composeGuidance()` | Compact current state and bounded advisory projections; no prior records or unselected notes enter reasoning. |
+| `DoomClient` | Acknowledged lease lifecycle, serialized operations, no retries. Playback does not call `getConfig()`, `getPrompt()` or `setConfig()`. |
+| Shared executor | Held-lease page/epoch/command correlation, DTO/settings/receipt parsing, PNG validation/materialization, exact prompt echo/revision increment, active start acknowledgment and decision observation correlation. |
+| Browser/controller | Lease/session/run ownership, one-shot issuance, CAS/readiness, nonrefundable reservations, SDK reader cleanup, Stop fences, native dispatch and resulting-frame verification. |
+
+## Continuation and admission contract
+
+After k-1 completed, certain decisions, the fresh reasoning observation requires:
+
+- Ready phase and a different observation ID from the previous receipt's ending
+  observation; matching ending session, map key and tic.
+- Session and revision matching the carried live scope.
+- Same active run ID, `limit === N`, `reserved === k-1`, `sdkInvoked === k-1`,
+  `remaining === N-(k-1)`.
+
+After CAS, admission rechecks session/map/tic against this slot's reasoning
+observation, requires a different ID, and checks the same run/accounting at the
+acknowledged revision. First admission uses zero consumed slots. These equal
+reservation/SDK counts apply only after completed receipts; admission may reserve a
+slot before SDK creation fails, and that reservation is never refunded.
 
 Standalone observations expose revision/configuration/run accounting. Decision
-receipts expose a base ending observation, **not updated run accounting or
-revision**. The fresh second reasoning observation obtains that missing state
-without an extra `getConfig()`. A completed action alone does not prove a lease
-is still valid. CAS and admission recheck after reasoning latency; Stop/revocation
-can always invalidate an earlier snapshot.
+receipts expose only a base ending observation. The standalone reasoning capture
+obtains missing accounting without another config read. Passive captures need not
+have equal PNG bytes, hashes, telemetry or render/frame counters. Same
+session/map/tic establishes the exposed simulation checkpoint; each capture's
+native/Canvas linkage is verified by the controller.
 
-Passive captures need not be byte-identical. Render/frame counters may advance;
-full frames, PNG hashes, telemetry and entire DTO equality are not local continuity
-requirements. Same session/map/tic ties the new capture to the verified simulation
-checkpoint. The controller independently verifies passive operations and each
-capture's native/Canvas linkage.
+All observations are snapshots. Stop during reasoning can leave that reasoning
+call running, but later CAS/admission must fail closed. Stop after admission is
+handled by controller fences and verification. The controller checks current
+lease/epoch, exact unconsumed observation, configuration identity, revision and
+readiness before dispatch; the coordinator cannot guarantee continued ownership.
 
-## Results and passive decision records
+## Results and passive records
 
-`PlayResult.records: DecisionRecord[]` is ordered, with ordinal **1** and, when
-second preparation begins, **2**. `decisionOrdinal` identifies the last returned
-decision. Existing flat perception/assessment, promptChanged, run ID, outcome,
-reason, action, SDK invocation, uncertainty and tic fields describe **that decision**,
-not aggregate totals. Cumulative tics retain the receipt's cumulative meaning.
-A returned result is not necessarily completed gameplay.
+`PlayResult.records` contains ordered records 1..k. `decisionOrdinal` identifies
+the last returned decision. Flat perception/assessment, promptChanged, run ID,
+outcome, reason, action, SDK invocation, uncertainty and tic fields describe that
+last decision, not run totals. `cumulativeTics` is copied unchanged from its receipt.
+A returned result need not represent completed gameplay.
 
-`PlaybackError.records` retains all completed and current partial records.
-`decisionOrdinal` and `stage` identify the failing slot. Its original `cause` and
-available objective/perception/assessment remain accessible. The constructor
-allows an empty array for errors constructed outside `play()`. The
-`decisionMayHaveBeenSent` flag concerns only the failing decision: second
-preparation failure does not imply the first decision was absent. Error wording
-names the ordinal; the CLI does not print raw causes or records.
+A noncompleted, terminal, declined or uncertain return stops before any next
+record/preparation. A failure throws `PlaybackError` containing all earlier
+completed records plus the current partial record, failing ordinal/stage, original
+cause and available objective/perception/assessment. `decisionMayHaveBeenSent`
+concerns only that failing ordinal. Clearing preparation before each new
+observation prevents stale perception/assessment in later errors.
 
-Each record contains its reasoning observation and owned `beforePng`, selection,
-perception/optional assessment with usage, composed guidance, prompt acknowledgment,
-admission observation, and decision evidence. Record #1 alone contains the lookup
-and start acknowledgment; those fields remain null in record #2. Record #2 is
-initialized before its observation, so even an observation failure retains
-`[record1, partialRecord2]`. An observation rejected by local checks remains recorded.
+Each record retains reasoning observation, owned `beforePng`, selection,
+perception/optional assessment with usage, guidance, prompt acknowledgment,
+admission observation and decision evidence. Only record 1 contains the original
+lookup and start acknowledgment. Decision evidence distinguishes:
 
-`decision.kind` distinguishes:
+- `not-called`: no invocation; only stages reached so far are retained.
+- `unconfirmed`: submitted scope/input retained, no trustworthy returned receipt;
+  a thrown `decide()` is conservatively uncertain even if its message says failure
+  occurred before dispatch. No fabricated receipt/image or retry.
+- `returned`: detached receipt, nullable owned `afterPng`, and separate nullable
+  `imageRetentionFailure` (`read-failed` or `digest-mismatch`). Without an ending
+  observation there is no after-image or retention failure. Retention failure alone
+  does not block a later independently verified reasoning capture.
 
-- `not-called`: no invocation; earlier evidence and bounded stage/message survive.
-- `unconfirmed`: submitted input/scope retained, no trustworthy receipt returned.
-  No fabricated receipt/image and no retry.
-- `returned`: exact submitted input, detached receipt, nullable owned `afterPng`,
-  and independent nullable `imageRetentionFailure` (`read-failed` or
-  `digest-mismatch`). Receipt return does not imply successful gameplay. No ending
-  observation means no after-image or retention failure. Image retention failure
-  leaves `record.failure` null and does not alter gameplay outcome.
+Records are passive; live scope/receipt/selection drive control flow. DTOs are
+cloned at capture, Buffers transfer ownership without another copy, and records
+are shallow-frozen at publication. Callers must treat nested DTOs, arrays and
+Buffers as immutable. Paths are ephemeral provenance; owned bytes survive file
+changes/deletion/detach. Executor materialization failure before return remains
+unconfirmed. Records provide no persistence or independent native proof.
 
-Records are passive. Control flow uses live scope/receipt/selection variables,
-never record fields. Record #1's retained after-image is never reused for second
-reasoning. Its retention failure alone cannot block a fresh verified observation.
-DTOs are detached with `structuredClone` at capture. Each reasoning Buffer is the
-same owned Buffer sent to perception, without another copy/read/hash. Each result
-image has one retained read plus hash comparison; mismatched bytes are not trusted.
-Records are frozen at publication. Readonly/freeze are shallow: callers must treat
-nested DTOs, the array and Buffers as immutable. There is no deep-freeze/copy layer.
+Memory grows O(N) because images and DTOs remain retained. Keep practical smoke
+budgets small; the positive-safe-integer limit has no additional small memory cap.
 
-PNG paths remain ephemeral provenance; only owned bytes survive source changes,
-deletion and detach. Reasoning reads retain the pre-existing materialization-to-read
-validation gap. Executor materialization failure before return is unconfirmed.
-Records provide no persistence, archive, independent native proof or authority.
+## Navigation, inference and failure boundaries
 
-## Navigation, inference and prompt lifecycle
+The objective and full target stay fixed. Historical anchor/hypothesis/question
+are unverified advice, not destinations or routes. All assessment verdicts may
+proceed; current verified game evidence, base survival rules and controller
+authority take priority. Advisory JSON excludes usage/full observations and labels
+embedded text untrusted. Decisions alone chooses the low-level action.
 
-Historical hypothesis/next question and raw observer pose are unverified advice,
-not verified destinations, geometry or arrival. All assessment verdicts may proceed.
-Current verified game evidence, base survival rules and controller authority take
-priority. Advisory JSON excludes usage/full observations and labels embedded text
-untrusted. Decisions retains all low-level action selection and controller-owned
-duration/authorization.
+Reasoning helpers retain their existing Responses configuration and schemas,
+`DOOM_REASONING_MODEL ?? "gpt-6-luna"`, no retries, 60-second abort signal,
+`store: false`, `reasoningEffort: "xhigh"`, and required finish reason `stop`.
 
-Both reasoning helpers are unchanged: `DOOM_REASONING_MODEL ?? "gpt-6-luna"`,
-Responses, strict schemas, no retries, 60-second abort signal, `store: false`,
-`reasoningEffort: "xhigh"`, and required finish reason `stop`. Perception remains
-image/state-only; assessment remains perception/selected-target-only. No new
-historical prompt input, reasoning step or reflection is introduced.
+The canonical template is captured once. `main()` supplies a fresh lease copied
+from human instructions. Direct callers must also supply a fresh unmodified lease:
+observations have no separate canonical-template field. Every amendment replaces
+instructions from that original base, never accumulates prior amendments. There
+is no prompt restoration mutation or automatic expiry of “next decision” wording.
 
-The canonical base is captured once from the initial observation. `main()` attaches
-a fresh lease copied from human instructions; direct callers must likewise supply
-a fresh unmodified lease, since observations have no separate canonical-base field.
-Each amendment replaces lease instructions. Prompt #2 never appends to prompt #1.
-There is no restoration mutation or automatic expiry of “next decision” wording.
+The 16,000 JavaScript-character guidance check never truncates. First overflow
+precedes claim; later overflow preserves earlier records and stops before that
+slot's CAS/dispatch. Stage names remain `observation`, `landmarks`, `perception`,
+`navigation-assessment`, `guidance`, `start-run`, `continuation-check`, `prompt-cas`,
+`dispatch-observation` and `decision`. Lost acknowledgments are never replayed.
+No config/duration change, refund, replacement run, objective switching, reflection,
+planner, landmark retirement or memory write is introduced.
 
-The 16,000 JavaScript-character size check does not truncate. First overflow occurs
-before claiming; second overflow occurs after the first decision but before second
-CAS/dispatch, retaining both complete/partial records. The issued allowance is not
-refunded or replaced. Agent admission reserves a slot even if SDK creation later
-fails; `sdkInvoked` separately records an actual SDK start. No tics/config change
-or budget replenishment occurs here.
+## Evidence and offline checks
 
-## Failure boundaries and current limits
+The earlier two-decision milestone was reported to pass 179/179 offline tests and
+an authorized live smoke (`turn_right`, then `forward`) with fresh perception and
+assessment before decision 2 and clean detach. The nested advisory-JSON assertion
+in `doom-tools.test.ts` is fixed. Root `AGENTS.md` still describes the older
+one-decision milestone; it is unchanged in this package-only refactor.
 
-- Attach preflight rejects absent, claimed/closed or non-2 budget hints; acknowledged
-  ownership is still detached. The authoritative claim may later fail independently.
-- First observation/image, landmark, perception, assessment or guidance failure
-  precedes claim. `start-run` includes wrong actual allowance/correlation failures.
-- Each slot preserves `prompt-cas`, `dispatch-observation` and `decision` stages.
-  Lost mutation acknowledgments may leave applied changes; never retry them.
-- Second observation/image failures use `observation`; checkpoint/accounting
-  rejection uses `continuation-check`. Later preparation failures retain record #1.
-- A thrown `decide()` is conservatively unconfirmed regardless of textual client
-  pre/post-dispatch messages. A returned receipt supplies explicit uncertainty.
-  Neither permits retry. All noncompleted first outcomes stop before slot #2.
-- Terminal prefixes, unsupported states, uncertainty, Stop and reader ownership
-  remain controlled by the unchanged browser pipeline. A completed receipt followed
-  by revocation does not authorize another decision.
-
-`main()` retains its detach/error aggregation semantics. Unacknowledged attach
-never initiates detach; failed detach closes the client without retry. There is
-no arbitrary-N loop, objective-completion logic, memory transition/write, planner,
-landmark retirement or persistence. Live two-decision gameplay remains unverified.
-
-## Focused offline checks
-
-`two-decisions.test.ts` covers stateful two-slot landmark/free-explore sequences,
-fresh images/state, same selected target, original-base prompts, claim/accounting
-checks, second-slot failure preservation, admission races and second overflow.
-Existing playback tests retain schema, advisory isolation, first failures,
-terminal/uncertain outcomes, DTO snapshots and image retention checks. Main tests
-cover preflight, waiting through slot #2, retained bytes after detach, compact
-output and combined failures. Provider/client/progress tests retain fake transport
-and module mocks. These are offline synthetic evidence, not browser/native/API
-proof. The observed pre-change suite had 133 passing and one outdated guidance-regex
-failure in `doom-tools.test.ts`; that unrelated assertion remains unchanged.
+Generalized N>2 has not been demonstrated live. Offline tests use synthetic PNGs,
+fake transports/models/tools and isolated temporary SQLite fixtures, never the
+historical DB. They do not establish browser/native rendering or paid API behavior.
+The existing `two-decisions.test.ts` now includes N=1/2/3/5, later checkpoint and
+accounting rejection, intermediate outcomes, later failures and retained evidence.
+Main tests cover hint validation/consistency, cleanup and record-free output.
+The 2026-11-10 offline verification passed 118/118 focused and 241/241 full tests,
+typecheck, the documented Biome check (16 files), and diff whitespace checks. The
+initial 179/179 baseline was also reproduced. See README for commands and details.
+Next steps are focused static review,
+then a separately authorized N=3 live experiment.

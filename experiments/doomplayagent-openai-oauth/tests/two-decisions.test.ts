@@ -267,100 +267,109 @@ for (const fault of [
 	});
 }
 
-for (const fault of [
-	"missing-run",
-	"run-id",
-	"inactive",
-	"limit",
-	"reserved",
-	"sdk",
-	"remaining",
-	"session",
-	"map",
-	"tic",
-	"revision",
-	"phase",
-	"observation-id",
-] as const) {
-	test(`second reasoning rejects ${fault} before inference or prompt mutation`, async (t) => {
-		const f = await fixture(t);
-		const observe = f.client.observe;
-		f.client.observe = async () => {
-			const o = await observe();
-			if (f.state.observeCalls === 3) {
-				assert.ok(o.run && f.state.after);
-				if (fault === "missing-run") o.run = null;
-				else if (fault === "run-id") o.run.runId = randomUUID();
-				else if (fault === "inactive") o.run.active = false;
-				else if (fault === "limit") o.run = { ...o.run, limit: 3 };
-				else if (fault === "reserved") o.run.reserved++;
-				else if (fault === "sdk") o.run.sdkInvoked = 0;
-				else if (fault === "remaining") o.run.remaining = 0;
-				else if (fault === "session") o.sessionId = randomUUID();
-				else if (fault === "map") o.mapIdentity.mapKey = "other-map";
-				else if (fault === "tic") o.tic++;
-				else if (fault === "revision") o.revision++;
-				else if (fault === "phase") Object.assign(o, { phase: "terminal" });
-				else o.observationId = f.state.after.observationId;
-			}
-			return o;
-		};
-		await assert.rejects(play(f.client, f.tools, f.provider), (error) => {
-			assert.ok(error instanceof PlaybackError);
-			assert.equal(error.stage, "continuation-check");
-			assert.equal(error.decisionOrdinal, 2);
-			assert.equal(error.decisionMayHaveBeenSent, false);
-			assert.deepEqual(
-				error.records.map((r) => r.decision.kind),
-				["returned", "not-called"],
+for (const ordinal of [2, 3]) {
+	for (const fault of [
+		"missing-run",
+		"run-id",
+		"inactive",
+		"limit",
+		"reserved",
+		"sdk",
+		"remaining",
+		"session",
+		"map",
+		"tic",
+		"revision",
+		"phase",
+		"observation-id",
+	] as const) {
+		test(`decision ${ordinal} reasoning rejects ${fault} before inference or prompt mutation`, async (t) => {
+			const f = await fixture(t, 5);
+			const observe = f.client.observe;
+			f.client.observe = async () => {
+				const o = await observe();
+				if (f.state.observeCalls === 2 * ordinal - 1) {
+					assert.ok(o.run && f.state.after);
+					if (fault === "missing-run") o.run = null;
+					else if (fault === "run-id") o.run.runId = randomUUID();
+					else if (fault === "inactive") o.run.active = false;
+					else if (fault === "limit") o.run = { ...o.run, limit: 3 };
+					else if (fault === "reserved") o.run.reserved++;
+					else if (fault === "sdk") o.run.sdkInvoked = 0;
+					else if (fault === "remaining") o.run.remaining = 0;
+					else if (fault === "session") o.sessionId = randomUUID();
+					else if (fault === "map") o.mapIdentity.mapKey = "other-map";
+					else if (fault === "tic") o.tic++;
+					else if (fault === "revision") o.revision++;
+					else if (fault === "phase") Object.assign(o, { phase: "terminal" });
+					else o.observationId = f.state.after.observationId;
+				}
+				return o;
+			};
+			await assert.rejects(play(f.client, f.tools, f.provider), (error) => {
+				assert.ok(error instanceof PlaybackError);
+				assert.equal(error.stage, "continuation-check");
+				assert.equal(error.decisionOrdinal, ordinal);
+				assert.equal(error.decisionMayHaveBeenSent, false);
+				assert.deepEqual(
+					error.records.map((r) => r.decision.kind),
+					[...Array(ordinal - 1).fill("returned"), "not-called"],
+				);
+				assert.ok(error.records[ordinal - 1].reasoningObservation);
+				assert.equal(error.records[ordinal - 1].beforePng, null);
+				assert.equal(error.records[ordinal - 1].landmarkLookup, null);
+				assert.equal(error.records[ordinal - 1].runStarted, null);
+				assert.deepEqual(
+					error.records[ordinal - 1].selection,
+					error.records[0].selection,
+				);
+				return true;
+			});
+			assert.equal(f.state.modelInputs.length, ordinal - 1);
+			assert.equal(f.events.filter((e) => e === "startRun").length, 1);
+			assert.equal(
+				f.events.filter((e) => e === "setPrompt").length,
+				ordinal - 1,
 			);
-			assert.ok(error.records[1].reasoningObservation);
-			assert.equal(error.records[1].beforePng, null);
-			assert.equal(error.records[1].landmarkLookup, null);
-			assert.equal(error.records[1].runStarted, null);
-			assert.deepEqual(error.records[1].selection, error.records[0].selection);
-			return true;
+			assert.equal(f.events.filter((e) => e === "decide").length, ordinal - 1);
 		});
-		assert.equal(f.state.modelInputs.length, 1);
-		assert.equal(f.events.filter((e) => e === "startRun").length, 1);
-		assert.equal(f.events.filter((e) => e === "setPrompt").length, 1);
-		assert.equal(f.events.filter((e) => e === "decide").length, 1);
-	});
-}
+	}
 
-for (const fault of ["inactive", "revision", "tic", "reused-id"] as const) {
-	test(`second post-CAS admission rejects ${fault} without dispatch`, async (t) => {
-		const f = await fixture(t);
-		const observe = f.client.observe;
-		let reasoningId = "";
-		f.client.observe = async () => {
-			const o = await observe();
-			if (f.state.observeCalls === 3) reasoningId = o.observationId;
-			if (f.state.observeCalls === 4) {
-				if (fault === "inactive") {
-					assert.ok(o.run);
-					o.run.active = false;
-				} else if (fault === "revision") o.revision++;
-				else if (fault === "tic") o.tic++;
-				else o.observationId = reasoningId;
-			}
-			return o;
-		};
-		await assert.rejects(play(f.client, f.tools, f.provider), (error) => {
-			assert.ok(error instanceof PlaybackError);
-			assert.equal(error.stage, "dispatch-observation");
-			assert.equal(error.decisionOrdinal, 2);
-			assert.equal(error.decisionMayHaveBeenSent, false);
-			assert.equal(error.records[0].decision.kind, "returned");
-			assert.ok(
-				error.records[1].promptAcknowledged &&
-					error.records[1].admissionObservation,
-			);
-			assert.equal(error.records[1].decision.kind, "not-called");
-			return true;
+	for (const fault of ["inactive", "revision", "tic", "reused-id"] as const) {
+		test(`decision ${ordinal} post-CAS admission rejects ${fault} without dispatch`, async (t) => {
+			const f = await fixture(t, 5);
+			const observe = f.client.observe;
+			let reasoningId = "";
+			f.client.observe = async () => {
+				const o = await observe();
+				if (f.state.observeCalls === 2 * ordinal - 1)
+					reasoningId = o.observationId;
+				if (f.state.observeCalls === 2 * ordinal) {
+					if (fault === "inactive") {
+						assert.ok(o.run);
+						o.run.active = false;
+					} else if (fault === "revision") o.revision++;
+					else if (fault === "tic") o.tic++;
+					else o.observationId = reasoningId;
+				}
+				return o;
+			};
+			await assert.rejects(play(f.client, f.tools, f.provider), (error) => {
+				assert.ok(error instanceof PlaybackError);
+				assert.equal(error.stage, "dispatch-observation");
+				assert.equal(error.decisionOrdinal, ordinal);
+				assert.equal(error.decisionMayHaveBeenSent, false);
+				assert.equal(error.records[0].decision.kind, "returned");
+				assert.ok(
+					error.records[ordinal - 1].promptAcknowledged &&
+						error.records[ordinal - 1].admissionObservation,
+				);
+				assert.equal(error.records[ordinal - 1].decision.kind, "not-called");
+				return true;
+			});
+			assert.equal(f.events.filter((e) => e === "decide").length, ordinal - 1);
 		});
-		assert.equal(f.events.filter((e) => e === "decide").length, 1);
-	});
+	}
 }
 
 for (const fault of [
@@ -545,4 +554,330 @@ test("second reasoning image read failure retains its observation and all first 
 	});
 	assert.equal(f.events.filter((e) => e === "setPrompt").length, 1);
 	assert.equal(f.events.filter((e) => e === "decide").length, 1);
+});
+
+for (const budget of [1, 2, 3, 5]) {
+	for (const landmark of [true, false]) {
+		test(`${budget} informed ${landmark ? "landmark" : "free-explore"} slots exhaust exactly one issued run`, async (t) => {
+			const f = await fixture(t, budget);
+			if (!landmark) f.state.candidates = [];
+			const decide = f.client.decide;
+			let returned = 0;
+			f.state.perception = { ...scenePerception, description: "SCENE_1" };
+			f.client.decide = async (input) => {
+				const receipt = await decide(input);
+				f.state.perception = {
+					...scenePerception,
+					description: `SCENE_${++returned + 1}`,
+				};
+				f.state.candidates = [];
+				return receipt;
+			};
+			const result = await play(f.client, f.tools, f.provider, budget);
+			assert.equal(result.decisionOrdinal, budget);
+			assert.deepEqual(
+				result.records.map((r) => r.ordinal),
+				Array.from({ length: budget }, (_, i) => i + 1),
+			);
+			assert.equal(result.cumulativeTics, f.base.tic + budget * 6);
+			assert.equal(result.perception.description, `SCENE_${budget}`);
+			assert.equal(f.state.observeCalls, 2 * budget);
+			assert.equal(f.state.modelInputs.length, budget);
+			assert.equal(f.state.assessmentInputs.length, landmark ? budget : 0);
+			assert.equal(f.state.memoryObservations.length, 1);
+			assert.equal(f.events.filter((e) => e === "startRun").length, 1);
+			for (const event of ["decide", "setPrompt"])
+				assert.equal(f.events.filter((e) => e === event).length, budget);
+			for (const [i, record] of result.records.entries()) {
+				assert.deepEqual(record.selection, result.records[0].selection);
+				assert.equal(record.perception?.description, `SCENE_${i + 1}`);
+				assert.deepEqual(record.beforePng, f.state.images[i]);
+				const input = sceneInput(f.state.modelInputs[i]);
+				assert.equal(input.image, record.beforePng);
+				assert.equal(input.state.tic, f.base.tic + i * 6);
+				assert.equal(input.state.telemetry.x, f.base.telemetry.x + i * 65536);
+				assert.deepEqual(record.admissionObservation?.run, {
+					runId: result.runId,
+					active: true,
+					limit: budget,
+					reserved: i,
+					sdkInvoked: i,
+					remaining: budget - i,
+				});
+				assert.equal(
+					record.admissionObservation?.revision,
+					f.base.revision + i + 1,
+				);
+				assert.ok(
+					record.guidance?.startsWith(f.base.configuration.instructionTemplate),
+				);
+				assert.equal(
+					record.guidance?.match(/Navigation amendment for the next decision:/g)
+						?.length,
+					1,
+				);
+				assert.match(record.guidance ?? "", new RegExp(`SCENE_${i + 1}`));
+				if (i)
+					assert.doesNotMatch(record.guidance ?? "", new RegExp(`SCENE_${i}`));
+				if (landmark) {
+					const user = f.state.assessmentInputs[i].prompt.find(
+						(m) => m.role === "user",
+					);
+					const text = user?.content.find((p) => p.type === "text");
+					assert.ok(text?.type === "text");
+					assert.equal(
+						JSON.parse(text.text).historicalLandmark.hypothesis,
+						f.note.hypothesis,
+					);
+				}
+				assert.equal(record.decision.kind, "returned");
+				if (record.decision.kind !== "returned")
+					throw Error("Expected receipt");
+				assert.deepEqual(record.decision.afterPng, f.state.images[i + 1]);
+			}
+			assert.equal(f.state.run?.active, false);
+			assert.equal(f.state.run?.remaining, 0);
+		});
+	}
+}
+
+for (const outcome of [
+	"stopped",
+	"terminal",
+	"not-admitted",
+	"api-failure",
+	"retired",
+	"uncertain",
+] as const) {
+	test(`third ${outcome} return stops a five-slot run without fourth preparation`, async (t) => {
+		const f = await fixture(t, 5);
+		const decide = f.client.decide;
+		let calls = 0;
+		f.client.decide = async (input) => {
+			const receipt = await decide(input);
+			if (++calls === 3) {
+				if (outcome === "uncertain") receipt.completionUncertain = true;
+				else receipt.outcome = outcome;
+			}
+			return receipt;
+		};
+		const result = await play(f.client, f.tools, f.provider);
+		assert.equal(result.decisionOrdinal, 3);
+		assert.equal(result.records.length, 3);
+		assert.equal(
+			result.outcome,
+			outcome === "uncertain" ? "completed" : outcome,
+		);
+		assert.equal(result.completionUncertain, outcome === "uncertain");
+		assert.equal(f.state.modelInputs.length, 3);
+		assert.equal(f.state.observeCalls, 6);
+		assert.equal(calls, 3);
+		assert.equal(f.events.filter((e) => e === "startRun").length, 1);
+	});
+}
+
+for (const ordinal of [3, 5]) {
+	for (const fault of [
+		"image",
+		"perception",
+		"navigation-assessment",
+		"guidance",
+		"prompt-cas",
+		"dispatch-observation",
+		"decision",
+	] as const) {
+		test(`decision ${ordinal} ${fault} failure retains every earlier receipt and image`, async (t) => {
+			const f = await fixture(t, 5);
+			const cause = new Error("LATER_FAILURE");
+			if (fault === "guidance") {
+				f.base.configuration = {
+					...f.base.configuration,
+					instructionTemplate: "B".repeat(14000),
+				};
+				f.state.configuration = structuredClone(f.base.configuration);
+				f.state.perception = {
+					description: "First.",
+					features: [],
+					uncertainty: "None.",
+				};
+				const decide = f.client.decide;
+				let calls = 0;
+				f.client.decide = async (input) => {
+					const receipt = await decide(input);
+					if (++calls === ordinal - 1)
+						f.state.perception = {
+							description: "D".repeat(300),
+							features: Array(8).fill("F".repeat(120)),
+							uncertainty: "U".repeat(300),
+						};
+					return receipt;
+				};
+			} else if (fault === "perception" || fault === "navigation-assessment") {
+				const generate = f.model.doGenerate.bind(f.model);
+				f.model.doGenerate = async (input) => {
+					if (
+						f.state.modelCalls ===
+						2 * (ordinal - 1) + (fault === "navigation-assessment" ? 1 : 0)
+					)
+						throw cause;
+					return generate(input);
+				};
+			} else if (fault === "image" || fault === "dispatch-observation") {
+				const observe = f.client.observe;
+				f.client.observe = async () => {
+					const o = await observe();
+					if (
+						f.state.observeCalls ===
+						2 * ordinal - (fault === "image" ? 1 : 0)
+					) {
+						if (fault === "image") await rm(o.pngPath);
+						else throw cause;
+					}
+					return o;
+				};
+			} else if (fault === "prompt-cas") {
+				const prompt = f.client.setPrompt;
+				let calls = 0;
+				f.client.setPrompt = async (input) => {
+					const ack = await prompt(input);
+					if (++calls === ordinal) throw cause;
+					return ack;
+				};
+			} else {
+				const decide = f.client.decide;
+				let calls = 0;
+				f.client.decide = async (input) => {
+					const receipt = await decide(input);
+					if (++calls === ordinal) throw cause;
+					return receipt;
+				};
+			}
+			await assert.rejects(play(f.client, f.tools, f.provider), (error) => {
+				assert.ok(error instanceof PlaybackError);
+				assert.equal(error.decisionOrdinal, ordinal);
+				assert.equal(error.stage, fault === "image" ? "observation" : fault);
+				assert.equal(error.decisionMayHaveBeenSent, fault === "decision");
+				assert.equal(error.records.length, ordinal);
+				if (fault !== "guidance" && fault !== "image")
+					assert.equal(error.cause, cause);
+				else assert.ok(error.cause instanceof Error);
+				for (const [i, record] of error.records.slice(0, -1).entries()) {
+					assert.equal(record.decision.kind, "returned");
+					if (record.decision.kind !== "returned")
+						throw Error("Expected prior receipt");
+					assert.equal(record.decision.receipt.outcome, "completed");
+					assert.deepEqual(record.beforePng, f.state.images[i]);
+					assert.deepEqual(record.decision.afterPng, f.state.images[i + 1]);
+				}
+				const current = error.records[ordinal - 1];
+				assert.equal(
+					current.decision.kind,
+					fault === "decision" ? "unconfirmed" : "not-called",
+				);
+				if (fault === "image") {
+					assert.equal(error.perception, null);
+					assert.equal(error.navigationAssessment, null);
+					assert.equal(current.beforePng, null);
+				}
+				if (current.decision.kind === "unconfirmed") {
+					assert.equal(
+						current.decision.input.observationId,
+						current.admissionObservation?.observationId,
+					);
+					assert.equal("receipt" in current.decision, false);
+				}
+				return true;
+			});
+			assert.equal(f.events.filter((e) => e === "startRun").length, 1);
+			assert.equal(
+				f.events.filter((e) => e === "decide").length,
+				ordinal - (fault === "decision" ? 0 : 1),
+			);
+		});
+	}
+}
+
+for (const limit of [0, -1, 1.5, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1]) {
+	test(`invalid issued limit ${limit} stops before first CAS`, async (t) => {
+		const f = await fixture(t);
+		const start = f.client.startRun;
+		f.client.startRun = async (input) => {
+			const ack = await start(input);
+			assert.ok(ack.run);
+			ack.run = { ...ack.run, limit, remaining: limit };
+			return ack;
+		};
+		await assert.rejects(play(f.client, f.tools, f.provider), (error) => {
+			assert.ok(error instanceof PlaybackError);
+			assert.equal(error.stage, "start-run");
+			assert.equal(error.decisionOrdinal, 1);
+			return true;
+		});
+		assert.equal(f.events.filter((e) => e === "startRun").length, 1);
+		assert.equal(f.events.includes("setPrompt"), false);
+		assert.equal(f.events.includes("decide"), false);
+	});
+}
+
+for (const timing of ["reasoning", "after-admission"] as const) {
+	test(`lease loss during third ${timing} cannot authorize another dispatch`, async (t) => {
+		const f = await fixture(t, 5);
+		const cause = new Error("lease-revoked");
+		if (timing === "reasoning") {
+			const generate = f.model.doGenerate.bind(f.model);
+			f.model.doGenerate = async (input) => {
+				const response = await generate(input);
+				if (f.state.modelInputs.length === 3) f.state.run = null;
+				return response;
+			};
+		} else {
+			const decide = f.client.decide;
+			f.client.decide = async (input) => {
+				if (f.state.modelInputs.length === 3) throw cause;
+				return decide(input);
+			};
+		}
+		await assert.rejects(play(f.client, f.tools, f.provider), (error) => {
+			assert.ok(error instanceof PlaybackError);
+			assert.equal(error.decisionOrdinal, 3);
+			assert.equal(
+				error.stage,
+				timing === "reasoning" ? "prompt-cas" : "decision",
+			);
+			assert.equal(error.decisionMayHaveBeenSent, timing === "after-admission");
+			assert.equal(error.records.length, 3);
+			return true;
+		});
+		assert.equal(f.events.filter((e) => e === "decide").length, 2);
+		assert.equal(f.events.filter((e) => e === "startRun").length, 1);
+	});
+}
+
+test("third result-image retention failure does not block fresh fourth and fifth reasoning images", async (t) => {
+	const f = await fixture(t, 5);
+	const decide = f.client.decide;
+	let calls = 0;
+	f.client.decide = async (input) => {
+		const receipt = await decide(input);
+		if (++calls === 3) {
+			assert.ok(receipt.pngPath);
+			await rm(receipt.pngPath);
+		}
+		return receipt;
+	};
+	const result = await play(f.client, f.tools, f.provider);
+	assert.equal(result.decisionOrdinal, 5);
+	assert.equal(result.outcome, "completed");
+	assert.equal(result.records.length, 5);
+	const third = result.records[2].decision;
+	assert.equal(third.kind, "returned");
+	if (third.kind !== "returned") throw Error("Expected receipt");
+	assert.equal(third.receipt.outcome, "completed");
+	assert.equal(third.imageRetentionFailure?.reason, "read-failed");
+	assert.equal(third.afterPng, null);
+	assert.deepEqual(result.records[3].beforePng, f.state.images[3]);
+	assert.deepEqual(result.records[4].beforePng, f.state.images[4]);
+	assert.equal(f.state.observeCalls, 10);
+	assert.equal(calls, 5);
+	assert.equal(f.events.filter((e) => e === "startRun").length, 1);
 });

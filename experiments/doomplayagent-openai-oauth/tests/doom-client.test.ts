@@ -1027,7 +1027,7 @@ test("main awaits offline playback and then detaches", async (t) => {
 	);
 	await main();
 	assert.deepEqual(fake.calls, ["attach", "observe", "detach"]);
-	assert.ok(messages.includes("Doom two-decision result:"));
+	assert.ok(messages.includes("Doom bounded-run result:"));
 });
 
 // Legacy transport tests mock playback so they never invoke real memory/model.

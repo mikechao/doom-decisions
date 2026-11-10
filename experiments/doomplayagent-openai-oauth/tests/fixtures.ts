@@ -31,7 +31,7 @@ export const navigationAssessment = {
 		"The visible doorway supports the doorway hypothesis; no specific conflict is described.",
 	uncertainty: "A generic doorway does not establish landmark identity.",
 };
-export async function fixture(t: TestContext) {
+export async function fixture(t: TestContext, budget = 2) {
 	t.mock.method(globalThis, "fetch", async () => {
 		throw new Error("External network forbidden");
 	});
@@ -41,7 +41,7 @@ export async function fixture(t: TestContext) {
 		pageId: randomUUID(),
 		epoch: randomUUID(),
 		ownerId: randomUUID(),
-		configuredDecisionBudget: 2,
+		configuredDecisionBudget: budget,
 		budgetUnclaimedAtAttach: true,
 		leaseFile: join(root, "lease.json"),
 	};
@@ -198,10 +198,10 @@ export async function fixture(t: TestContext) {
 			state.run = {
 				runId: randomUUID(),
 				active: true,
-				limit: 2,
+				limit: budget,
 				reserved: 0,
 				sdkInvoked: 0,
-				remaining: 2,
+				remaining: budget,
 			};
 			return config();
 		},
@@ -241,10 +241,10 @@ export async function fixture(t: TestContext) {
 			const reserved = state.run.reserved + 1;
 			state.run = {
 				...state.run,
-				active: reserved < 2,
+				active: reserved < budget,
 				reserved,
 				sdkInvoked: reserved,
-				remaining: 2 - reserved,
+				remaining: budget - reserved,
 			};
 
 			const {

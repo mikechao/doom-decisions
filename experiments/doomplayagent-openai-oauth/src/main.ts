@@ -1,9 +1,10 @@
 import { pathToFileURL } from "node:url";
 import { openaiCredentials } from "@openai-oauth/local";
+import { validAgentLimit } from "../../../app/src/agent-control.ts";
 import {
+	type AttachedLease,
 	createDoomClient,
 	DoomAttachError,
-	type AttachedLease,
 	type DoomAttachErrorCode,
 	type DoomClient,
 } from "./doom-client.ts";
@@ -13,7 +14,7 @@ import { progress } from "./progress.ts";
 import { createOAuthProvider } from "./provider.ts";
 
 const usage =
-	"Usage: main.ts (takes no arguments; no arguments authorizes up to two Doom decisions)";
+	"Usage: main.ts (takes no arguments; no arguments authorizes the broker-issued bounded Doom run)";
 const unconfirmedAttachGuidance =
 	"Doom attach unconfirmed; ownership may be held. If the local page is not running, from the repository root run `npm --prefix app run dev:agent`, open `http://127.0.0.1:5174`, and wait for the Doom page to be ready. If a page is already open, check its connection and use Stop Agent to release possible ownership before a fresh operator-initiated attempt. No automatic retry was made.";
 
@@ -65,21 +66,22 @@ export async function main() {
 			throw safeAttachError(error);
 		}
 		attached = true;
-		if (attachedLease.configuredDecisionBudget === null)
+		if (!validAgentLimit(attachedLease.configuredDecisionBudget))
 			throw new Error(
-				"Doom two-decision preflight failed: the broker has no configured decision budget. Set AGENT_DECISION_BUDGET=2 in app/.env.agent.local and fully restart dev:agent.",
+				"Doom bounded-run preflight failed: the broker needs a positive safe-integer decision budget. Set AGENT_DECISION_BUDGET in app/.env.agent.local and fully restart dev:agent.",
 			);
 		if (attachedLease.budgetUnclaimedAtAttach !== true)
 			throw new Error(
-				"Doom two-decision preflight failed: the broker allowance was already claimed or closed at attach. Fully stop and restart dev:agent.",
+				"Doom bounded-run preflight failed: the broker allowance was already claimed or closed at attach. Fully stop and restart dev:agent.",
 			);
-		if (attachedLease.configuredDecisionBudget !== 2)
-			throw new Error(
-				"Doom two-decision preflight failed: this CLI requires a configured budget of exactly 2. Set AGENT_DECISION_BUDGET=2 in app/.env.agent.local and fully restart dev:agent.",
-			);
-		result = await play(doomClient, doomTools, provider);
+		result = await play(
+			doomClient,
+			doomTools,
+			provider,
+			attachedLease.configuredDecisionBudget,
+		);
 		const { records: _records, ...summary } = result;
-		console.log("Doom two-decision result:", summary);
+		console.log("Doom bounded-run result:", summary);
 	} catch (error) {
 		failed = true;
 		playbackError = error;
