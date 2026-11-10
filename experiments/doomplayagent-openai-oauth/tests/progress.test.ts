@@ -22,6 +22,129 @@ function capture(t: TestContext) {
 	return { stderr, stdout };
 }
 
+function decisionBoundaries(output: string) {
+	return Array.from(
+		output.matchAll(/^\[info\] \[decision\] (?:Start|End) of Decision \d+$/gm),
+		(match) => match[0],
+	);
+}
+
+test("one-decision run logs a start and end around its progress", async (t) => {
+	const f = await fixture(t, 1);
+	const { stderr } = capture(t);
+
+	const result = await play(f.client, f.tools, f.provider);
+
+	assert.equal(result.records.length, 1);
+	const output = stderr.join("");
+	assert.deepEqual(decisionBoundaries(output), [
+		"[info] [decision] Start of Decision 1",
+		"[info] [decision] End of Decision 1",
+	]);
+	const decisionOutput = output.slice(
+		output.indexOf("Start of Decision 1"),
+		output.indexOf("End of Decision 1"),
+	);
+	assert.match(decisionOutput, /Perceiving current scene/);
+	assert.match(decisionOutput, /Navigation guidance acknowledged/);
+	assert.match(decisionOutput, /Action: forward; outcome: completed/);
+});
+
+test("three-decision run interleaves one boundary pair with each decision", async (t) => {
+	const f = await fixture(t, 3);
+	const { stderr } = capture(t);
+
+	const result = await play(f.client, f.tools, f.provider);
+
+	assert.equal(result.records.length, 3);
+	const output = stderr.join("");
+	assert.deepEqual(decisionBoundaries(output), [
+		"[info] [decision] Start of Decision 1",
+		"[info] [decision] End of Decision 1",
+		"[info] [decision] Start of Decision 2",
+		"[info] [decision] End of Decision 2",
+		"[info] [decision] Start of Decision 3",
+		"[info] [decision] End of Decision 3",
+	]);
+	for (let ordinal = 1; ordinal <= 3; ordinal++) {
+		const start = output.indexOf(`Start of Decision ${ordinal}`);
+		const end = output.indexOf(`End of Decision ${ordinal}`);
+		const decisionOutput = output.slice(start, end);
+		assert.ok(start >= 0 && end > start);
+		assert.match(decisionOutput, /Perceiving current scene/);
+		assert.match(decisionOutput, /Navigation guidance acknowledged/);
+		assert.match(decisionOutput, /Action: forward; outcome: completed/);
+	}
+});
+
+test("a non-continuable second receipt ends decision 2 without starting decision 3", async (t) => {
+	const f = await fixture(t, 3);
+	const { stderr } = capture(t);
+	const decide = f.client.decide;
+	let calls = 0;
+	f.client.decide = async (input) => {
+		const receipt = await decide(input);
+		if (++calls === 2) receipt.outcome = "terminal";
+		return receipt;
+	};
+
+	const result = await play(f.client, f.tools, f.provider);
+
+	assert.equal(result.decisionOrdinal, 2);
+	assert.equal(result.records.length, 2);
+	assert.deepEqual(decisionBoundaries(stderr.join("")), [
+		"[info] [decision] Start of Decision 1",
+		"[info] [decision] End of Decision 1",
+		"[info] [decision] Start of Decision 2",
+		"[info] [decision] End of Decision 2",
+	]);
+});
+
+test("a third-decision exception ends its boundary and preserves the cause and records", async (t) => {
+	const f = await fixture(t, 3);
+	const { stderr } = capture(t);
+	const cause = new Error("third decision failed");
+	const decide = f.client.decide;
+	let calls = 0;
+	f.client.decide = async (input) => {
+		const receipt = await decide(input);
+		if (++calls === 3) throw cause;
+		return receipt;
+	};
+
+	await assert.rejects(play(f.client, f.tools, f.provider), (error) => {
+		assert.ok(error instanceof PlaybackError);
+		assert.equal(error.cause, cause);
+		assert.equal(error.decisionOrdinal, 3);
+		assert.equal(error.records.length, 3);
+		assert.deepEqual(
+			error.records.map((record) => record.decision.kind),
+			["returned", "returned", "unconfirmed"],
+		);
+		assert.equal(error.records[2].failure?.stage, "decision");
+		return true;
+	});
+
+	const output = stderr.join("");
+	assert.deepEqual(decisionBoundaries(output), [
+		"[info] [decision] Start of Decision 1",
+		"[info] [decision] End of Decision 1",
+		"[info] [decision] Start of Decision 2",
+		"[info] [decision] End of Decision 2",
+		"[info] [decision] Start of Decision 3",
+		"[info] [decision] End of Decision 3",
+	]);
+	assert.ok(
+		output.indexOf("Stopped at decision for decision #3") <
+			output.indexOf("End of Decision 3"),
+	);
+	const thirdDecisionOutput = output.slice(
+		output.indexOf("Start of Decision 3"),
+		output.indexOf("End of Decision 3"),
+	);
+	assert.doesNotMatch(thirdDecisionOutput, /Action: /);
+});
+
 test("milestones log objective and perception to stderr and preserve final stdout", async (t) => {
 	const f = await fixture(t);
 	mocks.makeClient.mock.mockImplementation(() => f.client);

@@ -229,6 +229,14 @@ function newRecord(ordinal: number): DecisionEvidence {
 	};
 }
 
+function logDecisionBoundary(message: string) {
+	try {
+		progress.withTag("decision").info(message);
+	} catch {
+		// Progress output is best-effort and must not replace playback errors.
+	}
+}
+
 // Compare simulation checkpoints, not passive-render counters or image bytes.
 function checkCheckpoint(
 	next: MaterializedObserve,
@@ -444,8 +452,20 @@ export async function play(
 	let navigationObjective: NavigationObjective | null = null;
 	let prepared: PreparedDecision | null = null;
 	let record = newRecord(1);
+	let startedDecisionOrdinal: number | null = null;
 	const records: DecisionRecord[] = [];
+	const startDecision = (decisionOrdinal: number) => {
+		startedDecisionOrdinal = decisionOrdinal;
+		logDecisionBoundary(`Start of Decision ${decisionOrdinal}`);
+	};
+	const endDecision = () => {
+		const completedOrdinal = startedDecisionOrdinal;
+		if (completedOrdinal === null) return;
+		startedDecisionOrdinal = null;
+		logDecisionBoundary(`End of Decision ${completedOrdinal}`);
+	};
 	try {
+		startDecision(1);
 		const observation = await doomClient.observe();
 		const canonicalBase = observation.configuration.instructionTemplate;
 		record.reasoningObservation = structuredClone(observation);
@@ -520,6 +540,7 @@ export async function play(
 			record,
 		);
 		records.push(Object.freeze(record));
+		endDecision();
 		while (ordinal < limit) {
 			const previous = decision.receipt;
 			if (
@@ -535,6 +556,7 @@ export async function play(
 			record = newRecord(ordinal);
 			record.selection = structuredClone(selection);
 			prepared = null;
+			startDecision(ordinal);
 			stage = "observation";
 			const before = await doomClient.observe();
 			record.reasoningObservation = structuredClone(before);
@@ -563,6 +585,7 @@ export async function play(
 				record,
 			);
 			records.push(Object.freeze(record));
+			endDecision();
 		}
 		const receipt = decision.receipt;
 		return {
@@ -604,6 +627,7 @@ export async function play(
 		);
 		record.failure = { stage: failure.stage, message: failure.message };
 		records.push(Object.freeze(record));
+		endDecision();
 		throw failure;
 	}
 }
