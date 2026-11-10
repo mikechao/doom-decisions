@@ -366,7 +366,22 @@ async function executeOneDecision(
 		});
 		record.promptAcknowledged = structuredClone(changed);
 		scope.revision = changed.revision;
-		progress.withTag("decision").info("Navigation guidance acknowledged");
+		if (changed.instructions === instructions) {
+			try {
+				progress.withTag("decision").info("Navigation guidance acknowledged");
+				progress
+					.withTag("decision")
+					.info(
+						[
+							`Start of Decisions API Prompt for Decision ${ordinal}`,
+							changed.instructions,
+							`End of Decisions API Prompt for Decision ${ordinal}`,
+						].join("\n"),
+					);
+			} catch {
+				// Prompt output is best-effort and cannot affect the acknowledged run.
+			}
+		}
 
 		stage = "dispatch-observation";
 		// CAS invalidates observation admission. Always observe again.

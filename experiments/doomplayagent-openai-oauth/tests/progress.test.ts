@@ -29,14 +29,44 @@ function decisionBoundaries(output: string) {
 	);
 }
 
+function assertPromptBlock(
+	output: string,
+	ordinal: number,
+	instructions: string,
+) {
+	const startLabel = `[info] [decision] Start of Decisions API Prompt for Decision ${ordinal}`;
+	const endLabel = `End of Decisions API Prompt for Decision ${ordinal}`;
+	const start = output.indexOf(startLabel);
+	assert.ok(start >= 0, `missing prompt start for decision ${ordinal}`);
+	assert.equal(output.indexOf(startLabel, start + startLabel.length), -1);
+	const instructionsStart = start + startLabel.length + 1;
+	const end = output.indexOf(endLabel, instructionsStart);
+	assert.ok(
+		end > instructionsStart,
+		`missing prompt end for decision ${ordinal}`,
+	);
+	assert.equal(output[end - 1], "\n");
+	assert.equal(output.slice(instructionsStart, end - 1), instructions);
+	return { start, end: end + endLabel.length };
+}
+
 test("one-decision run logs a start and end around its progress", async (t) => {
 	const f = await fixture(t, 1);
 	const { stderr } = capture(t);
+	const prompted = t.mock.method(f.client, "setPrompt");
 
 	const result = await play(f.client, f.tools, f.provider);
 
 	assert.equal(result.records.length, 1);
 	const output = stderr.join("");
+	assert.equal(prompted.mock.callCount(), 1);
+	const instructions = prompted.mock.calls[0].arguments[0].instructions;
+	assert.equal(result.records[0].guidance, instructions);
+	assert.equal(
+		result.records[0].promptAcknowledged?.instructions,
+		instructions,
+	);
+	const prompt = assertPromptBlock(output, 1, instructions);
 	assert.deepEqual(decisionBoundaries(output), [
 		"[info] [decision] Start of Decision 1",
 		"[info] [decision] End of Decision 1",
@@ -48,16 +78,45 @@ test("one-decision run logs a start and end around its progress", async (t) => {
 	assert.match(decisionOutput, /Perceiving current scene/);
 	assert.match(decisionOutput, /Navigation guidance acknowledged/);
 	assert.match(decisionOutput, /Action: forward; outcome: completed/);
+	assert.ok(
+		output.indexOf("Navigation guidance acknowledged") < prompt.start &&
+			prompt.end < output.indexOf("End of Decision 1"),
+	);
+});
+
+test("a prompt acknowledgment with a mismatched echo is not logged as successful", async (t) => {
+	const f = await fixture(t, 1);
+	const { stderr } = capture(t);
+	const setPrompt = f.client.setPrompt;
+	f.client.setPrompt = async (input) => ({
+		...(await setPrompt(input)),
+		instructions: "untrusted prompt echo",
+	});
+
+	const result = await play(f.client, f.tools, f.provider);
+
+	assert.equal(result.outcome, "completed");
+	assert.equal(result.records[0].guidance, f.state.instructions);
+	assert.equal(
+		result.records[0].promptAcknowledged?.instructions,
+		"untrusted prompt echo",
+	);
+	assert.doesNotMatch(
+		stderr.join(""),
+		/Navigation guidance acknowledged|Start of Decisions API Prompt|End of Decisions API Prompt/,
+	);
 });
 
 test("three-decision run interleaves one boundary pair with each decision", async (t) => {
 	const f = await fixture(t, 3);
 	const { stderr } = capture(t);
+	const prompted = t.mock.method(f.client, "setPrompt");
 
 	const result = await play(f.client, f.tools, f.provider);
 
 	assert.equal(result.records.length, 3);
 	const output = stderr.join("");
+	assert.equal(prompted.mock.callCount(), 3);
 	assert.deepEqual(decisionBoundaries(output), [
 		"[info] [decision] Start of Decision 1",
 		"[info] [decision] End of Decision 1",
@@ -74,7 +133,34 @@ test("three-decision run interleaves one boundary pair with each decision", asyn
 		assert.match(decisionOutput, /Perceiving current scene/);
 		assert.match(decisionOutput, /Navigation guidance acknowledged/);
 		assert.match(decisionOutput, /Action: forward; outcome: completed/);
+		const instructions =
+			prompted.mock.calls[ordinal - 1].arguments[0].instructions;
+		assert.equal(result.records[ordinal - 1].guidance, instructions);
+		assert.equal(
+			result.records[ordinal - 1].promptAcknowledged?.instructions,
+			instructions,
+		);
+		assert.ok(
+			instructions.startsWith(
+				`${f.base.configuration.instructionTemplate}\n\nNavigation amendment for the next decision:`,
+			),
+		);
+		assert.equal(
+			instructions.match(/Navigation amendment for the next decision:/g)
+				?.length,
+			1,
+		);
+		const prompt = assertPromptBlock(output, ordinal, instructions);
+		assert.ok(
+			output.indexOf("Navigation guidance acknowledged", start) <
+				prompt.start && prompt.end < end,
+		);
 	}
+	const promptStarts = Array.from(
+		output.matchAll(/Start of Decisions API Prompt for Decision (\d+)/g),
+		(match) => Number(match[1]),
+	);
+	assert.deepEqual(promptStarts, [1, 2, 3]);
 });
 
 test("a non-continuable second receipt ends decision 2 without starting decision 3", async (t) => {
@@ -92,12 +178,20 @@ test("a non-continuable second receipt ends decision 2 without starting decision
 
 	assert.equal(result.decisionOrdinal, 2);
 	assert.equal(result.records.length, 2);
-	assert.deepEqual(decisionBoundaries(stderr.join("")), [
+	const output = stderr.join("");
+	assert.deepEqual(decisionBoundaries(output), [
 		"[info] [decision] Start of Decision 1",
 		"[info] [decision] End of Decision 1",
 		"[info] [decision] Start of Decision 2",
 		"[info] [decision] End of Decision 2",
 	]);
+	assert.deepEqual(
+		Array.from(
+			output.matchAll(/Start of Decisions API Prompt for Decision (\d+)/g),
+			(match) => Number(match[1]),
+		),
+		[1, 2],
+	);
 });
 
 test("a third-decision exception ends its boundary and preserves the cause and records", async (t) => {
@@ -215,11 +309,8 @@ test("milestones log objective and perception to stderr and preserve final stdou
 	assert.match(output, /outcome: completed; requested 6, verified 6 tics/);
 	assert.match(output, /\[doom\] Lease detached/);
 	for (const secret of [
-		selected.noteId,
-		JSON.stringify(selected.anchor),
 		unselected.hypothesis,
 		unselected.nextQuestion,
-		f.base.configuration.instructionTemplate,
 		f.root,
 	]) {
 		assert.ok(!output.includes(secret ?? ""));
@@ -235,6 +326,7 @@ test("milestones log objective and perception to stderr and preserve final stdou
 		f.state.instructions,
 		f.state.instructions,
 	]);
+	assert.ok(output.includes(f.state.instructions));
 	assert.ok(!output.includes(String.fromCharCode(27)));
 	assert.match(stdout.join(""), /^Doom bounded-run result:/);
 	assert.doesNotMatch(
@@ -315,6 +407,7 @@ for (const status of ["empty", "unavailable", "lookup_failed"] as const) {
 	test(`${status} logs the distinct fallback without asserting an active total`, async (t) => {
 		const f = await fixture(t);
 		const { stderr, stdout } = capture(t);
+		const prompted = t.mock.method(f.client, "setPrompt");
 		const find = f.tools.findActiveLandmarks;
 		f.tools.findActiveLandmarks = async (o) => ({
 			...(await find(o)),
@@ -327,6 +420,15 @@ for (const status of ["empty", "unavailable", "lookup_failed"] as const) {
 		assert.match(output, /Objective: free explore/);
 		assert.doesNotMatch(output, /Hypothesis:|Next question:|note#[0-9a-f]{12}/);
 		assert.match(output, /Navigation guidance acknowledged/);
+		assert.equal(prompted.mock.callCount(), 2);
+		for (const [index, call] of prompted.mock.calls.entries()) {
+			const instructions = call.arguments[0].instructions;
+			assert.match(
+				instructions,
+				/Current objective: free explore \(free-explore\)/,
+			);
+			assertPromptBlock(output, index + 1, instructions);
+		}
 		assert.doesNotMatch(
 			output,
 			/Base prompt unchanged|total|no active landmarks/,
@@ -353,6 +455,11 @@ for (const operation of ["setPrompt", "decide"] as const) {
 			assert.doesNotMatch(
 				output,
 				/guidance acknowledged|Base prompt unchanged/,
+			);
+		if (operation === "setPrompt")
+			assert.doesNotMatch(
+				output,
+				/Start of Decisions API Prompt|End of Decisions API Prompt/,
 			);
 		else assert.match(output, /decision outcome unconfirmed/);
 	});
