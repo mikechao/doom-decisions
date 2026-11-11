@@ -11,6 +11,7 @@ const scenePerceptionSchema = z.strictObject({
 
 export type ScenePerception = z.infer<typeof scenePerceptionSchema> & {
 	usage: LanguageModelUsage;
+	durationMs: number;
 };
 
 export type ScenePerceptionState = Pick<
@@ -35,6 +36,7 @@ export async function perceiveScene(
 ): Promise<ScenePerception> {
 	const modelId = process.env.DOOM_REASONING_MODEL ?? "gpt-6-luna";
 	const model = openAIProvider.responses(modelId);
+	const startedAt = performance.now();
 	const result = await generateText({
 		model,
 		maxRetries: 0,
@@ -66,10 +68,12 @@ export async function perceiveScene(
 			},
 		],
 	});
+	const durationMs = performance.now() - startedAt;
 	if (result.finishReason !== "stop")
 		throw new Error("Scene perception did not finish.");
 	return {
 		...result.output,
 		usage: result.usage,
+		durationMs,
 	};
 }
