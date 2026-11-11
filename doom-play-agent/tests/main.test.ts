@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { rm } from "node:fs/promises";
 import test from "node:test";
+import { stripVTControlCharacters } from "node:util";
 import { PlaybackError } from "../src/playback-error.ts";
 import { RunPersistenceError } from "../src/run-persistence.ts";
 import { fixture, scenePerception } from "./fixtures.ts";
@@ -216,8 +217,13 @@ await import(${JSON.stringify(new URL("../src/main.ts", import.meta.url).href)})
 	assert.match(child.stderr, /Lease detached/);
 });
 
-for (const detachFails of [false, true]) {
-	test(`executable recognizes PlaybackError safely (detach failure=${detachFails})`, () => {
+for (const [detachFails, forceColor] of [
+	[false, "0"],
+	[true, "0"],
+	[false, "1"],
+	[true, "1"],
+] as const) {
+	test(`executable recognizes PlaybackError safely (detach failure=${detachFails}, color=${forceColor})`, () => {
 		const child = spawnSync(
 			process.execPath,
 			[
@@ -258,33 +264,35 @@ process.argv = [process.execPath, fileURLToPath(${JSON.stringify(new URL("../src
 await import(${JSON.stringify(new URL("../src/main.ts", import.meta.url).href)});
 `,
 			],
-			{ encoding: "utf8", timeout: 10_000 },
+			{
+				encoding: "utf8",
+				timeout: 10_000,
+				env: { ...process.env, FORCE_COLOR: forceColor },
+			},
 		);
+		const stderr = stripVTControlCharacters(child.stderr);
 		assert.equal(child.error, undefined);
 		assert.equal(child.status, 1, child.stdout + child.stderr);
 		assert.equal(child.stdout, "");
+		assert.match(stderr, /Doom playback stopped at decision for decision #2/);
 		assert.match(
-			child.stderr,
-			/Doom playback stopped at decision for decision #2/,
-		);
-		assert.match(
-			child.stderr,
+			stderr,
 			/Decision #2 outcome may be unknown\. No retry was made\./,
 		);
-		assert.match(child.stderr, /navigationObjective: null/);
-		assert.match(child.stderr, /perception: null/);
-		assert.match(child.stderr, /navigationAssessment: null/);
+		assert.match(stderr, /navigationObjective: null/);
+		assert.match(stderr, /perception: null/);
+		assert.match(stderr, /navigationAssessment: null/);
 		assert.doesNotMatch(
-			child.stderr,
+			stderr,
 			/SECRET|records|beforePng|Buffer|Run artifact saved:/,
 		);
 		if (detachFails) {
-			assert.match(child.stderr, /Doom playback and detach both failed\./);
-			assert.match(child.stderr, /Doom operation or cleanup unconfirmed\./);
-			assert.match(child.stderr, /Detach unconfirmed; client closed/);
+			assert.match(stderr, /Doom playback and detach both failed\./);
+			assert.match(stderr, /Doom operation or cleanup unconfirmed\./);
+			assert.match(stderr, /Detach unconfirmed; client closed/);
 		} else {
-			assert.match(child.stderr, /Lease detached/);
-			assert.doesNotMatch(child.stderr, /Doom playback and detach both failed/);
+			assert.match(stderr, /Lease detached/);
+			assert.doesNotMatch(stderr, /Doom playback and detach both failed/);
 		}
 	});
 }
