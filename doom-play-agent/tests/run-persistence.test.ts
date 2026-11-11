@@ -78,7 +78,8 @@ test("writes one v2 directory with full non-image evidence and byte-faithful sid
 	}));
 	await fs.rm(f.root, { recursive: true, force: true });
 	directory = join(f.root, "runs");
-	const path = await persistRun(result);
+	const provenance = { git: { commit: "a".repeat(40), dirty: true } };
+	const path = await persistRun(result, provenance);
 	const runDirectory = redirected(dirname(path));
 	assert.equal(basename(path), "result.json");
 	assert.deepEqual(await fs.readdir(directory), [basename(dirname(path))]);
@@ -95,8 +96,10 @@ test("writes one v2 directory with full non-image evidence and byte-faithful sid
 	assert.deepEqual(Object.keys(saved), [
 		"schemaVersion",
 		"recordedAt",
+		"provenance",
 		"result",
 	]);
+	assert.deepEqual(saved.provenance, provenance);
 	assert.equal(new Date(saved.recordedAt).toISOString(), saved.recordedAt);
 	assert.equal(
 		basename(dirname(path)),
@@ -150,6 +153,29 @@ test("writes one v2 directory with full non-image evidence and byte-faithful sid
 		])
 			assert.equal((await fs.stat(entry)).mode & 0o077, 0);
 	}
+});
+
+test("unavailable Git metadata does not prevent saving a resolved run", async (t) => {
+	const registration = t.mock.module("node:child_process", {
+		namedExports: {
+			execFileSync: () => {
+				throw Error("SECRET Git failure");
+			},
+		},
+	});
+	const { captureRunProvenance: capture } = await import(
+		"../src/run-provenance.ts"
+	);
+	const provenance = capture();
+	registration.restore();
+	assert.deepEqual(provenance, { git: { commit: null, dirty: null } });
+	const f = await fixture(t, 1);
+	const result = await play(f.client, f.tools, f.provider);
+	directory = join(f.root, "runs");
+	const path = await persistRun(result, provenance);
+	const saved = JSON.parse(await fs.readFile(redirected(path), "utf8"));
+	assert.deepEqual(saved.provenance, provenance);
+	assert.equal(saved.result.runId, result.runId);
 });
 
 test("preserves retention failure and unavailable diagnostics without an after-image reference", async (t) => {

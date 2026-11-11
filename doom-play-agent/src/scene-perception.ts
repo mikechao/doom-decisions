@@ -10,6 +10,7 @@ const scenePerceptionSchema = z.strictObject({
 });
 
 export type ScenePerception = z.infer<typeof scenePerceptionSchema> & {
+	modelId: string;
 	usage: LanguageModelUsage;
 	durationMs: number;
 };
@@ -73,6 +74,7 @@ export async function perceiveScene(
 		throw new Error("Scene perception did not finish.");
 	return {
 		...result.output,
+		modelId,
 		usage: result.usage,
 		durationMs,
 	};

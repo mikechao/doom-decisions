@@ -17,6 +17,7 @@ const navigationAssessmentSchema = z.strictObject({
 export type NavigationAssessment = z.infer<
 	typeof navigationAssessmentSchema
 > & {
+	modelId: string;
 	usage: LanguageModelUsage;
 	durationMs: number;
 };
@@ -26,9 +27,8 @@ export async function assessNavigation(
 	perception: ScenePerception,
 	landmark: DoomMemoryCandidate,
 ): Promise<NavigationAssessment> {
-	const model = openAIProvider.responses(
-		process.env.DOOM_REASONING_MODEL ?? "gpt-6-luna",
-	);
+	const modelId = process.env.DOOM_REASONING_MODEL ?? "gpt-6-luna";
+	const model = openAIProvider.responses(modelId);
 	const startedAt = performance.now();
 	const result = await generateText({
 		model,
@@ -64,5 +64,5 @@ export async function assessNavigation(
 	const durationMs = performance.now() - startedAt;
 	if (result.finishReason !== "stop")
 		throw new Error("Navigation assessment did not finish.");
-	return { ...result.output, usage: result.usage, durationMs };
+	return { ...result.output, modelId, usage: result.usage, durationMs };
 }

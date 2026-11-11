@@ -10,8 +10,9 @@ proof of navigation improvement or live N>2 gameplay.
 
 ## Execution order
 
-1. Zero-argument exported `main()` constructs the client, host-only memory tools and
-   OAuth-backed provider, then attaches once. Attach preflight requires a positive
+1. Zero-argument exported `main()` captures best-effort Git provenance once before
+   constructing the client, host-only memory tools and OAuth-backed provider,
+   then attaches once. Attach preflight requires a positive
    safe-integer `configuredDecisionBudget` and `budgetUnclaimedAtAttach === true`.
    These snapshots do not claim or authorize a run. An acknowledged attach is
    detached in `finally`, including on preflight/playback failure.
@@ -65,9 +66,9 @@ proof of navigation improvement or live N>2 gameplay.
 12. `main()` prints only the compact last-decision summary, excluding records and
     Buffers, then attempts detach in `finally`. Playback and detach failures remain
     separate members of `AggregateError` when both fail.
-13. If `play()` resolved, `main()` then calls `persistRun()` once, even if detach
-    failed. It saves non-image evidence and retained PNG sidecars in a unique
-    ignored package-local `.local/runs/` directory. Only after all writes succeed
+13. If `play()` resolved, `main()` then calls `persistRun()` once with the pre-attach
+    snapshot, even if detach failed. It saves non-image evidence and retained PNG
+    sidecars in a unique ignored package-local `.local/runs/` directory. Only after all writes succeed
     does stderr report the `result.json` path. A persistence failure produces a
     bounded diagnostic and a nonzero CLI exit, while existing
     playback/detach errors retain precedence. A thrown `play()` is never persisted.
@@ -159,7 +160,7 @@ Buffers as immutable. Paths are ephemeral provenance; owned bytes survive file
 changes/deletion/detach. Executor materialization failure before return remains
 unconfirmed. Records provide no independent native proof. CLI persistence writes
 `<UTC-timestamp>_<encoded-broker-run-id>/result.json` under module-relative
-`.local/runs/`, with envelope `{ schemaVersion: 2, recordedAt, result }` and
+`.local/runs/`, with envelope `{ schemaVersion: 2, recordedAt, provenance, result }` and
 two-space JSON. All non-image evidence stays intact. Only the persisted
 `records[i].beforePng` and returned `records[i].decision.afterPng` Buffers become
 `{ "file": "decision-<ordinal>-before.png" }` and
@@ -170,6 +171,17 @@ existing hashes remain at `reasoningObservation.pngSha256` and
 Projection does not mutate in-memory results, records or Buffers. Nulls remain
 null, absent/undefined properties are omitted, and missing/failed image retention
 creates no sidecar or reference. Temporary `pngPath` fields remain provenance.
+
+`provenance.git` contains the full HEAD `commit` and repository-wide `dirty`
+status (staged, unstaged and nonignored untracked changes), captured from a
+module-relative Git working directory before attach. Ignored artifacts are
+excluded, preserving `HOME`/`XDG_CONFIG_HOME` for user-level Git exclusions while
+omitting checkout-redirecting Git environment variables.
+Each field is independently null on command failure; missing Git is
+optional provenance, not a gameplay/persistence failure. Persistence never queries
+Git and defaults both values to null when no snapshot is supplied. No Git output,
+filenames or raw errors are stored. This snapshot does not track mid-run edits,
+identify dirty content, or attest to the browser's loaded WASM.
 
 Images are written before the final JSON. Exclusive directory and file creation
 prevents overwrites, requesting 0700/0600 permissions where supported. A failure
@@ -234,6 +246,10 @@ embedded text untrusted. Decisions alone chooses the low-level action.
 Reasoning helpers retain their existing Responses configuration and schemas,
 `DOOM_REASONING_MODEL ?? "gpt-6-luna"`, no retries, 60-second abort signal,
 `store: false`, `reasoningEffort: "xhigh"`, and required finish reason `stop`.
+Each helper selects the ID once per invocation and returns that same `modelId`
+alongside `usage` and `durationMs`. It is a selected provider ID, not a reported
+server version; calls may differ if the environment changes in-process. This
+instrumentation is not model-generated and does not enter prompts or guidance.
 
 The canonical template is captured once. `main()` supplies a fresh lease copied
 from human instructions. Direct callers must also supply a fresh unmodified lease:

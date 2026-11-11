@@ -34,6 +34,7 @@ function perceptionWithZeroUsage(
 			"description" | "features" | "uncertainty"
 		>),
 		usage: zeroModelUsage,
+		modelId: process.env.DOOM_REASONING_MODEL ?? "gpt-6-luna",
 	};
 }
 
@@ -98,6 +99,7 @@ test("first decision retains stage snapshots across two slots, submitted scope a
 	);
 	assert.deepEqual(withoutDuration(record.navigationAssessment), {
 		...navigationAssessment,
+		modelId: process.env.DOOM_REASONING_MODEL ?? "gpt-6-luna",
 		usage: zeroModelUsage,
 	});
 	assert.deepEqual(result.records.at(-1)?.perception, result.perception);
@@ -519,6 +521,7 @@ for (const operation of ["startRun", "setPrompt", "decide"] as const) {
 				assert.match(String(error.cause), /response lost/);
 				assert.deepEqual(withoutDuration(error.navigationAssessment), {
 					...navigationAssessment,
+					modelId: process.env.DOOM_REASONING_MODEL ?? "gpt-6-luna",
 					usage: zeroModelUsage,
 				});
 				assert.deepEqual(
@@ -879,6 +882,7 @@ for (const assessment of [
 		const result = await play(f.client, f.tools, f.provider);
 		assert.deepEqual(withoutDuration(result.navigationAssessment), {
 			...assessment,
+			modelId: process.env.DOOM_REASONING_MODEL ?? "gpt-6-luna",
 			usage: zeroModelUsage,
 		});
 		assert.equal(f.state.modelCalls, 4);

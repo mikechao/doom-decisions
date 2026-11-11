@@ -15,6 +15,7 @@ import { PlaybackError } from "./playback-error.ts";
 import { progress } from "./progress.ts";
 import { createOAuthProvider } from "./provider.ts";
 import { persistRun, RunPersistenceError } from "./run-persistence.ts";
+import { captureRunProvenance } from "./run-provenance.ts";
 
 const usage =
 	"Usage: main.ts (takes no arguments; no arguments authorizes the broker-issued bounded Doom run)";
@@ -51,6 +52,7 @@ export async function main() {
 	const args = process.argv.slice(2);
 	if (args.length !== 0) throw new Error(usage);
 
+	const provenance = captureRunProvenance();
 	const doomClient: DoomClient = createDoomClient();
 	const doomTools = createDoomTools();
 	const provider = authenticatedProvider();
@@ -110,7 +112,7 @@ export async function main() {
 	if (result) {
 		let artifactPath: string | undefined;
 		try {
-			artifactPath = await persistRun(result);
+			artifactPath = await persistRun(result, provenance);
 		} catch {
 			persistenceError = new RunPersistenceError();
 			if (failed || cleanupFailed)

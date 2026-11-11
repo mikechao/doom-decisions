@@ -98,8 +98,20 @@ new directories/files request private permissions (0700/0600 where supported).
   decision-2-after.png
 ```
 
-The two-space JSON envelope contains `schemaVersion: 2`, `recordedAt` (UTC), and
-`result`. All non-image result evidence is retained, including ordered records,
+The two-space JSON envelope contains `schemaVersion: 2`, `recordedAt` (UTC),
+`provenance`, and `result`. Before attaching, `main()` takes one best-effort Git
+snapshot from the module-relative repository root. `provenance.git.commit` is
+the full HEAD SHA; `provenance.git.dirty` includes staged, unstaged and nonignored
+untracked changes across the repository. Ignored files, including `.local/runs/`,
+are excluded, respecting repository and user-level Git exclusions through `HOME`
+and `XDG_CONFIG_HOME`. Each value is independently null if its Git command fails; Git
+failure does not prevent gameplay or persistence. Standalone `persistRun()` calls
+without a snapshot save both values as null and never invoke Git.
+The snapshot is not refreshed after playback: edits during a run are not captured,
+a dirty flag does not identify changed content, and a SHA is not a browser/WASM
+runtime fingerprint. No Git output, filenames or errors are retained.
+
+All non-image result evidence is retained, including ordered records,
 receipts, raw poses, movement summaries, recent-pose comparisons, guidance and
 usage. Only retained image fields change on disk: `records[i].beforePng` and
 `records[i].decision.afterPng` become `{ "file": "decision-1-before.png" }` and
@@ -114,7 +126,15 @@ No file/reference is manufactured for a missing image or retention failure.
 
 Historical v1 artifacts embed Node Buffer JSON byte arrays in a single file.
 They remain untouched; no reader, compatibility layer or migration is provided.
-No extra model-selection metadata is collected.
+Each successful reasoning output retains `modelId` alongside existing `usage`
+and `durationMs`, at `result.records[i].perception.modelId` and, when assessed,
+`result.records[i].navigationAssessment.modelId`. This is the exact selected ID
+passed to the Responses provider for that call, including the default; it is not
+a server-reported model version. Selection remains per invocation, so changing
+the environment in-process can produce different IDs within one run. Model IDs
+are local instrumentation, excluded from generated-output schemas and guidance.
+Map/IWAD identity, run/budget, Decisions provider/model, prompts, selection and
+tics/poses remain in existing records rather than duplicated in provenance.
 
 Early, terminal, declined and uncertain returned outcomes are saved too; a saved
 artifact does not imply completed gameplay or confirmed detach. A detach failure

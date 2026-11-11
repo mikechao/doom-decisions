@@ -11,6 +11,37 @@ import { installMainMocks } from "./main-mocks.ts";
 const mocks = installMainMocks();
 const { main } = await import("../src/main.ts");
 
+for (const git of [
+	{ commit: "a".repeat(40), dirty: true },
+	{ commit: null, dirty: null },
+]) {
+	test(`captures provenance once before attach and passes it after detach (commit=${git.commit})`, async (t) => {
+		const f = await fixture(t, 1);
+		const provenance = { git };
+		mocks.capture.mock.mockImplementation(() => {
+			assert.deepEqual(f.events, []);
+			return provenance;
+		});
+		const attach = f.client.attach;
+		f.client.attach = async () => {
+			assert.equal(mocks.capture.mock.callCount(), 1);
+			return attach();
+		};
+		mocks.makeClient.mock.mockImplementation(() => f.client);
+		mocks.makeTools.mock.mockImplementation(() => f.tools);
+		mocks.makeProvider.mock.mockImplementation(() => f.provider);
+		t.mock.method(console, "log", () => {});
+		mocks.persist.mock.mockImplementation(async (_result, savedProvenance) => {
+			assert.equal(f.events.at(-1), "detach");
+			assert.equal(savedProvenance, provenance);
+			return "/synthetic/run/result.json";
+		});
+		await main();
+		assert.equal(mocks.capture.mock.callCount(), 1);
+		assert.equal(mocks.persist.mock.callCount(), 1);
+	});
+}
+
 test("logs the result.json path only after post-detach persistence completes", async (t) => {
 	const f = await fixture(t, 1);
 	mocks.makeClient.mock.mockImplementation(() => f.client);
@@ -314,9 +345,19 @@ for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 		t.mock.method(console, "log", () => {});
 		const result = await main();
 		assert.equal(responses.mock.callCount(), 4);
-		assert.deepEqual(responses.mock.calls[0].arguments, [
-			modelId ?? "gpt-6-luna",
-		]);
+		for (const [index, record] of result.records.entries()) {
+			assert.equal(record.perception?.modelId, modelId ?? "gpt-6-luna");
+			assert.equal(
+				record.navigationAssessment?.modelId,
+				modelId ?? "gpt-6-luna",
+			);
+			assert.deepEqual(responses.mock.calls[index * 2].arguments, [
+				record.perception?.modelId,
+			]);
+			assert.deepEqual(responses.mock.calls[index * 2 + 1].arguments, [
+				record.navigationAssessment?.modelId,
+			]);
+		}
 		assert.equal(f.state.modelCalls, 4);
 		assert.equal(result.outcome, "completed");
 		assert.equal(

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PlayResult } from "./doom-play-agent-types.ts";
+import type { RunProvenance } from "./run-provenance.ts";
 
 export class RunPersistenceError extends Error {
 	constructor() {
@@ -13,7 +14,10 @@ export class RunPersistenceError extends Error {
 }
 
 /** Save the existing result once; temporary PNG paths are provenance only. */
-export async function persistRun(result: PlayResult): Promise<string> {
+export async function persistRun(
+	result: PlayResult,
+	provenance: RunProvenance = { git: { commit: null, dirty: null } },
+): Promise<string> {
 	try {
 		const recordedAt = new Date().toISOString();
 		const base = fileURLToPath(new URL("../.local/runs/", import.meta.url));
@@ -55,7 +59,12 @@ export async function persistRun(result: PlayResult): Promise<string> {
 			records.push({ ...record, beforePng, decision });
 		}
 		const json = `${JSON.stringify(
-			{ schemaVersion: 2, recordedAt, result: { ...result, records } },
+			{
+				schemaVersion: 2,
+				recordedAt,
+				provenance,
+				result: { ...result, records },
+			},
 			null,
 			2,
 		)}\n`;

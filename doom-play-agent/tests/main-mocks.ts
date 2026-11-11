@@ -4,6 +4,7 @@ import * as playbackModule from "../src/doom-play-agent.ts";
 import type { createDoomTools } from "../src/doom-tools.ts";
 import type { createOAuthProvider } from "../src/provider.ts";
 import * as persistenceModule from "../src/run-persistence.ts";
+import type { captureRunProvenance } from "../src/run-provenance.ts";
 
 // One registration per process-isolated test file, before importing main.ts.
 // Cached main bindings survive restoration; cases must stay serial and reset
@@ -17,6 +18,9 @@ export function installMainMocks() {
 	const makeTools = mock.fn<typeof createDoomTools>(unconfigured);
 	const makeProvider = mock.fn<typeof createOAuthProvider>(unconfigured);
 	const playback = mock.fn(playbackModule.play);
+	const capture = mock.fn<typeof captureRunProvenance>(() => ({
+		git: { commit: "a".repeat(40), dirty: false },
+	}));
 	const persist = mock.fn<typeof persistenceModule.persistRun>(
 		async () => "/synthetic/run/result.json",
 	);
@@ -25,6 +29,9 @@ export function installMainMocks() {
 	});
 	const credentials = mock.fn(() => ({ getSession }));
 	const registrations = [
+		mock.module("../src/run-provenance.ts", {
+			namedExports: { captureRunProvenance: capture },
+		}),
 		mock.module("../src/doom-client.ts", {
 			namedExports: { ...clientModule, createDoomClient: makeClient },
 		}),
@@ -45,12 +52,16 @@ export function installMainMocks() {
 		}),
 	];
 	beforeEach(() => {
+		capture.mock.mockImplementation(() => ({
+			git: { commit: "a".repeat(40), dirty: false },
+		}));
 		makeClient.mock.mockImplementation(unconfigured);
 		makeTools.mock.mockImplementation(unconfigured);
 		makeProvider.mock.mockImplementation(unconfigured);
 		playback.mock.mockImplementation(playbackModule.play);
 		persist.mock.mockImplementation(async () => "/synthetic/run/result.json");
 		for (const fn of [
+			capture,
 			makeClient,
 			makeTools,
 			makeProvider,
@@ -65,6 +76,7 @@ export function installMainMocks() {
 		for (const registration of registrations) registration.restore();
 	});
 	return {
+		capture,
 		makeClient,
 		makeTools,
 		makeProvider,

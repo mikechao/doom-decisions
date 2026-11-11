@@ -1069,6 +1069,7 @@ const offlinePlayback: typeof import("../src/doom-play-agent.ts").play = async (
 			features: [],
 			uncertainty: "synthetic",
 			// This injected lifecycle-only playback bypasses inference entirely.
+			modelId: "synthetic",
 			durationMs: 0,
 			usage: {
 				inputTokens: 0,
