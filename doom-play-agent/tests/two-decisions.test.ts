@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import test from "node:test";
+import { maxAgentInstructions } from "../../app/src/agent-control.ts";
 import { play } from "../src/doom-play-agent.ts";
 import { PlaybackError } from "../src/playback-error.ts";
 import { fixture, scenePerception } from "./fixtures.ts";
@@ -11,6 +12,15 @@ const secondScene = {
 	features: ["Blue trim surrounds the doorway."],
 	uncertainty: "The next room is unseen.",
 };
+
+function recentHistory(instructions: string | null) {
+	assert.ok(instructions);
+	const label = "Recent verified history (JSON): ";
+	assert.equal(instructions.split(label).length, 2);
+	return JSON.parse(
+		instructions.slice(instructions.indexOf(label) + label.length),
+	);
+}
 
 function sceneInput(
 	input: Awaited<ReturnType<typeof fixture>>["state"]["modelInputs"][number],
@@ -80,6 +90,32 @@ for (const landmark of [true, false]) {
 		assert.equal(result.cumulativeTics, f.base.tic + 12);
 		assert.deepEqual(result.perception.description, secondScene.description);
 		const [r1, r2] = result.records;
+		assert.deepEqual(recentHistory(r1.guidance), {
+			status: "no-history",
+			window: 4,
+			rows: [],
+		});
+		assert.deepEqual(recentHistory(r2.guidance), {
+			status: "available",
+			window: 4,
+			columns: [
+				"ordinal",
+				"action",
+				"verifiedTics",
+				"netXYUnits",
+				"headingDeltaDeg",
+				"preSolidRayUnits",
+			],
+			rows: [[1, "forward", 6, "1.00", "0.00", null]],
+		});
+		assert.doesNotMatch(
+			JSON.stringify(f.state.modelInputs),
+			/Recent verified history/,
+		);
+		assert.doesNotMatch(
+			JSON.stringify(f.state.assessmentInputs),
+			/Recent verified history/,
+		);
 		assert.deepEqual(r2.selection, r1.selection);
 		assert.equal(r2.landmarkLookup, null);
 		assert.equal(r2.runStarted, null);
@@ -197,6 +233,156 @@ for (const landmark of [true, false]) {
 		assert.equal(r2.reasoningObservation?.telemetry.health, 100);
 		assert.deepEqual(r2.perception?.features, secondScene.features);
 		assert.deepEqual(r1.decision.afterPng, f.state.images[1]);
+	});
+}
+
+test("six decisions receive only the preceding four scalar rows with presentation rounding", async (t) => {
+	const f = await fixture(t, 6);
+	const actions = [
+		"turn_right",
+		"forward",
+		"turn_right",
+		"turn_left",
+		"backward",
+		"neutral",
+	] as const;
+	const distances = [0.5, 1.25, 2.5, 3.75, 4.5, 5.25];
+	const probes = [
+		{ kind: 2, door: 0, distance: 17 },
+		{ kind: 1, door: 0, distance: -1 },
+		null,
+		{ kind: 2, door: 0, distance: 65 }, // Invalid, never presented as solid.
+		{ kind: 4, door: 1, distance: 64 },
+		{ kind: 3, door: 0, distance: 32 },
+	];
+	const observe = f.client.observe;
+	f.client.observe = async () => {
+		const o = await observe();
+		if (f.state.observeCalls % 2 === 0) {
+			const probe = probes[f.state.observeCalls / 2 - 1];
+			o.facingProbe = probe && { ...probe, tic: o.tic };
+		}
+		return o;
+	};
+	const decide = f.client.decide;
+	let returned = 0;
+	f.client.decide = async (input) => {
+		const receipt = await decide(input);
+		assert.ok(receipt.observation && f.state.after);
+		const after = receipt.observation;
+		after.telemetry.x += (distances[returned] - 1) * 65536;
+		after.telemetry.angle -= 0x08c00000;
+		receipt.action = actions[returned++];
+		assert.ok(after.previousAction);
+		after.previousAction.action = receipt.action;
+		f.state.after = { ...structuredClone(after), png: f.state.after.png };
+		return receipt;
+	};
+	const result = await play(f.client, f.tools, f.provider);
+	const expected = [
+		[1, "turn_right", 6, "0.50", "-12.30", 17],
+		[2, "forward", 6, "1.25", "-12.30", "not-solid"],
+		[3, "turn_right", 6, "2.50", "-12.30", null],
+		[4, "turn_left", 6, "3.75", "-12.30", null],
+		[5, "backward", 6, "4.50", "-12.30", "not-solid"],
+	];
+	for (const [i, record] of result.records.entries()) {
+		const history = recentHistory(record.guidance);
+		assert.equal(history.status, i ? "available" : "no-history");
+		assert.equal(history.window, 4);
+		assert.deepEqual(history.rows, expected.slice(Math.max(0, i - 4), i));
+		assert.equal(record.guidance, f.state.decisionTemplates[i]);
+		assert.equal(record.promptAcknowledged?.instructions, record.guidance);
+		assert.equal(record.movement.status, "available");
+		if (record.movement.status !== "available")
+			throw Error("Expected movement");
+		assert.equal(record.movement.distance, distances[i]);
+		assert.equal(record.movement.headingDelta, -12.3046875);
+	}
+	assert.deepEqual(
+		recentHistory(result.records[5].guidance).rows,
+		expected.slice(1),
+	);
+	assert.equal(f.state.observeCalls, 12);
+	assert.equal(f.events.filter((e) => e === "startRun").length, 1);
+});
+
+for (const fault of [
+	"invalid-pose",
+	"missing-pose",
+	"receipt-correlation",
+	"receipt-tics",
+] as const) {
+	test(`ineligible ${fault} history recovers once the faulty row leaves the window`, async (t) => {
+		const f = await fixture(t, 6);
+		const observe = f.client.observe;
+		f.client.observe = async () => {
+			const o = await observe();
+			if (f.state.observeCalls === 2) {
+				if (fault === "invalid-pose") o.telemetry.angle = -1;
+				if (fault === "missing-pose") Reflect.deleteProperty(o, "telemetry");
+			}
+			return o;
+		};
+		const decide = f.client.decide;
+		let calls = 0;
+		f.client.decide = async (input) => {
+			const receipt = await decide(input);
+			if (++calls === 1) {
+				if (fault === "receipt-correlation")
+					receipt.beforeObservationId = randomUUID();
+				if (fault === "receipt-tics") receipt.reportedTics = 5;
+			}
+			return receipt;
+		};
+		const result = await play(f.client, f.tools, f.provider);
+		for (const record of result.records.slice(1, 5)) {
+			assert.deepEqual(recentHistory(record.guidance), {
+				status: "unavailable",
+				window: 4,
+				reason: "ineligible-history",
+				rows: [],
+			});
+		}
+		const recovered = recentHistory(result.records[5].guidance);
+		assert.equal(recovered.status, "available");
+		assert.deepEqual(
+			recovered.rows.map((row: unknown[]) => row[0]),
+			[2, 3, 4, 5],
+		);
+		assert.ok(
+			result.records.every(
+				(r) => r.recentPoseComparison.status === "unavailable",
+			),
+		);
+		assert.equal(result.outcome, "completed");
+		assert.equal(calls, 6);
+		assert.equal(f.state.run?.reserved, 6);
+	});
+}
+
+for (const field of ["x", "y", "angle", "missing-pose"] as const) {
+	test(`current reasoning ${field} mismatch suppresses only history`, async (t) => {
+		const f = await fixture(t);
+		const observe = f.client.observe;
+		f.client.observe = async () => {
+			const o = await observe();
+			if (f.state.observeCalls === 3) {
+				if (field === "missing-pose") Reflect.deleteProperty(o, "telemetry");
+				else o.telemetry[field]++;
+			}
+			return o;
+		};
+		const result = await play(f.client, f.tools, f.provider);
+		assert.deepEqual(recentHistory(result.records[1].guidance), {
+			status: "unavailable",
+			window: 4,
+			reason: "checkpoint-mismatch",
+			rows: [],
+		});
+		assert.equal(result.outcome, "completed");
+		assert.equal(result.records[1].recentPoseComparison.status, "available");
+		assert.equal(f.state.run?.sdkInvoked, 2);
 	});
 }
 
@@ -460,29 +646,25 @@ for (const fault of [
 	});
 }
 
-test("second guidance overflow preserves the first decision without another prompt or claim", async (t) => {
+test("history alone overflows second guidance before CAS and preserves the first record", async (t) => {
+	const calibration = await fixture(t, 1);
+	calibration.state.candidates = [];
+	const baseline = await play(
+		calibration.client,
+		calibration.tools,
+		calibration.provider,
+	);
+	const firstLength = baseline.records[0].guidance?.length;
+	assert.ok(firstLength);
 	const f = await fixture(t);
 	f.state.candidates = [];
 	f.base.configuration = {
 		...f.base.configuration,
-		instructionTemplate: "B".repeat(14500),
+		instructionTemplate:
+			f.base.configuration.instructionTemplate +
+			"B".repeat(maxAgentInstructions - firstLength),
 	};
 	f.state.configuration = structuredClone(f.base.configuration);
-	f.state.perception = {
-		description: "First.",
-		features: [],
-		uncertainty: "None.",
-	};
-	const decide = f.client.decide;
-	f.client.decide = async (input) => {
-		const receipt = await decide(input);
-		f.state.perception = {
-			description: "D".repeat(300),
-			features: Array(8).fill("F".repeat(120)),
-			uncertainty: "U".repeat(300),
-		};
-		return receipt;
-	};
 	await assert.rejects(play(f.client, f.tools, f.provider), (error) => {
 		assert.ok(error instanceof PlaybackError);
 		assert.equal(error.stage, "guidance");
@@ -493,6 +675,11 @@ test("second guidance overflow preserves the first decision without another prom
 			["returned", "not-called"],
 		);
 		assert.ok(error.records[1].perception);
+		assert.equal(error.records[0].guidance?.length, maxAgentInstructions);
+		assert.deepEqual(
+			error.records[0].perception?.description,
+			error.records[1].perception?.description,
+		);
 		assert.equal(error.records[1].guidance, null);
 		return true;
 	});
@@ -653,35 +840,62 @@ for (const budget of [1, 2, 3, 5]) {
 	}
 }
 
-test("same-tic admission pose disagreement affects only pose history", async (t) => {
-	const f = await fixture(t, 3);
-	const observe = f.client.observe;
-	f.client.observe = async () => {
-		const observation = await observe();
-		if (f.state.observeCalls === 4) observation.telemetry.angle++;
-		return observation;
-	};
-	const result = await play(f.client, f.tools, f.provider);
-	assert.equal(result.outcome, "completed");
-	assert.equal(result.action, "forward");
-	assert.equal(result.decisionOrdinal, 3);
-	assert.equal(result.records[0].recentPoseComparison.status, "available");
-	for (const record of result.records.slice(1)) {
-		assert.equal(record.movement.status, "available");
-		assert.equal(record.failure, null);
-		assert.deepEqual(record.recentPoseComparison, {
-			status: "unavailable",
-			ordinal: 2,
-			reason: "same-tic-pose-mismatch",
-		});
-	}
-	assert.equal(f.state.observeCalls, 6);
-	assert.equal(f.state.modelInputs.length, 3);
-	assert.equal(f.events.filter((event) => event === "setPrompt").length, 3);
-	assert.equal(f.events.filter((event) => event === "decide").length, 3);
-	assert.equal(f.state.run?.sdkInvoked, 3);
-	assert.equal(f.state.run?.remaining, 0);
-});
+for (const fault of ["pose-mismatch", "reused-id"] as const) {
+	test(`window join ${fault} suppresses history only while the join is inside the window`, async (t) => {
+		const f = await fixture(t, 6);
+		const observe = f.client.observe;
+		f.client.observe = async () => {
+			const observation = await observe();
+			if (f.state.observeCalls === 4) {
+				if (fault === "pose-mismatch") observation.telemetry.angle++;
+				else {
+					assert.ok(f.state.after);
+					observation.observationId = f.state.after.observationId;
+					f.state.lastId = observation.observationId;
+				}
+			}
+			return observation;
+		};
+		const result = await play(f.client, f.tools, f.provider);
+		assert.equal(result.outcome, "completed");
+		assert.equal(result.action, "forward");
+		assert.equal(result.decisionOrdinal, 6);
+		assert.equal(result.records[0].recentPoseComparison.status, "available");
+		for (const record of result.records.slice(1)) {
+			assert.equal(record.movement.status, "available");
+			assert.equal(record.failure, null);
+			assert.deepEqual(record.recentPoseComparison, {
+				status: "unavailable",
+				ordinal: 2,
+				reason:
+					fault === "pose-mismatch"
+						? "same-tic-pose-mismatch"
+						: "history-discontinuity",
+			});
+		}
+		assert.equal(recentHistory(result.records[1].guidance).status, "available");
+		for (const record of result.records.slice(2, 5)) {
+			assert.deepEqual(recentHistory(record.guidance), {
+				status: "unavailable",
+				window: 4,
+				reason: "checkpoint-mismatch",
+				rows: [],
+			});
+		}
+		const recovered = recentHistory(result.records[5].guidance);
+		assert.equal(recovered.status, "available");
+		assert.deepEqual(
+			recovered.rows.map((row: unknown[]) => row[0]),
+			[2, 3, 4, 5],
+		);
+		assert.equal(f.state.observeCalls, 12);
+		assert.equal(f.state.modelInputs.length, 6);
+		assert.equal(f.events.filter((event) => event === "setPrompt").length, 6);
+		assert.equal(f.events.filter((event) => event === "decide").length, 6);
+		assert.equal(f.state.run?.sdkInvoked, 6);
+		assert.equal(f.state.run?.remaining, 0);
+	});
+}
 
 for (const outcome of [
 	"stopped",
@@ -713,6 +927,13 @@ for (const outcome of [
 		assert.equal(result.completionUncertain, outcome === "uncertain");
 		assert.equal(result.records[2].recentPoseComparison.status, "unavailable");
 		assert.equal(f.state.modelInputs.length, 3);
+		assert.equal(f.state.decisionTemplates.length, 3);
+		assert.deepEqual(
+			recentHistory(result.records[2].guidance).rows.map(
+				(row: unknown[]) => row[0],
+			),
+			[1, 2],
+		);
 		assert.equal(f.state.observeCalls, 6);
 		assert.equal(calls, 3);
 		assert.equal(f.events.filter((e) => e === "startRun").length, 1);
@@ -735,7 +956,7 @@ for (const ordinal of [3, 5]) {
 			if (fault === "guidance") {
 				f.base.configuration = {
 					...f.base.configuration,
-					instructionTemplate: "B".repeat(14000),
+					instructionTemplate: "B".repeat(13000),
 				};
 				f.state.configuration = structuredClone(f.base.configuration);
 				f.state.perception = {

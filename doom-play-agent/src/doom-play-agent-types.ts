@@ -61,7 +61,7 @@ export type DecisionEvidence = {
  * Readonly/freeze protect the top level only: callers must treat nested DTOs and
  * Buffers as immutable too. No mutable control/result aliases are published. pngPath
  * fields are ephemeral source paths; only the Buffers retain image evidence.
- * Nothing in this record authorizes gameplay or supplies future guidance.
+ * Records never authorize gameplay; eligible published history may inform guidance.
  */
 export type DecisionRecord = Readonly<
 	DecisionEvidence & { recentPoseComparison: RecentPoseComparison }

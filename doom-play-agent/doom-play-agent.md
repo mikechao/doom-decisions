@@ -31,7 +31,9 @@ proof of navigation improvement or live N>2 gameplay.
    exists, `assessNavigation()` compares that perception with the selected target,
    text-only. Assessment failure stops without fallback.
 5. Preparation composes guidance from the original canonical base, selection,
-   current perception and optional assessment. First guidance is size-checked
+   current perception and optional assessment, then appends deterministic history
+   from the published prefix (explicit `no-history` for decision 1).
+   First guidance is size-checked
    **before the nonrefundable run claim**.
 6. `play()` calls `startRun()` once with the initial observation/session/revision.
    The broker chooses the run ID and limit. The executor checks correlation; local
@@ -90,7 +92,7 @@ JSON-quoted in logs; the note label uses a short SHA-256 digest of its ID.
 | `executeOneDecision()` | CAS, fresh admission/checks, one `decide()`, after-image retention. Never claims a run. |
 | `checkCheckpoint()` / `checkRun()` | Exposed checkpoint/scope/accounting checks; no independent native verifier or local authority ledger. |
 | `newRecord()` | Partial passive evidence initializer for the current numeric ordinal. |
-| `modelState()` / `composeGuidance()` | Compact current state and bounded advisory projections; no prior records or unselected notes enter reasoning. |
+| `modelState()` / `composeGuidance()` | Compact current state and bounded advisory projections; published history enters Decisions guidance only. Perception/assessment stay history-free; unselected notes are excluded. |
 | `DoomClient` | Acknowledged lease lifecycle, serialized operations, no retries. Playback does not call `getConfig()`, `getPrompt()` or `setConfig()`. |
 | Shared executor | Held-lease page/epoch/command correlation, DTO/settings/receipt parsing, PNG validation/materialization, exact prompt echo/revision increment, active start acknowledgment and decision observation correlation. |
 | Browser/controller | Lease/session/run ownership, one-shot issuance, CAS/readiness, nonrefundable reservations, SDK reader cleanup, Stop fences, native dispatch and resulting-frame verification. |
@@ -153,8 +155,8 @@ lookup and start acknowledgment. Decision evidence distinguishes:
   observation there is no after-image or retention failure. Retention failure alone
   does not block a later independently verified reasoning capture.
 
-Records are passive; live scope/receipt/selection drive control flow. DTOs are
-cloned at capture, Buffers transfer ownership without another copy, and records
+Records supply read-only advice; live scope/receipt/selection drive control flow.
+DTOs are cloned at capture, Buffers transfer ownership without another copy, and records
 are shallow-frozen at publication. Callers must treat nested DTOs, arrays and
 Buffers as immutable. Paths are ephemeral provenance; owned bytes survive file
 changes/deletion/detach. Executor materialization failure before return remains
@@ -209,8 +211,9 @@ delta in degrees [-180, 180) (half-turn tie -180), and independent exact positio
 heading change flags. Ordinal/action/tic context remains in the enclosing record
 and receipt. Each returned decision emits one best-effort net reported pose
 diagnostic inside its decision boundaries. Diagnostic errors cannot affect receipt
-retention or continuation. This adds no observations, inference, model inputs or
-control state; existing previous-action feedback remains unchanged. Endpoint
+retention or continuation. The helper adds no observations, inference or control
+state; Experiment C below projects its diagnostics into guidance. Existing
+previous-action feedback remains unchanged. Endpoint
 deltas are browser-reported diagnostics, not independent native pose attestation,
 path length, collision, exploration or landmark/exit progress. No motion threshold
 or revisit heuristic is applied. Controller/executor execution and image proofs
@@ -228,9 +231,42 @@ independent of pose eligibility.
 The diagnostic searches the entire prefix for the most recent exact raw XY,
 exact raw pose, and exact XY with a different raw heading. It also includes up
 to three prior checkpoints, newest first. Returned decisions log this bounded
-result through best-effort progress. It supplies no model or gameplay input.
+result through best-effort progress. Experiment C validates its own bounded
+window independently, without sending whole-run recurrence objects or changing B.
 Recurrence describes sampled endpoints and cannot establish a trajectory,
 collision, a traversal loop, or exploration or objective progress.
+
+Experiment C formats the last up to four immediately preceding published records
+at guidance composition, oldest first, for both objective modes. Available
+Experiment A movement establishes completed/certain/SDK-invoked receipts, action,
+positive matching tics and checkpoint correlation. The formatter checks submitted
+observation/scope correlation and unique admission/ending observation IDs within
+the selected window. Internal ending-to-admission joins must match run, session,
+map, tic and raw pose. No partial/error record is an eligible substitute.
+It compares the previous ending with the current reasoning observation's
+session/map/tic and raw pose; absent/conflicting evidence suppresses history only.
+Faults outside the selected window do not suppress otherwise valid history;
+within the window, no gap is skipped or backfilled. Experiment B's whole-prefix
+diagnostics stay unchanged. Current gameplay admission, receipt handling,
+no-retry boundaries and controller authority are unchanged.
+
+Rows contain ordinal, action, verified tics, `movement.distance` as `netXYUnits`,
+`movement.headingDelta` as `headingDeltaDeg`, and the pre-action admission probe's
+integer distance for valid solid kind 2. Other valid kinds use `"not-solid"`
+(not passability); missing/invalid probes use `null` without invalidating the row.
+Movement/heading are presentation strings with two decimal places, leaving full
+precision evidence intact. Scalar rows are immediately serialized; no mutable
+history accumulator or recomputed movement is introduced. Decision 1 emits
+`no-history`; insufficient integrity emits `unavailable` (`ineligible-history` or
+`checkpoint-mismatch`) with no rows, never zero movement. The complete composed
+prompt still fails before CAS on the existing 16,000-character limit.
+
+Perception and assessment remain history-free. Current verified screenshot/state
+is authoritative over historical browser-reported diagnostics. History establishes
+neither path length, collision, loops, objective progress nor landmark completion;
+direction-dependent rays cannot persistently identify a wall. There is no stuck
+verdict, navigation policy, extra reasoning stage or persistence change. Existing
+schema-v2 guidance/acknowledgment fields retain this amendment unchanged.
 
 Memory grows O(N) because images and DTOs remain retained. Keep practical smoke
 budgets small; the positive-safe-integer limit has no additional small memory cap.

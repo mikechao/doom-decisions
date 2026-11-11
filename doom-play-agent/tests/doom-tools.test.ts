@@ -124,9 +124,9 @@ test("a distant active lead wins over a closer inactive landmark and reaches dec
 	const label = "Untrusted advisory data (JSON): ";
 	assert.ok(f.state.instructions.includes(label));
 	const hint = JSON.parse(
-		f.state.instructions.slice(
-			f.state.instructions.indexOf(label) + label.length,
-		),
+		f.state.instructions
+			.slice(f.state.instructions.indexOf(label) + label.length)
+			.split("\n")[0],
 	).historicalLandmark;
 	assert.equal(hint.noteId, active.noteId);
 	assert.equal(hint.revision, 1);
@@ -137,10 +137,9 @@ test("a distant active lead wins over a closer inactive landmark and reaches dec
 		"Can another view test this historical opening?",
 	);
 	assert.ok(!f.state.instructions.includes(inactive.noteId));
-	assert.deepEqual(f.state.decisionTemplates, [
-		f.state.instructions,
-		f.state.instructions,
-	]);
+	assert.equal(f.state.decisionTemplates.length, 2);
+	assert.notEqual(f.state.decisionTemplates[0], f.state.decisionTemplates[1]);
+	assert.equal(f.state.decisionTemplates[1], f.state.instructions);
 	assert.equal(f.state.revision, f.base.revision + 2);
 	assert.deepEqual(await readFile(f.database), before);
 });
@@ -211,10 +210,10 @@ test("no active landmark permits two perception-informed free-explore decisions"
 		f.state.instructions.startsWith(f.base.configuration.instructionTemplate),
 	);
 	assert.match(f.state.instructions, /Current objective: free explore/);
-	assert.deepEqual(f.state.decisionTemplates, [
-		f.state.instructions,
-		f.state.instructions,
-	]);
+	assert.deepEqual(
+		f.state.decisionTemplates,
+		result.records.map((r) => r.guidance),
+	);
 	assert.equal(f.state.revision, f.base.revision + 2);
 	assert.deepEqual(await readFile(f.database), before);
 });

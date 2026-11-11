@@ -110,7 +110,7 @@ test("broken progress channel", async (t) => {
   assert.equal(writes, 1);
   if (failurePoint === "prompt") {
     assert.ok(failedPrompt.includes("Start of Decisions API Prompt for Decision 1"));
-    assert.ok(failedPrompt.includes(f.state.instructions));
+    assert.ok(failedPrompt.includes(f.state.decisionTemplates[0] ?? f.state.instructions));
     assert.ok(failedPrompt.includes("End of Decisions API Prompt for Decision 1"));
   } else if (operationFails) {
     assert.ok(failedChunk.includes("Stopped at decision"));

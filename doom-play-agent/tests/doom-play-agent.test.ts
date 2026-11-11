@@ -51,7 +51,9 @@ function withoutDuration<T extends { durationMs: number }>(
 function advisoryData(instructions: string) {
 	const label = "Untrusted advisory data (JSON): ";
 	return JSON.parse(
-		instructions.slice(instructions.indexOf(label) + label.length),
+		instructions
+			.slice(instructions.indexOf(label) + label.length)
+			.split("\n")[0],
 	);
 }
 
@@ -109,7 +111,7 @@ test("first decision retains stage snapshots across two slots, submitted scope a
 	);
 	assert.deepEqual(record.runStarted, start);
 	assert.deepEqual(record.promptAcknowledged, prompt);
-	assert.equal(record.guidance, f.state.instructions);
+	assert.equal(record.guidance, f.state.decisionTemplates[0]);
 	assert.equal(record.guidance, prompt.instructions);
 	assert.ok(
 		record.guidance?.startsWith(reasoning.configuration.instructionTemplate),
@@ -343,7 +345,7 @@ test("host selection preserves base and substitution through CAS, then decides t
 	);
 	assert.equal(setPrompt.mock.callCount(), 2);
 	const sent = setPrompt.mock.calls[0].arguments[0];
-	assert.equal(sent.instructions, f.state.instructions);
+	assert.equal(sent.instructions, f.state.decisionTemplates[0]);
 	assert.ok(
 		sent.instructions.startsWith(f.base.configuration.instructionTemplate),
 	);
@@ -367,10 +369,10 @@ test("host selection preserves base and substitution through CAS, then decides t
 	assert.ok(f.state.instructions.includes(JSON.stringify(f.note.hypothesis)));
 	assert.ok(f.state.instructions.includes(JSON.stringify(f.note.nextQuestion)));
 	assert.doesNotMatch(f.state.instructions, /ffffffff-ffff/);
-	assert.deepEqual(f.state.decisionTemplates, [
-		f.state.instructions,
-		f.state.instructions,
-	]);
+	assert.deepEqual(
+		f.state.decisionTemplates,
+		result.records.map((r) => r.guidance),
+	);
 	const input = f.state.modelInputs[0] as Parameters<
 		typeof f.model.doGenerate
 	>[0];
@@ -424,7 +426,10 @@ for (const status of ["empty", "unavailable", "lookup_failed"] as const) {
 		assert.deepEqual(advisoryData(sent), {
 			currentObservation: scenePerception,
 		});
-		assert.deepEqual(f.state.decisionTemplates, [sent, sent]);
+		assert.deepEqual(
+			f.state.decisionTemplates,
+			result.records.map((r) => r.guidance),
+		);
 	});
 }
 
@@ -923,7 +928,10 @@ for (const assessment of [
 			/no-visible-match verdict does not prove a wrong location or an unreachable destination/,
 		);
 		assert.match(sent, /possible-match does not confirm identity or arrival/);
-		assert.deepEqual(f.state.decisionTemplates, [sent, sent]);
+		assert.deepEqual(
+			f.state.decisionTemplates,
+			result.records.map((r) => r.guidance),
+		);
 		assert.equal(f.events.filter((event) => event === "decide").length, 2);
 	});
 }

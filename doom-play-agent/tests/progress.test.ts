@@ -195,7 +195,7 @@ test("three-decision run interleaves one boundary pair with each decision", asyn
 	for (const record of result.records) {
 		assert.doesNotMatch(
 			record.guidance ?? "",
-			/net reported pose|headingDelta|dxRaw|reported pose history|recentPoseComparison/,
+			/net reported pose|dxRaw|reported pose history|recentPoseComparison/,
 		);
 		if (record.decision.kind !== "returned") throw Error("Expected receipt");
 		assert.equal(
@@ -415,10 +415,10 @@ test("milestones log objective and perception to stderr and preserve final stdou
 	assert.ok(
 		f.state.instructions.includes(JSON.stringify(selected.nextQuestion)),
 	);
-	assert.deepEqual(f.state.decisionTemplates, [
-		f.state.instructions,
-		f.state.instructions,
-	]);
+	assert.deepEqual(
+		f.state.decisionTemplates,
+		result.records.map((r) => r.guidance),
+	);
 	assert.ok(output.includes(f.state.instructions));
 	assert.ok(!output.includes(String.fromCharCode(27)));
 	assert.match(stdout.join(""), /^Doom bounded-run result:/);

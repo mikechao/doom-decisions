@@ -41,6 +41,29 @@ objective/history; assessment is text-only. Historical and model text remain
 untrusted advisory JSON. First guidance must fit before claim; every later amendment
 must fit before its CAS/decision. No guidance accumulates across slots.
 
+Experiment C appends deterministic recent-history guidance in both landmark and
+free-explore mode: at most four immediately preceding eligible completed
+decisions, oldest first. Rows contain ordinal, action, verified tics, Euclidean
+endpoint displacement (Doom units), signed heading delta (degrees), and the
+pre-action admission solid center-ray distance. Movement/heading display two
+decimal places without changing retained telemetry. A valid non-solid probe is
+`"not-solid"` (not proof of passability); missing/invalid probes are `null`.
+Decision 1 explicitly has `no-history`. Invalid movement/receipt evidence or a
+checkpoint mismatch within the selected window (including its connection to the
+current reasoning observation) produces `unavailable` with no rows; invalid
+history is never skipped/backfilled.
+History recovers when faulty evidence leaves the window and all required joins
+are valid; Experiment B's whole-prefix diagnostics remain unchanged.
+This suppresses advice only, without changing admission or continuation.
+
+History uses published records, never the current attempt, and stays out of
+perception/assessment inference. Current verified screenshot/state and controller
+authority take precedence. Browser-reported endpoint diagnostics do not establish
+path length, collision, loops, objective progress or landmark completion; probe
+direction changes cannot identify the same wall. No stuck classifier, navigation
+policy, extra inference or persistence is added. Existing schema-v2 guidance and
+prompt acknowledgments already retain the amendment.
+
 `main()` attaches once and requires an advisory positive safe-integer
 `configuredDecisionBudget` and `budgetUnclaimedAtAttach === true`. It passes the
 hint to `play()` for consistency checking only. `play()` prepares the first slot,
@@ -186,8 +209,9 @@ prompt acknowledgment checks; the controller owns lease/Stop/CAS/native authorit
 preflight, the sole claim, and the continuation loop. `prepareDecision()` repeats
 perception, optional assessment and bounded prompt composition for every slot.
 `executeOneDecision()` repeats CAS, admission observation/checks, one invocation
-and image retention. Live scope/receipt variables drive continuation; records are
-passive snapshots. Full passive capture/frame/PNG equality is not required.
+and image retention. Live scope/receipt variables drive continuation; published
+records supply read-only recent-history advice. Full passive capture/frame/PNG
+equality is not required.
 Controller checks remain authoritative against Stop/revocation after any snapshot.
 
 Records retain PNG buffers and cloned DTOs, so memory grows O(N). Keep practical
