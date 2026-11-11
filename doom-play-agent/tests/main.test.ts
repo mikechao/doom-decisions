@@ -1,12 +1,184 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { rm } from "node:fs/promises";
 import test from "node:test";
 import { PlaybackError } from "../src/doom-play-agent.ts";
+import { RunPersistenceError } from "../src/run-persistence.ts";
 import { fixture, scenePerception } from "./fixtures.ts";
 import { installMainMocks } from "./main-mocks.ts";
 
 const mocks = installMainMocks();
 const { main } = await import("../src/main.ts");
+
+for (const outcome of [
+	"completed",
+	"not-admitted",
+	"api-failure",
+	"stopped",
+	"terminal",
+	"retired",
+] as const) {
+	test(`persists resolved ${outcome} evidence once, after detach`, async (t) => {
+		const f = await fixture(t, outcome === "completed" ? 1 : 3);
+		mocks.makeClient.mock.mockImplementation(() => f.client);
+		mocks.makeTools.mock.mockImplementation(() => f.tools);
+		mocks.makeProvider.mock.mockImplementation(() => f.provider);
+		t.mock.method(console, "log", () => {});
+		const decide = f.client.decide;
+		f.client.decide = async (input) => {
+			const receipt = await decide(input);
+			receipt.outcome = outcome;
+			receipt.completionUncertain = outcome === "retired";
+			if (outcome === "terminal" && receipt.observation)
+				receipt.observation.phase = "terminal";
+			else if (outcome !== "completed") {
+				receipt.observation = null;
+				receipt.pngPath = null;
+			}
+			return receipt;
+		};
+		mocks.persist.mock.mockImplementation(async (result) => {
+			assert.equal(f.events.at(-1), "detach");
+			assert.equal(result.outcome, outcome);
+			assert.equal(result.records[0].decision.kind, "returned");
+			return "/synthetic/run.json";
+		});
+		const result = await main();
+		assert.equal(mocks.persist.mock.callCount(), 1);
+		assert.equal(mocks.persist.mock.calls[0].arguments[0], result);
+		assert.equal(f.events.filter((e) => e === "decide").length, 1);
+	});
+}
+
+for (const detachFails of [false, true]) {
+	for (const persistenceFails of [false, true]) {
+		test(`resolved playback: detach failure=${detachFails}, persistence failure=${persistenceFails}`, async (t) => {
+			const f = await fixture(t, 1);
+			mocks.makeClient.mock.mockImplementation(() => f.client);
+			mocks.makeTools.mock.mockImplementation(() => f.tools);
+			mocks.makeProvider.mock.mockImplementation(() => f.provider);
+			t.mock.method(console, "log", () => {});
+			const stderr: string[] = [];
+			t.mock.method(process.stderr, "write", (chunk: unknown) => {
+				stderr.push(String(chunk));
+				return true;
+			});
+			const cleanupError = new Error("original detach error");
+			if (detachFails)
+				f.client.detach = async () => {
+					f.events.push("detach");
+					throw cleanupError;
+				};
+			mocks.persist.mock.mockImplementation(async () => {
+				assert.equal(f.events.at(-1), "detach");
+				f.events.push("persist");
+				if (persistenceFails) throw Error("SECRET storage error");
+				return "/synthetic/run.json";
+			});
+			if (detachFails || persistenceFails)
+				await assert.rejects(main(), (error) => {
+					if (detachFails) assert.equal(error, cleanupError);
+					else assert.ok(error instanceof RunPersistenceError);
+					return true;
+				});
+			else await main();
+			assert.equal(mocks.persist.mock.callCount(), 1);
+			assert.deepEqual(f.events.slice(-2), ["detach", "persist"]);
+			assert.equal(f.events.filter((e) => e === "decide").length, 1);
+			assert.equal(
+				stderr.join("").includes("Run artifact saved:"),
+				!persistenceFails,
+			);
+			assert.doesNotMatch(stderr.join(""), /SECRET/);
+			if (detachFails && persistenceFails)
+				assert.match(stderr.join(""), /Doom run persistence failed/);
+		});
+	}
+}
+
+for (const detachFails of [false, true]) {
+	test(`throwing playback never persists partial records (detach failure=${detachFails})`, async (t) => {
+		const f = await fixture(t, 1);
+		mocks.makeClient.mock.mockImplementation(() => f.client);
+		mocks.makeTools.mock.mockImplementation(() => f.tools);
+		mocks.makeProvider.mock.mockImplementation(() => f.provider);
+		const cause = Error("lost decision acknowledgment");
+		const cleanupError = Error("detach failed");
+		f.client.decide = async () => {
+			throw cause;
+		};
+		if (detachFails)
+			f.client.detach = async () => {
+				throw cleanupError;
+			};
+		await assert.rejects(main(), (error) => {
+			const playback = detachFails
+				? (error as AggregateError).errors[0]
+				: error;
+			assert.ok(playback instanceof PlaybackError);
+			assert.equal(playback.cause, cause);
+			assert.equal(playback.records[0].decision.kind, "unconfirmed");
+			if (detachFails)
+				assert.equal((error as AggregateError).errors[1], cleanupError);
+			return true;
+		});
+		assert.equal(mocks.persist.mock.callCount(), 0);
+	});
+}
+
+test("executable reports persistence failure safely and exits nonzero after detach", () => {
+	const child = spawnSync(
+		process.execPath,
+		[
+			"--experimental-strip-types",
+			"--experimental-test-module-mocks",
+			"--input-type=module",
+			"-e",
+			`
+import assert from "node:assert/strict";
+import { mock } from "node:test";
+import { fileURLToPath } from "node:url";
+let detached = false;
+let plays = 0;
+const client = await import(${JSON.stringify(new URL("../src/doom-client.ts", import.meta.url).href)});
+mock.module(${JSON.stringify(new URL("../src/doom-client.ts", import.meta.url).href)}, {
+  namedExports: { ...client, createDoomClient: () => ({
+    attach: async () => ({ configuredDecisionBudget: 1, budgetUnclaimedAtAttach: true }),
+    detach: async () => { detached = true; return { released: true }; },
+  }) },
+});
+mock.module(${JSON.stringify(new URL("../src/doom-tools.ts", import.meta.url).href)}, { namedExports: { createDoomTools: () => ({}) } });
+mock.module(${JSON.stringify(new URL("../src/provider.ts", import.meta.url).href)}, { namedExports: { createOAuthProvider: () => ({}) } });
+mock.module("@openai-oauth/local", {
+  namedExports: { openaiCredentials: () => ({ getSession() { throw Error("Credentials forbidden"); } }) },
+});
+const playback = await import(${JSON.stringify(new URL("../src/doom-play-agent.ts", import.meta.url).href)});
+mock.module(${JSON.stringify(new URL("../src/doom-play-agent.ts", import.meta.url).href)}, {
+  namedExports: { ...playback, play: async () => { plays++; return { records: [], runId: "synthetic" }; } },
+});
+const persistence = await import(${JSON.stringify(new URL("../src/run-persistence.ts", import.meta.url).href)});
+mock.module(${JSON.stringify(new URL("../src/run-persistence.ts", import.meta.url).href)}, {
+  namedExports: { ...persistence, persistRun: async () => {
+    assert.equal(detached, true);
+    assert.equal(plays, 1);
+    throw Error("SECRET prompt and filesystem error");
+  } },
+});
+process.argv = [process.execPath, fileURLToPath(${JSON.stringify(new URL("../src/main.ts", import.meta.url).href)})];
+await import(${JSON.stringify(new URL("../src/main.ts", import.meta.url).href)});
+`,
+		],
+		{ encoding: "utf8", timeout: 10_000 },
+	);
+	assert.equal(child.error, undefined);
+	assert.equal(child.status, 1, child.stdout + child.stderr);
+	assert.match(child.stderr, /Doom run persistence failed/);
+	assert.doesNotMatch(
+		child.stdout + child.stderr,
+		/SECRET|Run artifact saved:/,
+	);
+	assert.match(child.stderr, /Lease detached/);
+});
 
 for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 	test(`reasoning model selection through main preserves ${modelId === undefined ? "the default" : modelId === "" ? "an empty override" : "an explicit override"}`, async (t) => {

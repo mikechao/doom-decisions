@@ -77,9 +77,37 @@ block subsequent fresh reasoning. All records/Buffers are excluded from normal C
 output. Errors print bounded ordinal-aware diagnostics, not raw transport causes.
 Playback and detach failures remain separate `AggregateError` members.
 
-There is no re-selection, completion planner, landmark retirement,
-reflection or persistence. The lease prompt is not restored through another
+There is no re-selection, completion planner, landmark retirement or
+reflection. The lease prompt is not restored through another
 mutation; `main()` detaches in `finally` after playback settles.
+
+## Resolved-run artifacts
+
+After the detach attempt, `main()` saves each resolved `PlayResult` once under
+ignored `doom-play-agent/.local/runs/`, relative to the module rather than the
+working directory. Filenames combine a UTC timestamp and broker run ID, with
+exclusive creation to prevent overwrites. Newly created directories/files use
+private permissions (0700/0600 where supported).
+
+The two-space JSON envelope contains only `schemaVersion: 1`, `recordedAt` (UTC),
+and the entire existing `result`, including ordered records, receipts, raw poses,
+movement summaries, recent-pose comparisons, guidance and retained PNGs. Buffers
+use standard Node JSON (`{ "type": "Buffer", "data": [...] }`); parsing yields
+byte arrays, not Buffer instances. Undefined properties are omitted. No extra
+model-selection metadata is collected.
+
+Early, terminal, declined and uncertain returned outcomes are saved too; a saved
+artifact does not imply completed gameplay or confirmed detach. A detach failure
+remains primary even if saving also fails. Otherwise a persistence failure makes
+the CLI exit nonzero with a bounded diagnostic. A saved-path message appears on
+stderr only after the write succeeds; gameplay is never retried.
+
+Thrown playback errors and interrupted runs are not persisted. A failed or
+interrupted write can leave an incomplete file; this is not crash-safe storage.
+Image JSON may be large. Temporary PNG paths remain provenance, not durable image
+files; retained bytes are embedded. Artifacts contain potentially sensitive prompts,
+historical prose and local paths, so keep them local. Provider credentials, SDK
+instances, environment dumps and raw errors are not added.
 
 Tagged progress milestones use `consola/basic` on stderr; the existing final
 result stays on stdout. Progress includes lookup status and returned count (not
@@ -135,9 +163,9 @@ npm run check
 `npm test` runs the full offline `node:test` suite (`tests/*.test.ts`), including
 movement-summary tests. Prefer `npm run check` after changes: it runs `npm test`,
 `npm run typecheck`, then the existing non-writing Biome check, including
-`src/movement-summary.ts` and `tests`. It stops on any failed step and does not
-format or write source files. See `package.json` for the exact commands; use
-`npm run typecheck` to investigate TypeScript failures on its own.
+`src/movement-summary.ts`, `src/run-persistence.ts` and `tests`. It stops on any
+failed step and does not format or write source files. See `package.json` for the
+exact commands; use `npm run typecheck` to investigate TypeScript failures on its own.
 
 Tests use native Node module mocks (experimental on Node 22.20.0), registered
 before dynamically importing the zero-argument `main()` entry point. Test files
@@ -189,9 +217,10 @@ failures remained. No live gameplay, servers, OAuth or paid calls were exercised
    decisions only
    while previous receipts and fresh checkpoint/accounting permit continuation,
    a fresh reasoning image/pass for every slot, same objective/target, and prompt
-   amendments from the original base. Retain programmatic records if inspecting
-   images; normal CLI output excludes them. Check final summary ordinal, exact
-   tic/uncertainty outcomes and acknowledged detach. Do not call a terminal prefix
+   amendments from the original base. Normal CLI output excludes records; after
+   detach, inspect the saved artifact for ordered records and embedded images.
+   Check final summary ordinal, exact tic/uncertainty outcomes and acknowledged
+   detach. Do not call a terminal prefix
    a completed level transition.
 5. On uncertainty, stop and inspect; use Stop Agent to release possible ownership.
    Never rerun automatically. Another attempt needs fresh operator authorization

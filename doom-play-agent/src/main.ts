@@ -12,6 +12,7 @@ import { PlaybackError, type PlayResult, play } from "./doom-play-agent.ts";
 import { createDoomTools } from "./doom-tools.ts";
 import { progress } from "./progress.ts";
 import { createOAuthProvider } from "./provider.ts";
+import { persistRun, RunPersistenceError } from "./run-persistence.ts";
 
 const usage =
 	"Usage: main.ts (takes no arguments; no arguments authorizes the broker-issued bounded Doom run)";
@@ -103,6 +104,21 @@ export async function main() {
 			}
 		}
 	}
+	let persistenceError: RunPersistenceError | undefined;
+	if (result) {
+		let artifactPath: string | undefined;
+		try {
+			artifactPath = await persistRun(result);
+		} catch {
+			persistenceError = new RunPersistenceError();
+			if (failed || cleanupFailed)
+				progress.withTag("persistence").error(persistenceError.message);
+		}
+		if (artifactPath)
+			progress
+				.withTag("persistence")
+				.info(`Run artifact saved: ${artifactPath}`);
+	}
 	if (failed && cleanupFailed)
 		throw new AggregateError(
 			[playbackError, cleanupError],
@@ -110,6 +126,7 @@ export async function main() {
 		);
 	if (failed) throw playbackError;
 	if (cleanupFailed) throw cleanupError;
+	if (persistenceError) throw persistenceError;
 	return result;
 }
 
@@ -121,6 +138,7 @@ if (
 		const args = process.argv.slice(2);
 		const safeDoomMessage =
 			error instanceof DoomAttachError ||
+			error instanceof RunPersistenceError ||
 			(error instanceof Error &&
 				[
 					"Doom observation unconfirmed. No retry was made.",

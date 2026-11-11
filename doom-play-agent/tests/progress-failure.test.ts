@@ -36,6 +36,10 @@ test("broken progress channel", async (t) => {
   t.mock.module(${JSON.stringify(import.meta.resolve("@openai-oauth/local"))}, {
     namedExports: { openaiCredentials: () => ({ getSession() { throw Error("Credential access forbidden"); } }) },
   });
+  const persistenceModule = await import(${JSON.stringify(import.meta.resolve("../src/run-persistence.ts"))});
+  t.mock.module(${JSON.stringify(import.meta.resolve("../src/run-persistence.ts"))}, {
+    namedExports: { ...persistenceModule, persistRun: async () => "/synthetic/run.json" },
+  });
   const { main } = await import(${JSON.stringify(import.meta.resolve("../src/main.ts"))});
   // Let the experimental mock warning settle before breaking stderr.
   await new Promise((resolve) => setImmediate(resolve));

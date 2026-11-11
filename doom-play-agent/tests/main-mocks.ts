@@ -3,6 +3,7 @@ import * as clientModule from "../src/doom-client.ts";
 import * as playbackModule from "../src/doom-play-agent.ts";
 import type { createDoomTools } from "../src/doom-tools.ts";
 import type { createOAuthProvider } from "../src/provider.ts";
+import * as persistenceModule from "../src/run-persistence.ts";
 
 // One registration per process-isolated test file, before importing main.ts.
 // Cached main bindings survive restoration; cases must stay serial and reset
@@ -16,6 +17,9 @@ export function installMainMocks() {
 	const makeTools = mock.fn<typeof createDoomTools>(unconfigured);
 	const makeProvider = mock.fn<typeof createOAuthProvider>(unconfigured);
 	const playback = mock.fn(playbackModule.play);
+	const persist = mock.fn<typeof persistenceModule.persistRun>(
+		async () => "/synthetic/run.json",
+	);
 	const getSession = mock.fn(async () => {
 		throw new Error("Credential access forbidden in offline tests");
 	});
@@ -36,17 +40,22 @@ export function installMainMocks() {
 		mock.module("../src/doom-play-agent.ts", {
 			namedExports: { ...playbackModule, play: playback },
 		}),
+		mock.module("../src/run-persistence.ts", {
+			namedExports: { ...persistenceModule, persistRun: persist },
+		}),
 	];
 	beforeEach(() => {
 		makeClient.mock.mockImplementation(unconfigured);
 		makeTools.mock.mockImplementation(unconfigured);
 		makeProvider.mock.mockImplementation(unconfigured);
 		playback.mock.mockImplementation(playbackModule.play);
+		persist.mock.mockImplementation(async () => "/synthetic/run.json");
 		for (const fn of [
 			makeClient,
 			makeTools,
 			makeProvider,
 			playback,
+			persist,
 			credentials,
 			getSession,
 		])
@@ -60,6 +69,7 @@ export function installMainMocks() {
 		makeTools,
 		makeProvider,
 		playback,
+		persist,
 		credentials,
 		getSession,
 	};
