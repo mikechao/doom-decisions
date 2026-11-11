@@ -25,7 +25,9 @@ const zeroModelUsage: ScenePerception["usage"] = {
 	totalTokens: 0,
 };
 
-function perceptionWithZeroUsage(value: unknown): ScenePerception {
+function perceptionWithZeroUsage(
+	value: unknown,
+): Omit<ScenePerception, "durationMs"> {
 	return {
 		...(value as Pick<
 			ScenePerception,
@@ -33,6 +35,16 @@ function perceptionWithZeroUsage(value: unknown): ScenePerception {
 		>),
 		usage: zeroModelUsage,
 	};
+}
+
+// Each call has its own duration; validate it separately from model content.
+function withoutDuration<T extends { durationMs: number }>(
+	value: T | null,
+): Omit<T, "durationMs"> {
+	assert.ok(value);
+	const { durationMs, ...content } = value;
+	assert.ok(Number.isFinite(durationMs) && durationMs >= 0);
+	return content;
 }
 
 function advisoryData(instructions: string) {
@@ -80,8 +92,19 @@ test("first decision retains stage snapshots across two slots, submitted scope a
 		navigationObjective: result.navigationObjective,
 		target: f.note,
 	});
-	assert.deepEqual(record.perception, result.perception);
-	assert.deepEqual(record.navigationAssessment, result.navigationAssessment);
+	assert.deepEqual(
+		withoutDuration(record.perception),
+		perceptionWithZeroUsage(scenePerception),
+	);
+	assert.deepEqual(withoutDuration(record.navigationAssessment), {
+		...navigationAssessment,
+		usage: zeroModelUsage,
+	});
+	assert.deepEqual(result.records.at(-1)?.perception, result.perception);
+	assert.deepEqual(
+		result.records.at(-1)?.navigationAssessment,
+		result.navigationAssessment,
+	);
 	assert.deepEqual(record.runStarted, start);
 	assert.deepEqual(record.promptAcknowledged, prompt);
 	assert.equal(record.guidance, f.state.instructions);
@@ -270,7 +293,7 @@ test("landmark lookup precedes objective-independent perception of exact bytes a
 		/navigationObjective|historicalLandmark|hypothesis/,
 	);
 	assert.deepEqual(
-		result.perception,
+		withoutDuration(result.perception),
 		perceptionWithZeroUsage(f.state.perception),
 	);
 });
@@ -313,7 +336,7 @@ test("host selection preserves base and substitution through CAS, then decides t
 		revision: f.note.revision,
 	});
 	assert.deepEqual(
-		result.perception,
+		withoutDuration(result.perception),
 		perceptionWithZeroUsage(f.state.perception),
 	);
 	assert.equal(setPrompt.mock.callCount(), 2);
@@ -494,12 +517,12 @@ for (const operation of ["startRun", "setPrompt", "decide"] as const) {
 							: "decision",
 				);
 				assert.match(String(error.cause), /response lost/);
-				assert.deepEqual(error.navigationAssessment, {
+				assert.deepEqual(withoutDuration(error.navigationAssessment), {
 					...navigationAssessment,
 					usage: zeroModelUsage,
 				});
 				assert.deepEqual(
-					error.perception,
+					withoutDuration(error.perception),
 					perceptionWithZeroUsage(f.state.perception),
 				);
 				assert.deepEqual(error.navigationObjective, {
@@ -854,7 +877,7 @@ for (const assessment of [
 			hypothesis: "UNSELECTED_NOTE",
 		});
 		const result = await play(f.client, f.tools, f.provider);
-		assert.deepEqual(result.navigationAssessment, {
+		assert.deepEqual(withoutDuration(result.navigationAssessment), {
 			...assessment,
 			usage: zeroModelUsage,
 		});
@@ -927,7 +950,7 @@ for (const fault of ["transport", "finish", "schema"] as const) {
 			assert.equal(error.stage, "navigation-assessment");
 			assert.equal(error.decisionMayHaveBeenSent, false);
 			assert.deepEqual(
-				error.perception,
+				withoutDuration(error.perception),
 				perceptionWithZeroUsage(scenePerception),
 			);
 			assert.equal(error.navigationAssessment, null);
