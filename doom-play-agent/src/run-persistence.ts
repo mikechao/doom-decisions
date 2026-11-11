@@ -16,13 +16,50 @@ export class RunPersistenceError extends Error {
 export async function persistRun(result: PlayResult): Promise<string> {
 	try {
 		const recordedAt = new Date().toISOString();
-		const json = `${JSON.stringify({ schemaVersion: 1, recordedAt, result }, null, 2)}\n`;
-		const directory = fileURLToPath(
-			new URL("../.local/runs/", import.meta.url),
+		const base = fileURLToPath(new URL("../.local/runs/", import.meta.url));
+		const directory = join(
+			base,
+			`${recordedAt.replaceAll(":", "-")}_${encodeURIComponent(result.runId)}`,
 		);
-		const filename = `${recordedAt.replaceAll(":", "-")}_${encodeURIComponent(result.runId)}.json`;
-		const path = join(directory, filename);
-		await mkdir(directory, { recursive: true, mode: 0o700 });
+		await mkdir(base, { recursive: true, mode: 0o700 });
+		await mkdir(directory, { mode: 0o700 });
+
+		async function saveImage(image: Buffer | null | undefined, file: string) {
+			if (image === null || image === undefined) return image;
+			if (!Buffer.isBuffer(image)) throw Error("Invalid retained image.");
+			await writeFile(join(directory, file), image, {
+				flag: "wx",
+				mode: 0o600,
+			});
+			return { file };
+		}
+
+		const records = [];
+		for (const record of result.records) {
+			if (!Number.isSafeInteger(record.ordinal) || record.ordinal < 1)
+				throw Error("Invalid decision ordinal.");
+			const beforePng = await saveImage(
+				record.beforePng,
+				`decision-${record.ordinal}-before.png`,
+			);
+			const decision =
+				record.decision.kind === "returned"
+					? {
+							...record.decision,
+							afterPng: await saveImage(
+								record.decision.afterPng,
+								`decision-${record.ordinal}-after.png`,
+							),
+						}
+					: record.decision;
+			records.push({ ...record, beforePng, decision });
+		}
+		const json = `${JSON.stringify(
+			{ schemaVersion: 2, recordedAt, result: { ...result, records } },
+			null,
+			2,
+		)}\n`;
+		const path = join(directory, "result.json");
 		await writeFile(path, json, { encoding: "utf8", flag: "wx", mode: 0o600 });
 		return path;
 	} catch {

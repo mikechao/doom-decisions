@@ -10,6 +10,42 @@ import { installMainMocks } from "./main-mocks.ts";
 const mocks = installMainMocks();
 const { main } = await import("../src/main.ts");
 
+test("logs the result.json path only after post-detach persistence completes", async (t) => {
+	const f = await fixture(t, 1);
+	mocks.makeClient.mock.mockImplementation(() => f.client);
+	mocks.makeTools.mock.mockImplementation(() => f.tools);
+	mocks.makeProvider.mock.mockImplementation(() => f.provider);
+	t.mock.method(console, "log", () => {});
+	const stderr: string[] = [];
+	t.mock.method(process.stderr, "write", (chunk: unknown) => {
+		stderr.push(String(chunk));
+		return true;
+	});
+	let complete!: (path: string) => void;
+	let entered!: () => void;
+	const pending = new Promise<string>((resolve) => {
+		complete = resolve;
+	});
+	const started = new Promise<void>((resolve) => {
+		entered = resolve;
+	});
+	mocks.persist.mock.mockImplementation(async () => {
+		assert.equal(f.events.at(-1), "detach");
+		entered();
+		return pending;
+	});
+	const transaction = main();
+	await started;
+	assert.doesNotMatch(stderr.join(""), /Run artifact saved:/);
+	complete("/synthetic/run/result.json");
+	await transaction;
+	assert.match(
+		stderr.join(""),
+		/Run artifact saved: \/synthetic\/run\/result.json/,
+	);
+	assert.equal(f.events.filter((event) => event === "decide").length, 1);
+});
+
 for (const outcome of [
 	"completed",
 	"not-admitted",
@@ -41,7 +77,7 @@ for (const outcome of [
 			assert.equal(f.events.at(-1), "detach");
 			assert.equal(result.outcome, outcome);
 			assert.equal(result.records[0].decision.kind, "returned");
-			return "/synthetic/run.json";
+			return "/synthetic/run/result.json";
 		});
 		const result = await main();
 		assert.equal(mocks.persist.mock.callCount(), 1);
@@ -73,7 +109,7 @@ for (const detachFails of [false, true]) {
 				assert.equal(f.events.at(-1), "detach");
 				f.events.push("persist");
 				if (persistenceFails) throw Error("SECRET storage error");
-				return "/synthetic/run.json";
+				return "/synthetic/run/result.json";
 			});
 			if (detachFails || persistenceFails)
 				await assert.rejects(main(), (error) => {

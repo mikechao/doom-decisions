@@ -18,7 +18,7 @@ export function installMainMocks() {
 	const makeProvider = mock.fn<typeof createOAuthProvider>(unconfigured);
 	const playback = mock.fn(playbackModule.play);
 	const persist = mock.fn<typeof persistenceModule.persistRun>(
-		async () => "/synthetic/run.json",
+		async () => "/synthetic/run/result.json",
 	);
 	const getSession = mock.fn(async () => {
 		throw new Error("Credential access forbidden in offline tests");
@@ -49,7 +49,7 @@ export function installMainMocks() {
 		makeTools.mock.mockImplementation(unconfigured);
 		makeProvider.mock.mockImplementation(unconfigured);
 		playback.mock.mockImplementation(playbackModule.play);
-		persist.mock.mockImplementation(async () => "/synthetic/run.json");
+		persist.mock.mockImplementation(async () => "/synthetic/run/result.json");
 		for (const fn of [
 			makeClient,
 			makeTools,

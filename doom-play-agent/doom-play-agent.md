@@ -66,9 +66,10 @@ proof of navigation improvement or live N>2 gameplay.
     Buffers, then attempts detach in `finally`. Playback and detach failures remain
     separate members of `AggregateError` when both fail.
 13. If `play()` resolved, `main()` then calls `persistRun()` once, even if detach
-    failed. It saves the entire result in ignored package-local `.local/runs/`.
-    Only after a successful write does stderr report the saved path. A persistence
-    failure produces a bounded diagnostic and a nonzero CLI exit, while existing
+    failed. It saves non-image evidence and retained PNG sidecars in a unique
+    ignored package-local `.local/runs/` directory. Only after all writes succeed
+    does stderr report the `result.json` path. A persistence failure produces a
+    bounded diagnostic and a nonzero CLI exit, while existing
     playback/detach errors retain precedence. A thrown `play()` is never persisted.
 
 Lookup statuses `empty`, `unavailable` (missing storage), and `lookup_failed` permit
@@ -154,16 +155,29 @@ cloned at capture, Buffers transfer ownership without another copy, and records
 are shallow-frozen at publication. Callers must treat nested DTOs, arrays and
 Buffers as immutable. Paths are ephemeral provenance; owned bytes survive file
 changes/deletion/detach. Executor materialization failure before return remains
-unconfirmed. Records provide no independent native proof. CLI persistence wraps the
-entire existing `PlayResult` in `{ schemaVersion: 1, recordedAt, result }`, using
-two-space JSON and standard Buffer byte-array encoding. Undefined fields disappear.
-The module-relative filename combines a UTC timestamp and broker run ID; exclusive
-creation prevents overwrites, with 0700/0600 permissions for new directories/files
-where supported. Sensitive guidance, historical prose and temporary paths remain
-in the local artifact. No provider, credentials, environment dump or raw error is
-added. Thrown/interrupted runs are not saved, and failed/interrupted writes may
-leave incomplete files. Temporary paths are provenance only; embedded image bytes
-survive independently. Image JSON size remains unmeasured on a real persisted run.
+unconfirmed. Records provide no independent native proof. CLI persistence writes
+`<UTC-timestamp>_<encoded-broker-run-id>/result.json` under module-relative
+`.local/runs/`, with envelope `{ schemaVersion: 2, recordedAt, result }` and
+two-space JSON. All non-image evidence stays intact. Only the persisted
+`records[i].beforePng` and returned `records[i].decision.afterPng` Buffers become
+`{ "file": "decision-<ordinal>-before.png" }` and
+`{ "file": "decision-<ordinal>-after.png" }`. References resolve relative to
+`result.json`; sidecars contain the exact retained bytes. The corresponding
+existing hashes remain at `reasoningObservation.pngSha256` and
+`decision.receipt.observation.pngSha256`; persistence adds no hash pass.
+Projection does not mutate in-memory results, records or Buffers. Nulls remain
+null, absent/undefined properties are omitted, and missing/failed image retention
+creates no sidecar or reference. Temporary `pngPath` fields remain provenance.
+
+Images are written before the final JSON. Exclusive directory and file creation
+prevents overwrites, requesting 0700/0600 permissions where supported. A failure
+can leave a partial directory, incomplete sidecars or missing/incomplete JSON;
+there is no rollback or crash-safety guarantee. Historical single-file v1 JSON
+with Buffer byte arrays stays untouched; no reader or migration is implemented.
+Sensitive guidance, historical prose and temporary paths remain in the local
+artifact. No provider instance, credentials, environment dump or raw error is
+added. Thrown/interrupted runs are not saved. Persistence remains post-detach and
+cannot retry gameplay or change error precedence.
 
 Experiment A adds a passive `movement` result to each record. Before a receipt
 returns it is unavailable (`decision-not-returned`). For each returned receipt,

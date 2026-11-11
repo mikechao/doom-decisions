@@ -85,29 +85,51 @@ mutation; `main()` detaches in `finally` after playback settles.
 
 After the detach attempt, `main()` saves each resolved `PlayResult` once under
 ignored `doom-play-agent/.local/runs/`, relative to the module rather than the
-working directory. Filenames combine a UTC timestamp and broker run ID, with
-exclusive creation to prevent overwrites. Newly created directories/files use
-private permissions (0700/0600 where supported).
+working directory. Each run gets a directory named from its UTC timestamp and
+encoded broker run ID. Exclusive directory/file creation prevents overwrites;
+new directories/files request private permissions (0700/0600 where supported).
 
-The two-space JSON envelope contains only `schemaVersion: 1`, `recordedAt` (UTC),
-and the entire existing `result`, including ordered records, receipts, raw poses,
-movement summaries, recent-pose comparisons, guidance and retained PNGs. Buffers
-use standard Node JSON (`{ "type": "Buffer", "data": [...] }`); parsing yields
-byte arrays, not Buffer instances. Undefined properties are omitted. No extra
-model-selection metadata is collected.
+```text
+.local/runs/<UTC-timestamp>_<broker-run-id>/
+  result.json
+  decision-1-before.png
+  decision-1-after.png
+  decision-2-before.png
+  decision-2-after.png
+```
+
+The two-space JSON envelope contains `schemaVersion: 2`, `recordedAt` (UTC), and
+`result`. All non-image result evidence is retained, including ordered records,
+receipts, raw poses, movement summaries, recent-pose comparisons, guidance and
+usage. Only retained image fields change on disk: `records[i].beforePng` and
+`records[i].decision.afterPng` become `{ "file": "decision-1-before.png" }` and
+`{ "file": "decision-1-after.png" }`, respectively (using that record's ordinal).
+Resolve each reference relative to the directory containing `result.json`.
+Sidecars contain the exact retained Buffer bytes, with no re-encoding. Their
+existing digests remain in `reasoningObservation.pngSha256` for before-images
+and `decision.receipt.observation.pngSha256` for after-images. No extra production
+hash pass is added. In-memory records and Buffer ownership are unchanged.
+Null images remain null; absent/undefined fields are omitted as in ordinary JSON.
+No file/reference is manufactured for a missing image or retention failure.
+
+Historical v1 artifacts embed Node Buffer JSON byte arrays in a single file.
+They remain untouched; no reader, compatibility layer or migration is provided.
+No extra model-selection metadata is collected.
 
 Early, terminal, declined and uncertain returned outcomes are saved too; a saved
 artifact does not imply completed gameplay or confirmed detach. A detach failure
 remains primary even if saving also fails. Otherwise a persistence failure makes
-the CLI exit nonzero with a bounded diagnostic. A saved-path message appears on
-stderr only after the write succeeds; gameplay is never retried.
+the CLI exit nonzero with a bounded diagnostic. Images are written before the
+final `result.json`; the saved-path message appears on stderr only after all
+writes succeed and names `result.json`. Gameplay is never retried.
 
-Thrown playback errors and interrupted runs are not persisted. A failed or
-interrupted write can leave an incomplete file; this is not crash-safe storage.
-Image JSON may be large. Temporary PNG paths remain provenance, not durable image
-files; retained bytes are embedded. Artifacts contain potentially sensitive prompts,
-historical prose and local paths, so keep them local. Provider credentials, SDK
-instances, environment dumps and raw errors are not added.
+Thrown playback errors and interrupted runs are not persisted. Failed/interrupted
+writes can leave a partial run directory, missing or incomplete `result.json`, or
+incomplete sidecars; this is not crash-safe storage and no rollback is attempted.
+Temporary PNG paths remain provenance only; durable image links use the relative
+sidecar references. Artifacts contain potentially sensitive prompts, historical
+prose and local paths, so keep them local. Provider credentials, SDK instances,
+environment dumps and raw errors are not added.
 
 Tagged progress milestones use `consola/basic` on stderr; the existing final
 result stays on stdout. Progress includes lookup status and returned count (not
@@ -218,7 +240,7 @@ failures remained. No live gameplay, servers, OAuth or paid calls were exercised
    while previous receipts and fresh checkpoint/accounting permit continuation,
    a fresh reasoning image/pass for every slot, same objective/target, and prompt
    amendments from the original base. Normal CLI output excludes records; after
-   detach, inspect the saved artifact for ordered records and embedded images.
+   detach, inspect `result.json` for ordered records and referenced PNG sidecars.
    Check final summary ordinal, exact tic/uncertainty outcomes and acknowledged
    detach. Do not call a terminal prefix
    a completed level transition.
