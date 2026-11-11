@@ -8,8 +8,10 @@ import {
 	type DoomAttachErrorCode,
 	type DoomClient,
 } from "./doom-client.ts";
-import { PlaybackError, type PlayResult, play } from "./doom-play-agent.ts";
+import { play } from "./doom-play-agent.ts";
+import type { PlayResult } from "./doom-play-agent-types.ts";
 import { createDoomTools } from "./doom-tools.ts";
+import { PlaybackError } from "./playback-error.ts";
 import { progress } from "./progress.ts";
 import { createOAuthProvider } from "./provider.ts";
 import { persistRun, RunPersistenceError } from "./run-persistence.ts";

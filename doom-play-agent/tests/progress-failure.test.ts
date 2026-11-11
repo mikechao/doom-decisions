@@ -18,7 +18,7 @@ for (const failurePoint of ["existing-path", "prompt"] as const) {
 						`
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PlaybackError } from ${JSON.stringify(import.meta.resolve("../src/doom-play-agent.ts"))};
+import { PlaybackError } from ${JSON.stringify(import.meta.resolve("../src/playback-error.ts"))};
 import { fixture } from ${JSON.stringify(import.meta.resolve("./fixtures.ts"))};
 
 test("broken progress channel", async (t) => {

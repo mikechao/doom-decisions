@@ -81,6 +81,8 @@ JSON-quoted in logs; the note label uses a short SHA-256 digest of its ID.
 
 | Owner | Responsibility |
 | --- | --- |
+| `doom-play-agent-types.ts` | Shared passive evidence/result types and their supporting aliases; mutable evidence construction remains in the coordinator. |
+| `playback-error.ts` | Single `PlaybackError` constructor shared by the coordinator, CLI and tests; preserves the original cause and supplied records array identity. |
 | `play()` | Initial observation/base, lookup/selection, first preparation and sole claim; continuation loop, live scope/receipt, ordered records and final summary. |
 | `persistRun()` | CLI-only, post-detach serialization of a resolved result; no gameplay calls or control-state changes. |
 | `prepareDecision()` | Per-slot perception, optional assessment, canonical-base guidance and size check; stage-specific reasoning failures. |

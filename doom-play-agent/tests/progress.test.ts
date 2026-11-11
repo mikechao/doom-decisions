@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test, { type TestContext } from "node:test";
-import { PlaybackError, play } from "../src/doom-play-agent.ts";
+import { play } from "../src/doom-play-agent.ts";
+import { PlaybackError } from "../src/playback-error.ts";
 import { progress } from "../src/progress.ts";
 import { fixture, scenePerception } from "./fixtures.ts";
 import { installMainMocks } from "./main-mocks.ts";

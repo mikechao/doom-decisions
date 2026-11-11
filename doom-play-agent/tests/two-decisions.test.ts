@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import test from "node:test";
-import { PlaybackError, play } from "../src/doom-play-agent.ts";
+import { play } from "../src/doom-play-agent.ts";
+import { PlaybackError } from "../src/playback-error.ts";
 import { fixture, scenePerception } from "./fixtures.ts";
 
 const secondScene = {

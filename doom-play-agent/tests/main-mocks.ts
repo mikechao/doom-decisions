@@ -38,7 +38,7 @@ export function installMainMocks() {
 			namedExports: { openaiCredentials: credentials },
 		}),
 		mock.module("../src/doom-play-agent.ts", {
-			namedExports: { ...playbackModule, play: playback },
+			namedExports: { play: playback },
 		}),
 		mock.module("../src/run-persistence.ts", {
 			namedExports: { ...persistenceModule, persistRun: persist },

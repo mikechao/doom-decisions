@@ -7,35 +7,27 @@ import {
 	maxAgentInstructions,
 	validAgentLimit,
 } from "../../app/src/agent-control.ts";
-import type { AgentDecisionResult } from "../../app/src/agent-observation.ts";
-import type {
-	ConfigResult,
-	MaterializedDecision,
-	MaterializedObserve,
-	PromptResult,
-} from "../../scripts/doom-agent-client.ts";
+import type { MaterializedObserve } from "../../scripts/doom-agent-client.ts";
 import type { DoomClient } from "./doom-client.ts";
-import type { DoomMemoryCandidate, DoomTools } from "./doom-tools.ts";
-import { type MovementSummary, summarizeMovement } from "./movement-summary.ts";
+import type {
+	DecisionAttempt,
+	DecisionEvidence,
+	DecisionRecord,
+	Memory,
+	NavigationObjective,
+	NavigationSelection,
+	PlayResult,
+} from "./doom-play-agent-types.ts";
+import type { DoomTools } from "./doom-tools.ts";
+import { summarizeMovement } from "./movement-summary.ts";
 import {
 	assessNavigation,
 	type NavigationAssessment,
 } from "./navigation-assessment.ts";
+import { PlaybackError } from "./playback-error.ts";
 import { progress } from "./progress.ts";
-import {
-	compareRecentPoses,
-	type RecentPoseComparison,
-} from "./recent-pose-comparison.ts";
+import { compareRecentPoses } from "./recent-pose-comparison.ts";
 import { perceiveScene, type ScenePerception } from "./scene-perception.ts";
-
-export type NavigationObjective =
-	| { kind: "free-explore" }
-	| { kind: "landmark"; noteId: string; revision: number };
-type Memory = Awaited<ReturnType<DoomTools["findActiveLandmarks"]>>;
-type NavigationSelection = {
-	navigationObjective: NavigationObjective;
-	target: DoomMemoryCandidate | null;
-};
 
 function modelState(o: Omit<AgentObserveResult, "png">) {
 	return {
@@ -116,107 +108,6 @@ function composeGuidance(
 	if (instructions.length > maxAgentInstructions)
 		throw new Error("Navigation guidance exceeds the Decisions prompt limit.");
 	return instructions;
-}
-
-type DecisionAttempt =
-	| { kind: "not-called" }
-	| {
-			kind: "unconfirmed";
-			input: Parameters<DoomClient["decide"]>[0];
-	  }
-	| {
-			kind: "returned";
-			input: Parameters<DoomClient["decide"]>[0];
-			receipt: MaterializedDecision;
-			afterPng: Buffer | null;
-			imageRetentionFailure: {
-				reason: "read-failed" | "digest-mismatch";
-				message: string;
-			} | null;
-	  };
-
-type DecisionEvidence = {
-	ordinal: number;
-	reasoningObservation: MaterializedObserve | null;
-	beforePng: Buffer | null;
-	landmarkLookup: Memory | null;
-	selection: NavigationSelection | null;
-	perception: ScenePerception | null;
-	navigationAssessment: NavigationAssessment | null;
-	guidance: string | null;
-	runStarted: ConfigResult | null;
-	promptAcknowledged: PromptResult | null;
-	admissionObservation: MaterializedObserve | null;
-	decision: DecisionAttempt;
-	movement: MovementSummary;
-	failure: { stage: string; message: string } | null;
-};
-
-/**
- * Passive evidence for one attempt, including unreached/failed stages. DTOs are
- * detached at capture; PNG Buffers transfer ownership without another copy.
- * Readonly/freeze protect the top level only: callers must treat nested DTOs and
- * Buffers as immutable too. No mutable control/result aliases are published. pngPath
- * fields are ephemeral source paths; only the Buffers retain image evidence.
- * Nothing in this record authorizes gameplay or supplies future guidance.
- */
-export type DecisionRecord = Readonly<
-	DecisionEvidence & { recentPoseComparison: RecentPoseComparison }
->;
-
-export type PlayResult = {
-	readonly records: DecisionRecord[];
-	decisionOrdinal: number;
-	navigationObjective: NavigationObjective;
-	memoryStatus: Memory["status"];
-	candidateCount: number;
-	navigationAssessment: NavigationAssessment | null;
-	perception: ScenePerception;
-	promptChanged: boolean;
-	runId: string;
-	outcome: AgentDecisionResult["outcome"];
-	reason: AgentDecisionResult["reason"];
-	action: AgentDecisionResult["action"];
-	sdkInvoked: boolean;
-	completionUncertain: boolean;
-	cumulativeTics: number | null;
-	tics: {
-		requested: number | null;
-		reported: number | null;
-		verified: number | null;
-	};
-};
-export class PlaybackError extends Error {
-	readonly records: DecisionRecord[];
-	readonly decisionOrdinal: number;
-	readonly stage: string;
-	readonly navigationAssessment: NavigationAssessment | null;
-	readonly decisionMayHaveBeenSent: boolean;
-	readonly perception: ScenePerception | null;
-	readonly navigationObjective: NavigationObjective | null;
-	constructor(
-		stage: string,
-		decisionMayHaveBeenSent: boolean,
-		perception: ScenePerception | null,
-		cause: unknown,
-		navigationObjective: NavigationObjective | null = null,
-		navigationAssessment: NavigationAssessment | null = null,
-		records: DecisionRecord[] = [],
-		decisionOrdinal: number = 1,
-	) {
-		super(
-			`Doom playback stopped at ${stage} for decision #${decisionOrdinal}. ${decisionMayHaveBeenSent ? `Decision #${decisionOrdinal} outcome may be unknown.` : `Decision #${decisionOrdinal} was not sent.`} No retry was made.`,
-			{ cause },
-		);
-		this.name = "PlaybackError";
-		this.stage = stage;
-		this.navigationAssessment = navigationAssessment;
-		this.decisionMayHaveBeenSent = decisionMayHaveBeenSent;
-		this.perception = perception;
-		this.navigationObjective = navigationObjective;
-		this.records = records;
-		this.decisionOrdinal = decisionOrdinal;
-	}
 }
 
 function newRecord(ordinal: number): DecisionEvidence {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { rm } from "node:fs/promises";
 import test from "node:test";
-import { PlaybackError } from "../src/doom-play-agent.ts";
+import { PlaybackError } from "../src/playback-error.ts";
 import { RunPersistenceError } from "../src/run-persistence.ts";
 import { fixture, scenePerception } from "./fixtures.ts";
 import { installMainMocks } from "./main-mocks.ts";
@@ -215,6 +215,79 @@ await import(${JSON.stringify(new URL("../src/main.ts", import.meta.url).href)})
 	);
 	assert.match(child.stderr, /Lease detached/);
 });
+
+for (const detachFails of [false, true]) {
+	test(`executable recognizes PlaybackError safely (detach failure=${detachFails})`, () => {
+		const child = spawnSync(
+			process.execPath,
+			[
+				"--experimental-strip-types",
+				"--experimental-test-module-mocks",
+				"--input-type=module",
+				"-e",
+				`
+import { mock } from "node:test";
+import { fileURLToPath } from "node:url";
+import { PlaybackError } from ${JSON.stringify(new URL("../src/playback-error.ts", import.meta.url).href)};
+const failure = new PlaybackError("decision", true, null, Error("SECRET_CAUSE"), null, null, [
+  { ordinal: 2, guidance: "SECRET_RECORD", beforePng: Buffer.from("SECRET_IMAGE") },
+], 2);
+const client = await import(${JSON.stringify(new URL("../src/doom-client.ts", import.meta.url).href)});
+mock.module(${JSON.stringify(new URL("../src/doom-client.ts", import.meta.url).href)}, {
+  namedExports: { ...client, createDoomClient: () => ({
+    attach: async () => ({ configuredDecisionBudget: 2, budgetUnclaimedAtAttach: true }),
+    detach: async () => {
+      if (${detachFails}) throw Error("SECRET_DETACH");
+      return { released: true };
+    },
+  }) },
+});
+mock.module(${JSON.stringify(new URL("../src/doom-tools.ts", import.meta.url).href)}, { namedExports: { createDoomTools: () => ({}) } });
+mock.module(${JSON.stringify(new URL("../src/provider.ts", import.meta.url).href)}, { namedExports: { createOAuthProvider: () => ({}) } });
+mock.module("@openai-oauth/local", {
+  namedExports: { openaiCredentials: () => ({ getSession() { throw Error("SECRET_CREDENTIAL_ACCESS"); } }) },
+});
+mock.module(${JSON.stringify(new URL("../src/doom-play-agent.ts", import.meta.url).href)}, {
+  namedExports: { play: async () => { throw failure; } },
+});
+const persistence = await import(${JSON.stringify(new URL("../src/run-persistence.ts", import.meta.url).href)});
+mock.module(${JSON.stringify(new URL("../src/run-persistence.ts", import.meta.url).href)}, {
+  namedExports: { ...persistence, persistRun: async () => { throw Error("SECRET_PERSISTENCE_CALL"); } },
+});
+process.argv = [process.execPath, fileURLToPath(${JSON.stringify(new URL("../src/main.ts", import.meta.url).href)})];
+await import(${JSON.stringify(new URL("../src/main.ts", import.meta.url).href)});
+`,
+			],
+			{ encoding: "utf8", timeout: 10_000 },
+		);
+		assert.equal(child.error, undefined);
+		assert.equal(child.status, 1, child.stdout + child.stderr);
+		assert.equal(child.stdout, "");
+		assert.match(
+			child.stderr,
+			/Doom playback stopped at decision for decision #2/,
+		);
+		assert.match(
+			child.stderr,
+			/Decision #2 outcome may be unknown\. No retry was made\./,
+		);
+		assert.match(child.stderr, /navigationObjective: null/);
+		assert.match(child.stderr, /perception: null/);
+		assert.match(child.stderr, /navigationAssessment: null/);
+		assert.doesNotMatch(
+			child.stderr,
+			/SECRET|records|beforePng|Buffer|Run artifact saved:/,
+		);
+		if (detachFails) {
+			assert.match(child.stderr, /Doom playback and detach both failed\./);
+			assert.match(child.stderr, /Doom operation or cleanup unconfirmed\./);
+			assert.match(child.stderr, /Detach unconfirmed; client closed/);
+		} else {
+			assert.match(child.stderr, /Lease detached/);
+			assert.doesNotMatch(child.stderr, /Doom playback and detach both failed/);
+		}
+	});
+}
 
 for (const modelId of [undefined, "synthetic-reasoning-override", ""]) {
 	test(`reasoning model selection through main preserves ${modelId === undefined ? "the default" : modelId === "" ? "an empty override" : "an explicit override"}`, async (t) => {
