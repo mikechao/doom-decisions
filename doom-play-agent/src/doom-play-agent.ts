@@ -22,6 +22,10 @@ import {
 	type NavigationAssessment,
 } from "./navigation-assessment.ts";
 import { progress } from "./progress.ts";
+import {
+	compareRecentPoses,
+	type RecentPoseComparison,
+} from "./recent-pose-comparison.ts";
 import { perceiveScene, type ScenePerception } from "./scene-perception.ts";
 
 export type NavigationObjective =
@@ -156,7 +160,9 @@ type DecisionEvidence = {
  * fields are ephemeral source paths; only the Buffers retain image evidence.
  * Nothing in this record authorizes gameplay or supplies future guidance.
  */
-export type DecisionRecord = Readonly<DecisionEvidence>;
+export type DecisionRecord = Readonly<
+	DecisionEvidence & { recentPoseComparison: RecentPoseComparison }
+>;
 
 export type PlayResult = {
 	readonly records: DecisionRecord[];
@@ -484,6 +490,21 @@ export async function play(
 	let record = newRecord(1);
 	let startedDecisionOrdinal: number | null = null;
 	const records: DecisionRecord[] = [];
+	const publishRecord = () => {
+		const recentPoseComparison = compareRecentPoses(records, record);
+		records.push(Object.freeze({ ...record, recentPoseComparison }));
+		if (record.decision.kind === "returned") {
+			try {
+				progress
+					.withTag("decision")
+					.info(
+						`Decision ${record.ordinal} reported pose history ${JSON.stringify(recentPoseComparison)}`,
+					);
+			} catch {
+				// Formatting and logging are best-effort after record publication.
+			}
+		}
+	};
 	const startDecision = (decisionOrdinal: number) => {
 		startedDecisionOrdinal = decisionOrdinal;
 		logDecisionBoundary(`Start of Decision ${decisionOrdinal}`);
@@ -569,7 +590,7 @@ export async function play(
 			1,
 			record,
 		);
-		records.push(Object.freeze(record));
+		publishRecord();
 		endDecision();
 		while (ordinal < limit) {
 			const previous = decision.receipt;
@@ -614,7 +635,7 @@ export async function play(
 				ordinal,
 				record,
 			);
-			records.push(Object.freeze(record));
+			publishRecord();
 			endDecision();
 		}
 		const receipt = decision.receipt;
@@ -656,7 +677,7 @@ export async function play(
 			ordinal,
 		);
 		record.failure = { stage: failure.stage, message: failure.message };
-		records.push(Object.freeze(record));
+		publishRecord();
 		endDecision();
 		throw failure;
 	}

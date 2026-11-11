@@ -9,7 +9,7 @@
   "scripts": {
     "agent": "node --experimental-strip-types src/main.ts",
     "test": "node --experimental-strip-types --experimental-test-module-mocks --test tests/*.test.ts",
-    "check": "npm test && npm run typecheck && ../app/node_modules/.bin/biome check src/main.ts src/provider.ts src/doom-play-agent.ts src/movement-summary.ts src/navigation-assessment.ts src/doom-tools.ts src/progress.ts tests",
+    "check": "npm test && npm run typecheck && ../app/node_modules/.bin/biome check src/main.ts src/provider.ts src/doom-play-agent.ts src/movement-summary.ts src/recent-pose-comparison.ts src/navigation-assessment.ts src/doom-tools.ts src/progress.ts tests",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

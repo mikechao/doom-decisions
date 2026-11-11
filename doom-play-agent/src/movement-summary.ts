@@ -41,6 +41,14 @@ const unavailable = (
 const inRange = (value: number, min: number, max: number) =>
 	Number.isSafeInteger(value) && value >= min && value <= max;
 
+export function validRawPose(pose: { x: number; y: number; angle: number }) {
+	return (
+		inRange(pose.x, -2147483648, 2147483647) &&
+		inRange(pose.y, -2147483648, 2147483647) &&
+		inRange(pose.angle, 0, 0xffffffff)
+	);
+}
+
 /** Passive diagnostics only: browser-reported poses, not native pose attestation.
  * The controller/executor own execution and image verification. These checks
  * only decide whether arithmetic on their retained checkpoints is meaningful.
@@ -98,14 +106,7 @@ export function summarizeMovement(
 			return unavailable("checkpoint-mismatch");
 		const start = before.telemetry;
 		const end = after.telemetry;
-		if (
-			![start, end].every(
-				(pose) =>
-					inRange(pose.x, -2147483648, 2147483647) &&
-					inRange(pose.y, -2147483648, 2147483647) &&
-					inRange(pose.angle, 0, 0xffffffff),
-			)
-		)
+		if (!validRawPose(start) || !validRawPose(end))
 			return unavailable("invalid-pose");
 		const dxRaw = end.x - start.x;
 		const dyRaw = end.y - start.y;

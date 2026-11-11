@@ -137,6 +137,10 @@ test("three-decision run interleaves one boundary pair with each decision", asyn
 		const diagnostic = `Decision ${ordinal} (forward; verified 6 tics): net reported pose deltas; distance=1 Doom units; headingDelta=0 degrees`;
 		assert.equal(decisionOutput.split(diagnostic).length - 1, 1);
 		assert.equal(result.records[ordinal - 1].movement.status, "available");
+		const history = result.records[ordinal - 1].recentPoseComparison;
+		assert.equal(history.status, "available");
+		const historyLog = `Decision ${ordinal} reported pose history ${JSON.stringify(history)}`;
+		assert.equal(decisionOutput.split(historyLog).length - 1, 1);
 		const instructions =
 			prompted.mock.calls[ordinal - 1].arguments[0].instructions;
 		assert.equal(result.records[ordinal - 1].guidance, instructions);
@@ -190,7 +194,7 @@ test("three-decision run interleaves one boundary pair with each decision", asyn
 	for (const record of result.records) {
 		assert.doesNotMatch(
 			record.guidance ?? "",
-			/net reported pose|headingDelta|dxRaw/,
+			/net reported pose|headingDelta|dxRaw|reported pose history|recentPoseComparison/,
 		);
 		if (record.decision.kind !== "returned") throw Error("Expected receipt");
 		assert.equal(
@@ -200,7 +204,7 @@ test("three-decision run interleaves one boundary pair with each decision", asyn
 	}
 });
 
-test("movement logger exceptions cannot affect retention or continuation", async (t) => {
+test("pose diagnostic logger exceptions cannot affect retention or continuation", async (t) => {
 	const f = await fixture(t, 3);
 	const withTag = progress.withTag.bind(progress);
 	let attempts = 0;
@@ -208,7 +212,9 @@ test("movement logger exceptions cannot affect retention or continuation", async
 		const logger = withTag(tag);
 		const info = logger.info.bind(logger);
 		t.mock.method(logger, "info", (...args: unknown[]) => {
-			if (String(args[0]).includes("net reported pose deltas")) {
+			if (
+				/net reported pose deltas|reported pose history/.test(String(args[0]))
+			) {
 				attempts++;
 				throw Error("Synthetic diagnostic logging failure");
 			}
@@ -217,7 +223,7 @@ test("movement logger exceptions cannot affect retention or continuation", async
 		return logger;
 	});
 	const result = await play(f.client, f.tools, f.provider);
-	assert.equal(attempts, 3);
+	assert.equal(attempts, 6);
 	assert.equal(result.outcome, "completed");
 	assert.deepEqual(
 		result.records.map((r) => r.ordinal),
@@ -225,6 +231,7 @@ test("movement logger exceptions cannot affect retention or continuation", async
 	);
 	for (const record of result.records) {
 		assert.equal(record.movement.status, "available");
+		assert.equal(record.recentPoseComparison.status, "available");
 		assert.equal(record.failure, null);
 		if (record.decision.kind !== "returned") throw Error("Expected receipt");
 		assert.ok(record.decision.afterPng);
@@ -260,6 +267,11 @@ test("a non-continuable second receipt ends decision 2 without starting decision
 	assert.match(
 		output,
 		/Decision 2 \(forward; verified 6 tics\): net reported pose deltas; unavailable: not-completed/,
+	);
+	assert.ok(
+		output.includes(
+			'Decision 2 reported pose history {"status":"unavailable","ordinal":2,"reason":"not-completed"}',
+		),
 	);
 	assert.deepEqual(
 		Array.from(

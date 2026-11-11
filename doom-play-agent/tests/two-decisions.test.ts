@@ -592,6 +592,17 @@ for (const budget of [1, 2, 3, 5]) {
 				assert.deepEqual(record.selection, result.records[0].selection);
 				assert.equal(record.perception?.description, `SCENE_${i + 1}`);
 				assert.deepEqual(record.beforePng, f.state.images[i]);
+				const history = record.recentPoseComparison;
+				assert.equal(history.status, "available");
+				assert.equal(history.current.tic, f.base.tic + (i + 1) * 6);
+				assert.deepEqual(
+					history.recent.map((checkpoint) => checkpoint.tic),
+					Array.from(
+						{ length: Math.min(3, i + 1) },
+						(_, j) => f.base.tic + (i - j) * 6,
+					),
+				);
+				assert.equal(history.exactXY, null);
 				const input = sceneInput(f.state.modelInputs[i]);
 				assert.equal(input.image, record.beforePng);
 				assert.equal(input.state.tic, f.base.tic + i * 6);
@@ -641,6 +652,36 @@ for (const budget of [1, 2, 3, 5]) {
 	}
 }
 
+test("same-tic admission pose disagreement affects only pose history", async (t) => {
+	const f = await fixture(t, 3);
+	const observe = f.client.observe;
+	f.client.observe = async () => {
+		const observation = await observe();
+		if (f.state.observeCalls === 4) observation.telemetry.angle++;
+		return observation;
+	};
+	const result = await play(f.client, f.tools, f.provider);
+	assert.equal(result.outcome, "completed");
+	assert.equal(result.action, "forward");
+	assert.equal(result.decisionOrdinal, 3);
+	assert.equal(result.records[0].recentPoseComparison.status, "available");
+	for (const record of result.records.slice(1)) {
+		assert.equal(record.movement.status, "available");
+		assert.equal(record.failure, null);
+		assert.deepEqual(record.recentPoseComparison, {
+			status: "unavailable",
+			ordinal: 2,
+			reason: "same-tic-pose-mismatch",
+		});
+	}
+	assert.equal(f.state.observeCalls, 6);
+	assert.equal(f.state.modelInputs.length, 3);
+	assert.equal(f.events.filter((event) => event === "setPrompt").length, 3);
+	assert.equal(f.events.filter((event) => event === "decide").length, 3);
+	assert.equal(f.state.run?.sdkInvoked, 3);
+	assert.equal(f.state.run?.remaining, 0);
+});
+
 for (const outcome of [
 	"stopped",
 	"terminal",
@@ -669,6 +710,7 @@ for (const outcome of [
 			outcome === "uncertain" ? "completed" : outcome,
 		);
 		assert.equal(result.completionUncertain, outcome === "uncertain");
+		assert.equal(result.records[2].recentPoseComparison.status, "unavailable");
 		assert.equal(f.state.modelInputs.length, 3);
 		assert.equal(f.state.observeCalls, 6);
 		assert.equal(calls, 3);
@@ -768,8 +810,14 @@ for (const ordinal of [3, 5]) {
 					assert.equal(record.decision.receipt.outcome, "completed");
 					assert.deepEqual(record.beforePng, f.state.images[i]);
 					assert.deepEqual(record.decision.afterPng, f.state.images[i + 1]);
+					assert.equal(record.recentPoseComparison.status, "available");
 				}
 				const current = error.records[ordinal - 1];
+				assert.deepEqual(current.recentPoseComparison, {
+					status: "unavailable",
+					ordinal,
+					reason: "decision-not-returned",
+				});
 				assert.equal(
 					current.decision.kind,
 					fault === "decision" ? "unconfirmed" : "not-called",
@@ -875,6 +923,11 @@ test("third result-image retention failure does not block fresh fourth and fifth
 	assert.equal(third.receipt.outcome, "completed");
 	assert.equal(third.imageRetentionFailure?.reason, "read-failed");
 	assert.equal(third.afterPng, null);
+	assert.ok(
+		result.records.every(
+			(record) => record.recentPoseComparison.status === "available",
+		),
+	);
 	assert.deepEqual(result.records[3].beforePng, f.state.images[3]);
 	assert.deepEqual(result.records[4].beforePng, f.state.images[4]);
 	assert.equal(f.state.observeCalls, 10);

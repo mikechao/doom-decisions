@@ -1052,6 +1052,11 @@ const offlinePlayback: typeof import("../src/doom-play-agent.ts").play = async (
 				admissionObservation: null,
 				decision: { kind: "not-called" },
 				movement: { status: "unavailable", reason: "decision-not-returned" },
+				recentPoseComparison: {
+					status: "unavailable",
+					ordinal: 1,
+					reason: "decision-not-returned",
+				},
 				failure: null,
 			},
 		],

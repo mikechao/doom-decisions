@@ -173,6 +173,22 @@ path length, collision, exploration or landmark/exit progress. No motion thresho
 or revisit heuristic is applied. Controller/executor execution and image proofs
 remain authoritative; this helper does not repeat those proofs.
 
+Experiment B derives `recentPoseComparison` at record publication from the
+eligible prefix of the same run. It uses the first post-CAS admission once and
+one completed receipt ending per distinct simulation tic. The prior ending and
+next admission must agree on session, map, tic and raw pose. Each admission and
+ending capture needs a unique observation ID, including at the same tic. A gap,
+partial record, terminal prefix or conflicting capture makes the comparison
+unavailable at the affected ordinal. Optional result-image retention is
+independent of pose eligibility.
+
+The diagnostic searches the entire prefix for the most recent exact raw XY,
+exact raw pose, and exact XY with a different raw heading. It also includes up
+to three prior checkpoints, newest first. Returned decisions log this bounded
+result through best-effort progress. It supplies no model or gameplay input.
+Recurrence describes sampled endpoints and cannot establish a trajectory,
+collision, a traversal loop, or exploration or objective progress.
+
 Memory grows O(N) because images and DTOs remain retained. Keep practical smoke
 budgets small; the positive-safe-integer limit has no additional small memory cap.
 

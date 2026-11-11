@@ -279,7 +279,7 @@ test("main waits for second decision, retains both images through detach, and pr
 	]);
 	assert.doesNotMatch(
 		JSON.stringify(output.mock.calls[0].arguments),
-		/records|beforePng|afterPng|pngPath|Buffer/,
+		/records|beforePng|afterPng|pngPath|Buffer|recentPoseComparison/,
 	);
 	assert.equal(f.events.at(-1), "detach");
 });
