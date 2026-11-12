@@ -114,6 +114,7 @@ test("offline snapshot prices 30 C1-shaped calls per task, then aggregates witho
 			...r,
 			navigationAssessment: {
 				verdict: "no-visible-match" as const,
+				investigationGuidance: null,
 				evidence: "Synthetic",
 				uncertainty: "Unknown",
 				modelId: "gpt-6-luna",

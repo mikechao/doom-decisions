@@ -29,7 +29,10 @@ proof of navigation improvement or live N>2 gameplay.
 4. `prepareDecision()` calls `perceiveScene()` with the first owned image and compact
    current state. Perception receives no objective or historical note. When a target
    exists, `assessNavigation()` compares that perception with the selected target,
-   text-only. Assessment failure stops without fallback.
+   text-only. Before assessment, the host computes the stateless 256-unit
+   observer-anchor proximity gate from this reasoning observation (see below),
+   passing only an activation boolean as an additional input. Assessment failure
+   stops without fallback.
 5. Preparation composes guidance from the original canonical base, selection,
    current perception and optional assessment, then appends deterministic history
    from the published prefix (explicit `no-history` for decision 1).
@@ -302,7 +305,52 @@ proceed; current verified game evidence, base survival rules and controller
 authority take priority. Advisory JSON excludes usage/full observations and labels
 embedded text untrusted. Decisions alone chooses the low-level action.
 
-Reasoning helpers retain their existing Responses configuration and schemas,
+Approach B adds optional proximity-triggered investigation guidance to the existing
+assessment call, with no additional inference or retry. Each fresh reasoning
+observation independently computes
+`Math.hypot(current.x - anchor.x, current.y - anchor.y) / 65536 <= 256`,
+without rounding or int32 subtraction. The selected upstream-validated target
+must have a nonempty trimmed `nextQuestion`, the full current map key (including
+IWAD identity), and valid raw current/anchor poses; absent or invalid evidence
+does not activate. The fixed radius is `investigationRadiusUnits` in the
+coordinator. This is permission to request evidence-seeking advice, never proof
+of arrival, passage recognition or reachability. No proximity state is carried
+between decisions; admission and after-action observations do not set this gate.
+
+Assessment receives only `investigationActive` in addition to its existing
+perception text and selected historical hypothesis/question/observer pose.
+Its strict result adds required `investigationGuidance: string | null`.
+Inactive output must be null (schema-enforced); active output may also be null.
+A non-null suggestion must contain 1–240 trimmed characters, be scene-grounded,
+uncertain and aimed at a clearer view relevant to `nextQuestion`. It must not
+select an action enum/duration, route plan, configuration, passage coordinates,
+arrival claim or completion verdict, or assume unseen geometry is traversable.
+`no-visible-match` does not suppress a grounded suggestion, and `possible-match`
+does not require one. These semantic constraints are model instructions, not a
+host proof of scene grounding; only structure and length are schema-validated.
+Invalid output, transport failure or noncompletion stops through the existing
+assessment failure path without salvage, fallback or retry.
+
+Only the host-active flag plus validated non-null assessment advice projects
+`landmarkInvestigation` into untrusted advisory JSON, once in the current prompt.
+It includes `observerAnchorRadiusUnits: 256`; accompanying text labels it advisory,
+uncertain model interpretation subordinate to verified screenshot/native state
+and controller authority. Null/inactive guidance preserves the existing prompt
+projection. Canonical base, objective/question, current evidence, Experiment C,
+16,000-character preflight, CAS/exact acknowledgment and fresh admission remain.
+The saved reasoning observation, fixed selection, assessment, exact guidance and
+acknowledgment suffice to reconstruct activation/delivery; no record field,
+schema-v3 envelope, PNG/receipt or cost-summary infrastructure changes are needed.
+
+Offline tests include boundary/invalid-evidence cases, near/far/near re-entry and
+a synthetic C2 D21-like right-edge gap at approximately 226 units with
+`no-visible-match`. They establish a contract, not behavioral improvement.
+Historical runs stay untouched. A separately authorized live comparison would
+measure whether Decisions obtains a clearer identified passage, threshold or
+approach view relevant to `nextQuestion`, rather than merely reducing distance
+to the historical observer anchor. No question completion/lifecycle is evaluated.
+
+Reasoning helpers retain their existing Responses configuration,
 `DOOM_REASONING_MODEL ?? "gpt-6-luna"`, no retries, 60-second abort signal,
 `store: false`, `reasoningEffort: "xhigh"`, and required finish reason `stop`.
 Each helper selects the ID once per invocation and returns that same `modelId`

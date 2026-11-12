@@ -41,6 +41,26 @@ objective/history; assessment is text-only. Historical and model text remain
 untrusted advisory JSON. First guidance must fit before claim; every later amendment
 must fit before its CAS/decision. No guidance accumulates across slots.
 
+Approach B permits one optional, uncertain evidence-seeking suggestion in the
+existing assessment when the fresh **reasoning observation** is within 256 Doom
+units of the selected historical observer anchor. The gate uses unrounded raw
+16.16 XY distance, valid poses, matching full map/IWAD key and a nonempty
+`nextQuestion`; it recomputes every decision without arrival state. Assessment
+receives only one extra host boolean, and returns nullable `investigationGuidance`
+(1–240 trimmed characters when non-null). Inactive assessments require null;
+active scenes may still provide no defensible suggestion. `no-visible-match`
+does not exclude advice. No extra inference, action/duration authority, retry,
+or completion evaluation is added.
+Host activation and validated non-null advice are both required for one JSON-quoted
+`landmarkInvestigation` advisory in Decisions guidance. It records the 256-unit
+radius, remains subordinate to current verified evidence/controller authority,
+and stays within the existing prompt preflight. Existing schema-v3 records retain
+everything needed to audit activation, advice and acknowledgment; costing and
+image/receipt persistence are unchanged. See the [execution baseline](doom-play-agent.md#navigation-inference-and-failure-boundaries).
+Offline synthetic tests establish these contracts only. A separately authorized
+live trial would measure clearer identified passage/threshold/approach views
+relevant to `nextQuestion`, rather than proximity to the observer anchor alone.
+
 Experiment C appends deterministic recent-history guidance in both landmark and
 free-explore mode: at most four immediately preceding eligible completed
 decisions, oldest first. Rows contain ordinal, action, verified tics, Euclidean

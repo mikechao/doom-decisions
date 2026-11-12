@@ -27,6 +27,7 @@ export const scenePerception = {
 };
 export const navigationAssessment = {
 	verdict: "possible-match",
+	investigationGuidance: null as string | null,
 	evidence:
 		"The visible doorway supports the doorway hypothesis; no specific conflict is described.",
 	uncertainty: "A generic doorway does not establish landmark identity.",

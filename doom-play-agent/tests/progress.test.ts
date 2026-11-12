@@ -589,6 +589,7 @@ test("assessment strings stay escaped in stderr and advisory prompt JSON", async
 	const { stderr, stdout } = capture(t);
 	const assessment = {
 		verdict: "insufficient-evidence",
+		investigationGuidance: null,
 		evidence: "Ambiguous doorway.\u001b[31m\n[forged]",
 		uncertainty: "Unknown identity.\r\n[forged]",
 	};

@@ -6,7 +6,7 @@ import test, { after, beforeEach } from "node:test";
 import { fileURLToPath } from "node:url";
 import { play } from "../src/doom-play-agent.ts";
 import * as costing from "../src/run-cost.ts";
-import { fixture } from "./fixtures.ts";
+import { fixture, navigationAssessment } from "./fixtures.ts";
 
 const defaultDirectory = fileURLToPath(
 	new URL("../.local/runs/", import.meta.url),
@@ -89,6 +89,11 @@ const { persistRun, RunPersistenceError } = await import(
 
 test("writes one v3 directory with full non-image evidence and byte-faithful sidecars after temporary images disappear", async (t) => {
 	const f = await fixture(t, 3);
+	f.state.assessment = {
+		...navigationAssessment,
+		investigationGuidance:
+			"A clearer view of the possible gap might reveal its threshold.",
+	};
 	const result = await play(f.client, f.tools, f.provider);
 	const original = JSON.stringify(result);
 	const expected = JSON.parse(original);
@@ -128,6 +133,14 @@ test("writes one v3 directory with full non-image evidence and byte-faithful sid
 	assert.equal(saved.costSummary.tasks.perception.calls, 3);
 	assert.equal(saved.costSummary.tasks.navigationAssessment.calls, 3);
 	assert.equal(saved.costSummary.tasks.decisions.calls, 3);
+	assert.equal(
+		saved.result.records[0].navigationAssessment.investigationGuidance,
+		(f.state.assessment as typeof navigationAssessment).investigationGuidance,
+	);
+	assert.equal(
+		saved.result.records[0].promptAcknowledged.instructions,
+		saved.result.records[0].guidance,
+	);
 	assert.equal(new Date(saved.recordedAt).toISOString(), saved.recordedAt);
 	assert.equal(
 		basename(dirname(path)),

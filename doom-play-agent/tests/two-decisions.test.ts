@@ -5,7 +5,7 @@ import test from "node:test";
 import { maxAgentInstructions } from "../../app/src/agent-control.ts";
 import { play } from "../src/doom-play-agent.ts";
 import { PlaybackError } from "../src/playback-error.ts";
-import { fixture, scenePerception } from "./fixtures.ts";
+import { fixture, navigationAssessment, scenePerception } from "./fixtures.ts";
 
 const secondScene = {
 	description: "SECOND_ONLY: a closer doorway is visible.",
@@ -36,6 +36,84 @@ function sceneInput(
 	);
 	return { state: JSON.parse(text.text).state, image: image.data.data };
 }
+
+test("investigation recomputes near -> far -> near from reasoning, independently of admission and ending poses", async (t) => {
+	const f = await fixture(t, 3);
+	const positions = [10, 300, 20];
+	f.note.anchor = { x: 0, y: 0, angle: 0 };
+	f.base.telemetry.y = 0;
+	f.base.telemetry.x = positions[0] * 65536;
+	const firstSuggestion = "A clearer near-gap view might reveal its threshold.";
+	const suggestions = [
+		firstSuggestion,
+		null,
+		"A second view of the edge may clarify the opening.",
+	];
+	const observe = f.client.observe;
+	f.client.observe = async () => {
+		const observation = await observe();
+		// Post-CAS admission is deliberately on the opposite side of the gate.
+		// It must not activate or revoke this reasoning pass's permission.
+		if (f.state.observeCalls % 2 === 0)
+			observation.telemetry.x = (f.state.observeCalls === 4 ? 0 : 500) * 65536;
+		return observation;
+	};
+	const generate = f.model.doGenerate;
+	f.model.doGenerate = async (input) => {
+		f.state.assessment = {
+			...navigationAssessment,
+			investigationGuidance: suggestions[f.state.assessmentInputs.length],
+		};
+		return generate(input);
+	};
+	const decide = f.client.decide;
+	f.client.decide = async (input) => {
+		const receipt = await decide(input);
+		const nextX = positions[f.state.decisionTemplates.length] ?? 400;
+		assert.ok(f.state.after && receipt.observation);
+		f.state.after.telemetry.x = nextX * 65536;
+		receipt.observation.telemetry.x = nextX * 65536;
+		return receipt;
+	};
+	const result = await play(f.client, f.tools, f.provider);
+	assert.deepEqual(
+		f.state.assessmentInputs.map((input) => {
+			const user = input.prompt.find((m) => m.role === "user");
+			const text = user?.content.find((p) => p.type === "text");
+			assert.ok(text?.type === "text");
+			return JSON.parse(text.text).investigationActive;
+		}),
+		[true, false, true],
+	);
+	for (const [i, record] of result.records.entries()) {
+		assert.equal(
+			record.reasoningObservation?.telemetry.x,
+			positions[i] * 65536,
+		);
+		assert.equal(
+			record.navigationAssessment?.investigationGuidance,
+			suggestions[i],
+		);
+		const guidance = record.guidance;
+		assert.ok(guidance);
+		assert.equal(
+			guidance.match(/"landmarkInvestigation"/g)?.length ?? 0,
+			i === 1 ? 0 : 1,
+		);
+		if (suggestions[i])
+			assert.ok(guidance.includes(JSON.stringify(suggestions[i])));
+		if (i > 0) assert.ok(!guidance.includes(firstSuggestion));
+		assert.equal(record.promptAcknowledged?.instructions, guidance);
+		assert.equal(f.state.decisionTemplates[i], guidance);
+		assert.ok(guidance.startsWith(f.base.configuration.instructionTemplate));
+		assert.equal(record.admissionObservation?.configuration.tics, 6);
+	}
+	assert.equal(f.state.modelCalls, 6);
+	assert.equal(f.state.assessmentInputs.length, 3);
+	assert.equal(f.events.filter((event) => event === "decide").length, 3);
+	assert.equal(f.events.filter((event) => event === "observe").length, 6);
+	assert.equal(f.events.filter((event) => event === "memory").length, 1);
+});
 
 for (const landmark of [true, false]) {
 	test(`two informed ${landmark ? "landmark" : "free-explore"} decisions share one run and original base`, async (t) => {
