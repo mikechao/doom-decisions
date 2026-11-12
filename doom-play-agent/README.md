@@ -121,8 +121,8 @@ new directories/files request private permissions (0700/0600 where supported).
   decision-2-after.png
 ```
 
-The two-space JSON envelope contains `schemaVersion: 2`, `recordedAt` (UTC),
-`provenance`, and `result`. Before attaching, `main()` takes one best-effort Git
+The two-space JSON envelope contains `schemaVersion: 3`, `recordedAt` (UTC),
+`provenance`, `costSummary`, and `result`. Before attaching, `main()` takes one best-effort Git
 snapshot from the module-relative repository root. `provenance.git.commit` is
 the full HEAD SHA; `provenance.git.dirty` includes staged, unstaged and nonignored
 untracked changes across the repository. Ignored files, including `.local/runs/`,
@@ -133,6 +133,49 @@ without a snapshot save both values as null and never invoke Git.
 The snapshot is not refreshed after playback: edits during a run are not captured,
 a dirty flag does not identify changed content, and a SHA is not a browser/WASM
 runtime fingerprint. No Git output, filenames or errors are retained.
+
+Just before serialization, `persistRun()` calculates `costSummary` from
+`result.records[]` only; flat final-decision summaries are duplicates. The pure
+`estimateRunCost()` uses the bundled offline `@opencode-ai/models@0.0.133` snapshot,
+loaded inside an optional pricing boundary. No client, network request, credentials
+or pricing updater is involved. Separately reviewed dependency updates refresh
+prices for newly saved runs. SDK version, snapshot source and `generatedAt` are
+saved; the SDK supplies no snapshot hash. This timestamp is not a historical
+price-effective date.
+
+The summary is an **estimated API-equivalent USD cost**, not actual OAuth charges
+or an invoice. Each task bucket records calls, input/output totals, priced/unpriced
+counts, unknown reasons, a covered subtotal and nullable complete task estimate.
+`models[]` groups exact provider/requested/reported identities and the rates
+actually used (USD per million tokens). Both reasoning tasks use their recorded
+`modelId` on the source-verified OpenAI route. Decisions price the receipt's exact
+requested OpenRouter or OpenAI offering; the reported version remains diagnostic
+and is never treated as an alias. Unsupported providers have unknown cost.
+
+Each invocation is priced before aggregation without rounding. Cache-read/write
+partitions are subtracted from total input and priced separately when used;
+reasoning is already in output and is priced once at the ordinary output rate.
+Raw and total-token counters are not added. Decisions lack retained cache/reasoning
+partitions: their explicit base-rate convention applies only when the offering
+has no differentiated cache or reasoning prices. Standard mode and published
+text/screenshot token rates are an estimation convention; no additional image
+surcharge, priority service or experimental-mode charge is inferred. Separate
+reasoning prices, unsupported model/modalities, missing/invalid required counters or rates,
+and calls whose input plus output reaches a context-tier threshold are unknown.
+The conservative threshold check may reject a call whose actual input alone
+would still qualify for base pricing; this is intentionally not a tier engine.
+
+`coveredSubtotal.isPartial` explicitly marks incomplete coverage, and full-run
+`estimatedUsd` is null whenever any recorded call is unpriced. No priced calls
+means a null covered subtotal; an explicitly priced free call may legitimately
+cost zero. Skipped assessment and non-invoked Decisions create no calls and have
+null task estimates. Unknown input/output totals are null, never invented zeros.
+Only retained invocations can be estimated; missing failed-call usage cannot
+reconstruct total spend. Snapshot failures produce unknown costs; lookup failures
+can preserve partial coverage; an unexpected estimator failure saves an explicit
+unknown summary with unavailable task details. Pricing failures never suppress a
+valid run, while existing JSON/image write and serialization failures still fail
+persistence normally. Neither `play()` nor `PlayResult` is changed for costing.
 
 All non-image result evidence is retained, including ordered records,
 receipts, raw poses, movement summaries, recent-pose comparisons, guidance and
@@ -147,8 +190,10 @@ hash pass is added. In-memory records and Buffer ownership are unchanged.
 Null images remain null; absent/undefined fields are omitted as in ordinary JSON.
 No file/reference is manufactured for a missing image or retention failure.
 
-Historical v1 artifacts embed Node Buffer JSON byte arrays in a single file.
-They remain untouched; no reader, compatibility layer or migration is provided.
+Historical v1 artifacts embed Node Buffer JSON byte arrays in a single file;
+v2 artifacts use the same sidecar/result contract as v3 but lack `costSummary`.
+They remain untouched and readable in their original JSON form; no reader,
+compatibility layer or migration is provided.
 Each successful reasoning output retains `modelId` alongside existing `usage`
 and `durationMs`, at `result.records[i].perception.modelId` and, when assessed,
 `result.records[i].navigationAssessment.modelId`. This is the exact selected ID

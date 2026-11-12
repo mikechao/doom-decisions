@@ -9,13 +9,14 @@
   "scripts": {
     "agent": "node --experimental-strip-types src/main.ts",
     "test": "node --experimental-strip-types --experimental-test-module-mocks --test tests/*.test.ts",
-    "check": "npm test && npm run typecheck && ../app/node_modules/.bin/biome check src/main.ts src/run-persistence.ts src/run-provenance.ts src/provider.ts src/doom-play-agent.ts src/doom-play-agent-types.ts src/playback-error.ts src/movement-summary.ts src/recent-pose-comparison.ts src/scene-perception.ts src/navigation-assessment.ts src/doom-tools.ts src/progress.ts tests",
+    "check": "npm test && npm run typecheck && ../app/node_modules/.bin/biome check src/main.ts src/run-persistence.ts src/run-cost.ts src/run-provenance.ts src/provider.ts src/doom-play-agent.ts src/doom-play-agent-types.ts src/playback-error.ts src/movement-summary.ts src/recent-pose-comparison.ts src/scene-perception.ts src/navigation-assessment.ts src/doom-tools.ts src/progress.ts tests",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.0",
     "@openai-oauth/core": "^2.0.0",
     "@openai-oauth/local": "^2.0.0",
+    "@opencode-ai/models": "0.0.133",
     "ai": "^7.0.159",
     "consola": "3.4.2",
     "zod": "^4.0.0"

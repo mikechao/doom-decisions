@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import test, { after, beforeEach } from "node:test";
 import { fileURLToPath } from "node:url";
 import { play } from "../src/doom-play-agent.ts";
+import * as costing from "../src/run-cost.ts";
 import { fixture } from "./fixtures.ts";
 
 const defaultDirectory = fileURLToPath(
@@ -13,6 +14,27 @@ const defaultDirectory = fileURLToPath(
 let directory: string;
 let failure: "mkdir" | "image" | "json" | null = null;
 let writes: string[] = [];
+let costFailure: "lookup" | "calculation" | null = null;
+const costRegistration = test.mock.module("../src/run-cost.ts", {
+	namedExports: {
+		...costing,
+		estimateRunCost: (...args: Parameters<typeof costing.estimateRunCost>) => {
+			if (costFailure === "calculation") throw Error("SECRET pricing failure");
+			if (costFailure === "lookup" && args[1]) {
+				args[1] = {
+					...args[1],
+					providers: new Proxy(args[1].providers, {
+						get() {
+							throw Error("SECRET lookup failure");
+						},
+					}),
+				};
+			}
+			return costing.estimateRunCost(...args);
+		},
+	},
+});
+after(() => costRegistration.restore());
 // Redirect only persistence operations into each fixture's temporary directory.
 // Production has no path override; tests never access historical artifacts.
 function redirected(path: string) {
@@ -58,13 +80,14 @@ const registration = test.mock.module("node:fs/promises", {
 after(() => registration.restore());
 beforeEach(() => {
 	failure = null;
+	costFailure = null;
 	writes = [];
 });
 const { persistRun, RunPersistenceError } = await import(
 	"../src/run-persistence.ts"
 );
 
-test("writes one v2 directory with full non-image evidence and byte-faithful sidecars after temporary images disappear", async (t) => {
+test("writes one v3 directory with full non-image evidence and byte-faithful sidecars after temporary images disappear", async (t) => {
 	const f = await fixture(t, 3);
 	const result = await play(f.client, f.tools, f.provider);
 	const original = JSON.stringify(result);
@@ -86,7 +109,7 @@ test("writes one v2 directory with full non-image evidence and byte-faithful sid
 	assert.equal(writes.length, 7);
 	assert.equal(writes.at(-1), "result.json");
 	const text = await fs.readFile(redirected(path), "utf8");
-	assert.ok(text.startsWith('{\n  "schemaVersion": 2,\n'));
+	assert.ok(text.startsWith('{\n  "schemaVersion": 3,\n'));
 	assert.ok(text.endsWith("\n"));
 	assert.doesNotMatch(
 		text,
@@ -97,9 +120,14 @@ test("writes one v2 directory with full non-image evidence and byte-faithful sid
 		"schemaVersion",
 		"recordedAt",
 		"provenance",
+		"costSummary",
 		"result",
 	]);
 	assert.deepEqual(saved.provenance, provenance);
+	assert.equal(saved.costSummary.kind, "api-equivalent-estimate");
+	assert.equal(saved.costSummary.tasks.perception.calls, 3);
+	assert.equal(saved.costSummary.tasks.navigationAssessment.calls, 3);
+	assert.equal(saved.costSummary.tasks.decisions.calls, 3);
 	assert.equal(new Date(saved.recordedAt).toISOString(), saved.recordedAt);
 	assert.equal(
 		basename(dirname(path)),
@@ -154,6 +182,35 @@ test("writes one v2 directory with full non-image evidence and byte-faithful sid
 			assert.equal((await fs.stat(entry)).mode & 0o077, 0);
 	}
 });
+
+for (const mode of ["lookup", "calculation"] as const) {
+	test(`${mode} pricing failure does not prevent persistence or alter run evidence`, async (t) => {
+		const f = await fixture(t, 1);
+		const result = await play(f.client, f.tools, f.provider);
+		directory = join(f.root, "runs");
+		costFailure = mode;
+		const path = await persistRun(result);
+		const text = await fs.readFile(redirected(path), "utf8");
+		const saved = JSON.parse(text);
+		assert.equal(saved.schemaVersion, 3);
+		assert.equal(saved.costSummary.coverage, "unknown");
+		assert.equal(saved.costSummary.estimatedUsd, null);
+		assert.equal(saved.costSummary.coveredSubtotal.estimatedUsd, null);
+		if (mode === "lookup")
+			assert.equal(
+				saved.costSummary.tasks.perception.unknownReasons[
+					"pricing-lookup-failed"
+				],
+				1,
+			);
+		else assert.equal(saved.costSummary.reason, "cost-estimation-unavailable");
+		const expected = JSON.parse(JSON.stringify(result));
+		expected.records[0].beforePng = { file: "decision-1-before.png" };
+		expected.records[0].decision.afterPng = { file: "decision-1-after.png" };
+		assert.deepEqual(saved.result, expected);
+		assert.doesNotMatch(text, /SECRET/);
+	});
+}
 
 test("unavailable Git metadata does not prevent saving a resolved run", async (t) => {
 	const registration = t.mock.module("node:child_process", {

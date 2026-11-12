@@ -70,7 +70,10 @@ proof of navigation improvement or live N>2 gameplay.
     separate members of `AggregateError` when both fail.
 13. If `play()` resolved, `main()` then calls `persistRun()` once with the pre-attach
     snapshot, even if detach failed. It saves non-image evidence and retained PNG
-    sidecars in a unique ignored package-local `.local/runs/` directory. Only after all writes succeed
+    sidecars in a unique ignored package-local `.local/runs/` directory. Before JSON
+    serialization it adds an offline, nonfatal API-equivalent cost summary from
+    records and the pinned SDK snapshot; costing cannot authorize gameplay.
+    Only after all writes succeed
     does stderr report the `result.json` path. A persistence failure produces a
     bounded diagnostic and a nonzero CLI exit, while existing
     playback/detach errors retain precedence. A thrown `play()` is never persisted.
@@ -87,7 +90,8 @@ JSON-quoted in logs; the note label uses a short SHA-256 digest of its ID.
 | `doom-play-agent-types.ts` | Shared passive evidence/result types and their supporting aliases; mutable evidence construction remains in the coordinator. |
 | `playback-error.ts` | Single `PlaybackError` constructor shared by the coordinator, CLI and tests; preserves the original cause and supplied records array identity. |
 | `play()` | Initial observation/base, lookup/selection, first preparation and sole claim; continuation loop, live scope/receipt, ordered records and final summary. |
-| `persistRun()` | CLI-only, post-detach serialization of a resolved result; no gameplay calls or control-state changes. |
+| `persistRun()` | CLI-only, post-detach serialization of a resolved result, including an optional offline snapshot cost estimate; no gameplay calls or control-state changes. |
+| `estimateRunCost()` | Pure per-record usage adaptation, exact requested-offering lookup and standard-rate arithmetic; no I/O or authority. Unknown pricing never prevents persistence. |
 | `prepareDecision()` | Per-slot perception, optional assessment, canonical-base guidance and size check; stage-specific reasoning failures. |
 | `executeOneDecision()` | CAS, fresh admission/checks, one `decide()`, after-image retention. Never claims a run. |
 | `checkCheckpoint()` / `checkRun()` | Exposed checkpoint/scope/accounting checks; no independent native verifier or local authority ledger. |
@@ -162,7 +166,7 @@ Buffers as immutable. Paths are ephemeral provenance; owned bytes survive file
 changes/deletion/detach. Executor materialization failure before return remains
 unconfirmed. Records provide no independent native proof. CLI persistence writes
 `<UTC-timestamp>_<encoded-broker-run-id>/result.json` under module-relative
-`.local/runs/`, with envelope `{ schemaVersion: 2, recordedAt, provenance, result }` and
+`.local/runs/`, with envelope `{ schemaVersion: 3, recordedAt, provenance, costSummary, result }` and
 two-space JSON. All non-image evidence stays intact. Only the persisted
 `records[i].beforePng` and returned `records[i].decision.afterPng` Buffers become
 `{ "file": "decision-<ordinal>-before.png" }` and
@@ -173,6 +177,24 @@ existing hashes remain at `reasoningObservation.pngSha256` and
 Projection does not mutate in-memory results, records or Buffers. Nulls remain
 null, absent/undefined properties are omitted, and missing/failed image retention
 creates no sidecar or reference. Temporary `pngPath` fields remain provenance.
+
+`costSummary` estimates public API-equivalent cost from recorded invocations only,
+never duplicate flat summaries. It uses the bundled `@opencode-ai/models@0.0.133`
+snapshot without a network fallback or pricing updater. It saves source/version,
+snapshot generation time (not a price-effective date), per-task usage/coverage,
+unknown reasons, exact provider/requested/reported identities and used rates.
+Reasoning uses its recorded model ID on the OpenAI route; Decisions use the exact
+receipt provider/requested offering, never a guessed reported-model alias.
+Cache partitions replace their share of inclusive input, and inclusive reasoning
+output is not added twice. Decisions' missing cache/reasoning detail uses an
+explicit base-rate assumption only without differentiated rates. Standard mode
+and screenshot token pricing are estimation conventions, not OAuth billing proof.
+Separate reasoning rates and reached context tiers are unsupported; invalid or
+incomplete data yields unknown cost. Skipped stages are absent calls. A partial
+covered subtotal never becomes a complete run estimate; the latter is null if
+any recorded call is unpriced. Snapshot loading and costing have nonfatal error
+boundaries; write/serialization errors retain existing failure semantics. See
+[artifact cost conventions](README.md#resolved-run-artifacts) for details.
 
 `provenance.git` contains the full HEAD `commit` and repository-wide `dirty`
 status (staged, unstaged and nonignored untracked changes), captured from a
@@ -189,7 +211,8 @@ Images are written before the final JSON. Exclusive directory and file creation
 prevents overwrites, requesting 0700/0600 permissions where supported. A failure
 can leave a partial directory, incomplete sidecars or missing/incomplete JSON;
 there is no rollback or crash-safety guarantee. Historical single-file v1 JSON
-with Buffer byte arrays stays untouched; no reader or migration is implemented.
+with Buffer byte arrays and v2 sidecar artifacts without cost summaries stay
+untouched; no reader or migration is implemented.
 Sensitive guidance, historical prose and temporary paths remain in the local
 artifact. No provider instance, credentials, environment dump or raw error is
 added. Thrown/interrupted runs are not saved. Persistence remains post-detach and

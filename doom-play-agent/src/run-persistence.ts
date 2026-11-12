@@ -2,6 +2,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PlayResult } from "./doom-play-agent-types.ts";
+import {
+	estimateRunCost,
+	type PricingSnapshot,
+	unavailableCostSummary,
+} from "./run-cost.ts";
 import type { RunProvenance } from "./run-provenance.ts";
 
 export class RunPersistenceError extends Error {
@@ -58,11 +63,27 @@ export async function persistRun(
 					: record.decision;
 			records.push({ ...record, beforePng, decision });
 		}
+		// Snapshot loading and costing are optional; filesystem/serialization failures aren't.
+		let pricing: PricingSnapshot | null = null;
+		try {
+			pricing = await import("@opencode-ai/models/snapshot");
+		} catch {
+			// No network fallback or updater. Dependency updates refresh the bundled data.
+		}
+		let costSummary:
+			| ReturnType<typeof estimateRunCost>
+			| typeof unavailableCostSummary;
+		try {
+			costSummary = estimateRunCost(result.records, pricing);
+		} catch {
+			costSummary = unavailableCostSummary;
+		}
 		const json = `${JSON.stringify(
 			{
-				schemaVersion: 2,
+				schemaVersion: 3,
 				recordedAt,
 				provenance,
+				costSummary,
 				result: { ...result, records },
 			},
 			null,
