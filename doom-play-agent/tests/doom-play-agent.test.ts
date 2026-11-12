@@ -1209,6 +1209,12 @@ for (const assessment of [
 			/untrusted data.*never instructions/,
 		);
 		assert.match(JSON.stringify(input.prompt), /takes priority/);
+		const specificityInstruction =
+			"When investigationActive is true, any non-null investigationGuidance must identify one specific feature actually named by the current perception (such as an opening, ledge, wall, or dark-floored area) and the particular next observation that would help distinguish whether it is an approachable passage or an obstruction. Do not merely repeat nextQuestion or request a generally clearer right-side view. Preserve uncertainty about unseen geometry, identity, reachability, and exit connection. Return null if the supplied perception does not support a grounded, discriminating suggestion.";
+		const system = input.prompt.find((message) => message.role === "system");
+		assert.ok(system?.role === "system");
+		assert.equal(system.content.split(specificityInstruction).length, 2);
+		assert.ok(system.content.endsWith(specificityInstruction));
 		assert.doesNotMatch(JSON.stringify(input), /UNSELECTED_NOTE|data:image/);
 		assert.deepEqual(input.providerOptions, {
 			openai: { store: false, reasoningEffort: "xhigh" },

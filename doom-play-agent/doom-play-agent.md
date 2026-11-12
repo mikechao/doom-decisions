@@ -321,10 +321,14 @@ Assessment receives only `investigationActive` in addition to its existing
 perception text and selected historical hypothesis/question/observer pose.
 Its strict result adds required `investigationGuidance: string | null`.
 Inactive output must be null (schema-enforced); active output may also be null.
-A non-null suggestion must contain 1–240 trimmed characters, be scene-grounded,
-uncertain and aimed at a clearer view relevant to `nextQuestion`. It must not
-select an action enum/duration, route plan, configuration, passage coordinates,
-arrival claim or completion verdict, or assume unseen geometry is traversable.
+A non-null suggestion must contain 1–240 trimmed characters, name one specific
+feature in the current perception and the particular next observation that could
+distinguish an approachable passage from an obstruction, while preserving
+uncertainty. It must not merely repeat `nextQuestion` or request a generally
+clearer right-side view; absent a grounded, discriminating suggestion, return null.
+It must not select an action enum/duration, route plan, configuration, passage
+coordinates, arrival claim or completion verdict, or assume unseen geometry is
+traversable.
 `no-visible-match` does not suppress a grounded suggestion, and `possible-match`
 does not require one. These semantic constraints are model instructions, not a
 host proof of scene grounding; only structure and length are schema-validated.
