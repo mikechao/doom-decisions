@@ -403,14 +403,88 @@ the anchor itself. `nextQuestion: null` remains valid. Evidence/model/response
 failures throw sanitized errors and never become abstention or automatic retry.
 
 The separate `author-note` CLI validates arguments before constructing the existing
-OAuth provider. Only explicit credentialed execution incurs one paid inference;
-normal OAuth refresh behavior still applies. It exclusively writes an ignored
-`.local/note-drafts/<timestamp>_<runId>/draft.json` artifact for draft or abstention,
+OAuth provider. With only `--run-dir`, it first calls the offline selector below.
+A `selected` result supplies the exact decision/image ordinals to one authoring
+call. `no_candidate` prints a reason and manual-selection guidance and exits
+successfully without credentials, inference or an artifact; it is distinct from
+the model's `no_note`. Corrupt/unsupported required evidence throws a safe nonzero
+error before provider construction. Explicit `--decisions` and `--images` together
+bypass the selector and preserve manual selection; supplying just one is a usage
+error. Only explicit credentialed execution with selected evidence incurs one paid
+inference; normal OAuth refresh behavior still applies. It exclusively writes an
+ignored `.local/note-drafts/<timestamp>_<runId>/draft.json` artifact for draft or abstention,
 including evidence/request/model provenance without credentials or raw transport
-payloads. The reusable function performs no writes. Neither path imports memory
-storage, promotes a note, mutates SQLite, attaches to Doom or changes gameplay.
+payloads. Artifacts retain `status: "unapproved"` and add `selectionMode` (`automatic`
+or `manual`); automatic artifacts also store the selector's existing compact
+`selectionProvenance`. Before writing, the CLI compares the selector's result-file
+SHA-256 with the authoring audit's digest. A mismatch fails without an artifact or
+retry, preventing provenance for a different snapshot from being recorded. This
+check happens after inference, which can still be charged; saved runs should remain
+unchanged during the command. The reusable function performs no writes. Neither
+path imports memory storage, promotes a note, mutates SQLite, attaches to Doom or
+changes gameplay.
 Offline tests use synthetic sidecars and mocked generation/auth; ignored `.local`
 experiment artifacts are not runtime dependencies. Live inference is unverified.
+
+### Offline boundary-encounter selection experiment
+
+`selectHistoricalNoteEvidence(runDirectory)` in `historical-note-authoring.ts`
+is an independent offline function used by the CLI's default selection path, with
+no integration into gameplay or post-`play()` authoring. Rule
+`boundary-encounter-v1` scans schema-v3 before checkpoints in ordinal
+order for the earliest consecutive probe kinds 1,2,2. With `d` the first kind-2
+ordinal, it selects exactly D(d−2)…D(d+4), attaching before images d−2,d+1,d+4.
+An incomplete earliest window returns `no_candidate`; it never shifts or falls
+back to a later encounter. No encounter or duplicate selected PNG/native-frame
+hashes also return `no_candidate`, without image replacement or perceptual scoring.
+
+The scan projects only ordinal and before-checkpoint metadata, checks its
+map/session/run identity, checkpoint/probe consistency and unique identifiers, and
+ignores historical prose, guidance, assessments, objectives and prompts. One
+result-file snapshot feeds both selection and the unchanged selected-packet
+validation path used before authoring inference. Every selected record's before
+and after sidecar is checked before duplicate detection. Unsupported/corrupt
+required evidence throws the shared `HistoricalNoteAuthoringError`, never ordinary
+abstention. Unselected receipts/sidecars are not validated, so `no_candidate` does
+not certify an entire run. Provenance retains rule version, run/result digest,
+map/session identity and selected before observation IDs/tics/PNG and frame hashes.
+
+Selection only samples viewpoints. It neither asserts landmark usefulness nor
+chooses a future author's source anchor. There are no credential, model, artifact
+write or memory operations. Synthetic tests enforce the rule and its offline
+boundary; real-image usefulness requires separate manual review.
+
+Offline local evaluation (no authoring call): Experiment F run
+`99988680-89a3-433f-91e0-d60fd139c4c7`, schema v3, selected the predicted D16–D22
+and before images 16,19,22. Result SHA-256:
+`7edc05dcf3c7ac77ce2aee91a727e11a7bb7d8e4f2bd313ad7322a12d1cf1148`.
+The supplied contrast run `cf6badc9-46fa-4864-b012-f629489bae34` is actually schema
+v2 and was rejected as unsupported (original result SHA-256
+`582032d052d2e8a14dadbaffc594684e8493e30a1d3f5916f8c80b4500c9b2a9`). A temporary
+copy changing only the envelope version to 3, with copied sidecars, selected the
+predicted D8–D14 and images 8,11,14; its result SHA-256 was
+`76e0387596bac4d49473d23deb113ff6577b45ddeee27fde8d8cdd8f763d31cd`.
+Both selected packets passed the shared authoring input/evidence checks without
+inference and returned identical provenance on repeated selection. The temporary
+copy was removed; original run files were unchanged. This diagnostic does not
+make the original v2 run supported or authorize a schema migration.
+
+| Run / before image | Tic | Observation ID | PNG SHA-256 |
+| --- | --- | --- | --- |
+| F / D16 | 91 | `728fd10f-41f6-41c5-96e2-0481a49c15dc` | `17f73f3ef59b0fcf7cb0c2bdeaa8f57b38244259c871f3c621b2b90a6eb44038` |
+| F / D19 | 109 | `eabed558-d584-4c3b-8216-6b4dcb420e2d` | `78c9440c87e780642752cc2859df275e1f61bbb271c793f0c399ad435bde3b06` |
+| F / D22 | 127 | `0728dad7-969d-464c-bc02-847bdc44e4c2` | `5ed3b9a7c5ff92b2b86d4c30f5d8eb86f6f94368c36b27c5a52085d0237eb480` |
+| Contrast / D8 | 43 | `134a30a7-32a2-470b-901e-e4d4fb6e5f24` | `07aaaec207360c966d0956fdab6bef1f9645eb4660b16703b54af6f3bb9a0141` |
+| Contrast / D11 | 61 | `09f22a5e-7c66-4bc6-a6c7-5e9aa8dbcdf0` | `9236914b2c51ff19d1f27f672d2bad81b208deb580fbee250bd3dee7d491dba5` |
+| Contrast / D14 | 79 | `9983e9f5-a2fe-4b1d-bb17-5f374e3d7106` | `523baa88de0d7a1456a352d8c4ed4deff00801a26ae5d6c0abf3bf93993cce8d` |
+
+Manual inspection found complementary stable yard/ledge/interior relationships
+in F's D19/D22, with D16 supplying approach context. Contrast D8/D14 retain broad
+pool/support/wall context, but D11 is dominated by a close column; this packet is
+borderline rather than convincing evidence of useful recognition. The heuristic
+has weak selectivity and was not tuned to hide that result. Neither packet proves
+historical-note or navigation usefulness. Ignored runs are evaluation inputs only,
+never source/test/runtime dependencies.
 
 ## Evidence and offline checks
 

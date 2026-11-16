@@ -263,15 +263,28 @@ Prompt wording about the next decision has no automatic expiry within a lease;
 there is no restoration mutation or objective lifecycle. Several notes may remain
 active; only the first is selected, even if the bounded lookup reports `hasMore`.
 
-## Manual historical-note drafts
+## Historical-note drafts
 
 Historical-note authoring is a separate post-run command. It reads an existing
 schema-v3 saved run; it never invokes `play()`, starts Doom, or creates, promotes,
 or activates SQLite notes. Its result is an **unapproved** local draft or an
 explicit abstention. Ordinary gameplay never invokes it automatically.
 
-Only deliberately running this command with credentials invokes one paid OAuth
-Responses inference, including normal credential session/refresh behavior:
+With only `--run-dir`, the command selects evidence automatically using the fixed
+boundary-encounter rule described below:
+
+```sh
+npm --prefix doom-play-agent run author-note -- \
+  --run-dir /absolute/path/to/saved-run
+```
+
+Selection runs before provider/credential construction. `no_candidate` prints its
+reason and exits successfully without inference or a draft; choose another run or
+provide an explicit selection. Invalid/unsupported required evidence is an error.
+When selection succeeds, the command invokes exactly one paid OAuth Responses
+inference, including normal credential session/refresh behavior.
+
+To select evidence manually, supply both lists; this bypasses the selector:
 
 ```sh
 npm --prefix doom-play-agent run author-note -- \
@@ -280,8 +293,9 @@ npm --prefix doom-play-agent run author-note -- \
   --images 17,20,22
 ```
 
-Both lists are required, unique positive ordinals and are sorted before use.
-Select 1–7 text records and 1–3 before images from those records. The model chooses
+When either list is supplied, both are required. Ordinals must be unique and
+positive and are sorted before use. Select 1–7 text records and 1–3 before images
+from those records. The model chooses
 one attached before checkpoint as its observer anchor or returns `no_note`;
 `nextQuestion: null` is valid. The text window may contain later action evidence,
 explicitly labeled as retrospective. Historical-note prose and gameplay prompts
@@ -305,13 +319,35 @@ directories. Both draft and abstention artifacts include the source-result diges
 allowlisted evidence packet, before-image identities/hashes, exact instructions,
 settings/schema digest, output and bounded model/usage provenance. Credentials,
 headers, full transport errors and unrelated run fields are excluded. An artifact
-write failure does not retry inference. Re-running the command is a new paid attempt.
+write failure does not retry inference. Re-running the command with selected
+evidence is a new paid attempt.
+
+Artifacts mark `selectionMode: "automatic"` or `"manual"`. Automatic artifacts also
+retain the selector's compact `selectionProvenance` unchanged. Before writing, the
+CLI requires the selector and authoring result-file SHA-256 values to agree; a
+changed snapshot produces an error with no artifact or retry. This check follows
+inference, so a source change can still consume that one paid call. Keep saved runs
+unchanged while authoring.
 
 `authorHistoricalNote(input, { provider, generate? })` in
 `src/historical-note-authoring.ts` exposes the same operation without CLI or artifact
 writes. Offline tests inject generation and use synthetic saved runs; they do not
 depend on ignored Experiment F files or real credentials. No live authoring test
 has been run for this implementation.
+
+`selectHistoricalNoteEvidence(runDirectory)` in the same module is the offline
+selector used by the CLI's default path. The function itself performs no authoring
+or gameplay. It selects the earliest sustained before-probe 1→2 encounter (`d`,
+followed by another kind 2),
+records d−2…d+4 and before images d−2,d+1,d+4. The earliest encounter must have all
+seven consecutive records; missing context, no encounter or duplicate selected
+PNG/native-frame hashes return `no_candidate`, with no shifting, replacement or
+later-event fallback. Required corrupt/unsupported evidence throws instead. It
+scans before metadata and reuses authoring's full selected-packet validation,
+without inference, authentication or writes. Unselected receipts/sidecars remain
+unchecked. Returned provenance identifies the rule, run/result digest, map/session
+and selected before-image identities. Selection does not establish landmark
+quality or choose the later author's anchor. See the [execution-flow baseline](doom-play-agent.md#offline-boundary-encounter-selection-experiment).
 
 ## Responsibility audit
 

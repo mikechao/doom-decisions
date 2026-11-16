@@ -11,7 +11,14 @@ const id = (n: number) =>
 export const sha = (bytes: Buffer | string) =>
 	createHash("sha256").update(bytes).digest("hex");
 
-export async function savedRun(t: TestContext) {
+export async function savedRun(
+	t: TestContext,
+	options: {
+		firstOrdinal?: number;
+		count?: number;
+		distinctFrames?: boolean;
+	} = {},
+) {
 	t.mock.method(globalThis, "fetch", async () => {
 		throw Error("Network forbidden");
 	});
@@ -31,6 +38,9 @@ export async function savedRun(t: TestContext) {
 	};
 	const checkpoint = (n: number, observationId: string) => {
 		const tic = 97 + (n - 17) * 6;
+		const frameHash = options.distinctFrames
+			? sha(`frame-${n}`)
+			: "b".repeat(64);
 		return {
 			observationId,
 			sessionId,
@@ -44,8 +54,8 @@ export async function savedRun(t: TestContext) {
 			},
 			frame: {
 				tic,
-				nativeSha256: "b".repeat(64),
-				canvasSha256: "b".repeat(64),
+				nativeSha256: frameHash,
+				canvasSha256: frameHash,
 			},
 			counters: { gametic: tic },
 			pngSha256: sha(png(n)),
@@ -56,8 +66,8 @@ export async function savedRun(t: TestContext) {
 		};
 	};
 	const records = await Promise.all(
-		Array.from({ length: 7 }, async (_, i) => {
-			const ordinal = 17 + i;
+		Array.from({ length: options.count ?? 7 }, async (_, i) => {
+			const ordinal = (options.firstOrdinal ?? 17) + i;
 			const before = checkpoint(
 				ordinal,
 				ordinal === 22

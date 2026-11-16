@@ -104,19 +104,20 @@ const movementSchema = z.object({
 	positionChanged: z.boolean(),
 	headingChanged: z.boolean(),
 });
+const reasoningObservationSchema = checkpointSchema.extend({
+	facingProbe: z
+		.object({
+			tic: ordinal,
+			kind: z.number().int().min(1).max(5),
+			door: z.number().int().min(0).max(2),
+			distance: z.number().int().min(-1).max(64),
+		})
+		.nullable(),
+	run: z.object({ runId: id }).nullable(),
+});
 const recordSchema = z.object({
 	ordinal,
-	reasoningObservation: checkpointSchema.extend({
-		facingProbe: z
-			.object({
-				tic: ordinal,
-				kind: z.number().int().min(1).max(5),
-				door: z.number().int().min(0).max(2),
-				distance: z.number().int().min(-1).max(64),
-			})
-			.nullable(),
-		run: z.object({ runId: id }).nullable(),
-	}),
+	reasoningObservation: reasoningObservationSchema,
 	beforePng: z.object({ file: z.string() }),
 	perception: z.object({
 		description: text(300),
@@ -214,14 +215,8 @@ async function readPng(directory: string, file: string, expected: string) {
 	return bytes;
 }
 
-async function loadEvidence(input: HistoricalNoteInput) {
-	const selected = historicalNoteInputSchema.safeParse(input);
-	requireEvidence(selected.success, "selection");
-	const decisionOrdinals = [...selected.data.decisionOrdinals].sort(
-		(a, b) => a - b,
-	);
-	const imageOrdinals = [...selected.data.imageOrdinals].sort((a, b) => a - b);
-	const directory = await realpath(input.runDirectory);
+async function readSavedRun(runDirectory: string) {
+	const directory = await realpath(runDirectory);
 	const bytes = await readFile(join(directory, "result.json"));
 	const saved = z
 		.object({
@@ -229,6 +224,51 @@ async function loadEvidence(input: HistoricalNoteInput) {
 			result: z.object({ runId: id, records: z.array(z.unknown()) }),
 		})
 		.parse(JSON.parse(bytes.toString("utf8")));
+	return { directory, bytes, saved };
+}
+
+function checkCheckpoint(
+	checkpoint: z.infer<typeof checkpointSchema>,
+	first: z.infer<typeof checkpointSchema>,
+) {
+	requireEvidence(
+		checkpoint.sessionId === first.sessionId &&
+			same(checkpoint.mapIdentity, first.mapIdentity) &&
+			same(
+				checkpoint.mapIdentity,
+				createAgentMapIdentity(checkpoint.mapIdentity.iwadSha256, 1, 1),
+			) &&
+			checkpoint.frame.tic === checkpoint.tic &&
+			checkpoint.counters.gametic === checkpoint.tic &&
+			checkpoint.frame.nativeSha256 === checkpoint.frame.canvasSha256,
+		"checkpoint",
+	);
+}
+
+function checkProbe(o: z.infer<typeof reasoningObservationSchema>) {
+	const probe = o.facingProbe;
+	requireEvidence(
+		probe === null ||
+			(probe.tic === o.tic &&
+				(probe.kind === 1
+					? probe.door === 0 && probe.distance === -1
+					: probe.distance >= 0)),
+		"checkpoint",
+	);
+}
+
+async function loadEvidence(
+	input: HistoricalNoteInput,
+	snapshot?: Awaited<ReturnType<typeof readSavedRun>>,
+) {
+	const selected = historicalNoteInputSchema.safeParse(input);
+	requireEvidence(selected.success, "selection");
+	const decisionOrdinals = [...selected.data.decisionOrdinals].sort(
+		(a, b) => a - b,
+	);
+	const imageOrdinals = [...selected.data.imageOrdinals].sort((a, b) => a - b);
+	const { directory, bytes, saved } =
+		snapshot ?? (await readSavedRun(input.runDirectory));
 	const runId = saved.result.runId;
 	const records = decisionOrdinals.map((n) => {
 		const matches = saved.result.records.filter(
@@ -251,19 +291,8 @@ async function loadEvidence(input: HistoricalNoteInput) {
 		const d = r.decision.receipt;
 		const e = d.observation;
 		for (const checkpoint of [o, a, e]) {
-			requireEvidence(
-				!seen.has(checkpoint.observationId) &&
-					checkpoint.sessionId === first.sessionId &&
-					same(checkpoint.mapIdentity, first.mapIdentity) &&
-					same(
-						checkpoint.mapIdentity,
-						createAgentMapIdentity(checkpoint.mapIdentity.iwadSha256, 1, 1),
-					) &&
-					checkpoint.frame.tic === checkpoint.tic &&
-					checkpoint.counters.gametic === checkpoint.tic &&
-					checkpoint.frame.nativeSha256 === checkpoint.frame.canvasSha256,
-				"checkpoint",
-			);
+			requireEvidence(!seen.has(checkpoint.observationId), "checkpoint");
+			checkCheckpoint(checkpoint, first);
 			seen.add(checkpoint.observationId);
 		}
 		requireEvidence(
@@ -307,14 +336,7 @@ async function loadEvidence(input: HistoricalNoteInput) {
 			"receipt",
 		);
 		const probe = o.facingProbe;
-		requireEvidence(
-			probe === null ||
-				(probe.tic === o.tic &&
-					(probe.kind === 1
-						? probe.door === 0 && probe.distance === -1
-						: probe.distance >= 0)),
-			"checkpoint",
-		);
+		checkProbe(o);
 		const checkpoint = async (
 			value: z.infer<typeof checkpointSchema>,
 			file: string,
@@ -401,6 +423,131 @@ async function loadEvidence(input: HistoricalNoteInput) {
 		packet,
 		images,
 	};
+}
+
+export type SelectionProvenance = {
+	ruleVersion: "boundary-encounter-v1";
+	runId: string;
+	resultSha256: string;
+	mapIdentity: z.infer<typeof checkpointSchema>["mapIdentity"];
+	sessionId: string;
+	beforeImages: {
+		ordinal: number;
+		observationId: string;
+		tic: number;
+		pngSha256: string;
+		nativeSha256: string;
+		canvasSha256: string;
+	}[];
+};
+
+export type HistoricalNoteSelection =
+	| {
+			kind: "selected";
+			decisionOrdinals: number[];
+			imageOrdinals: number[];
+			provenance: SelectionProvenance;
+	  }
+	| { kind: "no_candidate"; reason: string };
+
+/** Offline checkpoint sampling only; never authors a note or chooses its anchor.
+ * Scan before metadata throughout the run, then fully validate only the selected
+ * packet with the authoring loader. A no_candidate result does not certify all
+ * receipts/sidecars. Reuse one result.json snapshot for selection and provenance.
+ */
+export async function selectHistoricalNoteEvidence(
+	runDirectory: string,
+): Promise<HistoricalNoteSelection> {
+	try {
+		const snapshot = await readSavedRun(runDirectory);
+		const { runId } = snapshot.saved.result;
+		const scanSchema = recordSchema.pick({
+			ordinal: true,
+			reasoningObservation: true,
+		});
+		const records = snapshot.saved.result.records
+			.map((r) => scanSchema.parse(r))
+			.sort((a, b) => a.ordinal - b.ordinal);
+		const byOrdinal = new Map(records.map((r) => [r.ordinal, r]));
+		requireEvidence(byOrdinal.size === records.length, "selection");
+		const seen = new Set<string>();
+		for (const r of records) {
+			const o = r.reasoningObservation;
+			checkCheckpoint(o, records[0].reasoningObservation);
+			checkProbe(o);
+			requireEvidence(!seen.has(o.observationId), "checkpoint");
+			seen.add(o.observationId);
+			requireEvidence(
+				o.run === null ? r.ordinal === 1 : o.run.runId === runId,
+				"checkpoint",
+			);
+		}
+		const event = records.find((r, i) => {
+			const previous = records[i - 1];
+			const next = records[i + 1];
+			return (
+				previous?.ordinal === r.ordinal - 1 &&
+				next?.ordinal === r.ordinal + 1 &&
+				previous.reasoningObservation.facingProbe?.kind === 1 &&
+				r.reasoningObservation.facingProbe?.kind === 2 &&
+				next.reasoningObservation.facingProbe?.kind === 2
+			);
+		});
+		if (!event)
+			return {
+				kind: "no_candidate",
+				reason: "No sustained 1-to-2 boundary encounter.",
+			};
+		const d = event.ordinal;
+		const decisionOrdinals = Array.from({ length: 7 }, (_, i) => d - 2 + i);
+		if (!decisionOrdinals.every((n) => byOrdinal.has(n)))
+			return {
+				kind: "no_candidate",
+				reason:
+					"Earliest boundary encounter lacks a complete seven-record window.",
+			};
+		const imageOrdinals = [d - 2, d + 1, d + 4];
+		// The exact same checks run before authorHistoricalNote's inference path.
+		const evidence = await loadEvidence(
+			{ runDirectory, decisionOrdinals, imageOrdinals },
+			snapshot,
+		);
+		const beforeImages = evidence.packet.records
+			.filter((r) => r.imageAttached)
+			.map((r) => ({
+				ordinal: r.ordinal,
+				observationId: r.before.observationId,
+				tic: r.before.tic,
+				pngSha256: r.before.png.sha256,
+				nativeSha256: r.before.frame.nativeSha256,
+				canvasSha256: r.before.frame.canvasSha256,
+			}));
+		if (
+			new Set(beforeImages.map((r) => r.pngSha256)).size !== 3 ||
+			new Set(beforeImages.map((r) => r.nativeSha256)).size !== 3
+		)
+			return {
+				kind: "no_candidate",
+				reason:
+					"Selected before images contain duplicate PNG or frame identities.",
+			};
+		return {
+			kind: "selected",
+			decisionOrdinals,
+			imageOrdinals,
+			provenance: {
+				ruleVersion: "boundary-encounter-v1",
+				runId,
+				resultSha256: evidence.resultSha256,
+				mapIdentity: evidence.packet.mapIdentity,
+				sessionId: evidence.packet.records[0].before.sessionId,
+				beforeImages,
+			},
+		};
+	} catch (error) {
+		if (error instanceof HistoricalNoteAuthoringError) throw error;
+		throw new HistoricalNoteAuthoringError("saved-run");
+	}
 }
 
 /** Explicit post-run inference only. No credentials, artifact writes or memory operations. */

@@ -29,6 +29,7 @@ const author = mock.fn<typeof authoring.authorHistoricalNote>((input, deps) =>
 		generate: generate as unknown as typeof generateText,
 	}),
 );
+const select = mock.fn(authoring.selectHistoricalNoteEvidence);
 const base = fileURLToPath(new URL("../.local/note-drafts/", import.meta.url));
 let outputRoot: string;
 const writes: string[] = [];
@@ -46,7 +47,11 @@ const registrations = [
 		namedExports: { createOAuthProvider: provider },
 	}),
 	mock.module("../src/historical-note-authoring.ts", {
-		namedExports: { ...authoring, authorHistoricalNote: author },
+		namedExports: {
+			...authoring,
+			authorHistoricalNote: author,
+			selectHistoricalNoteEvidence: select,
+		},
 	}),
 	mock.module("node:fs/promises", {
 		namedExports: {
@@ -79,8 +84,16 @@ after(() => {
 	importFetch.mock.restore();
 });
 beforeEach(() => {
-	for (const fn of [getSession, credentials, provider, author, generate])
+	for (const fn of [
+		getSession,
+		credentials,
+		provider,
+		author,
+		generate,
+		select,
+	])
 		fn.mock.resetCalls();
+	select.mock.mockImplementation(authoring.selectHistoricalNoteEvidence);
 	generate.mock.mockImplementation(async () => ({
 		finishReason: "stop",
 		output,
@@ -99,6 +112,7 @@ test("imports the function and CLI without auth, model, filesystem writes or net
 	assert.equal(provider.mock.callCount(), 0);
 	assert.equal(author.mock.callCount(), 0);
 	assert.equal(generate.mock.callCount(), 0);
+	assert.equal(select.mock.callCount(), 0);
 	assert.equal(fetch.mock.callCount(), 0);
 	assert.equal(importFetch.mock.callCount(), 0);
 	assert.deepEqual(writes, []);
@@ -107,6 +121,16 @@ test("imports the function and CLI without auth, model, filesystem writes or net
 for (const args of [
 	[],
 	["--help"],
+	["--run-dir", "/unused", "--decisions", "17"],
+	["--run-dir", "/unused", "--images", "17"],
+	["--decisions", "17", "--images", "17"],
+	["--unknown", "/unused"],
+	["--run-dir", "/unused", "--unknown", "17", "--images", "17"],
+	["--run-dir", "/unused", "--run-dir", "/unused", "--images", "17"],
+	["--run-dir", "relative"],
+	["--run-dir"],
+	["--run-dir", "/unused", "--decisions", "0", "--images", "0"],
+	["--run-dir", "/unused", "--decisions", "17,", "--images", "17"],
 	["--run-dir", "/unused", "--decisions", "17,17", "--images", "17"],
 	["--run-dir", "relative", "--decisions", "17", "--images", "17"],
 	["--run-dir", "/unused", "--decisions", "17", "--images", "18"],
@@ -128,6 +152,7 @@ for (const args of [
 		assert.equal(provider.mock.callCount(), 0);
 		assert.equal(author.mock.callCount(), 0);
 		assert.equal(generate.mock.callCount(), 0);
+		assert.equal(select.mock.callCount(), 0);
 		assert.deepEqual(writes, []);
 	});
 }
@@ -155,17 +180,21 @@ for (const decision of ["propose", "no_note"] as const) {
 			"--run-dir",
 			f.root,
 			"--decisions",
-			"17,18,19,20,21,22,23",
+			"23,22,21,20,19,18,17",
 			"--images",
-			"17,20,22",
+			"22,20,17",
 		];
 		const path = await main(args);
+		assert.ok(path);
 		assert.equal(writes.length, 1);
 		assert.equal(writes[0], path);
 		const bytes = await fs.readFile(redirected(path), "utf8");
 		const artifact = JSON.parse(bytes);
 		assert.equal(artifact.schemaVersion, 1);
 		assert.equal(artifact.status, "unapproved");
+		assert.equal(artifact.selectionMode, "manual");
+		assert.equal(artifact.selectionProvenance, undefined);
+		assert.equal(select.mock.callCount(), 0);
 		assert.equal(artifact.decision, decision);
 		assert.deepEqual(
 			artifact.note,
@@ -193,8 +222,150 @@ for (const decision of ["propose", "no_note"] as const) {
 			"second explicit invocation only; no internal retry",
 		);
 		assert.equal(writes.length, 1, "exclusive directory prevents an overwrite");
+		assert.equal(select.mock.callCount(), 0);
 	});
 }
+
+for (const decision of ["propose", "no_note"] as const) {
+	test(`run-dir alone selects evidence and saves an unapproved ${decision} with provenance`, async (t) => {
+		const f = await savedRun(t, { distinctFrames: true });
+		for (const r of f.records.slice(2, 4)) {
+			r.reasoningObservation.facingProbe.kind = 2;
+			r.reasoningObservation.facingProbe.distance = 32;
+		}
+		await f.save();
+		const expected = await authoring.selectHistoricalNoteEvidence(f.root);
+		assert.equal(expected.kind, "selected");
+		if (expected.kind !== "selected")
+			throw Error("Expected synthetic selection");
+		outputRoot = join(f.root, "drafts");
+		output =
+			decision === "propose"
+				? f.proposal(20)
+				: { decision, reason: "Synthetic model abstention.", note: null };
+		t.mock.method(console, "log", () => {});
+		const { main } = await import("../src/historical-note-authoring-main.ts");
+		const path = await main(["--run-dir", f.root]);
+		assert.ok(path);
+		assert.equal(select.mock.callCount(), 1);
+		assert.deepEqual(select.mock.calls[0].arguments, [f.root]);
+		assert.equal(author.mock.callCount(), 1);
+		assert.deepEqual(author.mock.calls[0].arguments[0], {
+			runDirectory: f.root,
+			decisionOrdinals: [17, 18, 19, 20, 21, 22, 23],
+			imageOrdinals: [17, 20, 23],
+		});
+		assert.equal(generate.mock.callCount(), 1);
+		assert.equal(credentials.mock.callCount(), 1);
+		assert.equal(provider.mock.callCount(), 1);
+		assert.equal(getSession.mock.callCount(), 0);
+		assert.equal(writes.length, 1);
+		const bytes = await fs.readFile(redirected(path), "utf8");
+		const artifact = JSON.parse(bytes);
+		assert.equal(artifact.status, "unapproved");
+		assert.equal(artifact.decision, decision);
+		assert.equal(artifact.selectionMode, "automatic");
+		assert.deepEqual(artifact.selectionProvenance, expected.provenance);
+		assert.equal(
+			artifact.source.resultSha256,
+			artifact.selectionProvenance.resultSha256,
+		);
+		assert.deepEqual(
+			artifact.source.decisionOrdinals,
+			expected.decisionOrdinals,
+		);
+		assert.deepEqual(artifact.source.imageOrdinals, expected.imageOrdinals);
+		assert.doesNotMatch(
+			bytes,
+			/EXCLUDED_SECRET|authorization|headers|data:image/,
+		);
+	});
+}
+
+test("no_candidate is a successful selection outcome without auth, authoring or drafts", async (t) => {
+	const f = await savedRun(t);
+	outputRoot = join(f.root, "drafts");
+	const before = (await fs.readdir(f.root)).sort();
+	const previous = process.exitCode;
+	process.exitCode = 0;
+	t.after(() => {
+		process.exitCode = previous;
+	});
+	const log = t.mock.method(console, "log", () => {});
+	const stderr = t.mock.method(console, "error", () => {});
+	const { runCli } = await import("../src/historical-note-authoring-main.ts");
+	await runCli(["--run-dir", f.root]);
+	assert.equal(process.exitCode, 0);
+	assert.equal(select.mock.callCount(), 1);
+	assert.equal(stderr.mock.callCount(), 0);
+	assert.match(String(log.mock.calls[0].arguments[0]), /No sustained 1-to-2/);
+	assert.match(
+		String(log.mock.calls[0].arguments[0]),
+		/--decisions and --images/,
+	);
+	for (const fn of [credentials, provider, getSession, author, generate])
+		assert.equal(fn.mock.callCount(), 0);
+	assert.deepEqual(writes, []);
+	assert.deepEqual((await fs.readdir(f.root)).sort(), before);
+});
+
+for (const corruption of ["unsupported schema", "malformed JSON"]) {
+	test(`automatic ${corruption} fails safely before credentials or inference`, async (t) => {
+		const f = await savedRun(t);
+		if (corruption === "unsupported schema") {
+			f.saved.schemaVersion = 2;
+			await f.save();
+		} else {
+			await fs.writeFile(join(f.root, "result.json"), "SECRET invalid JSON");
+		}
+		const previous = process.exitCode;
+		t.after(() => {
+			process.exitCode = previous;
+		});
+		const stderr = t.mock.method(console, "error", () => {});
+		const { runCli } = await import("../src/historical-note-authoring-main.ts");
+		await runCli(["--run-dir", f.root]);
+		assert.equal(process.exitCode, 1);
+		assert.match(String(stderr.mock.calls[0].arguments[0]), /saved-run/);
+		assert.doesNotMatch(String(stderr.mock.calls[0].arguments[0]), /SECRET/);
+		for (const fn of [credentials, provider, getSession, author, generate])
+			assert.equal(fn.mock.callCount(), 0);
+		assert.deepEqual(writes, []);
+	});
+}
+
+test("a changed result snapshot cannot be saved with stale selector provenance", async (t) => {
+	const f = await savedRun(t, { distinctFrames: true });
+	for (const r of f.records.slice(2, 4)) {
+		r.reasoningObservation.facingProbe.kind = 2;
+		r.reasoningObservation.facingProbe.distance = 32;
+	}
+	await f.save();
+	select.mock.mockImplementation(async (directory) => {
+		const selection = await authoring.selectHistoricalNoteEvidence(directory);
+		f.saved.result.extraneous = "Changed after selection, before authoring";
+		await f.save();
+		return selection;
+	});
+	output = { decision: "no_note", reason: "Synthetic output.", note: null };
+	const previous = process.exitCode;
+	t.after(() => {
+		process.exitCode = previous;
+	});
+	const stderr = t.mock.method(console, "error", () => {});
+	const { runCli } = await import("../src/historical-note-authoring-main.ts");
+	await runCli(["--run-dir", f.root]);
+	assert.equal(process.exitCode, 1);
+	assert.match(String(stderr.mock.calls[0].arguments[0]), /source changed/);
+	assert.equal(select.mock.callCount(), 1);
+	assert.equal(author.mock.callCount(), 1);
+	assert.equal(
+		generate.mock.callCount(),
+		1,
+		"no retry after snapshot mismatch",
+	);
+	assert.deepEqual(writes, []);
+});
 
 test("CLI prints a safe error and writes nothing after a mocked model failure", async (t) => {
 	const f = await savedRun(t);
