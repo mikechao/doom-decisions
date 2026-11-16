@@ -272,6 +272,40 @@ export async function findMemory(input) {
   }
 }
 
+// Promotion's exact-equality guard is independent of the bounded navigation
+// previews. Accept a create payload so normalization matches the eventual write.
+// Identical-source requests remain eligible for the writer's existing replay.
+export async function findExactMemory(input) {
+  const record = memoryRecordSchema.parse(input);
+  if (record.operation !== 'create')
+    throw new TypeError('Exact memory lookup requires a create record.');
+  const path = memoryDatabasePath();
+  if (!exists(path)) return null;
+  const db = await open(path, true);
+  try {
+    return transaction(db, 'BEGIN', () => {
+      checkSchema(db);
+      const row = db
+        .prepare(`SELECT note_id FROM notes WHERE map_namespace = ?
+          AND x = ? AND y = ? AND angle = ? AND hypothesis = ?
+          AND next_question IS ? AND source <> ?
+          ORDER BY note_id ASC LIMIT 1`)
+        .get(
+          record.mapNamespace,
+          record.x,
+          record.y,
+          record.angle,
+          record.hypothesis,
+          record.nextQuestion ?? null,
+          record.source,
+        );
+      return row ? { noteId: row.note_id } : null;
+    });
+  } finally {
+    db.close();
+  }
+}
+
 export async function recordMemory(input) {
   const record = memoryRecordSchema.parse(input);
   const path = memoryDatabasePath();

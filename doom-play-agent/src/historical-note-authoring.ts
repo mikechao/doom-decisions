@@ -62,7 +62,7 @@ const noteSchema = z.strictObject({
 	reuseReason: text(300),
 });
 export type HistoricalNoteDraft = z.infer<typeof noteSchema>;
-const outputSchema = z.strictObject({
+export const historicalNoteOutputSchema = z.strictObject({
 	decision: z.enum(["no_note", "propose"]),
 	reason: text(500).nullable(),
 	note: noteSchema.nullable(),
@@ -189,12 +189,19 @@ const sha256 = (bytes: Buffer | string) =>
 const same = (a: unknown, b: unknown) =>
 	JSON.stringify(a) === JSON.stringify(b);
 
-async function readPng(directory: string, file: string, expected: string) {
+type EvidenceReader = (path: string) => Promise<Buffer>;
+
+async function readPng(
+	directory: string,
+	file: string,
+	expected: string,
+	read: EvidenceReader = readFile,
+) {
 	let bytes: Buffer;
 	try {
 		const path = await realpath(join(directory, file));
 		requireEvidence(dirname(path) === directory, "png-read");
-		bytes = await readFile(path);
+		bytes = await read(path);
 	} catch {
 		throw new HistoricalNoteAuthoringError("png-read");
 	}
@@ -215,9 +222,12 @@ async function readPng(directory: string, file: string, expected: string) {
 	return bytes;
 }
 
-async function readSavedRun(runDirectory: string) {
+async function readSavedRun(
+	runDirectory: string,
+	read: EvidenceReader = readFile,
+) {
 	const directory = await realpath(runDirectory);
-	const bytes = await readFile(join(directory, "result.json"));
+	const bytes = await read(join(directory, "result.json"));
 	const saved = z
 		.object({
 			schemaVersion: z.literal(3),
@@ -260,6 +270,7 @@ function checkProbe(o: z.infer<typeof reasoningObservationSchema>) {
 async function loadEvidence(
 	input: HistoricalNoteInput,
 	snapshot?: Awaited<ReturnType<typeof readSavedRun>>,
+	read: EvidenceReader = readFile,
 ) {
 	const selected = historicalNoteInputSchema.safeParse(input);
 	requireEvidence(selected.success, "selection");
@@ -268,7 +279,7 @@ async function loadEvidence(
 	);
 	const imageOrdinals = [...selected.data.imageOrdinals].sort((a, b) => a - b);
 	const { directory, bytes, saved } =
-		snapshot ?? (await readSavedRun(input.runDirectory));
+		snapshot ?? (await readSavedRun(input.runDirectory, read));
 	const runId = saved.result.runId;
 	const records = decisionOrdinals.map((n) => {
 		const matches = saved.result.records.filter(
@@ -343,7 +354,7 @@ async function loadEvidence(
 			role: "before" | "after",
 		) => {
 			requireEvidence(file === `decision-${r.ordinal}-${role}.png`, "png-read");
-			const image = await readPng(directory, file, value.pngSha256);
+			const image = await readPng(directory, file, value.pngSha256, read);
 			if (role === "before" && imageOrdinals.includes(r.ordinal))
 				images.set(r.ordinal, image);
 			return {
@@ -423,6 +434,67 @@ async function loadEvidence(
 		packet,
 		images,
 	};
+}
+
+/** The same selected-packet checks as authoring, without inference or writes. */
+export function loadHistoricalNoteEvidence(
+	input: HistoricalNoteInput,
+	read: EvidenceReader = readFile,
+) {
+	return loadEvidence(input, undefined, read);
+}
+
+/** Validate proposal/abstention and attached-before grounding without inference. */
+export function validateHistoricalNoteDecision(
+	value: unknown,
+	packet: Awaited<ReturnType<typeof loadEvidence>>["packet"],
+): AuthoringDecision {
+	let output: z.infer<typeof historicalNoteOutputSchema>;
+	try {
+		output = historicalNoteOutputSchema.parse(value);
+	} catch {
+		throw new HistoricalNoteAuthoringError("response");
+	}
+	const attachments = packet.records
+		.filter((r) => r.imageAttached)
+		.map((r) => ({ ordinal: r.ordinal, ...r.before }));
+	let decision: AuthoringDecision;
+	if (output.decision === "no_note") {
+		requireEvidence(output.note === null && output.reason !== null, "response");
+		decision = { decision: "no_note", reason: output.reason, note: null };
+	} else {
+		requireEvidence(output.reason === null && output.note !== null, "response");
+		const note = output.note;
+		const anchor = note.observationAnchor;
+		const source = attachments.find((a) => a.ordinal === anchor.ordinal);
+		requireEvidence(
+			source &&
+				same(anchor, {
+					runId: packet.runId,
+					ordinal: source.ordinal,
+					observationId: source.observationId,
+					tic: source.tic,
+					mapKey: source.mapKey,
+					...source.observerPose,
+				}),
+			"response",
+		);
+		const seen = new Set<number>();
+		for (const ref of note.sourceEvidence) {
+			const attached = attachments.find((a) => a.ordinal === ref.ordinal);
+			requireEvidence(
+				attached &&
+					!seen.has(ref.ordinal) &&
+					ref.observationId === attached.observationId &&
+					ref.pngSha256 === attached.png.sha256,
+				"response",
+			);
+			seen.add(ref.ordinal);
+		}
+		requireEvidence(seen.has(anchor.ordinal), "response");
+		decision = { decision: "propose", reason: null, note };
+	}
+	return decision;
 }
 
 export type SelectionProvenance = {
@@ -610,7 +682,7 @@ Return the experiment-local structured result. For no_note, reason explains the 
 			maxOutputTokens: settings.maxOutputTokens,
 			abortSignal: AbortSignal.timeout(settings.timeoutMs),
 			providerOptions: settings.providerOptions,
-			output: Output.object({ schema: outputSchema }),
+			output: Output.object({ schema: historicalNoteOutputSchema }),
 			instructions,
 			messages: [{ role: "user", content }],
 		});
@@ -618,48 +690,12 @@ Return the experiment-local structured result. For no_note, reason explains the 
 		throw new HistoricalNoteAuthoringError("generation");
 	}
 	const durationMs = performance.now() - startedAt;
-	let output: z.infer<typeof outputSchema>;
+	let decision: AuthoringDecision;
 	try {
 		requireEvidence(result.finishReason === "stop", "response");
-		output = outputSchema.parse(result.output);
+		decision = validateHistoricalNoteDecision(result.output, packet);
 	} catch {
 		throw new HistoricalNoteAuthoringError("response");
-	}
-	let decision: AuthoringDecision;
-	if (output.decision === "no_note") {
-		requireEvidence(output.note === null && output.reason !== null, "response");
-		decision = { decision: "no_note", reason: output.reason, note: null };
-	} else {
-		requireEvidence(output.reason === null && output.note !== null, "response");
-		const note = output.note;
-		const anchor = note.observationAnchor;
-		const source = attachments.find((a) => a.ordinal === anchor.ordinal);
-		requireEvidence(
-			source &&
-				same(anchor, {
-					runId: packet.runId,
-					ordinal: source.ordinal,
-					observationId: source.observationId,
-					tic: source.tic,
-					mapKey: source.mapKey,
-					...source.observerPose,
-				}),
-			"response",
-		);
-		const seen = new Set<number>();
-		for (const ref of note.sourceEvidence) {
-			const attached = attachments.find((a) => a.ordinal === ref.ordinal);
-			requireEvidence(
-				attached &&
-					!seen.has(ref.ordinal) &&
-					ref.observationId === attached.observationId &&
-					ref.pngSha256 === attached.png.sha256,
-				"response",
-			);
-			seen.add(ref.ordinal);
-		}
-		requireEvidence(seen.has(anchor.ordinal), "response");
-		decision = { decision: "propose", reason: null, note };
 	}
 	const count = (value: number | undefined) =>
 		typeof value === "number" && Number.isSafeInteger(value) && value >= 0
@@ -679,7 +715,9 @@ Return the experiment-local structured result. For no_note, reason explains the 
 			settings,
 			instructions,
 			packetSha256: sha256(JSON.stringify(packet)),
-			outputSchemaSha256: sha256(JSON.stringify(z.toJSONSchema(outputSchema))),
+			outputSchemaSha256: sha256(
+				JSON.stringify(z.toJSONSchema(historicalNoteOutputSchema)),
+			),
 			imageAttachments: attachments,
 		},
 		model: {

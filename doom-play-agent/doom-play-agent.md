@@ -426,6 +426,48 @@ changes gameplay.
 Offline tests use synthetic sidecars and mocked generation/auth; ignored `.local`
 experiment artifacts are not runtime dependencies. Live inference is unverified.
 
+### Separate explicit promotion
+
+`historical-note-promotion-main.ts` provides `approve-note --draft /absolute/path`.
+It is not called by `play()`, `main()`, `persistRun()` or authoring. Read-only
+`prepareHistoricalNotePromotion()` validates the strict v1 unapproved proposal
+envelope and reuses `loadHistoricalNoteEvidence()` and
+`validateHistoricalNoteDecision()`. The exported loader accepts a reader so only
+promotion adds regular-file/containment checks and bounded reads (draft 1 MiB,
+result 64 MiB, PNG 2 MiB); authoring and selection retain their previous defaults.
+It verifies the exact source result digest, selected packet, packet hash, attached
+before references and optional automatic provenance without rerunning selection or
+checking every unselected record. A missing selection mode stays unspecified.
+Missing sources, abstentions and inconsistent evidence cannot be promoted.
+
+Preparation resolves the shared existing SQLite path (including `DOOM_MEMORY_DB`)
+and captures its device/inode before storage reads. It performs the existing
+bounded active/nearby reads plus `findExactMemory()`'s targeted read-only equality
+query, using the shared storage schema checks. Exact matching includes namespace,
+raw pose/angle, hypothesis and nullable question, independently of preview limits
+and active flags; identical-source requests remain eligible for writer replay.
+The preview includes
+canonical destination, exact write payload, observer/source identities and overlap
+warnings. Different-source exact anchor/content blocks a duplicate; uncertain
+overlap requires human judgment, not semantic matching. The bounded previews
+cannot prove semantic uniqueness. One default-No TTY confirmation authorizes
+`promoteHistoricalNote()` to call `recordMemory(create)` once with that same frozen
+payload, after rechecking destination path/device/inode. Identity is also checked
+after the preview reads. Same-path replacement is rejected; this does not lock the
+filesystem or atomically prevent concurrent inserts. No direct SQL writes,
+migrations, automatic retry, append, retirement or original-draft mutation occurs.
+
+Both active flags are explicit; map key, raw pose and hypothesis are unchanged,
+and null question is omitted. Compact deterministic source attribution and
+`approve-note:v1:<original-draft-sha256>` provide the existing request-ID replay
+guard. Full provenance remains in the draft; hashes establish consistency, not
+truth or model reliability. Changed-byte proposals need overlap review. Replay
+returns the original receipt and does not promise current flags/revision or
+reactivation. All memory remains unverified. Active eligibility is separate from
+the unchanged oldest-active objective selection, and a null question cannot
+activate investigation guidance. Offline tests use synthetic evidence and explicit
+throwaway SQLite paths only; historical database mutation is not test coverage.
+
 ### Offline boundary-encounter selection experiment
 
 `selectHistoricalNoteEvidence(runDirectory)` in `historical-note-authoring.ts`

@@ -349,6 +349,59 @@ unchecked. Returned provenance identifies the rule, run/result digest, map/sessi
 and selected before-image identities. Selection does not establish landmark
 quality or choose the later author's anchor. See the [execution-flow baseline](doom-play-agent.md#offline-boundary-encounter-selection-experiment).
 
+## Explicit historical-note approval
+
+After reviewing one saved draft, run from the repository root:
+
+```sh
+npm --prefix doom-play-agent run approve-note -- \
+  --draft /absolute/path/to/draft.json
+```
+
+This separate command validates an unapproved version-1 `propose` artifact and
+its original schema-v3 saved run. It reuses authoring's selected-evidence checks,
+including before/after sidecar hashes, exact attached-before anchor, full IWAD/map
+identity and retained receipt/movement consistency. It also compares the saved
+result digest, packet hash/content, attachments and optional automatic-selection
+provenance. Unselected frames are not validated. Known older v1 drafts without
+`selectionMode` remain unspecified; missing sources, `no_note`, malformed or
+inconsistent artifacts fail before approval. Read limits are 1 MiB per draft,
+64 MiB per result and 2 MiB per PNG, with regular-file and source-containment checks.
+
+The destination must already exist: `memoryDatabasePath()` resolves the same
+repository-root `.local/doom-memory.sqlite` used by agent reads, or an absolute
+`DOOM_MEMORY_DB` override. No `.env` file is loaded. Use the same override for later
+agent runs. The preview names the canonical destination, exact hypothesis/question,
+raw **observer** pose, source identities/hashes, draft digest, active flags and
+bounded overlap candidates. These queries inspect up to ten active notes and ten
+nearby notes within 1024 Doom units; they do not establish semantic uniqueness.
+A separate read-only equality query checks the full namespace, raw pose/angle,
+hypothesis and nullable question independently of those limits and active flags.
+Existing exact anchor/content under another source blocks creation. Uncertain
+overlap must be reviewed; no note is automatically appended, merged or retired.
+Preparation captures the canonical path and device/inode before these reads and
+checks them afterward and again before writing. Replacement at the same pathname
+during confirmation is rejected. This is an identity check, not a filesystem lock.
+
+Only an interactive `y` or `yes` to `Create this as a distinct active landmark?
+[y/N]` calls the existing `recordMemory(create)` writer once with the frozen
+previewed payload. Empty, declined, EOF/interrupted or non-TTY input writes nothing;
+piping `yes` cannot approve. Both landmark flags are explicitly true. Raw XY/angle,
+map key and hypothesis remain unchanged; a null question is omitted and stores SQL
+NULL. Detailed authoring metadata stays in the unchanged draft. Source attribution
+and request ID use its original byte SHA-256, not its path or approval timestamp.
+Identical-byte reapproval uses the writer's existing replay receipt; it does not
+reactivate a subsequently retired note. Reformatted or separately generated drafts
+have different hashes, so bounded overlap review still matters. No automatic retry
+is made, including after an unconfirmed write acknowledgment.
+
+Approval leaves status **unverified** and establishes neither useful recognition
+nor navigation benefit. Active eligibility is not objective selection: the agent
+still reads at most three active notes in creation/ID order and selects the oldest.
+A null question cannot enable local investigation guidance. Selection-policy work
+is a separate milestone. Gameplay, post-run persistence and authoring never invoke
+this command automatically.
+
 ## Responsibility audit
 
 DoomPlayAgent trusts the existing executor/browser stack; it is not an

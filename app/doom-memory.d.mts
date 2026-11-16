@@ -112,4 +112,5 @@ export function memoryError(error: unknown): {
     | 'memory-storage-unavailable';
 };
 export function findMemory(input: unknown): Promise<MemoryFindResult>;
+export function findExactMemory(input: unknown): Promise<{ noteId: string } | null>;
 export function recordMemory(input: unknown): Promise<MemoryRecordResult>;
