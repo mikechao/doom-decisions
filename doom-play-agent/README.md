@@ -30,7 +30,12 @@ or model retry.
 
 `play()` coordinates a bounded sequential run. Its once-only work is the initial
 observation/base capture, map-wide active-landmark lookup (limit 3), deterministic
-first-active selection and nonrefundable run claim. Missing, failed and empty
+nearest-active-landmark selection and nonrefundable run claim. Selection uses
+initial player XY and observer-anchor XY, with exact distance ties retaining
+candidate order. Null-question recognition notes remain eligible; angle and the
+separate 256-unit investigation gate do not rank or exclude candidates. An
+incomplete pool (`hasMore`) or missing/invalid initial pose causes free exploration.
+Selection stays fixed throughout the run. Missing, failed and empty
 storage results remain distinct and permit free exploration; malformed evidence
 stops. Existing memory access remains read-only with no migration or writes.
 
@@ -261,7 +266,9 @@ The smallest safe handling for direct callers is a fresh, unmodified lease for
 each attach/play/detach transaction. Never reuse an augmented template as base.
 Prompt wording about the next decision has no automatic expiry within a lease;
 there is no restoration mutation or objective lifecycle. Several notes may remain
-active; only the first is selected, even if the bounded lookup reports `hasMore`.
+active; only the initially nearest is selected when the bounded lookup is complete.
+An incomplete pool causes free exploration; its candidates and `hasMore` remain
+in the initial lookup record.
 
 ## Historical-note drafts
 
@@ -397,9 +404,12 @@ is made, including after an unconfirmed write acknowledgment.
 
 Approval leaves status **unverified** and establishes neither useful recognition
 nor navigation benefit. Active eligibility is not objective selection: the agent
-still reads at most three active notes in creation/ID order and selects the oldest.
-A null question cannot enable local investigation guidance. Selection-policy work
-is a separate milestone. Gameplay, post-run persistence and authoring never invoke
+still reads at most three active notes in creation/ID order and selects the nearest
+observer anchor to the initial player XY only when the pool is complete and the
+initial pose is valid. Exact distance ties preserve that order; recognition-only
+notes remain eligible, without a selection radius.
+A null question cannot enable local investigation guidance.
+Gameplay, post-run persistence and authoring never invoke
 this command automatically.
 
 ## Responsibility audit

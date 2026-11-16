@@ -77,6 +77,239 @@ function assessmentContext(
 	return JSON.parse(text.text);
 }
 
+test("nearest initial selection: saved D1 XY chooses B and preserves the one-decision pipeline", async (t) => {
+	const f = await fixture(t, 1);
+	Object.assign(f.base.telemetry, {
+		x: 69206016,
+		y: -236978176,
+		angle: 1073741824,
+	});
+	const candidates = [
+		{
+			...f.note,
+			noteId: "1d3cf84f-8e29-4e40-8c00-87e274aaeefd",
+			revision: 9,
+			anchor: { x: 70966777, y: -203915488, angle: 926941184 },
+			hypothesis:
+				"Dark metal floor, green-striped barrel, possible right passage.",
+			nextQuestion: "Is the right passage clear?",
+		},
+		{
+			...f.note,
+			noteId: "9b171d6b-092f-4089-9a0a-996b4a559ffb",
+			revision: 2,
+			anchor: { x: 68428808, y: -222599480, angle: 1304428544 },
+			hypothesis:
+				"Blue basin with a left dry ledge and dark floor beyond a pillar.",
+			nextQuestion: "Does the left ledge connect to a dry continuation?",
+		},
+		{
+			...f.note,
+			noteId: "690c4230-13dc-4099-8811-976e3ea321b4",
+			revision: 1,
+			anchor: { x: 84595626, y: -215789052, angle: 3837788160 },
+			hypothesis:
+				"Yard corner with green patch, brick ledge, crate and ribbed wall.",
+			nextQuestion: null,
+		},
+	];
+	f.state.candidates = candidates;
+	const result = await play(f.client, f.tools, f.provider);
+	const selected = candidates[1];
+	const objective = {
+		kind: "landmark",
+		noteId: selected.noteId,
+		revision: selected.revision,
+	};
+	assert.deepEqual(result.navigationObjective, objective);
+	assert.deepEqual(result.records[0].selection, {
+		navigationObjective: objective,
+		target: selected,
+	});
+	assert.deepEqual(result.records[0].landmarkLookup?.candidates, candidates);
+	assert.equal(result.candidateCount, 3);
+	assert.deepEqual(assessmentContext(f.state.assessmentInputs[0]), {
+		investigationActive: true,
+		perception: scenePerception,
+		historicalLandmark: {
+			hypothesis: selected.hypothesis,
+			nextQuestion: selected.nextQuestion,
+			observerPoseRawTelemetry: selected.anchor,
+		},
+	});
+	assert.deepEqual(advisoryData(f.state.instructions).historicalLandmark, {
+		noteId: selected.noteId,
+		revision: selected.revision,
+		observerPoseRawTelemetry: selected.anchor,
+		hypothesis: selected.hypothesis,
+		nextQuestion: selected.nextQuestion,
+	});
+	assert.equal(result.records[0].guidance, f.state.decisionTemplates[0]);
+	assert.equal(
+		result.records[0].promptAcknowledged?.instructions,
+		f.state.instructions,
+	);
+	assert.equal(f.state.modelInputs.length, 1);
+	assert.equal(f.state.assessmentInputs.length, 1);
+	assert.deepEqual(f.events, [
+		"observe",
+		"memory",
+		"model",
+		"assessment",
+		"startRun",
+		"setPrompt",
+		"observe",
+		"decide",
+	]);
+});
+
+for (const c of [
+	{
+		label: "closer recognition-only note wins despite opposite heading",
+		playerX: 0,
+		anchors: [
+			{ x: 2 * 65536, y: 0 },
+			{ x: 65536, y: 0 },
+		],
+		winner: 1,
+		nextQuestion: null,
+	},
+	{
+		label: "both XY axes determine Euclidean distance",
+		playerX: 0,
+		anchors: [
+			{ x: 0, y: 6 },
+			{ x: 3, y: 4 },
+		],
+		winner: 1,
+		nextQuestion: null,
+	},
+	{
+		label: "exact distance ties retain candidate order",
+		playerX: 0,
+		anchors: [
+			{ x: -3, y: 4 },
+			{ x: 3, y: -4 },
+		],
+		winner: 0,
+		nextQuestion: null,
+	},
+	{
+		label: "int32 extremes do not create a floating-point distance tie",
+		playerX: -2147483648,
+		anchors: [
+			{ x: 2147483647, y: 1 },
+			{ x: 2147483647, y: 0 },
+		],
+		winner: 1,
+		nextQuestion: "What is visible?",
+	},
+	{
+		label: "distant nearest note wins outside the investigation radius",
+		playerX: 0,
+		anchors: [
+			{ x: 600 * 65536, y: 0 },
+			{ x: 500 * 65536, y: 0 },
+		],
+		winner: 1,
+		nextQuestion: "What is visible?",
+	},
+]) {
+	test(`nearest initial selection: ${c.label}`, async (t) => {
+		const f = await fixture(t, 1);
+		Object.assign(f.base.telemetry, { x: c.playerX, y: 0, angle: 0 });
+		f.state.candidates = c.anchors.map((anchor, i) => ({
+			...f.note,
+			noteId: i ? "ffffffff-ffff-4fff-8fff-ffffffffffff" : f.note.noteId,
+			anchor: { ...anchor, angle: i ? 0x80000000 : 0 },
+			nextQuestion: i === c.winner ? c.nextQuestion : f.note.nextQuestion,
+		}));
+		const selected = f.state.candidates[c.winner];
+		const result = await play(f.client, f.tools, f.provider);
+		assert.equal(result.records[0].selection?.target?.noteId, selected.noteId);
+		assert.equal(
+			assessmentContext(f.state.assessmentInputs[0]).investigationActive,
+			false,
+		);
+		assert.equal(result.navigationAssessment?.investigationGuidance, null);
+		assert.equal(
+			advisoryData(f.state.instructions).historicalLandmark.noteId,
+			selected.noteId,
+		);
+		assert.equal(
+			advisoryData(f.state.instructions).historicalLandmark.nextQuestion,
+			selected.nextQuestion,
+		);
+		assert.equal(
+			advisoryData(f.state.instructions).landmarkInvestigation,
+			undefined,
+		);
+		assert.equal(f.state.modelCalls, 2);
+	});
+}
+
+test("nearest initial selection: incomplete pool abstains and retains lookup evidence", async (t) => {
+	const f = await fixture(t, 1);
+	const memory = {
+		...(await f.tools.findActiveLandmarks(f.base)),
+		hasMore: true,
+	};
+	f.events.length = 0;
+	f.tools.findActiveLandmarks = async () => {
+		f.events.push("memory");
+		return memory;
+	};
+	const result = await play(f.client, f.tools, f.provider);
+	assert.deepEqual(result.navigationObjective, { kind: "free-explore" });
+	assert.deepEqual(result.records[0].selection, {
+		navigationObjective: { kind: "free-explore" },
+		target: null,
+	});
+	assert.deepEqual(result.records[0].landmarkLookup, memory);
+	assert.equal(result.memoryStatus, "found");
+	assert.equal(result.candidateCount, 1);
+	assert.equal(result.navigationAssessment, null);
+	assert.equal(
+		advisoryData(f.state.instructions).historicalLandmark,
+		undefined,
+	);
+	assert.equal(f.state.modelCalls, 1);
+	assert.deepEqual(f.events, [
+		"observe",
+		"memory",
+		"model",
+		"startRun",
+		"setPrompt",
+		"observe",
+		"decide",
+	]);
+});
+
+test("nearest initial selection stays fixed when movement makes another cached note closer", async (t) => {
+	const f = await fixture(t, 2);
+	const other = {
+		...f.note,
+		noteId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+		anchor: { x: f.base.telemetry.x + 65536, y: f.base.telemetry.y, angle: 0 },
+	};
+	f.note.anchor.x = f.base.telemetry.x;
+	f.state.candidates = [other, f.note];
+	const result = await play(f.client, f.tools, f.provider);
+	assert.equal(
+		result.records[1].reasoningObservation?.telemetry.x,
+		other.anchor.x,
+	);
+	for (const record of result.records)
+		assert.equal(record.selection?.target?.noteId, f.note.noteId);
+	assert.equal(
+		result.navigationObjective.kind === "landmark" &&
+			result.navigationObjective.noteId,
+		f.note.noteId,
+	);
+	assert.equal(f.events.filter((event) => event === "memory").length, 1);
+	assert.equal(f.state.assessmentInputs.length, 2);
+});
+
 for (const c of [
 	{ label: "exact 256-unit boundary", x: -256 * 65536, active: true },
 	{ label: "one raw unit outside", x: -256 * 65536 - 1, active: false },
@@ -108,16 +341,36 @@ for (const c of [
 		namespace: `doom-map:v1:iwad-sha256:${"b".repeat(64)}:E1M1`,
 		active: false,
 	},
-	{ label: "invalid current coordinate", x: Number.NaN, active: false },
-	{ label: "fractional current coordinate", x: 0.5, active: false },
+	{
+		label: "invalid current coordinate",
+		x: Number.NaN,
+		active: false,
+		selected: false,
+	},
+	{
+		label: "fractional current coordinate",
+		x: 0.5,
+		active: false,
+		selected: false,
+	},
+	{
+		label: "out-of-range current coordinate",
+		x: 2147483648,
+		active: false,
+		selected: false,
+	},
 	{ label: "out-of-range anchor", anchorX: 2147483648, active: false },
 	{ label: "invalid anchor angle", anchorAngle: -1, active: false },
-	{ label: "missing current pose", missing: "current", active: false },
-	{ label: "missing anchor", missing: "anchor", active: false },
+	{
+		label: "missing current pose",
+		missing: "current",
+		active: false,
+		selected: false,
+	},
 	{ label: "null question", question: null, active: false },
 	{ label: "empty question", question: "", active: false },
 	{ label: "whitespace question", question: " \n\t ", active: false },
-	{ label: "no landmark", missing: "landmark", active: false },
+	{ label: "no landmark", missing: "landmark", active: false, selected: false },
 ]) {
 	test(`investigation gate: ${c.label}`, async (t) => {
 		const f = await fixture(t, 1);
@@ -138,10 +391,9 @@ for (const c of [
 			}
 			return o;
 		};
-		if (c.missing === "anchor")
-			f.note.anchor = null as unknown as typeof f.note.anchor;
 		const result = await play(f.client, f.tools, f.provider);
-		if (c.missing !== "landmark") {
+		const hasTarget = c.selected !== false;
+		if (hasTarget) {
 			assert.equal(
 				assessmentContext(f.state.assessmentInputs[0]).investigationActive,
 				c.active,
@@ -151,8 +403,18 @@ for (const c of [
 				advisoryData(f.state.instructions).currentAssessment,
 				diagnosticAssessment(navigationAssessment),
 			);
+		} else {
+			assert.deepEqual(result.records[0].selection, {
+				navigationObjective: { kind: "free-explore" },
+				target: null,
+			});
+			assert.equal(result.navigationAssessment, null);
+			assert.equal(
+				advisoryData(f.state.instructions).historicalLandmark,
+				undefined,
+			);
 		}
-		assert.equal(f.state.modelCalls, c.missing === "landmark" ? 1 : 2);
+		assert.equal(f.state.modelCalls, hasTarget ? 2 : 1);
 		assert.equal(f.events.filter((event) => event === "decide").length, 1);
 		assert.equal(
 			advisoryData(f.state.instructions).landmarkInvestigation,

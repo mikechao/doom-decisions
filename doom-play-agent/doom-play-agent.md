@@ -23,8 +23,12 @@ proof of navigation improvement or live N>2 gameplay.
    the file. Later file changes cannot change the owned inference bytes.
 3. `findActiveLandmarks()` performs one map-wide `active-landmarks` lookup with the
    verified map key, limit 3 and no pose/radius restriction. Storage is read-only.
-   Candidates must match the namespace and have unique IDs. The first candidate in
-   creation-time/ID order becomes the target; otherwise the objective is free
+   Candidates must match the namespace and have unique IDs. With a complete pool
+   and valid initial pose, the nearest observer anchor by raw 2-D XY becomes the
+   target. Exact squared distances use BigInt to avoid rounding ties across signed
+   int32 coordinates; exact ties preserve creation-time/ID array order. Angle,
+   nextQuestion and the investigation radius do not affect selection. Empty or
+   incomplete pools (`hasMore`), or missing/invalid initial poses, yield free
    exploration. This selection remains unchanged throughout the run.
 4. `prepareDecision()` calls `perceiveScene()` with the first owned image and compact
    current state. Perception receives no objective or historical note. When a target
@@ -83,7 +87,9 @@ proof of navigation improvement or live N>2 gameplay.
 
 Lookup statuses `empty`, `unavailable` (missing storage), and `lookup_failed` permit
 perception-informed free exploration. Malformed evidence stops at `landmarks`.
-`hasMore` stays diagnostic and never changes selection. Historical prose is
+An incomplete pool (`hasMore`) also permits free exploration; its returned
+candidates and completeness evidence stay in the initial lookup record. Malformed
+note evidence is not converted into abstention. Historical prose is
 JSON-quoted in logs; the note label uses a short SHA-256 digest of its ID.
 
 ## Helpers, data and ownership
@@ -464,7 +470,7 @@ guard. Full provenance remains in the draft; hashes establish consistency, not
 truth or model reliability. Changed-byte proposals need overlap review. Replay
 returns the original receipt and does not promise current flags/revision or
 reactivation. All memory remains unverified. Active eligibility is separate from
-the unchanged oldest-active objective selection, and a null question cannot
+the initial nearest-active objective selection, and a null question cannot
 activate investigation guidance. Offline tests use synthetic evidence and explicit
 throwaway SQLite paths only; historical database mutation is not test coverage.
 

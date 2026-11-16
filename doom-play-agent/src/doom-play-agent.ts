@@ -44,10 +44,27 @@ function modelState(o: Omit<AgentObserveResult, "png">) {
 	};
 }
 
-function selectNavigationObjective(memory: Memory): NavigationSelection {
-	// The tool returns only active landmarks in shared creation-time/ID order.
-	// This initial tie policy makes no claim about proximity or usefulness.
-	const target = memory.candidates[0] ?? null;
+function selectNavigationObjective(
+	memory: Memory,
+	observation: MaterializedObserve,
+): NavigationSelection {
+	let target: NavigationSelection["target"] = null;
+	const pose = observation.telemetry;
+	// An incomplete pool cannot establish the nearest active landmark.
+	if (!memory.hasMore && pose && validRawPose(pose)) {
+		let nearestDistance: bigint | undefined;
+		for (const candidate of memory.candidates) {
+			// Exact squared raw-XY distances avoid rounding ties across int32 poses.
+			// Candidates are validated upstream; keep array order on exact ties.
+			const dx = BigInt(pose.x - candidate.anchor.x);
+			const dy = BigInt(pose.y - candidate.anchor.y);
+			const distance = dx * dx + dy * dy;
+			if (nearestDistance === undefined || distance < nearestDistance) {
+				nearestDistance = distance;
+				target = candidate;
+			}
+		}
+	}
 	return {
 		navigationObjective: target
 			? { kind: "landmark", noteId: target.noteId, revision: target.revision }
@@ -613,7 +630,7 @@ export async function play(
 			.info(
 				`Active-landmark lookup: ${memory.status}; ${memory.candidates.length} returned${memory.hasMore ? "; more available" : ""}`,
 			);
-		const selection = selectNavigationObjective(memory);
+		const selection = selectNavigationObjective(memory, observation);
 		record.selection = structuredClone(selection);
 		navigationObjective = selection.navigationObjective;
 		// Keep historical text readable while quoting it so it cannot forge log lines.

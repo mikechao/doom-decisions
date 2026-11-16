@@ -181,6 +181,11 @@ test("malformed stored evidence fails validation", async (t) => {
 		db.close();
 	}
 	await assert.rejects(f.tools.findActiveLandmarks(f.base));
+	await assert.rejects(play(f.client, f.tools, f.provider), {
+		stage: "landmarks",
+	});
+	assert.equal(f.state.modelCalls, 0);
+	assert.equal(f.state.run, null);
 });
 
 test("no active landmark permits two perception-informed free-explore decisions", async (t) => {

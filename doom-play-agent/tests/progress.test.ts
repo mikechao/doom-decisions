@@ -350,11 +350,6 @@ test("milestones log objective and perception to stderr and preserve final stdou
 		nextQuestion: "Unselected candidate question.",
 	};
 	f.state.candidates = [selected, unselected];
-	const find = f.tools.findActiveLandmarks;
-	f.tools.findActiveLandmarks = async (o) => ({
-		...(await find(o)),
-		hasMore: true,
-	});
 	const setPrompt = f.client.setPrompt;
 	f.client.setPrompt = async (input) => {
 		if (f.state.decisionTemplates.length === 0)
@@ -371,7 +366,8 @@ test("milestones log objective and perception to stderr and preserve final stdou
 	assert.equal(f.events.filter((event) => event === "decide").length, 2);
 	const output = stderr.join("");
 	assert.match(output, /\[doom\] Attached; observed E1M1 at tic 43/);
-	assert.match(output, /lookup: found; 2 returned; more available/);
+	assert.match(output, /lookup: found; 2 returned/);
+	assert.doesNotMatch(output, /more available/);
 	const fingerprint = createHash("sha256")
 		.update(selected.noteId)
 		.digest("hex")
@@ -426,6 +422,23 @@ test("milestones log objective and perception to stderr and preserve final stdou
 		stdout.join(""),
 		/\[doom\]|\[navigation\]|\[perception\]|\[decision\]/,
 	);
+});
+
+test("incomplete lookup logs more available and free exploration without exposing candidates", async (t) => {
+	const f = await fixture(t, 1);
+	const { stderr } = capture(t);
+	const find = f.tools.findActiveLandmarks;
+	f.tools.findActiveLandmarks = async (o) => ({
+		...(await find(o)),
+		hasMore: true,
+	});
+	const result = await play(f.client, f.tools, f.provider);
+	const output = stderr.join("");
+	assert.match(output, /lookup: found; 1 returned; more available/);
+	assert.match(output, /Objective: free explore/);
+	assert.ok(!output.includes(f.note.hypothesis));
+	assert.ok(!output.includes(f.note.noteId));
+	assert.equal(result.records[0].landmarkLookup?.hasMore, true);
 });
 
 test("perception newlines and ANSI escapes are quoted in stderr without changing results", async (t) => {
