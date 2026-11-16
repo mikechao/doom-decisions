@@ -376,6 +376,42 @@ slot's CAS/dispatch. Stage names remain `observation`, `landmarks`, `perception`
 No config/duration change, refund, replacement run, objective switching, reflection,
 planner, landmark retirement or memory write is introduced.
 
+## Separate post-run authoring
+
+`authorHistoricalNote()` reads an explicitly selected schema-v3 persisted run,
+validates only selected evidence, and makes one structured image-aware Responses
+call. It remains outside `play()`, `main()` and `persistRun()`. Up to seven text
+records and three selected before images are sorted by ordinal. The packet retains
+before/admission/after linkage, bounded goal-independent perceptions, facing probes,
+completed action receipts and rechecked endpoint movement. Previous historical-note
+text, assessments, objectives, configuration and prompts are excluded.
+
+Selected before/after PNG sidecars must have exact ordinal/role filenames, remain
+inside the run directory, pass the existing 640×400 PNG header convention, and match
+recorded SHA-256 values. One map/session, raw observer pose ranges, checkpoint
+tics/hashes, run/admission scope and the action/movement fields sent are checked.
+These checks validate retained reports, not fresh native execution or PNG decoding;
+unselected files and the complete persistence schema are deliberately not verified.
+
+Instructions and packet projection adapt the successful manual D17–D23 experiment,
+with D17/D20/D22 before images. Image count and last-decision labels are derived
+from explicit inputs; anchors are restricted to attached before checkpoints. The
+model may choose any attached anchor or abstain. Host post-validation enforces
+proposal/abstention relationships, meaningful bounded strings, nonempty visible
+features/evidence, exact anchor identity/pose and matching source hashes, including
+the anchor itself. `nextQuestion: null` remains valid. Evidence/model/response
+failures throw sanitized errors and never become abstention or automatic retry.
+
+The separate `author-note` CLI validates arguments before constructing the existing
+OAuth provider. Only explicit credentialed execution incurs one paid inference;
+normal OAuth refresh behavior still applies. It exclusively writes an ignored
+`.local/note-drafts/<timestamp>_<runId>/draft.json` artifact for draft or abstention,
+including evidence/request/model provenance without credentials or raw transport
+payloads. The reusable function performs no writes. Neither path imports memory
+storage, promotes a note, mutates SQLite, attaches to Doom or changes gameplay.
+Offline tests use synthetic sidecars and mocked generation/auth; ignored `.local`
+experiment artifacts are not runtime dependencies. Live inference is unverified.
+
 ## Evidence and offline checks
 
 The earlier two-decision milestone was reported to pass 179/179 offline tests and

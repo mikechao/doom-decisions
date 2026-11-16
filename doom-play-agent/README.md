@@ -263,6 +263,56 @@ Prompt wording about the next decision has no automatic expiry within a lease;
 there is no restoration mutation or objective lifecycle. Several notes may remain
 active; only the first is selected, even if the bounded lookup reports `hasMore`.
 
+## Manual historical-note drafts
+
+Historical-note authoring is a separate post-run command. It reads an existing
+schema-v3 saved run; it never invokes `play()`, starts Doom, or creates, promotes,
+or activates SQLite notes. Its result is an **unapproved** local draft or an
+explicit abstention. Ordinary gameplay never invokes it automatically.
+
+Only deliberately running this command with credentials invokes one paid OAuth
+Responses inference, including normal credential session/refresh behavior:
+
+```sh
+npm --prefix doom-play-agent run author-note -- \
+  --run-dir /absolute/path/to/saved-run \
+  --decisions 17,18,19,20,21,22,23 \
+  --images 17,20,22
+```
+
+Both lists are required, unique positive ordinals and are sorted before use.
+Select 1–7 text records and 1–3 before images from those records. The model chooses
+one attached before checkpoint as its observer anchor or returns `no_note`;
+`nextQuestion: null` is valid. The text window may contain later action evidence,
+explicitly labeled as retrospective. Historical-note prose and gameplay prompts
+are excluded from the request.
+
+The command verifies selected checkpoint/receipt/movement links and every selected
+record's before/after sidecar header and recorded SHA-256 before inference. Missing,
+inconsistent, uncertain or corrupt selected evidence fails without a model call.
+Checks concern saved reports, not fresh native attestation or full PNG decoding.
+Unselected run files are not verified. No retries or fallback models are used.
+
+`DOOM_REASONING_MODEL` defaults to `gpt-6-luna`; authoring retains the manual
+experiment's `xhigh`, `store: false`, zero retries, 2,200 requested output-token
+limit and 120-second timeout. Importing the module or invoking the command without
+arguments does not authenticate or infer. API/auth/validation failures are errors,
+not abstentions; abort/timeout does not prove remote processing or billing stopped.
+
+The CLI exclusively writes
+`.local/note-drafts/<timestamp>_<runId>/draft.json`, with mode 0600 under 0700
+directories. Both draft and abstention artifacts include the source-result digest,
+allowlisted evidence packet, before-image identities/hashes, exact instructions,
+settings/schema digest, output and bounded model/usage provenance. Credentials,
+headers, full transport errors and unrelated run fields are excluded. An artifact
+write failure does not retry inference. Re-running the command is a new paid attempt.
+
+`authorHistoricalNote(input, { provider, generate? })` in
+`src/historical-note-authoring.ts` exposes the same operation without CLI or artifact
+writes. Offline tests inject generation and use synthetic saved runs; they do not
+depend on ignored Experiment F files or real credentials. No live authoring test
+has been run for this implementation.
+
 ## Responsibility audit
 
 DoomPlayAgent trusts the existing executor/browser stack; it is not an
