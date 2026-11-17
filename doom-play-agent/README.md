@@ -462,6 +462,34 @@ convergence and the shared executor through an injected fake HTTP transport.
 Existing agent, CLI and MCP callers retain absolute-file prompt inputs and the
 same validated wire command.
 
+## Offline D10 replay experiment
+
+Run this separately from package checks, from the repository root with Node
+22.20.0 and owner approval for real Worker/WASM execution and game-asset use.
+Supply the pinned controlled-title WASM with its `doom-build.json` beside it,
+your local shareware `DOOM1.WAD`, and the original saved N=10 `result.json` with
+its 20 PNG sidecars. The tool checks the exact input digests before creating a
+Worker and reads the IWAD directly from `--iwad`.
+
+```sh
+node doom-play-agent/experiments/replay-d10.mjs \
+  --wasm app/public/doom.wasm \
+  --iwad "$LOCAL_SHAREWARE_IWAD" \
+  --run "$LOCAL_N10_RESULT"
+```
+
+Two independent controllers replay D1–D9 and verify the archived tic-55 state.
+The fake requests differ only in `landmarkInvestigation.suggestion`. The
+experiment verifies the known `forward` and `turn_right` outcomes at tic 61
+after six tics each. These scripted choices test controller-owned branching
+and request integrity. Guidance effects on real action selection remain outside
+the experiment. The CLI has no network or real-provider mode.
+
+The command saves PNGs and digest and receipt evidence under ignored
+`doom-play-agent/.local/offline-replays/tracked-d10-ab/`. Move that specific
+output directory aside before rerunning if it already exists. The historical
+run and earlier experiment artifacts stay in place.
+
 ## Evidence and suggested live smoke, requiring separate operator authorization
 
 The earlier two-decision implementation was reported to pass 179/179 offline tests
