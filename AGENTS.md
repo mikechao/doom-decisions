@@ -76,6 +76,11 @@ Read-only inspection and non-writing syntax/diff checks include `git status --sh
 
 ### Agent Development
 
+Before proposing new Doom navigation experiments, consult the [November 17 experiment
+retrospective](doom-play-agent/experiments/2026-11-17-doom-decisions-experiment-retrospective.md).
+It records tested hypotheses, negative or inconclusive findings, and verified replay
+capabilities so experiments are not repeated without a new reason.
+
 For `doom-play-agent/`, run commands from that package directory with existing dependencies. Run `npm run check` after changes as the preferred full verification gate (offline tests, TypeScript typecheck, and non-writing Biome checks); use `npm test` for a shorter test-only pass of the full offline `node:test` suite. `package.json` is the command source of truth. `npm test` and `npm run check` are offline and must not start Doom, use OAuth, paid inference or the Decisions API, or access or mutate the historical SQLite database.
 
 `npm --prefix doom-play-agent run agent` is the live gameplay command; it requires the normal broker/browser and credentials setup and may make paid API calls. Agents must not execute this live command unless separately authorized by the user.

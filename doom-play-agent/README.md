@@ -462,6 +462,11 @@ convergence and the shared executor through an injected fake HTTP transport.
 Existing agent, CLI and MCP callers retain absolute-file prompt inputs and the
 same validated wire command.
 
+## Experiments and findings
+
+See the [November 17 experiment retrospective](experiments/2026-11-17-doom-decisions-experiment-retrospective.md)
+for tested hypotheses, negative or inconclusive findings, and verified replay capabilities.
+
 ## Offline D10 replay experiment
 
 Run this separately from package checks, from the repository root with Node
