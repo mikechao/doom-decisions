@@ -22,6 +22,7 @@ import type { DoomTools } from "./doom-tools.ts";
 import { summarizeMovement, validRawPose } from "./movement-summary.ts";
 import {
 	assessNavigation,
+	type LandmarkEvidence,
 	type NavigationAssessment,
 } from "./navigation-assessment.ts";
 import { PlaybackError } from "./playback-error.ts";
@@ -367,20 +368,33 @@ async function prepareDecision(
 	openAIProvider: OpenAIProvider,
 	observation: MaterializedObserve,
 	image: Buffer,
-	selection: NavigationSelection,
+	selection: {
+		navigationObjective: NavigationObjective;
+		landmark: LandmarkEvidence | null;
+	},
 	canonicalBase: string,
 	ordinal: number,
 	record: DecisionEvidence,
 	records: readonly DecisionRecord[],
 ): Promise<PreparedDecision> {
-	let stage = "perception";
+	let stage = "reasoning-evidence";
 	let perception: ScenePerception | null = null;
 	let navigationAssessment: NavigationAssessment | null = null;
-	const investigationActive = investigationIsActive(
-		observation,
-		selection.target,
-	);
+	const target = selection.landmark?.note ?? null;
+	const investigationActive = investigationIsActive(observation, target);
 	try {
+		if (
+			target &&
+			(target.mapNamespace !== observation.mapIdentity.mapKey ||
+				!observation.telemetry ||
+				!validRawPose(observation.telemetry) ||
+				createHash("sha256").update(image).digest("hex") !==
+					observation.pngSha256)
+		)
+			throw new Error(
+				"Current reasoning evidence does not match the selected landmark assessment.",
+			);
+		stage = "perception";
 		progress.withTag("perception").info("Perceiving current scene");
 		perception = await perceiveScene(openAIProvider, {
 			image,
@@ -396,17 +410,18 @@ async function prepareDecision(
 					`Uncertainty: ${JSON.stringify(perception.uncertainty)}`,
 				].join("\n")}`,
 			);
-		if (selection.target) {
+		if (selection.landmark) {
 			stage = "navigation-assessment";
 			progress
 				.withTag("navigation")
 				.info("Assessing visible landmark evidence");
-			navigationAssessment = await assessNavigation(
-				openAIProvider,
+			navigationAssessment = await assessNavigation(openAIProvider, {
+				observation,
+				image,
 				perception,
-				selection.target,
+				landmark: selection.landmark,
 				investigationActive,
-			);
+			});
 			record.navigationAssessment = structuredClone(navigationAssessment);
 			progress
 				.withTag("navigation")
@@ -416,7 +431,8 @@ async function prepareDecision(
 		}
 		stage = "guidance";
 		const guidance = {
-			...selection,
+			navigationObjective: selection.navigationObjective,
+			target,
 			perception,
 			navigationAssessment,
 			investigationActive,
@@ -633,6 +649,14 @@ export async function play(
 		const selection = selectNavigationObjective(memory, observation);
 		record.selection = structuredClone(selection);
 		navigationObjective = selection.navigationObjective;
+		stage = "landmark-reference";
+		const decisionSelection = {
+			navigationObjective,
+			landmark: selection.target && {
+				note: selection.target,
+				referencePng: doomTools.loadLandmarkReference(selection.target),
+			},
+		};
 		// Keep historical text readable while quoting it so it cannot forge log lines.
 		progress
 			.withTag("navigation")
@@ -649,7 +673,7 @@ export async function play(
 			openAIProvider,
 			observation,
 			image,
-			selection,
+			decisionSelection,
 			canonicalBase,
 			1,
 			record,
@@ -717,7 +741,7 @@ export async function play(
 				openAIProvider,
 				before,
 				image,
-				selection,
+				decisionSelection,
 				canonicalBase,
 				ordinal,
 				record,

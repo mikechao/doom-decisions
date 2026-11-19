@@ -18,7 +18,7 @@ objective once. The separate reasoning model independently perceives the
 visible scene from the verified screenshot and compact state, returning a small
 diagnostic description, features, uncertainty and usage. It receives no
 navigation objective or historical landmark. The host combines perception and,
-for a landmark, a text-only navigation assessment into advisory Decisions guidance.
+for a landmark, a multimodal navigation assessment into advisory Decisions guidance.
 
 DoomPlayAgent uses the installed AI SDK 7, official `@ai-sdk/openai` Responses
 provider and existing local OAuth transport. `DOOM_REASONING_MODEL` selects the
@@ -30,19 +30,24 @@ or model retry.
 
 `play()` coordinates a bounded sequential run. Its once-only work is the initial
 observation/base capture, map-wide active-landmark lookup (limit 3), deterministic
-nearest-active-landmark selection and nonrefundable run claim. Selection uses
-initial player XY and observer-anchor XY, with exact distance ties retaining
-candidate order. Null-question recognition notes remain eligible; angle and the
-separate 256-unit investigation gate do not rank or exclude candidates. An
-incomplete pool (`hasMore`) or missing/invalid initial pose causes free exploration.
+nearest-active-landmark selection, selected reference verification and nonrefundable
+run claim. Selection uses initial player XY and observer-anchor XY, with exact distance ties retaining
+candidate order. Angle and the separate 256-unit investigation gate do not rank
+or exclude candidates. An incomplete pool (`hasMore`) or missing or invalid
+initial pose causes free exploration.
 Selection stays fixed throughout the run. Missing, failed and empty
 storage results remain distinct and permit free exploration; malformed evidence
-stops. Existing memory access remains read-only with no migration or writes.
+and unsupported memory schemas stop. The selected PNG is loaded and verified
+once before inference or claim. Existing memory access remains read-only.
 
 For each decision, `prepareDecision()` perceives that decision's fresh owned PNG
 and compact current state, optionally assesses the same selected target, and
 composes guidance from the original canonical base. Perception receives no
-objective/history; assessment is text-only. Historical and model text remain
+objective or history. The assessor receives the current reasoning PNG first,
+then the selected note's historical PNG. Each image has its own observation
+metadata and raw pose. The note supplies audited static linedefs, which the
+assessor projects to approximate horizontal bounds using the current pose.
+The verdict must be grounded in current pixels. Historical and model text remain
 untrusted advisory JSON. First guidance must fit before claim; every later amendment
 must fit before its CAS/decision. No guidance accumulates across slots.
 
@@ -50,8 +55,8 @@ Approach B permits one optional, uncertain evidence-seeking suggestion in the
 existing assessment when the fresh **reasoning observation** is within 256 Doom
 units of the selected historical observer anchor. The gate uses unrounded raw
 16.16 XY distance, valid poses, matching full map/IWAD key and a nonempty
-`nextQuestion`; it recomputes every decision without arrival state. Assessment
-receives only one extra host boolean, and returns nullable `investigationGuidance`
+`nextQuestion`; it recomputes every decision without arrival state. The host
+passes the gate as a boolean. Assessment returns nullable `investigationGuidance`
 (1–240 trimmed characters when non-null). Inactive assessments require null;
 active scenes may still provide no defensible suggestion. `no-visible-match`
 does not exclude advice. No extra inference, action/duration authority, retry,
@@ -429,8 +434,8 @@ independent native verifier. Shared protocol, broker, controller and root agent
 code are unchanged. The executor owns held-lease envelope/DTO/image validation and
 prompt acknowledgment checks; the controller owns lease/Stop/CAS/native authority.
 
-`play()` owns one lookup/selection and canonical-base capture, first-slot
-preflight, the sole claim, and the continuation loop. `prepareDecision()` repeats
+`play()` owns one lookup/selection, the selected reference read, canonical-base
+capture, first-slot preflight, the sole claim, and the continuation loop. `prepareDecision()` repeats
 perception, optional assessment and bounded prompt composition for every slot.
 `executeOneDecision()` repeats CAS, admission observation/checks, one invocation
 and image retention. Live scope/receipt variables drive continuation; published
@@ -438,8 +443,9 @@ records supply read-only recent-history advice. Full passive capture/frame/PNG
 equality is not required.
 Controller checks remain authoritative against Stop/revocation after any snapshot.
 
-Records retain PNG buffers and cloned DTOs, so memory grows O(N). Keep practical
-smoke budgets small (initially N=3); safe-integer validation is not a small memory
+Records retain existing current-frame and result PNG buffers and cloned DTOs,
+so memory grows O(N). The historical reference bytes stay in run-local state.
+Keep practical smoke budgets small (initially N=3); safe-integer validation is not a small memory
 cap. A fresh unmodified lease is still required for direct `play()` callers.
 
 Offline verification, from `doom-play-agent/` with Node

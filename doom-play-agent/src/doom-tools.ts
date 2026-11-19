@@ -7,6 +7,7 @@ import {
 	memoryMapKeySchema,
 	memoryNextQuestionSchema,
 	memoryRecognitionSchema,
+	readMemoryReferencePng,
 } from "../../app/doom-memory.mjs";
 import type { AgentObserveResult } from "../../app/src/agent-control.ts";
 
@@ -58,6 +59,9 @@ async function findActiveMemory(
 
 export function createDoomTools() {
 	return {
+		loadLandmarkReference(note: DoomMemoryCandidate): Buffer {
+			return readMemoryReferencePng(note.recognition.reference);
+		},
 		// Host-only capability. No model tool or model-supplied query arguments.
 		async findActiveLandmarks(
 			observation: Pick<AgentObserveResult, "mapIdentity">,

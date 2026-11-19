@@ -5,7 +5,12 @@ import test from "node:test";
 import { maxAgentInstructions } from "../../app/src/agent-control.ts";
 import { play } from "../src/doom-play-agent.ts";
 import { PlaybackError } from "../src/playback-error.ts";
-import { fixture, navigationAssessment, scenePerception } from "./fixtures.ts";
+import {
+	fixture,
+	navigationAssessment,
+	readAssessmentInput,
+	scenePerception,
+} from "./fixtures.ts";
 
 const secondScene = {
 	description: "SECOND_ONLY: a closer doorway is visible.",
@@ -267,21 +272,16 @@ for (const landmark of [true, false]) {
 		assert.equal(input2.state.previousAction.endTic, input2.state.tic);
 		assert.equal(f.state.assessmentInputs.length, landmark ? 2 : 0);
 		if (landmark) {
-			const payloads = f.state.assessmentInputs.map((input) => {
-				const user = input.prompt.find((m) => m.role === "user");
-				const text = user?.content.find((p) => p.type === "text");
-				assert.ok(text?.type === "text");
-				return JSON.parse(text.text);
-			});
+			const [first, second] = f.state.assessmentInputs.map(readAssessmentInput);
+			assert.deepEqual(first.historical, second.historical);
 			assert.deepEqual(
-				payloads[0].historicalLandmark,
-				payloads[1].historicalLandmark,
-			);
-			assert.deepEqual(
-				payloads[1].historicalLandmark.observerPoseRawTelemetry,
+				second.historical.historicalLandmark.observerPoseRawTelemetry,
 				f.note.anchor,
 			);
-			assert.equal(payloads[1].perception.description, secondScene.description);
+			assert.equal(
+				second.current.perception.description,
+				secondScene.description,
+			);
 		}
 		for (const template of f.state.decisionTemplates) {
 			assert.ok(template.startsWith(f.base.configuration.instructionTemplate));
@@ -442,6 +442,7 @@ for (const fault of [
 for (const field of ["x", "y", "angle", "missing-pose"] as const) {
 	test(`current reasoning ${field} mismatch suppresses only history`, async (t) => {
 		const f = await fixture(t);
+		if (field === "missing-pose") f.state.candidates = [];
 		const observe = f.client.observe;
 		f.client.observe = async () => {
 			const o = await observe();
@@ -463,6 +464,24 @@ for (const field of ["x", "y", "angle", "missing-pose"] as const) {
 		assert.equal(f.state.run?.sdkInvoked, 2);
 	});
 }
+
+test("a missing continuation pose stops selected-landmark assessment before a second CAS", async (t) => {
+	const f = await fixture(t);
+	const observe = f.client.observe;
+	f.client.observe = async () => {
+		const observation = await observe();
+		if (f.state.observeCalls === 3)
+			Reflect.deleteProperty(observation, "telemetry");
+		return observation;
+	};
+	await assert.rejects(play(f.client, f.tools, f.provider), {
+		stage: "reasoning-evidence",
+		decisionOrdinal: 2,
+		decisionMayHaveBeenSent: false,
+	});
+	assert.equal(f.state.modelCalls, 2);
+	assert.equal(f.events.filter((event) => event === "setPrompt").length, 1);
+});
 
 for (const fault of [
 	"limit-1",
@@ -897,13 +916,11 @@ for (const budget of [1, 2, 3, 5]) {
 				if (i)
 					assert.doesNotMatch(record.guidance ?? "", new RegExp(`SCENE_${i}`));
 				if (landmark) {
-					const user = f.state.assessmentInputs[i].prompt.find(
-						(m) => m.role === "user",
+					const { historical } = readAssessmentInput(
+						f.state.assessmentInputs[i],
 					);
-					const text = user?.content.find((p) => p.type === "text");
-					assert.ok(text?.type === "text");
 					assert.equal(
-						JSON.parse(text.text).historicalLandmark.hypothesis,
+						historical.historicalLandmark.hypothesis,
 						f.note.hypothesis,
 					);
 				}

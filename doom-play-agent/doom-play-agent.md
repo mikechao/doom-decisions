@@ -19,8 +19,9 @@ proof of navigation improvement or live N>2 gameplay.
 2. `play()` obtains the initial observation and captures its canonical instruction
    template once from the fresh unmodified lease. It snapshots the observation and
    reads its materialized PNG once into an owned Buffer. The shared executor checks
-   PNG header/hash before materialization; this reasoning read does not revalidate
-   the file. Later file changes cannot change the owned inference bytes.
+   PNG header/hash before materialization. For a selected landmark, preparation
+   rechecks the encoded digest of the owned reasoning bytes before inference.
+   Later file changes cannot change those owned bytes.
 3. `findActiveLandmarks()` performs one map-wide `active-landmarks` lookup with the
    verified map key, limit 3 and no pose/radius restriction. Storage is read-only.
    Candidates must match the namespace and have unique IDs. The host DTO retains
@@ -31,14 +32,20 @@ proof of navigation improvement or live N>2 gameplay.
    int32 coordinates; exact ties preserve creation-time/ID array order. Angle,
    nextQuestion and the investigation radius do not affect selection. Empty or
    incomplete pools (`hasMore`), or missing/invalid initial poses, yield free
-   exploration. This selection remains unchanged throughout the run.
-4. `prepareDecision()` calls `perceiveScene()` with the first owned image and compact
-   current state. Perception receives no objective or historical note. When a target
-   exists, `assessNavigation()` compares that perception with the selected target,
-   text-only. Before assessment, the host computes the stateless 256-unit
-   observer-anchor proximity gate from this reasoning observation (see below),
-   passing only an activation boolean as an additional input. Assessment failure
-   stops without fallback.
+   exploration. This selection remains unchanged throughout the run. `play()` uses
+   `loadLandmarkReference()` once for the selected DTO. The shared memory reader
+   verifies both stored hashes. Missing or invalid reference pixels stop before
+   any model call or run claim.
+4. `prepareDecision()` calls `perceiveScene()` with that slot’s owned current PNG
+   and compact state. Perception receives no objective or historical note. With
+   a selected target, `assessNavigation()` sends ordered pairs of labeled metadata
+   and PNG bytes for the current reasoning observation and historical reference.
+   The current map key must match the selected note, and the current raw pose must
+   be valid. The assessor derives approximate, unclamped horizontal search bounds
+   from the static linedefs and current pose. An endpoint within one map unit of
+   or behind the camera plane suppresses the span. Bounds omit occlusion, height
+   and collision. The verdict relies on current pixels. The existing 256-unit
+   observer-anchor proximity gate still controls optional guidance.
 5. Preparation composes guidance from the original canonical base, selection,
    current perception and optional assessment, then appends deterministic history
    from the published prefix (explicit `no-history` for decision 1).
@@ -158,7 +165,9 @@ observation prevents stale perception/assessment in later errors.
 
 Each record retains reasoning observation, owned `beforePng`, selection,
 perception/optional assessment with usage, guidance, prompt acknowledgment,
-admission observation and decision evidence. Only record 1 contains the original
+admission observation and decision evidence. Historical selection retains only
+the note DTO and its provenance hashes. The reference bytes stay in run-local
+assessment state. Only record 1 contains the original
 lookup and start acknowledgment. Decision evidence distinguishes:
 
 - `not-called`: no invocation; only stages reached so far are retained.
@@ -325,9 +334,8 @@ coordinator. This is permission to request evidence-seeking advice, never proof
 of arrival, passage recognition or reachability. No proximity state is carried
 between decisions; admission and after-action observations do not set this gate.
 
-Assessment receives only `investigationActive` in addition to its existing
-perception text and selected historical hypothesis/question/observer pose.
-Its strict result adds required `investigationGuidance: string | null`.
+Assessment receives `investigationActive` with the current and historical evidence
+described above. Its strict result includes `investigationGuidance: string | null`.
 Inactive output must be null (schema-enforced); active output may also be null.
 A non-null suggestion must contain 1–240 trimmed characters, name one specific
 feature in the current perception and the particular next observation that could
@@ -378,8 +386,9 @@ is no prompt restoration mutation or automatic expiry of “next decision” wor
 
 The 16,000 JavaScript-character guidance check never truncates. First overflow
 precedes claim; later overflow preserves earlier records and stops before that
-slot's CAS/dispatch. Stage names remain `observation`, `landmarks`, `perception`,
-`navigation-assessment`, `guidance`, `start-run`, `continuation-check`, `prompt-cas`,
+slot's CAS/dispatch. Stage names include `observation`, `landmarks`,
+`landmark-reference`, `reasoning-evidence`, `perception`, `navigation-assessment`,
+`guidance`, `start-run`, `continuation-check`, `prompt-cas`,
 `dispatch-observation` and `decision`. Lost acknowledgments are never replayed.
 No config/duration change, refund, replacement run, objective switching, reflection,
 planner, landmark retirement or memory write is introduced.

@@ -22,6 +22,9 @@ const mocks = installMainMocks();
 function configureOfflineMain(factory: () => DoomClient) {
 	mocks.makeClient.mock.mockImplementation(factory);
 	mocks.makeTools.mock.mockImplementation(() => ({
+		loadLandmarkReference() {
+			throw Error("Memory reference access forbidden");
+		},
 		async findActiveLandmarks() {
 			throw Error("Memory access forbidden");
 		},

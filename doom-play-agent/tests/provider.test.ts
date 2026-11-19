@@ -19,7 +19,7 @@ test("Responses model construction does not invoke auth or fetch", async (t) => 
 	assert.equal(fetchStub.mock.callCount(), 0);
 });
 
-test("offline OAuth transport preserves Responses schema and exact inline image", async (t) => {
+test("offline OAuth transport preserves Responses schema and exact inline images", async (t) => {
 	const { createOAuthProvider } = await import("../src/provider.ts");
 	const { play } = await import("../src/doom-play-agent.ts");
 	const { fixture, scenePerception, navigationAssessment } = await import(
@@ -157,9 +157,29 @@ test("offline OAuth transport preserves Responses schema and exact inline image"
 					"no-visible-match",
 					"insufficient-evidence",
 				]);
-				assert.doesNotMatch(
-					JSON.stringify(body.input),
-					/input_image|data:image/,
+				const user = body.input.find(
+					(message: { role: string }) => message.role === "user",
+				);
+				const [current, image, historical, reference] = user.content;
+				assert.deepEqual(
+					user.content.map((part: { type: string }) => part.type),
+					["input_text", "input_image", "input_text", "input_image"],
+				);
+				assert.equal(
+					JSON.parse(current.text).label,
+					"Current observation (next PNG)",
+				);
+				assert.equal(
+					JSON.parse(historical.text).label,
+					"Historical landmark and reference (next PNG)",
+				);
+				assert.equal(
+					image.image_url,
+					`data:image/png;base64,${f.state.images[responseCalls === 4 ? 1 : 0].toString("base64")}`,
+				);
+				assert.equal(
+					reference.image_url,
+					`data:image/png;base64,${f.landmarkReferencePng.toString("base64")}`,
 				);
 				assert.match(JSON.stringify(body.input), /untrusted data/);
 			}

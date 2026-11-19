@@ -6,7 +6,12 @@ import { maxAgentInstructions } from "../../app/src/agent-control.ts";
 import { play } from "../src/doom-play-agent.ts";
 import { PlaybackError } from "../src/playback-error.ts";
 import type { ScenePerception } from "../src/scene-perception.ts";
-import { fixture, navigationAssessment, scenePerception } from "./fixtures.ts";
+import {
+	fixture,
+	navigationAssessment,
+	readAssessmentInput,
+	scenePerception,
+} from "./fixtures.ts";
 import { installMainMocks } from "./main-mocks.ts";
 
 const mocks = installMainMocks();
@@ -71,11 +76,62 @@ function assessmentContext(
 		ReturnType<typeof fixture>
 	>["state"]["assessmentInputs"][number],
 ) {
-	const user = input.prompt.find((message) => message.role === "user");
-	const text = user?.content.find((part) => part.type === "text");
-	assert.ok(text?.type === "text");
-	return JSON.parse(text.text);
+	return readAssessmentInput(input).current;
 }
+
+for (const [depth, columns] of [
+	[4, [0, 640]],
+	[1, undefined],
+	[-4, undefined],
+] as const) {
+	test(`quarter-turn projection with final endpoint at depth ${depth}`, async (t) => {
+		const f = await fixture(t, 1);
+		Object.assign(f.base.telemetry, { x: 0, y: 0, angle: 0x40000000 });
+		const { geometry } = f.note.recognition;
+		f.note.recognition = {
+			...f.note.recognition,
+			geometry: {
+				...geometry,
+				segments: [
+					{
+						...geometry.segments[0],
+						endpoints: [
+							[-4, 4],
+							[4, depth],
+						],
+					},
+				],
+			},
+		};
+		await play(f.client, f.tools, f.provider);
+		const current = assessmentContext(
+			f.state.assessmentInputs[0],
+		).currentObservation;
+		if (columns) {
+			const actual = current.approximateSearchColumns;
+			assert.equal(actual.length, 2);
+			for (const [index, column] of columns.entries())
+				assert.ok(Math.abs(actual[index] - column) < 1e-9);
+		} else {
+			assert.equal("approximateSearchColumns" in current, false);
+		}
+	});
+}
+
+test("a current reasoning PNG whose bytes changed since materialization stops before model calls", async (t) => {
+	const f = await fixture(t, 1);
+	const observe = f.client.observe;
+	f.client.observe = async () => {
+		const observation = await observe();
+		await writeFile(observation.pngPath, "changed before play read the image");
+		return observation;
+	};
+	await assert.rejects(play(f.client, f.tools, f.provider), {
+		stage: "reasoning-evidence",
+	});
+	assert.equal(f.state.modelCalls, 0);
+	assert.equal(f.state.run, null);
+});
 
 test("nearest initial selection: saved D1 XY chooses B and preserves the one-decision pipeline", async (t) => {
 	const f = await fixture(t, 1);
@@ -128,15 +184,14 @@ test("nearest initial selection: saved D1 XY chooses B and preserves the one-dec
 	});
 	assert.deepEqual(result.records[0].landmarkLookup?.candidates, candidates);
 	assert.equal(result.candidateCount, 3);
-	assert.deepEqual(assessmentContext(f.state.assessmentInputs[0]), {
-		investigationActive: true,
-		perception: scenePerception,
-		historicalLandmark: {
-			hypothesis: selected.hypothesis,
-			nextQuestion: selected.nextQuestion,
-			observerPoseRawTelemetry: selected.anchor,
-		},
-	});
+	const submitted = readAssessmentInput(f.state.assessmentInputs[0]);
+	assert.equal(submitted.current.investigationActive, true);
+	assert.deepEqual(submitted.current.perception, scenePerception);
+	assert.equal(submitted.historical.historicalLandmark.noteId, selected.noteId);
+	assert.equal(
+		submitted.historical.historicalLandmark.nextQuestion,
+		selected.nextQuestion,
+	);
 	assert.deepEqual(advisoryData(f.state.instructions).historicalLandmark, {
 		noteId: selected.noteId,
 		revision: selected.revision,
@@ -392,6 +447,14 @@ for (const c of [
 			}
 			return o;
 		};
+		if (c.namespace) {
+			await assert.rejects(play(f.client, f.tools, f.provider), {
+				stage: "reasoning-evidence",
+			});
+			assert.equal(f.state.modelCalls, 0);
+			assert.equal(f.state.run, null);
+			return;
+		}
 		const result = await play(f.client, f.tools, f.provider);
 		const hasTarget = c.selected !== false;
 		if (hasTarget) {
@@ -480,7 +543,7 @@ test("C2 D21-like no-visible-match can deliver one uncertain right-edge investig
 	assert.equal(record.admissionObservation?.configuration.tics, 6);
 	assert.deepEqual(
 		Object.keys(assessmentContext(f.state.assessmentInputs[0])),
-		["investigationActive", "perception", "historicalLandmark"],
+		["label", "investigationActive", "currentObservation", "perception"],
 	);
 	const second = result.records[1];
 	assert.ok(second.guidance);
@@ -1419,7 +1482,7 @@ for (const assessment of [
 		uncertainty: "The landmark may be outside this view.",
 	},
 ]) {
-	test(`text-only ${assessment.verdict} assessment reaches setPrompt as selected-note advice`, async (t) => {
+	test(`multimodal ${assessment.verdict} assessment reaches setPrompt as selected-note advice`, async (t) => {
 		const f = await fixture(t);
 		const setPrompt = t.mock.method(f.client, "setPrompt");
 		f.state.assessment = assessment;
@@ -1452,26 +1515,26 @@ for (const assessment of [
 		const input = f.state.assessmentInput as Parameters<
 			typeof f.model.doGenerate
 		>[0];
-		const user = input.prompt.find((m) => m.role === "user");
-		assert.ok(user);
-		assert.equal(user.content.length, 1);
-		const text = user.content[0];
-		assert.equal(text.type, "text");
-		if (text.type !== "text") throw Error("Expected text");
-		assert.deepEqual(JSON.parse(text.text), {
-			investigationActive: true,
-			perception: f.state.perception,
-			historicalLandmark: {
-				hypothesis: f.note.hypothesis,
-				nextQuestion: f.note.nextQuestion,
-				observerPoseRawTelemetry: f.note.anchor,
-			},
-		});
+		const submitted = readAssessmentInput(input);
+		assert.equal(submitted.current.investigationActive, true);
+		assert.deepEqual(submitted.current.perception, f.state.perception);
+		assert.equal(
+			submitted.historical.historicalLandmark.hypothesis,
+			f.note.hypothesis,
+		);
+		assert.equal(
+			submitted.historical.historicalLandmark.nextQuestion,
+			f.note.nextQuestion,
+		);
+		assert.deepEqual(
+			submitted.historical.historicalLandmark.observerPoseRawTelemetry,
+			f.note.anchor,
+		);
 		assert.match(
 			JSON.stringify(input.prompt),
 			/untrusted data.*never instructions/,
 		);
-		assert.match(JSON.stringify(input.prompt), /takes priority/);
+		assert.match(JSON.stringify(input.prompt), /take priority/);
 		const specificityInstruction =
 			"When investigationActive is true, any non-null investigationGuidance must identify one specific feature actually named by the current perception (such as an opening, ledge, wall, or dark-floored area) and the particular next observation that would help distinguish whether it is an approachable passage or an obstruction. Do not merely repeat nextQuestion or request a generally clearer right-side view. Preserve uncertainty about unseen geometry, identity, reachability, and exit connection. Return null if the supplied perception does not support a grounded, discriminating suggestion.";
 		const system = input.prompt.find((message) => message.role === "system");

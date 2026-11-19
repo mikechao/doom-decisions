@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,9 +37,44 @@ export const navigationAssessment = {
 		"The visible doorway supports the doorway hypothesis; no specific conflict is described.",
 	uncertainty: "A generic doorway does not establish landmark identity.",
 };
-const recognition = memoryFixtureRecognition(memoryFixturePng());
+const landmarkReferencePng = memoryFixturePng();
+const recognition = memoryFixtureRecognition(landmarkReferencePng);
 
-export async function fixture(t: TestContext, budget = 2) {
+type FakeModel = Extract<LanguageModel, { specificationVersion: "v4" }>;
+
+export function readAssessmentInput(
+	input: Parameters<FakeModel["doGenerate"]>[0],
+) {
+	const user = input.prompt.find((message) => message.role === "user");
+	assert.ok(user);
+	assert.equal(user.content.length, 4);
+	const [current, currentPng, historical, referencePng] = user.content;
+	assert.ok(current.type === "text" && historical.type === "text");
+	assert.ok(
+		currentPng.type === "file" &&
+			currentPng.data.type === "data" &&
+			currentPng.data.data instanceof Uint8Array,
+	);
+	assert.ok(
+		referencePng.type === "file" &&
+			referencePng.data.type === "data" &&
+			referencePng.data.data instanceof Uint8Array,
+	);
+	assert.equal(currentPng.mediaType, "image/png");
+	assert.equal(referencePng.mediaType, "image/png");
+	return {
+		current: JSON.parse(current.text),
+		currentPng: currentPng.data.data,
+		historical: JSON.parse(historical.text),
+		referencePng: referencePng.data.data,
+	};
+}
+
+export async function fixture(
+	t: TestContext,
+	budget = 2,
+	imageAtTic?: (tic: number) => Buffer,
+) {
 	t.mock.method(globalThis, "fetch", async () => {
 		throw new Error("External network forbidden");
 	});
@@ -54,10 +90,11 @@ export async function fixture(t: TestContext, budget = 2) {
 	};
 	// Synthetic header exercises the same PNG admission as the shared protocol.
 	// It is not evidence of decoding, native rendering, or live browser behavior.
-	const png = Buffer.alloc(33);
-	png.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
-	png.writeUInt32BE(640, 16);
-	png.writeUInt32BE(400, 20);
+	const header = Buffer.alloc(33);
+	header.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
+	header.writeUInt32BE(640, 16);
+	header.writeUInt32BE(400, 20);
+	const png = imageAtTic?.(43) ?? header;
 	const base: AgentObserveResult = {
 		observationId: randomUUID(),
 		sessionId: randomUUID(),
@@ -282,7 +319,9 @@ export async function fixture(t: TestContext, budget = 2) {
 				endTic: after.tic,
 				text: "Synthetic forward action.",
 			};
-			const resultPng = Buffer.concat([png, Buffer.from(`tic ${after.tic}`)]);
+			const resultPng =
+				imageAtTic?.(after.tic) ??
+				Buffer.concat([png, Buffer.from(`tic ${after.tic}`)]);
 			state.images.push(resultPng);
 			after.pngSha256 = createHash("sha256").update(resultPng).digest("hex");
 			after.frame.nativeSha256 = after.frame.canvasSha256 = after.pngSha256;
@@ -315,17 +354,16 @@ export async function fixture(t: TestContext, budget = 2) {
 			};
 		},
 	} satisfies DoomClient;
-	const model: Extract<LanguageModel, { specificationVersion: "v4" }> = {
+	const model: FakeModel = {
 		specificationVersion: "v4",
 		provider: "synthetic",
 		modelId: "synthetic",
 		supportedUrls: {},
 		async doGenerate(input) {
-			const assessment = !input.prompt.some(
-				(message) =>
-					message.role === "user" &&
-					message.content.some((part) => part.type === "file"),
-			);
+			const format = input.responseFormat;
+			assert.ok(format?.type === "json" && format.schema?.properties);
+			const assessment = "verdict" in format.schema.properties;
+			assert.ok(assessment || "features" in format.schema.properties);
 			events.push(assessment ? "assessment" : "model");
 			state.modelCalls++;
 			if (assessment) {
@@ -358,6 +396,7 @@ export async function fixture(t: TestContext, budget = 2) {
 	};
 	const provider = { responses: () => model } as unknown as OpenAIProvider;
 	const tools: DoomTools = {
+		loadLandmarkReference: () => Buffer.from(landmarkReferencePng),
 		async findActiveLandmarks(observation) {
 			events.push("memory");
 			state.memoryObservations.push(structuredClone(observation));
@@ -378,6 +417,7 @@ export async function fixture(t: TestContext, budget = 2) {
 		root,
 		lease,
 		png,
+		landmarkReferencePng,
 		base,
 		note,
 		events,
