@@ -8,7 +8,7 @@ import {
 } from "./historical-note-promotion.ts";
 
 const usage =
-	"Usage: approve-note --draft /absolute/path/draft.json (interactive approval required)";
+	"Usage: approve-note --draft /absolute/path/draft.json --geometry /absolute/path/geometry.json (interactive approval required)";
 type Terminal = {
 	interactive: boolean;
 	print: (text: string) => void;
@@ -35,14 +35,20 @@ const terminal: Terminal = {
 };
 
 export async function main(args = process.argv.slice(2), io = terminal) {
-	if (args.length !== 2 || args[0] !== "--draft" || !isAbsolute(args[1]))
+	if (
+		args.length !== 4 ||
+		args[0] !== "--draft" ||
+		!isAbsolute(args[1]) ||
+		args[2] !== "--geometry" ||
+		!isAbsolute(args[3])
+	)
 		throw new Error(usage);
-	const prepared = await prepareHistoricalNotePromotion(args[1]);
+	const prepared = await prepareHistoricalNotePromotion(args[1], args[3]);
 	io.print(
 		`Historical note promotion preview (observer pose, not destination):\n${JSON.stringify(prepared, null, 2)}`,
 	);
 	io.print(
-		"Both proposed flags are true. The note remains unverified. Active eligibility does not guarantee selection: the agent selects the oldest active candidate.",
+		"Both proposed flags are true. The note remains unverified. Active eligibility does not guarantee selection.",
 	);
 	if (prepared.representedBy) {
 		io.print(

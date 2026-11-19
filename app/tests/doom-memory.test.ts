@@ -4,17 +4,20 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { it } from 'vitest';
-import { memoryDatabasePath } from '../doom-memory.mjs';
+import { initializeMemoryDatabase, memoryDatabasePath, readMemoryReferencePng, recordMemory } from '../doom-memory.mjs';
+import { memoryFixturePng, memoryFixtureRecognition } from './fixtures/doom-memory.ts';
 
 const serverPath = fileURLToPath(new URL('../agent-mcp.mjs', import.meta.url));
-const mapNamespace = 'unverified:shareware-doom1-e1m1';
+const mapKey = (digit: string) => `doom-map:v1:iwad-sha256:${digit.repeat(64)}:E1M1`;
+const mapNamespace = mapKey('1');
+const referencePng = memoryFixturePng();
 const a = { mapNamespace, x: 71761920, y: -194576384, angle: 0xf0000000 };
 const d = { mapNamespace, x: 73662464, y: -195428352, angle: 0x10000000 };
 const seed = {
@@ -22,16 +25,33 @@ const seed = {
   source: 'Run A, decision 22, tic 133; docs/navigation/doom1-e1m1-session-01a179df.md; archived Codex visual interpretation',
   hypothesis: 'The apparent recess beside the tan column might continue beyond the pool room; traversability is unverified.',
   nextQuestion: 'Does a clearer view reveal continuous player-width floor beyond the wall end?',
+  recognition: memoryFixtureRecognition(referencePng),
 };
 // Synthetic canonical namespace only; these tests do not verify a live map.
 const activeQuery = {
   mode: 'active-landmarks',
-  mapNamespace: `doom-map:v1:iwad-sha256:${'a'.repeat(64)}:E1M1`,
+  mapNamespace: mapKey('a'),
 };
 const activeSeed = {
   ...seed, mapNamespace: activeQuery.mapNamespace, requestId: 'landmark',
   x: 211, y: 0, angle: 90,
   isLandmark: true, isActiveExploration: true,
+};
+
+async function create(database: string, input: unknown = seed, png = referencePng) {
+  const previous = process.env.DOOM_MEMORY_DB;
+  process.env.DOOM_MEMORY_DB = database;
+  try {
+    return await recordMemory(input, png);
+  } finally {
+    if (previous === undefined) delete process.env.DOOM_MEMORY_DB;
+    else process.env.DOOM_MEMORY_DB = previous;
+  }
+}
+
+const appendProbe = {
+  operation: 'append', requestId: 'append-probe', noteId: '11111111-1111-4111-8111-111111111111',
+  expectedRevision: 1, source: 'Synthetic fixture', assessment: 'Schema probe',
 };
 
 it('round-trips raw telemetry unchanged and rejects fractional, out-of-range and degree-field inputs', async () => {
@@ -46,11 +66,11 @@ it('round-trips raw telemetry unchanged and rejects fractional, out-of-range and
         { headingDeg: 90 },
       ]) {
         await rejects(client, 'doom_memory_find', { ...a, ...invalid });
-        await rejects(client, 'doom_memory_record', { ...seed, ...invalid });
+        await assert.rejects(create(database, { ...seed, ...invalid }));
       }
       assert.equal(existsSync(database), false);
       const raw = { x: -2147483648, y: 2147483647, angle: 0xffffffff };
-      const created = await invoke(client, 'doom_memory_record', { ...seed, ...raw });
+      const created = await create(database, { ...seed, ...raw });
       const found = await invoke(client, 'doom_memory_find', { ...a, ...raw });
       assert.equal(found.candidates.length, 1);
       assert.equal(found.candidates[0].noteId, created.noteId);
@@ -115,6 +135,111 @@ async function rejects(client, name, args, error) {
   if (error) assert.deepEqual(result.structuredContent, { error });
 }
 
+it('requires complete recognition evidence before creating storage and verifies immutable PNG sidecars', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'doom-memory-reference-'));
+  const database = join(directory, 'memory.sqlite');
+  const { reference } = seed.recognition;
+  const { pngSha256 } = reference;
+  const path = join(`${database}.refs`, `${pngSha256}.png`);
+  try {
+    const { recognition: _recognition, ...oldCreate } = seed;
+    const { nextQuestion: _question, ...withoutQuestion } = seed;
+    for (const input of [oldCreate, withoutQuestion, { ...seed, nextQuestion: ' \t' },
+      { ...seed, mapNamespace: `${mapNamespace}\n` },
+      { ...seed, recognition: { ...seed.recognition, reference: { ...seed.recognition.reference, pngSha256: `${pngSha256}\n` } } },
+      { ...seed, recognition: { ...seed.recognition, geometry: { ...seed.recognition.geometry, segments: [] } } },
+    ]) await assert.rejects(create(database, input));
+    const truncated = referencePng.subarray(0, 33);
+    await assert.rejects(create(database, { ...seed, recognition: memoryFixtureRecognition(truncated) }, truncated), /memory-reference-invalid/);
+    const brokenIdat = memoryFixturePng(0, undefined, Buffer.from('invalid compressed payload'));
+    await assert.rejects(create(database, { ...seed, recognition: memoryFixtureRecognition(brokenIdat) }, brokenIdat), /memory-reference-invalid/);
+    const wrongPixels = memoryFixturePng(1);
+    await assert.rejects(create(database, { ...seed, recognition: memoryFixtureRecognition(wrongPixels) }, wrongPixels), /memory-reference-invalid/);
+    await assert.rejects(create(database, seed, Buffer.alloc(0)), /memory-reference-invalid/);
+    // No host-only PNG argument. A fully formed JSON create cannot provide it.
+    const previous = process.env.DOOM_MEMORY_DB;
+    process.env.DOOM_MEMORY_DB = database;
+    try {
+      await assert.rejects(Reflect.apply(recordMemory, undefined, [seed]), /memory-reference-invalid/);
+    } finally {
+      if (previous === undefined) delete process.env.DOOM_MEMORY_DB;
+      else process.env.DOOM_MEMORY_DB = previous;
+    }
+    assert.equal(existsSync(database), false);
+    assert.equal(existsSync(`${database}.refs`), false);
+
+    await create(database);
+    assert.deepEqual(await readFile(path), referencePng);
+    const resolved = readMemoryReferencePng(reference, database);
+    assert.deepEqual(resolved, referencePng);
+    assert.deepEqual([resolved.readUInt32BE(16), resolved.readUInt32BE(20)], [640, 400]);
+    assert.throws(() => readMemoryReferencePng({ ...reference, pngSha256: 'f'.repeat(64) }, database), /memory-reference-missing/);
+    const wrongImage = memoryFixturePng(1);
+    await writeFile(path, wrongImage);
+    assert.throws(() => readMemoryReferencePng(reference, database), /memory-reference-invalid/);
+    const before = await readFile(database);
+    await assert.rejects(create(database, { ...seed, requestId: 'second-create' }), /memory-reference-invalid/);
+    await assert.rejects(create(database), /memory-reference-invalid/);
+    assert.deepEqual(await readFile(path), wrongImage);
+    assert.deepEqual(await readFile(database), before);
+    await rm(path);
+    assert.throws(() => readMemoryReferencePng(reference, database), /memory-reference-missing/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it('rejects a symlinked reference directory for both resolution and publication', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'doom-memory-symlink-'));
+  const database = join(directory, 'memory.sqlite');
+  const external = join(directory, 'other-notebook');
+  const { reference } = seed.recognition;
+  const filename = `${reference.pngSha256}.png`;
+  try {
+    await initializeMemoryDatabase(database);
+    await mkdir(external);
+    await symlink(external, `${database}.refs`, 'dir');
+    const externalPng = join(external, filename);
+    await writeFile(externalPng, referencePng);
+    assert.throws(() => readMemoryReferencePng(reference, database), /memory-reference-invalid/);
+    const before = await readFile(database);
+    await assert.rejects(create(database), /memory-reference-invalid/);
+    assert.deepEqual(await readFile(externalPng), referencePng);
+    await rm(externalPng);
+    await assert.rejects(create(database), /memory-reference-invalid/);
+    assert.deepEqual(await readdir(external), []);
+    assert.deepEqual(await readFile(database), before);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it('rolls back the note when its receipt fails after PNG publication', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'doom-memory-rollback-'));
+  const database = join(directory, 'memory.sqlite');
+  try {
+    await initializeMemoryDatabase(database);
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(database);
+    try {
+      db.exec(`CREATE TRIGGER fail_create_receipt BEFORE INSERT ON entries
+        BEGIN SELECT RAISE(ABORT, 'synthetic receipt failure'); END`);
+      await assert.rejects(create(database), /synthetic receipt failure/);
+      assert.deepEqual(readMemoryReferencePng(seed.recognition.reference, database), referencePng);
+      assert.equal(db.prepare('SELECT count(*) AS count FROM notes').get().count, 0);
+      assert.equal(db.prepare('SELECT count(*) AS count FROM entries').get().count, 0);
+      db.exec('DROP TRIGGER fail_create_receipt');
+      const receipt = await create(database);
+      assert.equal(receipt.replayed, false);
+      assert.equal(db.prepare('SELECT count(*) AS count FROM entries WHERE note_id = ?').get(receipt.noteId).count, 1);
+    } finally {
+      db.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it('finds and reconciles one advisory regional note across three independent MCP processes', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'doom-memory-mcp-'));
   const storage = join(directory, 'storage');
@@ -139,14 +264,14 @@ it('finds and reconciles one advisory regional note across three independent MCP
       assert.match(empty.caution, /unverified/);
       assert.equal(existsSync(storage), false, 'Find must not create even the directory');
       assert.equal(stderr(), '', 'Missing lookup must not load SQLite');
-      await rejects(client, 'doom_memory_record', { ...seed, status: 'verified_traversed' });
-      await rejects(client, 'doom_memory_record', { ...seed, validated_live: true });
-      await rejects(client, 'doom_memory_record', { ...seed, source: ' ' });
+      const { recognition: _recognition, ...oldCreate } = seed;
+      await rejects(client, 'doom_memory_record', oldCreate);
+      await rejects(client, 'doom_memory_record', seed);
       await rejects(client, 'doom_memory_record', {
         ...append, noteId: '11111111-1111-4111-8111-111111111111',
       }, 'memory-note-not-found');
       assert.equal(existsSync(storage), false, 'Rejected records must not initialize storage');
-      created = await invoke(client, 'doom_memory_record', seed);
+      created = await create(database);
       assert.equal(created.revision, 1); assert.equal(created.status, 'unverified');
       assert.equal(created.replayed, false);
       assert.equal(existsSync(database), true);
@@ -162,6 +287,7 @@ it('finds and reconciles one advisory regional note across three independent MCP
       assert.equal(note.distance, 0); assert.equal(note.angleDifference, 0);
       assert.equal(note.source, seed.source); assert.equal(note.hypothesis, seed.hypothesis);
       assert.equal(note.nextQuestion, seed.nextQuestion);
+      assert.deepEqual(note.recognition, seed.recognition);
       assert.equal(note.mapNamespace, mapNamespace); assert.equal(note.status, 'unverified');
       assert.equal(note.isLandmark, false); assert.equal(note.isActiveExploration, false);
       assert.deepEqual(note.entries, []);
@@ -181,15 +307,15 @@ it('finds and reconciles one advisory regional note across three independent MCP
       for (const query of [
         { ...a, x: a.x + 8388608 },
         { ...a, x: a.x + 4194304, y: a.y + 4194304 },
-        { ...a, mapNamespace: 'unverified:freedoom-e1m1' },
+        { ...a, mapNamespace: mapKey('f') },
       ]) assert.deepEqual((await invoke(client, 'doom_memory_find', query)).candidates, []);
       assert.equal((await invoke(client, 'doom_memory_find', { ...a, x: a.x + 4194304 })).candidates.length, 1);
       for (const invalid of [{ radius: 0 }, { radius: 67108865 }, { limit: 11 }, { angle: 4294967296 }, { x: 2147483648 }, { status: 'verified_traversed' }])
         await rejects(client, 'doom_memory_find', { ...a, ...invalid });
 
-      const replay = await invoke(client, 'doom_memory_record', seed);
+      const replay = await create(database);
       assert.deepEqual(replay, { ...created, replayed: true });
-      await rejects(client, 'doom_memory_record', { ...seed, hypothesis: 'Different claim' }, 'memory-request-conflict');
+      await assert.rejects(create(database, { ...seed, hypothesis: 'Different claim' }), /memory-request-conflict/);
       const entry = { ...append, noteId: created.noteId };
       const added = await invoke(client, 'doom_memory_record', entry);
       assert.equal(added.revision, 2); assert.equal(added.replayed, false);
@@ -220,7 +346,7 @@ it('finds and reconciles one advisory regional note across three independent MCP
       assert.equal(final.status, 'unverified'); assert.equal(final.revision, 3);
       assert.deepEqual(final.entries.map(entry => entry.revision), [2, 3]);
       assert.equal(final.hypothesis, seed.hypothesis);
-      assert.deepEqual(await invoke(client, 'doom_memory_record', seed), { ...created, replayed: true });
+      assert.deepEqual(await create(database), { ...created, replayed: true });
     });
     assert.equal(new Set(pids).size, 3);
     console.info(`SQLite memory persistence: distinct MCP PIDs ${pids.join(', ')}; create r1 → reopened append r2 → reopened retrieval; all unverified.`);
@@ -245,7 +371,7 @@ it('discovers a distant active landmark and its evidence across three independen
       assert.deepEqual(empty, { ...activeQuery, caution: empty.caution, candidates: [], hasMore: false });
       assert.equal(existsSync(storage), false);
       assert.equal(stderr(), '');
-      created = await invoke(client, 'doom_memory_record', activeSeed);
+      created = await create(database, activeSeed);
       const { DatabaseSync } = await import('node:sqlite');
       const db = new DatabaseSync(database, { readOnly: true });
       try {
@@ -310,13 +436,13 @@ it('validates flag pairs in MCP and SQLite and preserves atomic revisioned trans
       for (const invalid of [
         { isLandmark: false, isActiveExploration: true }, { isActiveExploration: true },
         { isLandmark: 1 }, { isLandmark: 'true' }, { isActiveExploration: null },
-      ]) await rejects(client, 'doom_memory_record', { ...seed, ...invalid });
+      ]) await assert.rejects(create(database, { ...seed, ...invalid }));
       assert.equal(existsSync(database), false);
-      const created = await invoke(client, 'doom_memory_record', seed);
+      const created = await create(database);
       const { DatabaseSync } = await import('node:sqlite');
       const db = new DatabaseSync(database);
       try {
-        assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
+        assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4);
         assert.equal(db.prepare('PRAGMA application_id').get().application_id, 0x444f4f4d);
         for (const table of ['notes', 'entries']) {
           assert.deepEqual({ ...db.prepare(`SELECT is_landmark, is_active_exploration FROM ${table}`).get() },
@@ -374,7 +500,7 @@ it('validates flag pairs in MCP and SQLite and preserves atomic revisioned trans
       }, 'memory-request-conflict');
       await rejects(client, 'doom_memory_record', { ...firstWrite, requestId: 'stale-flags' }, 'memory-revision-conflict');
       assert.deepEqual(await invoke(client, 'doom_memory_record', firstWrite), { ...firstReceipt, replayed: true });
-      assert.deepEqual(await invoke(client, 'doom_memory_record', { ...seed, isLandmark: false, isActiveExploration: false }),
+      assert.deepEqual(await create(database, { ...seed, isLandmark: false, isActiveExploration: false }),
         { ...created, replayed: true });
       let note = (await invoke(client, 'doom_memory_find', a)).candidates[0];
       assert.equal(note.revision, 7); assert.equal(note.isLandmark, false); assert.equal(note.isActiveExploration, false);
@@ -407,13 +533,13 @@ it('bounds active discovery by exact namespace and deterministic creation order 
       const anchors = [[0, 0, 0xffffffff], [0, 0, 5], [10, 0, 1], [300, 0, 1]];
       const notes = [];
       for (const [index, [x, y, angle]] of anchors.entries())
-        notes.push(await invoke(client, 'doom_memory_record', {
+        notes.push(await create(database, {
           ...activeSeed, requestId: `ordered-${index}`, x, y, angle,
         }));
-      await invoke(client, 'doom_memory_record', { ...activeSeed, requestId: 'inactive', x: 500, isActiveExploration: false });
-      await invoke(client, 'doom_memory_record', { ...activeSeed, requestId: 'ordinary', x: 600, isLandmark: false, isActiveExploration: false });
+      await create(database, { ...activeSeed, requestId: 'inactive', x: 500, isActiveExploration: false });
+      await create(database, { ...activeSeed, requestId: 'ordinary', x: 600, isLandmark: false, isActiveExploration: false });
       const otherNamespace = activeQuery.mapNamespace.replace('a'.repeat(64), 'b'.repeat(64));
-      const foreign = await invoke(client, 'doom_memory_record', { ...activeSeed, requestId: 'other-map', mapNamespace: otherNamespace });
+      const foreign = await create(database, { ...activeSeed, requestId: 'other-map', mapNamespace: otherNamespace });
       const { DatabaseSync } = await import('node:sqlite');
       const db = new DatabaseSync(database);
       const dates = ['2026-01-03', '2026-01-02', '2026-01-02', '2026-01-01'];
@@ -432,7 +558,7 @@ it('bounds active discovery by exact namespace and deterministic creation order 
       }
       assert.equal((await invoke(client, 'doom_memory_find', activeQuery)).candidates.length, 3);
       assert.deepEqual((await invoke(client, 'doom_memory_find', { ...activeQuery, mapNamespace: otherNamespace })).candidates.map(note => note.noteId), [foreign.noteId]);
-      const missing = await invoke(client, 'doom_memory_find', { ...activeQuery, mapNamespace: 'absent' });
+      const missing = await invoke(client, 'doom_memory_find', { ...activeQuery, mapNamespace: mapKey('f') });
       assert.deepEqual(missing.candidates, []); assert.equal(missing.hasMore, false);
       for (const invalid of [{ x: 0 }, { y: 0 }, { angle: 0 }, { radius: 128 }, { limit: 0 }, { limit: 11 }, { limit: 1.5 }, { mapNamespace: '' }, { mode: 'all' }])
         await rejects(client, 'doom_memory_find', { ...activeQuery, ...invalid });
@@ -453,11 +579,11 @@ it('keeps path selection explicit and module-relative, and rejects unsupported s
   try {
     await withServer('relative.sqlite', directory, async client => {
       await rejects(client, 'doom_memory_find', a, 'memory-invalid-path');
-      await rejects(client, 'doom_memory_record', seed, 'memory-invalid-path');
+      await rejects(client, 'doom_memory_record', appendProbe, 'memory-invalid-path');
       assert.equal(existsSync(join(directory, 'relative.sqlite')), false);
     });
     await withServer(database, directory, async client => {
-      const created = await invoke(client, 'doom_memory_record', seed);
+      const created = await create(database);
       const { DatabaseSync } = await import('node:sqlite');
       const db = new DatabaseSync(database);
       try {
@@ -471,7 +597,7 @@ it('keeps path selection explicit and module-relative, and rejects unsupported s
         assert.equal((await invoke(client, 'doom_memory_find', a)).candidates[0].revision, 1);
         db.exec('PRAGMA user_version = 99');
         await rejects(client, 'doom_memory_find', a, 'memory-schema-unsupported');
-        await rejects(client, 'doom_memory_record', seed, 'memory-schema-unsupported');
+        await rejects(client, 'doom_memory_record', appendProbe, 'memory-schema-unsupported');
         assert.equal(db.prepare('PRAGMA user_version').get().user_version, 99);
       } finally { db.close(); }
     });
@@ -486,7 +612,7 @@ it('keeps path selection explicit and module-relative, and rejects unsupported s
       await withServer(foreignPath, directory, async client => {
         await rejects(client, 'doom_memory_find', a, 'memory-schema-unsupported');
         await rejects(client, 'doom_memory_find', activeQuery, 'memory-schema-unsupported');
-        await rejects(client, 'doom_memory_record', seed, 'memory-schema-unsupported');
+        await rejects(client, 'doom_memory_record', appendProbe, 'memory-schema-unsupported');
       });
       assert.deepEqual(await readFile(foreignPath), before);
       assert.equal(foreign.prepare('PRAGMA user_version').get().user_version, 0);
@@ -518,7 +644,7 @@ it('keeps path selection explicit and module-relative, and rejects unsupported s
         PRAGMA user_version = 1;
       `);
     } finally { legacy.close(); }
-    for (const version of [1, 2]) {
+    for (const version of [1, 2, 3]) {
       const legacyVersion = new DatabaseSync(legacyPath);
       try { legacyVersion.exec(`PRAGMA user_version = ${version}`); }
       finally { legacyVersion.close(); }
@@ -526,12 +652,15 @@ it('keeps path selection explicit and module-relative, and rejects unsupported s
       await withServer(legacyPath, directory, async client => {
         await rejects(client, 'doom_memory_find', a, 'memory-schema-unsupported');
         await rejects(client, 'doom_memory_find', activeQuery, 'memory-schema-unsupported');
-        await rejects(client, 'doom_memory_record', seed, 'memory-schema-unsupported');
+        await rejects(client, 'doom_memory_record', appendProbe, 'memory-schema-unsupported');
         await rejects(client, 'doom_memory_record', {
           operation: 'append', requestId: 'old-append', noteId: '11111111-1111-4111-8111-111111111111',
           expectedRevision: 1, source: 'Offline rejection test', assessment: 'Must not be stored',
         }, 'memory-schema-unsupported');
       });
+      await assert.rejects(create(legacyPath), /memory-schema-unsupported/);
+      await assert.rejects(initializeMemoryDatabase(legacyPath), /memory-schema-unsupported/);
+      assert.equal(existsSync(`${legacyPath}.refs`), false);
       assert.deepEqual(await readFile(legacyPath), before, `Version-${version} schema, records and bytes must stay unchanged`);
     }
   } finally {

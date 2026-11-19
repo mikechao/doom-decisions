@@ -1,15 +1,18 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
-import { dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import {
 	findExactMemory,
 	findMemory,
 	memoryDatabasePath,
+	memoryGeometrySchema,
+	memoryMapKeySchema,
 	memoryRecordSchema,
 	recordMemory,
+	verifyMemoryReferencePng,
 } from "../../app/doom-memory.mjs";
 import {
 	historicalNoteInputSchema,
@@ -18,7 +21,24 @@ import {
 	validateHistoricalNoteDecision,
 } from "./historical-note-authoring.ts";
 
-const hash = z.string().regex(/^[a-f0-9]{64}$/);
+const hash = z
+	.string()
+	.length(64)
+	.regex(/^[a-f0-9]{64}$/);
+const geometryArtifactSchema = z.strictObject({
+	mapKey: memoryMapKeySchema,
+	observationId: z.uuid(),
+	pngSha256: hash,
+	auditFile: z
+		.string()
+		.max(128)
+		.regex(/^[\w-][\w.-]*\.json$/),
+	geometry: memoryGeometrySchema,
+});
+const geometryAuditSchema = z.strictObject({
+	mapKey: memoryMapKeySchema,
+	segments: z.array(z.unknown()).min(1).max(32),
+});
 const count = z.number().int().nonnegative().safe().nullable();
 const artifactSchema = historicalNoteOutputSchema.extend({
 	schemaVersion: z.literal(1),
@@ -73,6 +93,7 @@ const artifactSchema = historicalNoteOutputSchema.extend({
 type Failure =
 	| "draft"
 	| "evidence"
+	| "geometry"
 	| "database"
 	| "duplicate"
 	| "write-unconfirmed";
@@ -141,8 +162,14 @@ async function existingDatabaseIdentity() {
 	}
 }
 
+// Keep the exact reviewed bytes out of the printable preview and out of caller reach.
+const approvedReference = new WeakMap<HistoricalNotePromotion, Buffer>();
+
 /** Read-only preparation. The returned payload is the exact immutable write preview. */
-export async function prepareHistoricalNotePromotion(draftPath: string) {
+export async function prepareHistoricalNotePromotion(
+	draftPath: string,
+	geometryPath: string,
+) {
 	let artifact: z.infer<typeof artifactSchema>;
 	let draftSha256: string;
 	try {
@@ -154,7 +181,7 @@ export async function prepareHistoricalNotePromotion(draftPath: string) {
 		requireMatch(
 			artifact.decision === "propose" &&
 				artifact.reason === null &&
-				artifact.note,
+				artifact.note?.nextQuestion,
 			"draft",
 		);
 		// Reject normalization rather than silently changing reviewed note text.
@@ -239,21 +266,85 @@ export async function prepareHistoricalNotePromotion(draftPath: string) {
 		throw new HistoricalNotePromotionError("evidence");
 	}
 	const note = artifact.note;
-	requireMatch(note, "draft");
+	requireMatch(note?.nextQuestion, "draft");
 	const anchor = note.observationAnchor;
-	const pngSha256 = note.sourceEvidence.find(
-		(e) => e.ordinal === anchor.ordinal,
-	)?.pngSha256;
+	const before = evidence.packet.records.find(
+		(record) => record.ordinal === anchor.ordinal && record.imageAttached,
+	)?.before;
+	const referencePng = evidence.images.get(anchor.ordinal);
+	requireMatch(before && referencePng, "evidence");
+	try {
+		verifyMemoryReferencePng(referencePng, {
+			pngSha256: before.png.sha256,
+			frameSha256: before.frame.nativeSha256,
+		});
+	} catch {
+		throw new HistoricalNotePromotionError("evidence");
+	}
+	let geometryArtifact: z.infer<typeof geometryArtifactSchema>;
+	let geometrySha256: string;
+	try {
+		requireMatch(isAbsolute(geometryPath), "geometry");
+		const geometryFile = await realpath(geometryPath);
+		const bytes = await readBounded(geometryFile, 64 * 1024);
+		geometrySha256 = sha256(bytes);
+		geometryArtifact = geometryArtifactSchema.parse(
+			JSON.parse(bytes.toString("utf8")),
+		);
+		requireMatch(
+			geometryArtifact.mapKey === anchor.mapKey &&
+				geometryArtifact.observationId === before.observationId &&
+				geometryArtifact.pngSha256 === before.png.sha256,
+			"geometry",
+		);
+		const auditDirectory = dirname(geometryFile);
+		const auditBytes = await readBounded(
+			join(auditDirectory, geometryArtifact.auditFile),
+			64 * 1024,
+			auditDirectory,
+		);
+		const proposed = geometryArtifact.geometry;
+		requireMatch(
+			sha256(auditBytes) === proposed.provenance.artifactSha256,
+			"geometry",
+		);
+		const audit = geometryAuditSchema.parse(
+			JSON.parse(auditBytes.toString("utf8")),
+		);
+		const audited = memoryGeometrySchema.parse({
+			...proposed,
+			segments: audit.segments,
+		});
+		requireMatch(
+			audit.mapKey === anchor.mapKey &&
+				isDeepStrictEqual(audited.segments, proposed.segments),
+			"geometry",
+		);
+	} catch {
+		throw new HistoricalNotePromotionError("geometry");
+	}
 	const payload = memoryRecordSchema.parse({
 		operation: "create",
-		requestId: `approve-note:v1:${draftSha256}`,
+		requestId: `approve-note:v2:${sha256(`${draftSha256}:${geometrySha256}`)}`,
 		mapNamespace: anchor.mapKey,
 		x: anchor.rawX,
 		y: anchor.rawY,
 		angle: anchor.rawAngle,
 		hypothesis: note.hypothesis,
-		...(note.nextQuestion === null ? {} : { nextQuestion: note.nextQuestion }),
-		source: `Human-approved draft sha256:${draftSha256}; run:${anchor.runId}; D${anchor.ordinal}; observation:${anchor.observationId}; tic:${anchor.tic}; PNG sha256:${pngSha256}; model interpretation, unverified`,
+		nextQuestion: note.nextQuestion,
+		recognition: {
+			reference: {
+				runId: anchor.runId,
+				ordinal: anchor.ordinal,
+				observationId: before.observationId,
+				tic: before.tic,
+				runResultSha256: evidence.resultSha256,
+				pngSha256: before.png.sha256,
+				frameSha256: before.frame.nativeSha256,
+			},
+			geometry: geometryArtifact.geometry,
+		},
+		source: `Human-approved draft sha256:${draftSha256}; geometry input sha256:${geometrySha256}; run:${anchor.runId}; D${anchor.ordinal}; observation:${before.observationId}; tic:${before.tic}; PNG sha256:${before.png.sha256}; model interpretation, unverified`,
 		isLandmark: true,
 		isActiveExploration: true,
 	});
@@ -286,13 +377,14 @@ export async function prepareHistoricalNotePromotion(draftPath: string) {
 				[...active.candidates, ...nearby.candidates].map((n) => [n.noteId, n]),
 			).values(),
 		];
-		return Object.freeze({
+		const prepared = Object.freeze({
 			draftSha256,
+			geometrySha256,
 			databasePath,
 			databaseIdentity,
 			selectionMode: artifact.selectionMode ?? "unspecified",
 			nextQuestion: note.nextQuestion,
-			observer: Object.freeze({ ...anchor, pngSha256 }),
+			observer: Object.freeze({ ...anchor, pngSha256: before.png.sha256 }),
 			payload,
 			representedBy: sameContent?.noteId ?? null,
 			overlap: {
@@ -314,6 +406,8 @@ export async function prepareHistoricalNotePromotion(draftPath: string) {
 				})),
 			},
 		});
+		approvedReference.set(prepared, referencePng);
+		return prepared;
 	} catch {
 		throw new HistoricalNotePromotionError("database");
 	}
@@ -328,6 +422,8 @@ export async function promoteHistoricalNote(
 	prepared: HistoricalNotePromotion,
 	writer: typeof recordMemory = recordMemory,
 ) {
+	const referencePng = approvedReference.get(prepared);
+	requireMatch(referencePng, "evidence");
 	requireMatch(!prepared.representedBy, "duplicate");
 	requireMatch(
 		isDeepStrictEqual(
@@ -337,7 +433,7 @@ export async function promoteHistoricalNote(
 		"database",
 	);
 	try {
-		const receipt = await writer(prepared.payload);
+		const receipt = await writer(prepared.payload, Buffer.from(referencePng));
 		return {
 			...receipt,
 			databasePath: prepared.databasePath,

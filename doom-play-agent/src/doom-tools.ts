@@ -1,7 +1,13 @@
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import type { memoryFindSchema } from "../../app/doom-memory.mjs";
-import { findMemory, memoryDatabasePath } from "../../app/doom-memory.mjs";
+import {
+	findMemory,
+	memoryDatabasePath,
+	memoryMapKeySchema,
+	memoryNextQuestionSchema,
+	memoryRecognitionSchema,
+} from "../../app/doom-memory.mjs";
 import type { AgentObserveResult } from "../../app/src/agent-control.ts";
 
 type SharedMemoryQuery = z.infer<typeof memoryFindSchema>;
@@ -17,7 +23,7 @@ export type ActiveLandmarkMemoryQuery = Extract<
 const candidateSchema = z.object({
 	noteId: z.uuid(),
 	revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-	mapNamespace: z.string().min(1).max(128),
+	mapNamespace: memoryMapKeySchema,
 	status: z.literal("unverified"),
 	isLandmark: z.literal(true),
 	isActiveExploration: z.literal(true),
@@ -27,7 +33,8 @@ const candidateSchema = z.object({
 		angle: z.number().int().min(0).max(0xffffffff),
 	}),
 	hypothesis: z.string().trim().min(1).max(2000),
-	nextQuestion: z.string().trim().min(1).max(512).nullable(),
+	nextQuestion: memoryNextQuestionSchema,
+	recognition: memoryRecognitionSchema,
 });
 export type DoomMemoryCandidate = z.infer<typeof candidateSchema>;
 
@@ -64,7 +71,13 @@ export function createDoomTools() {
 			let raw: unknown;
 			try {
 				raw = await findActiveMemory(query);
-			} catch {
+			} catch (error) {
+				if (
+					error instanceof Error &&
+					(error.message === "memory-schema-unsupported" ||
+						error.message === "memory-note-invalid")
+				)
+					throw error;
 				return {
 					status: "lookup_failed" as const,
 					caution,

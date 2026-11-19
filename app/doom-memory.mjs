@@ -1,8 +1,22 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, statSync } from 'node:fs';
-import { dirname, isAbsolute } from 'node:path';
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  realpathSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as z from 'zod/v4';
+import { frameRgbaSha256 } from './frame-png.mjs';
 
 const text = (max) => z.string().trim().min(1).max(max);
 // Match native telemetry exactly: signed 16.16 XY and unsigned binary angle.
@@ -15,11 +29,88 @@ const validFlags = (flags) => !flags.isActiveExploration || flags.isLandmark;
 const flagsSchema = z
   .strictObject({ isLandmark: z.boolean(), isActiveExploration: z.boolean() })
   .refine(validFlags, 'Active exploration requires a landmark.');
+export const memoryMapKeySchema = z
+  .string()
+  .length('doom-map:v1:iwad-sha256::E1M1'.length + 64)
+  .regex(/^doom-map:v1:iwad-sha256:[a-f0-9]{64}:E1M1$/);
+const sha256 = z
+  .string()
+  .length(64)
+  .regex(/^[a-f0-9]{64}$/);
+const worldUnit = z.number().int().min(-32768).max(32767);
+const wadIndex = z.number().int().min(0).max(65534);
+const worldXY = z.tuple([worldUnit, worldUnit]).readonly();
+const side = z.strictObject({ sector: wadIndex, floor: worldUnit }).readonly();
+const segment = z
+  .strictObject({
+    linedefOrdinal: wadIndex,
+    endpoints: z.tuple([worldXY, worldXY]).readonly(),
+    front: side,
+    back: side,
+  })
+  .refine(
+    ({ endpoints: [[ax, ay], [bx, by]] }) => ax !== bx || ay !== by,
+    'A linedef must have distinct endpoints.',
+  )
+  .readonly();
+
+export const memoryGeometrySchema = z
+  .strictObject({
+    kind: z.literal('two-sided-linedefs'),
+    provenance: z
+      .strictObject({
+        method: z.literal('wad-lump-audit-v1'),
+        artifactSha256: sha256,
+      })
+      .readonly(),
+    segments: z
+      .array(segment)
+      .min(1)
+      .max(32)
+      .refine(
+        (segments) =>
+          new Set(segments.map(({ linedefOrdinal }) => linedefOrdinal)).size ===
+          segments.length,
+        'Linedef ordinals must be unique.',
+      )
+      .readonly(),
+  })
+  .readonly();
+
+export const memoryNextQuestionSchema = text(512);
+const referenceHashesSchema = z.object({
+  pngSha256: sha256,
+  frameSha256: sha256,
+});
+export const memoryRecognitionSchema = z
+  .strictObject({
+    reference: z
+      .strictObject({
+        runId: z.uuid(),
+        ordinal: z.number().int().positive(),
+        observationId: z.uuid(),
+        tic: z.number().int().nonnegative(),
+        runResultSha256: sha256,
+        ...referenceHashesSchema.shape,
+      })
+      .readonly(),
+    geometry: memoryGeometrySchema,
+  })
+  .readonly();
+
+const noteContent = {
+  mapNamespace: memoryMapKeySchema,
+  ...pose,
+  hypothesis: text(2000),
+  nextQuestion: memoryNextQuestionSchema,
+  recognition: memoryRecognitionSchema,
+};
+const noteContentSchema = z.strictObject(noteContent);
 
 export const memoryFindSchema = z.union([
   z.strictObject({
     mode: z.literal('nearby').optional(),
-    mapNamespace: text(128),
+    mapNamespace: memoryMapKeySchema,
     ...pose,
     // Raw fixed-point radius; default 64 map units, maximum 1024.
     radius: z.number().int().positive().max(67108864).default(4194304),
@@ -27,45 +118,46 @@ export const memoryFindSchema = z.union([
   }),
   z.strictObject({
     mode: z.literal('active-landmarks'),
-    mapNamespace: text(128),
+    mapNamespace: memoryMapKeySchema,
     limit,
   }),
 ]);
+export const memoryAppendSchema = z.strictObject({
+  operation: z.literal('append'),
+  ...request,
+  noteId: z.uuid(),
+  expectedRevision: z
+    .number()
+    .int()
+    .min(1)
+    .max(Number.MAX_SAFE_INTEGER - 1),
+  assessment: text(2000),
+  flags: flagsSchema.optional(),
+});
 export const memoryRecordSchema = z.discriminatedUnion('operation', [
   z
     .strictObject({
       operation: z.literal('create'),
       ...request,
-      mapNamespace: text(128),
-      ...pose,
-      hypothesis: text(2000),
-      nextQuestion: text(512).optional(),
+      ...noteContent,
       isLandmark: z.boolean().default(false),
       isActiveExploration: z.boolean().default(false),
     })
     .refine(validFlags, 'Active exploration requires a landmark.'),
-  z.strictObject({
-    operation: z.literal('append'),
-    ...request,
-    noteId: z.uuid(),
-    expectedRevision: z
-      .number()
-      .int()
-      .min(1)
-      .max(Number.MAX_SAFE_INTEGER - 1),
-    assessment: text(2000),
-    flags: flagsSchema.optional(),
-  }),
+  memoryAppendSchema,
 ]);
 
-const applicationId = 0x444f4f4d;
-const schemaVersion = 3;
+export const memoryApplicationId = 0x444f4f4d;
+export const memorySchemaVersion = 4;
 const caution =
   'Advisory, unverified memory. Source text does not authenticate claims or IWAD identity. Proximity does not prove the same viewpoint, map identity, passability or navigation success.';
 const errors = new Set([
   'memory-invalid-path',
   'memory-schema-unsupported',
   'memory-note-not-found',
+  'memory-note-invalid',
+  'memory-reference-invalid',
+  'memory-reference-missing',
   'memory-revision-conflict',
   'memory-request-conflict',
 ]);
@@ -102,7 +194,7 @@ function exists(path) {
 function checkSchema(db, allowEmpty = false) {
   const version = db.prepare('PRAGMA user_version').get().user_version;
   const owner = db.prepare('PRAGMA application_id').get().application_id;
-  if (version === schemaVersion && owner === applicationId) return;
+  if (version === memorySchemaVersion && owner === memoryApplicationId) return;
   if (
     allowEmpty &&
     version === 0 &&
@@ -125,7 +217,9 @@ function initialize(db) {
       x INTEGER NOT NULL CHECK (x BETWEEN -2147483648 AND 2147483647),
       y INTEGER NOT NULL CHECK (y BETWEEN -2147483648 AND 2147483647),
       angle INTEGER NOT NULL CHECK (angle BETWEEN 0 AND 4294967295),
-      hypothesis TEXT NOT NULL, next_question TEXT,
+      hypothesis TEXT NOT NULL,
+      next_question TEXT NOT NULL CHECK (length(trim(next_question)) > 0),
+      recognition_json TEXT NOT NULL CHECK (json_valid(recognition_json)),
       source TEXT NOT NULL, created_at TEXT NOT NULL,
       revision INTEGER NOT NULL CHECK (revision >= 1),
       is_landmark INTEGER NOT NULL DEFAULT 0 CHECK (is_landmark IN (0, 1)),
@@ -146,8 +240,8 @@ function initialize(db) {
       CHECK (is_active_exploration <= is_landmark),
       PRIMARY KEY (note_id, revision)
     ) STRICT;
-    PRAGMA application_id = ${applicationId};
-    PRAGMA user_version = ${schemaVersion};
+    PRAGMA application_id = ${memoryApplicationId};
+    PRAGMA user_version = ${memorySchemaVersion};
   `);
 }
 
@@ -177,6 +271,123 @@ function transaction(db, mode, work) {
   }
 }
 
+export async function initializeMemoryDatabase(databasePath) {
+  const path = memoryDatabasePath(databasePath);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const db = await open(path, false);
+  try {
+    transaction(db, 'BEGIN IMMEDIATE', () => initialize(db));
+  } finally {
+    db.close();
+  }
+}
+
+const maxReferencePngBytes = 2 * 1024 * 1024;
+export function verifyMemoryReferencePng(bytes, reference) {
+  if (
+    Buffer.isBuffer(bytes) &&
+    bytes.length <= maxReferencePngBytes &&
+    createHash('sha256').update(bytes).digest('hex') === reference.pngSha256
+  ) {
+    try {
+      if (frameRgbaSha256(bytes) === reference.frameSha256) return;
+    } catch {
+      // Report malformed image contents through the same bounded storage error.
+    }
+  }
+  throw Error('memory-reference-invalid');
+}
+
+function referenceFile(databasePath, hash, createDirectory = false) {
+  const directory = `${realpathSync(databasePath)}.refs`;
+  if (createDirectory) {
+    try {
+      mkdirSync(directory, { mode: 0o700 });
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+  }
+  if (!lstatSync(directory).isDirectory())
+    throw Error('memory-reference-invalid');
+  return join(directory, `${hash}.png`);
+}
+
+function readReferenceFile(path, reference) {
+  const file = openSync(
+    path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    const info = fstatSync(file);
+    if (!info.isFile() || info.size > maxReferencePngBytes)
+      throw Error('memory-reference-invalid');
+    const bytes = Buffer.alloc(info.size + 1);
+    let size = 0;
+    while (size < bytes.length) {
+      const count = readSync(file, bytes, size, bytes.length - size, size);
+      if (!count) break;
+      size += count;
+    }
+    if (size !== info.size) throw Error('memory-reference-invalid');
+    const png = bytes.subarray(0, size);
+    verifyMemoryReferencePng(png, reference);
+    return png;
+  } finally {
+    closeSync(file);
+  }
+}
+
+export function readMemoryReferencePng(
+  reference,
+  databasePath = memoryDatabasePath(),
+) {
+  const hashes = referenceHashesSchema.parse(reference);
+  try {
+    return readReferenceFile(
+      referenceFile(memoryDatabasePath(databasePath), hashes.pngSha256),
+      hashes,
+    );
+  } catch (error) {
+    if (error.message === 'memory-invalid-path') throw error;
+    throw Error(
+      error.code === 'ENOENT'
+        ? 'memory-reference-missing'
+        : 'memory-reference-invalid',
+    );
+  }
+}
+
+function publishReference(databasePath, bytes, reference) {
+  const path = referenceFile(databasePath, reference.pngSha256, true);
+  try {
+    readReferenceFile(path, reference);
+    return;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  const temporary = join(dirname(path), `${randomUUID()}.tmp`);
+  const file = openSync(temporary, 'wx', 0o600);
+  try {
+    try {
+      writeFileSync(file, bytes, { flush: true });
+    } finally {
+      closeSync(file);
+    }
+    try {
+      linkSync(temporary, path);
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      readReferenceFile(path, reference);
+    }
+  } finally {
+    try {
+      unlinkSync(temporary);
+    } catch {
+      // The staging filename is never referenced by the database.
+    }
+  }
+}
+
 function flagsFromRow(row) {
   return {
     isLandmark: row.is_landmark === 1,
@@ -185,14 +396,29 @@ function flagsFromRow(row) {
 }
 
 function noteFromRow(row) {
+  let content;
+  try {
+    content = noteContentSchema.parse({
+      mapNamespace: row.map_namespace,
+      x: row.x,
+      y: row.y,
+      angle: row.angle,
+      hypothesis: row.hypothesis,
+      nextQuestion: row.next_question,
+      recognition: JSON.parse(row.recognition_json),
+    });
+  } catch {
+    throw Error('memory-note-invalid');
+  }
   return {
     noteId: row.note_id,
     revision: row.revision,
-    mapNamespace: row.map_namespace,
-    anchor: { x: row.x, y: row.y, angle: row.angle },
+    mapNamespace: content.mapNamespace,
+    anchor: { x: content.x, y: content.y, angle: content.angle },
     source: row.source,
-    hypothesis: row.hypothesis,
-    nextQuestion: row.next_question,
+    hypothesis: content.hypothesis,
+    nextQuestion: content.nextQuestion,
+    recognition: content.recognition,
     createdAt: row.created_at,
     status: 'unverified',
     ...flagsFromRow(row),
@@ -288,7 +514,7 @@ export async function findExactMemory(input) {
       const row = db
         .prepare(`SELECT note_id FROM notes WHERE map_namespace = ?
           AND x = ? AND y = ? AND angle = ? AND hypothesis = ?
-          AND next_question IS ? AND source <> ?
+          AND next_question = ? AND source <> ?
           ORDER BY note_id ASC LIMIT 1`)
         .get(
           record.mapNamespace,
@@ -296,7 +522,7 @@ export async function findExactMemory(input) {
           record.y,
           record.angle,
           record.hypothesis,
-          record.nextQuestion ?? null,
+          record.nextQuestion,
           record.source,
         );
       return row ? { noteId: row.note_id } : null;
@@ -306,8 +532,15 @@ export async function findExactMemory(input) {
   }
 }
 
-export async function recordMemory(input) {
+export async function recordMemory(input, referencePng) {
   const record = memoryRecordSchema.parse(input);
+  const reference =
+    record.operation === 'create' ? record.recognition.reference : null;
+  let bytes;
+  if (reference !== null) {
+    verifyMemoryReferencePng(referencePng, reference);
+    bytes = Buffer.from(referencePng);
+  }
   const path = memoryDatabasePath();
   const present = exists(path);
   if (!present && record.operation === 'append')
@@ -330,6 +563,7 @@ export async function recordMemory(input) {
       if (previous) {
         if (previous.request_hash !== requestHash)
           throw Error('memory-request-conflict');
+        if (reference !== null) readMemoryReferencePng(reference, path);
         return {
           noteId: previous.note_id,
           revision: previous.revision,
@@ -342,11 +576,16 @@ export async function recordMemory(input) {
       let revision;
       let flags;
       if (record.operation === 'create') {
+        // Publish before the row. A failed SQL write can leave an unreferenced
+        // sidecar, which another identical create can safely reuse.
+        publishReference(path, bytes, reference);
         noteId = randomUUID();
         revision = 1;
         flags = record;
         db.prepare(
-          `INSERT INTO notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO notes (note_id, map_namespace, x, y, angle, hypothesis,
+            next_question, recognition_json, source, created_at, revision,
+            is_landmark, is_active_exploration) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           noteId,
           record.mapNamespace,
@@ -354,7 +593,8 @@ export async function recordMemory(input) {
           record.y,
           record.angle,
           record.hypothesis,
-          record.nextQuestion ?? null,
+          record.nextQuestion,
+          JSON.stringify(record.recognition),
           record.source,
           createdAt,
           revision,

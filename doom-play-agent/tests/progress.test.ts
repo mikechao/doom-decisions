@@ -500,7 +500,8 @@ test("historical objective newlines and ANSI escapes are quoted in stderr", asyn
 test("missing historical next question is reported without invention", async (t) => {
 	const f = await fixture(t);
 	const { stderr } = capture(t);
-	f.note.nextQuestion = null;
+	// Inject malformed input to exercise the defensive logging branch.
+	f.note.nextQuestion = null as unknown as string;
 
 	await play(f.client, f.tools, f.provider);
 

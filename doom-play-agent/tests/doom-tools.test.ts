@@ -5,6 +5,11 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test, { type TestContext } from "node:test";
+import { recordMemory } from "../../app/doom-memory.mjs";
+import {
+	memoryFixturePng,
+	memoryFixtureRecognition,
+} from "../../app/tests/fixtures/doom-memory.ts";
 import { play } from "../src/doom-play-agent.ts";
 import { createDoomTools } from "../src/doom-tools.ts";
 import { fixture } from "./fixtures.ts";
@@ -19,26 +24,28 @@ async function memoryFixture(t: TestContext) {
 		else process.env.DOOM_MEMORY_DB = previous;
 	});
 	// Use only this test's database, never the historical memory store.
-	const modulePath = "../../app/doom-memory.mjs";
-	const memory = (await import(modulePath)) as {
-		recordMemory(input: unknown): Promise<{ noteId: string }>;
-	};
+	const png = memoryFixturePng();
 	return {
 		...f,
 		database,
 		tools: createDoomTools(),
 		seed(overrides: Record<string, unknown> = {}) {
-			return memory.recordMemory({
-				operation: "create",
-				requestId: randomUUID(),
-				source: "Synthetic offline fixture",
-				mapNamespace: f.note.mapNamespace,
-				...f.note.anchor,
-				hypothesis: f.note.hypothesis,
-				isLandmark: true,
-				isActiveExploration: true,
-				...overrides,
-			});
+			return recordMemory(
+				{
+					operation: "create",
+					requestId: randomUUID(),
+					source: "Synthetic offline fixture",
+					mapNamespace: f.note.mapNamespace,
+					...f.note.anchor,
+					hypothesis: f.note.hypothesis,
+					nextQuestion: "Can another view clarify the doorway?",
+					recognition: memoryFixtureRecognition(png),
+					isLandmark: true,
+					isActiveExploration: true,
+					...overrides,
+				},
+				png,
+			);
 		},
 	};
 }
@@ -49,7 +56,10 @@ test("active lookup is map-wide, bounded and preserves shared creation ordering"
 	for (const x of [13107200, 327680, 393216, 458752])
 		expected.push(await f.seed({ x }));
 	await f.seed({ x: 131072, isActiveExploration: false });
-	await f.seed({ mapNamespace: "another-map", x: 131072 });
+	await f.seed({
+		mapNamespace: `doom-map:v1:iwad-sha256:${"b".repeat(64)}:E1M1`,
+		x: 131072,
+	});
 	const db = new DatabaseSync(f.database);
 	try {
 		for (const [index, note] of expected.entries())
@@ -165,7 +175,9 @@ test("missing storage, unreadable database and successful empty lookup are disti
 
 	// A separate existing database has no notes for the current map.
 	process.env.DOOM_MEMORY_DB = join(f.root, "empty-for-map.sqlite");
-	await f.seed({ mapNamespace: "another-map" });
+	await f.seed({
+		mapNamespace: `doom-map:v1:iwad-sha256:${"b".repeat(64)}:E1M1`,
+	});
 	const empty = await f.tools.findActiveLandmarks(f.base);
 	assert.equal(empty.status, "empty");
 	assert.deepEqual(empty.candidates, []);
@@ -176,16 +188,35 @@ test("malformed stored evidence fails validation", async (t) => {
 	await f.seed();
 	const db = new DatabaseSync(f.database);
 	try {
-		db.exec("UPDATE notes SET hypothesis = ''");
+		db.exec("UPDATE notes SET recognition_json = '{}' ");
 	} finally {
 		db.close();
 	}
-	await assert.rejects(f.tools.findActiveLandmarks(f.base));
+	await assert.rejects(
+		f.tools.findActiveLandmarks(f.base),
+		/memory-note-invalid/,
+	);
 	await assert.rejects(play(f.client, f.tools, f.provider), {
 		stage: "landmarks",
 	});
 	assert.equal(f.state.modelCalls, 0);
 	assert.equal(f.state.run, null);
+});
+
+test("v3 storage is rejected without falling through to an empty landmark pool", async (t) => {
+	const f = await memoryFixture(t);
+	const db = new DatabaseSync(f.database);
+	try {
+		db.exec("PRAGMA application_id = 1146048333; PRAGMA user_version = 3");
+	} finally {
+		db.close();
+	}
+	const before = await readFile(f.database);
+	await assert.rejects(
+		f.tools.findActiveLandmarks(f.base),
+		/memory-schema-unsupported/,
+	);
+	assert.deepEqual(await readFile(f.database), before);
 });
 
 test("no active landmark permits two perception-informed free-explore decisions", async (t) => {

@@ -144,7 +144,7 @@ function fixture(attributed = false) {
         result.status = 'found';
         result.candidates.push({ noteId, revision: 2, mapNamespace: context.mapIdentity.mapKey,
           anchor: { x: -123 * 65536, y: 456 * 65536, angle: 1073741824 }, source: 'Host historical attribution', summary: 'A historical question.',
-          summaryTruncated: false, nextQuestion: null, latestAssessment: null, status: 'unverified', createdAt: '2026-01-01',
+          summaryTruncated: false, nextQuestion: 'Does the corridor continue?', latestAssessment: null, status: 'unverified', createdAt: '2026-01-01',
           isLandmark: true, isActiveExploration: true, distance: 0, angleDifference: 0 });
       }
       return result;

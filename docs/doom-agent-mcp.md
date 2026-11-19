@@ -130,10 +130,10 @@ errors still take precedence; the final append is no general exit flush. See the
 [skill](../.agents/skills/doom-decisions/SKILL.md#advisory-navigation-memory) for the full policy.
 
 Every note and appended assessment is **advisory and unverified**. A required
-plain-text `source` attributes a claim; it does not authenticate telemetry,
-screenshots, traversal or IWAD identity. Status is always `unverified`; status
-inputs and other unknown fields are rejected. Text claiming success is still
-unverified text. No live observation/receipt association is implemented.
+plain-text `source` attributes each claim. Status is always `unverified`; status
+inputs and other unknown fields are rejected. A stored note also carries the
+before-checkpoint reference and reviewed static geometry. The text remains an
+advisory interpretation of that evidence.
 
 Final-assessment eligibility and at-most-one append are procedural Codex discipline,
 not server enforcement. Final accounting is a snapshot, not an atomic permission
@@ -149,20 +149,16 @@ writing that location. No `.env` file is read. There is no implicit seed data.
 Tests always select separate temporary files, never the normal notebook.
 
 Lookup opens existing storage read-only. If absent, it returns no candidates
-without creating a file/directory or loading SQLite. A valid create operation
-initializes storage; append against absent storage fails. Built-in `node:sqlite`
-loads lazily and can emit Node 22.20.0's experimental warning to stderr only when
-used. Module import, tool listing and gameplay-only use do not load it.
-
-Schema v3 stores raw telemetry and keeps the same application ID and default
-`.local/doom-memory.sqlite` filename. Version-1, version-2 and foreign databases return `memory-schema-unsupported`
-without changing their contents/version. There is no automatic deletion or migration.
-To start fresh while preserving an older database, stop the MCP/agent process,
-set `DOOM_MEMORY_DB` to a new absolute file path, then restart.
-The first valid create lazily initializes v3; a missing-database lookup still writes nothing.
+without creating a file or loading SQLite. Append against absent storage fails.
+The MCP recorder is append-only. Use [offline approval and v4 initialization](../doom-play-agent/README.md#explicit-historical-note-approval)
+to create evidence-backed notes. Schema v4 preserves the application ID and
+default filename. Older and foreign databases return `memory-schema-unsupported`
+without migration. Point `DOOM_MEMORY_DB` at a fresh absolute path to preserve a
+v3 notebook. The SQLite import is lazy and may emit Node's experimental warning.
 
 There are two tables: `notes` stores the immutable original claim, namespace,
-observer anchor, source, next question and creation date, plus its current revision
+observer anchor, source, required question, recognition evidence and creation date,
+plus its current revision
 and mutable landmark/exploration flags;
 `entries` stores ordered, dated source/assessment appends and request-id receipts.
 Revision 1's receipt represents creation; subsequent revisions hold assessments.
@@ -180,21 +176,20 @@ Tool arguments (all objects reject unknown fields):
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
-| `doom_memory_find` nearby | `mode?: "nearby", mapNamespace, x, y, angle, radius? = 4194304, limit? = 3` | `caution, candidates[]` with ID, revision, source, observer anchor, original hypothesis/question, creation date, `unverified` status, both flags, raw distance, circular `angleDifference` and ordered assessments with flag snapshots |
+| `doom_memory_find` nearby | `mode?: "nearby", mapNamespace, x, y, angle, radius? = 4194304, limit? = 3` | `caution, candidates[]` with ID, revision, source, observer anchor, original hypothesis/question, recognition evidence, creation date, `unverified` status, both flags, raw distance, circular `angleDifference` and ordered assessments with flag snapshots |
 | `doom_memory_find` active | `mode: "active-landmarks", mapNamespace, limit? = 3` | `mode, mapNamespace, caution, candidates[], hasMore`; same note/history fields, without distance/heading delta |
-| `doom_memory_record` create | `operation: "create", requestId, mapNamespace, x, y, angle, hypothesis, nextQuestion?, source, isLandmark? = false, isActiveExploration? = false` | `noteId, revision: 1, status: "unverified", replayed` |
 | `doom_memory_record` append | `operation: "append", requestId, noteId, expectedRevision, assessment, source, flags?: {isLandmark, isActiveExploration}` | `noteId, revision, status: "unverified", replayed` |
 
 Pass observation `telemetry.x`, `telemetry.y` and `telemetry.angle` unchanged for
-both lookup and create. XY are signed 16.16 integers in [-2147483648, 2147483647];
+nearby lookup. XY are signed 16.16 integers in [-2147483648, 2147483647];
 angle is an unsigned integer in [0, 4294967295]. Anchors retain those raw values.
 Radius is a positive integer in raw XY units, default 4194304 (64 map units),
 maximum 67108864 (1024 map units). Returned distance uses raw XY units and
 `angleDifference` uses raw circular angle units, with a full turn of 4294967296.
 Limit is an integer from 1 through 10. No pose conversion occurs on save or lookup.
-Namespace/request IDs are nonblank text up to 128 characters; source/next
-question up to 512; hypothesis/assessment up to 2000. Note IDs are UUIDs.
-Namespace matching is exact after trimming surrounding whitespace. Lookup filters
+Request IDs are nonblank text up to 128 characters; source/question up to 512;
+hypothesis/assessment up to 2000. Note IDs are UUIDs. The namespace must match
+the exact `doom-map:v1:iwad-sha256:<lowercase SHA-256>:E1M1` key. Lookup filters
 by XY radius, sorts by distance then circular heading difference then stable ID,
 and never excludes a candidate just because it faces another direction.
 
@@ -206,18 +201,6 @@ The default limit is 3 (maximum 10); no history paging or candidate pagination i
 Ordered assessments retain disagreements and proposed next experiments; the latest
 free-text suggestion is advisory, never proof. Selection stays in Codex session
 context and does not change a note's active flag.
-
-For a synthetic raw pose, call `doom_memory_find` offline with:
-
-```json
-{"mapNamespace":"synthetic:example","x":131072,"y":-196608,"angle":1073741824}
-```
-
-To explicitly create a note, call `doom_memory_record` with:
-
-```json
-{"operation":"create","requestId":"example-1","mapNamespace":"synthetic:example","x":131072,"y":-196608,"angle":1073741824,"hypothesis":"A possible doorway; traversal remains unestablished.","nextQuestion":"Does a clearer view show continuous player-width floor?","source":"Synthetic example; no gameplay evidence"}
-```
 
 Append using the returned `noteId`, its revision, a new request ID, required source
 and `assessment`. Repeating the exact normalized request ID/payload returns its
@@ -239,18 +222,10 @@ also returns history. All assessments remain visible, including disagreements;
 long histories can increase response size. Do not put credentials, prompts, auth
 data or complete provider payloads in this notebook.
 
-Proximity establishes neither the same viewpoint nor map identity, passability
-or navigation success. `unverified:shareware-doom1-e1m1` is a caller-chosen label,
-not an authenticated IWAD key. A nearby note provides regional context, not
-recognition of the same view or proof that two described openings connect.
-Historical degree/map-unit examples describe the old format and cannot be
-passed to schema v3 unchanged.
-
-PNG storage/retrieval is deliberately unsupported in Milestone 1. The retained
-[A note](navigation/doom1-e1m1-session-01a179df.md) links its historical PNG, which
-Codex can explicitly open with `view_image` during separate offline review;
-play never uses a file/viewer fallback for required native images. Notebook text
-alone does not display or authenticate its pixels. No D screenshot is retained here.
+A nearby note provides regional context. Its proximity and static geometry leave
+viewpoint identity, passability and navigation success unresolved. The returned
+recognition metadata references a hash-verified local PNG sidecar. MCP responses
+carry the metadata and static geometry. The host resolver reads the image bytes.
 
 `app/tests/doom-memory.test.ts` exercises actual stdio MCP child processes against
 isolated temporary databases with fail-on-use fetch. It checks missing-storage

@@ -3,7 +3,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { findMemory, memoryDatabasePath, memoryFindSchema } from '../../app/doom-memory.mjs';
+import { findMemory, memoryApplicationId, memoryDatabasePath, memoryFindSchema, memorySchemaVersion } from '../../app/doom-memory.mjs';
 import { parseAgentObserveResult } from '../../app/src/agent-control.ts';
 import { isAgentId } from '../../app/src/agent-observation.ts';
 
@@ -46,9 +46,9 @@ export function verifySnapshot(path = snapshotPath) {
     db.exec('PRAGMA busy_timeout = 100; PRAGMA foreign_keys = ON;');
     const rows = db.prepare('PRAGMA integrity_check').all();
     if (rows.length !== 1 || rows[0].integrity_check !== 'ok') throw new Error('SNAPSHOT_INTEGRITY');
-    if (db.prepare('PRAGMA application_id').get()?.application_id !== 0x444f4f4d ||
-        db.prepare('PRAGMA user_version').get()?.user_version !== 3) throw new Error('SNAPSHOT_SCHEMA');
-    return { integrity: 'ok', readOnly: true, schemaVersion: 3 };
+    if (db.prepare('PRAGMA application_id').get()?.application_id !== memoryApplicationId ||
+        db.prepare('PRAGMA user_version').get()?.user_version !== memorySchemaVersion) throw new Error('SNAPSHOT_SCHEMA');
+    return { integrity: 'ok', readOnly: true, schemaVersion: memorySchemaVersion };
   } finally { db.close(); }
 }
 
@@ -60,7 +60,7 @@ const pose = z.strictObject({
 const rawNote = z.object({
   noteId: z.string().uuid(), revision: z.number().int().positive(), mapNamespace: z.string(),
   anchor: pose, source: z.string().min(1).max(512), hypothesis: z.string().min(1).max(2000),
-  nextQuestion: z.string().max(512).nullable(), createdAt: z.string(), status: z.literal('unverified'),
+  nextQuestion: z.string().min(1).max(512), createdAt: z.string(), status: z.literal('unverified'),
   isLandmark: z.boolean(), isActiveExploration: z.boolean(),
   distance: z.number().nonnegative(), angleDifference: z.number().nonnegative(),
   entries: z.array(z.object({

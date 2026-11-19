@@ -10,7 +10,7 @@ import {
   findMemory,
   memoryError,
   memoryFindSchema,
-  memoryRecordSchema,
+  memoryAppendSchema,
   recordMemory,
 } from './doom-memory.mjs';
 
@@ -162,8 +162,8 @@ export function createAgentMcpServer({
     ],
     [
       'doom_memory_record',
-      memoryRecordSchema,
-      'Create or append advisory, unverified navigation notes; create takes raw telemetry x/y/angle unchanged (signed 16.16 XY, unsigned 32-bit angle). Append may replace both landmark/exploration flags with an assessment and revision CAS. Source text is attribution, never proof. During play, use only at skill-approved healthy checkpoints.',
+      memoryAppendSchema,
+      'Append an advisory assessment to an existing note with revision CAS and optional replacement of both landmark/exploration flags. New notes require offline evidence-backed approval. During play, use only at skill-approved healthy checkpoints.',
       recordMemory,
     ],
   ]) {

@@ -10,7 +10,7 @@ import { promotionFixture } from "./historical-note-promotion-fixtures.ts";
 const noNetwork = mock.method(globalThis, "fetch", async () => {
 	throw Error("Network forbidden, including import");
 });
-const writer = mock.fn(async (_input: unknown) => ({
+const writer = mock.fn(async (_input: unknown, _png: Buffer) => ({
 	noteId: "00000000-0000-4000-8000-000000000999",
 	revision: 1,
 	status: "unverified" as const,
@@ -70,7 +70,7 @@ for (const answer of ["", "n", "no", "not sure"]) {
 		const confirm = t.mock.fn(async () => answer);
 		const before = await readFile(f.database);
 		assert.equal(
-			await main(["--draft", f.draft], {
+			await main(f.args, {
 				interactive: true,
 				print: (line) => printed.push(line),
 				confirm,
@@ -89,7 +89,7 @@ test("noninteractive input never invokes the confirmation seam or writer", async
 	const f = await promotionFixture(t);
 	writer.mock.resetCalls();
 	const confirm = t.mock.fn(async () => "yes");
-	await main(["--draft", f.draft], {
+	await main(f.args, {
 		interactive: false,
 		print: () => {},
 		confirm,
@@ -106,8 +106,7 @@ test("real CLI with piped yes only previews an explicit temporary DB", async (t)
 		[
 			"--experimental-strip-types",
 			"src/historical-note-promotion-main.ts",
-			"--draft",
-			f.draft,
+			...f.args,
 		],
 		{
 			cwd: fileURLToPath(new URL("../", import.meta.url)),
@@ -122,10 +121,10 @@ test("real CLI with piped yes only previews an explicit temporary DB", async (t)
 	assert.deepEqual(await readFile(f.database), before);
 });
 
-test("approval passes exactly the previewed frozen snapshot once, even if the draft changes", async (t) => {
+test("approval passes the previewed snapshot and PNG once, even if the inputs change", async (t) => {
 	const f = await promotionFixture(t);
 	const anchor = f.artifact.note.observationAnchor;
-	const overlap = await memory.recordMemory({
+	const overlap = await f.seed({
 		operation: "create",
 		requestId: "overlap-test",
 		mapNamespace: anchor.mapKey,
@@ -138,7 +137,7 @@ test("approval passes exactly the previewed frozen snapshot once, even if the dr
 	writer.mock.resetCalls();
 	const printed: string[] = [];
 	let reviewed: Record<string, unknown> | undefined;
-	const receipt = await main(["--draft", f.draft], {
+	const receipt = await main(f.args, {
 		interactive: true,
 		print: (line) => printed.push(line),
 		async confirm(question) {
@@ -151,6 +150,11 @@ test("approval passes exactly the previewed frozen snapshot once, even if the dr
 			assert.ok(printed[0].includes(overlap.noteId));
 			assert.ok(printed[0].includes("Review before creating a distinct note"));
 			await writeFile(f.draft, "changed after the reviewed snapshot");
+			await writeFile(f.geometry, "changed after the reviewed snapshot");
+			await writeFile(
+				join(f.root, "decision-22-before.png"),
+				"changed after review",
+			);
 			return " YeS ";
 		},
 	});
@@ -158,6 +162,7 @@ test("approval passes exactly the previewed frozen snapshot once, even if the dr
 	const payload = writer.mock.calls[0].arguments[0];
 	assert.ok(reviewed);
 	assert.deepEqual(payload, reviewed.payload);
+	assert.deepEqual(writer.mock.calls[0].arguments[1], f.referencePng);
 	assert.equal(Object.isFrozen(payload), true);
 	assert.equal(receipt?.status, "unverified");
 	assert.equal(receipt?.databasePath, f.database);
@@ -170,16 +175,19 @@ test("uncertain overlap is visible before approval; exact represented content do
 	const { prepareHistoricalNotePromotion } = await import(
 		"../src/historical-note-promotion.ts"
 	);
-	const prepared = await prepareHistoricalNotePromotion(f.draft);
-	const existing = await memory.recordMemory({
-		...prepared.payload,
-		requestId: "existing-test",
-		source: "Existing synthetic note",
-	});
+	const prepared = await prepareHistoricalNotePromotion(f.draft, f.geometry);
+	const existing = await memory.recordMemory(
+		{
+			...prepared.payload,
+			requestId: "existing-test",
+			source: "Existing synthetic note",
+		},
+		f.referencePng,
+	);
 	writer.mock.resetCalls();
 	const printed: string[] = [];
 	const confirm = t.mock.fn(async () => "yes");
-	await main(["--draft", f.draft], {
+	await main(f.args, {
 		interactive: true,
 		print: (line) => printed.push(line),
 		confirm,
@@ -197,7 +205,7 @@ test("missing evidence and database removal during approval cannot reach writer"
 	const f = await promotionFixture(t);
 	writer.mock.resetCalls();
 	await assert.rejects(
-		main(["--draft", f.draft], {
+		main(f.args, {
 			interactive: true,
 			print: () => {},
 			async confirm() {
@@ -212,7 +220,7 @@ test("missing evidence and database removal during approval cannot reach writer"
 	await rm(join(f.root, "decision-22-before.png"));
 	const confirm = t.mock.fn(async () => "yes");
 	await assert.rejects(
-		main(["--draft", f.draft], { interactive: true, print: () => {}, confirm }),
+		main(f.args, { interactive: true, print: () => {}, confirm }),
 		{ code: "evidence" },
 	);
 	assert.equal(confirm.mock.callCount(), 0);
@@ -225,7 +233,7 @@ test("same-path database replacement during confirmation cannot reach writer", a
 	const backup = join(f.root, "previewed.sqlite");
 	writer.mock.resetCalls();
 	await assert.rejects(
-		main(["--draft", f.draft], {
+		main(f.args, {
 			interactive: true,
 			print: () => {},
 			async confirm() {

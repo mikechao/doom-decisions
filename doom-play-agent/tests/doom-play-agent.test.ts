@@ -110,7 +110,7 @@ test("nearest initial selection: saved D1 XY chooses B and preserves the one-dec
 			anchor: { x: 84595626, y: -215789052, angle: 3837788160 },
 			hypothesis:
 				"Yard corner with green patch, brick ledge, crate and ribbed wall.",
-			nextQuestion: null,
+			nextQuestion: "What is visible?",
 		},
 	];
 	f.state.candidates = candidates;
@@ -165,14 +165,14 @@ test("nearest initial selection: saved D1 XY chooses B and preserves the one-dec
 
 for (const c of [
 	{
-		label: "closer recognition-only note wins despite opposite heading",
+		label: "closer note wins despite opposite heading",
 		playerX: 0,
 		anchors: [
 			{ x: 2 * 65536, y: 0 },
 			{ x: 65536, y: 0 },
 		],
 		winner: 1,
-		nextQuestion: null,
+		nextQuestion: "What is visible?",
 	},
 	{
 		label: "both XY axes determine Euclidean distance",
@@ -182,7 +182,7 @@ for (const c of [
 			{ x: 3, y: 4 },
 		],
 		winner: 1,
-		nextQuestion: null,
+		nextQuestion: "What is visible?",
 	},
 	{
 		label: "exact distance ties retain candidate order",
@@ -192,7 +192,7 @@ for (const c of [
 			{ x: 3, y: -4 },
 		],
 		winner: 0,
-		nextQuestion: null,
+		nextQuestion: "What is visible?",
 	},
 	{
 		label: "int32 extremes do not create a floating-point distance tie",
@@ -229,7 +229,8 @@ for (const c of [
 		assert.equal(result.records[0].selection?.target?.noteId, selected.noteId);
 		assert.equal(
 			assessmentContext(f.state.assessmentInputs[0]).investigationActive,
-			false,
+			Math.hypot(selected.anchor.x - c.playerX, selected.anchor.y) / 65536 <=
+				256,
 		);
 		assert.equal(result.navigationAssessment?.investigationGuidance, null);
 		assert.equal(
@@ -376,7 +377,7 @@ for (const c of [
 		const f = await fixture(t, 1);
 		f.note.anchor = { x: c.anchorX ?? 0, y: 0, angle: c.anchorAngle ?? 0 };
 		if (c.namespace) f.note.mapNamespace = c.namespace;
-		if ("question" in c) f.note.nextQuestion = c.question ?? null;
+		if ("question" in c) f.note.nextQuestion = c.question as string;
 		if (c.missing === "landmark") f.state.candidates = [];
 		// Only synthetic reasoning evidence is malformed; upstream production DTO
 		// and memory validation remain authoritative and are not bypassed in code.

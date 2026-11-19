@@ -358,57 +358,67 @@ quality or choose the later author's anchor. See the [execution-flow baseline](d
 
 ## Explicit historical-note approval
 
-After reviewing one saved draft, run from the repository root:
+Review the saved draft and a geometry JSON file, then run from the repository root:
 
 ```sh
 npm --prefix doom-play-agent run approve-note -- \
-  --draft /absolute/path/to/draft.json
+  --draft /absolute/path/to/draft.json --geometry /absolute/path/to/geometry.json
 ```
 
-This separate command validates an unapproved version-1 `propose` artifact and
-its original schema-v3 saved run. It reuses authoring's selected-evidence checks,
-including before/after sidecar hashes, exact attached-before anchor, full IWAD/map
-identity and retained receipt/movement consistency. It also compares the saved
-result digest, packet hash/content, attachments and optional automatic-selection
-provenance. Unselected frames are not validated. Known older v1 drafts without
-`selectionMode` remain unspecified; missing sources, `no_note`, malformed or
-inconsistent artifacts fail before approval. Read limits are 1 MiB per draft,
-64 MiB per result and 2 MiB per PNG, with regular-file and source-containment checks.
+The geometry file has `mapKey`, `observationId`, `pngSha256`, `auditFile` and `geometry`.
+Use the saved before observation's full IWAD/map key and encoded PNG digest. Set
+`geometry.kind` to `two-sided-linedefs` and include `geometry.provenance` with
+`method: "wad-lump-audit-v1"` and the audit artifact's `artifactSha256`. Include an
+ordered array `geometry.segments` of `linedefOrdinal`, two `endpoints` as integer
+world XY pairs, and `front` and `back` objects with zero-based `sector` and `floor`
+in world units. `auditFile` is the base filename of the companion JSON audit in
+the same directory. The audit holds `mapKey` and the ordered `segments` exported
+from the map audit. Promotion hashes the exact audit bytes and checks its map key
+and segment values against the proposal before showing the approval preview.
+Review the audit's extraction and association with the reference before approving.
 
-The destination must already exist: `memoryDatabasePath()` resolves the same
-repository-root `.local/doom-memory.sqlite` used by agent reads, or an absolute
-`DOOM_MEMORY_DB` override. No `.env` file is loaded. Use the same override for later
-agent runs. The preview names the canonical destination, exact hypothesis/question,
-raw **observer** pose, source identities/hashes, draft digest, active flags and
-bounded overlap candidates. These queries inspect up to ten active notes and ten
-nearby notes within 1024 Doom units; they do not establish semantic uniqueness.
-A separate read-only equality query checks the full namespace, raw pose/angle,
-hypothesis and nullable question independently of those limits and active flags.
-Existing exact anchor/content under another source blocks creation. Uncertain
-overlap must be reviewed; no note is automatically appended, merged or retired.
-Preparation captures the canonical path and device/inode before these reads and
-checks them afterward and again before writing. Replacement at the same pathname
-during confirmation is rejected. This is an identity check, not a filesystem lock.
+Promotion requires a nonblank unresolved question. It validates the unapproved
+v1 proposal and verifies its attached before checkpoint against the original
+schema-v3 run. The raw pose, tic and map must match, and both the encoded PNG
+SHA-256 and the decoded RGBA SHA-256 must match the checkpoint receipts. The
+reference format is the 640×400 non-interlaced RGBA Canvas PNG. The reviewed
+geometry file must identify the same before observation and image. The draft,
+geometry, audit, result and PNG read limits are 1 MiB, 64 KiB, 64 KiB, 64 MiB
+and 2 MiB respectively.
 
-Only an interactive `y` or `yes` to `Create this as a distinct active landmark?
-[y/N]` calls the existing `recordMemory(create)` writer once with the frozen
-previewed payload. Empty, declined, EOF/interrupted or non-TTY input writes nothing;
-piping `yes` cannot approve. Both landmark flags are explicitly true. Raw XY/angle,
-map key and hypothesis remain unchanged; a null question is omitted and stores SQL
-NULL. Detailed authoring metadata stays in the unchanged draft. Source attribution
-and request ID use its original byte SHA-256, not its path or approval timestamp.
-Identical-byte reapproval uses the writer's existing replay receipt; it does not
-reactivate a subsequently retired note. Reformatted or separately generated drafts
-have different hashes, so bounded overlap review still matters. No automatic retry
-is made, including after an unconfirmed write acknowledgment.
+The destination must be initialized as v4. To preserve a v3 database, use a fresh
+absolute path. From the repository root, initialize it explicitly and keep the
+same override for approval and later memory reads.
+
+```sh
+export DOOM_MEMORY_DB=/absolute/path/to/new-memory.sqlite
+node --input-type=module -e 'import { initializeMemoryDatabase } from "./app/doom-memory.mjs"; await initializeMemoryDatabase(process.env.DOOM_MEMORY_DB)'
+```
+
+With no override, lookup and approval use `.local/doom-memory.sqlite` at the
+repository root. The initializer and writer reject v3 and other unsupported
+schemas. Recreate a lead only when its complete recognition evidence is available.
+
+The read-only preview shows the exact payload, draft and geometry digests,
+reference checkpoint and bounded overlap candidates. Exact duplicate detection
+checks map, raw pose, hypothesis and question across the store. A matching lead
+under another source blocks creation. The preview pins the database path and
+device/inode and rechecks them before writing.
+
+Only an interactive `y` or `yes` approves the frozen payload and retained PNG
+bytes. The writer verifies both image digests and publishes
+`<database-path>.refs/<png-sha256>.png` without overwriting an existing sidecar.
+The reference directory must be a real directory. SQLite keeps the hashes,
+provenance and geometry. A failed SQLite write may leave an unreferenced,
+reusable sidecar. The draft and geometry digests identify
+the approval request. Exact replay returns the original receipt and preserves any
+later revision or flag changes.
 
 Approval leaves status **unverified** and establishes neither useful recognition
 nor navigation benefit. Active eligibility is not objective selection: the agent
 still reads at most three active notes in creation/ID order and selects the nearest
 observer anchor to the initial player XY only when the pool is complete and the
-initial pose is valid. Exact distance ties preserve that order; recognition-only
-notes remain eligible, without a selection radius.
-A null question cannot enable local investigation guidance.
+initial pose is valid. Exact distance ties preserve that order.
 Gameplay, post-run persistence and authoring never invoke
 this command automatically.
 

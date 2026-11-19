@@ -13,6 +13,10 @@ import {
 	type AgentObservation,
 	createAgentMapIdentity,
 } from "../../app/src/agent-observation.ts";
+import {
+	memoryFixturePng,
+	memoryFixtureRecognition,
+} from "../../app/tests/fixtures/doom-memory.ts";
 import type {
 	AttachedLease,
 	MaterializedDecision,
@@ -32,6 +36,8 @@ export const navigationAssessment = {
 		"The visible doorway supports the doorway hypothesis; no specific conflict is described.",
 	uncertainty: "A generic doorway does not establish landmark identity.",
 };
+const recognition = memoryFixtureRecognition(memoryFixturePng());
+
 export async function fixture(t: TestContext, budget = 2) {
 	t.mock.method(globalThis, "fetch", async () => {
 		throw new Error("External network forbidden");
@@ -104,6 +110,7 @@ export async function fixture(t: TestContext, budget = 2) {
 		anchor: { x: 262144, y: -196608, angle: 0x40000000 },
 		hypothesis: "There may be a doorway nearby.",
 		nextQuestion: "Can a clearer view test the doorway hypothesis?",
+		recognition,
 	};
 	const events: string[] = [];
 	const state = {

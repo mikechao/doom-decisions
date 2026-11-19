@@ -9,6 +9,7 @@ import test from 'node:test';
 import { z } from 'zod';
 import { MockLanguageModelV4 } from 'ai/test';
 import { findMemory, recordMemory } from '../../app/doom-memory.mjs';
+import { memoryFixturePng, memoryFixtureRecognition } from '../../app/tests/fixtures/doom-memory.ts';
 import { createAgentMapIdentity } from '../../app/src/agent-observation.ts';
 import { nativeTool, type HostCall } from '../src/native-tools.ts';
 import { createLandmarksAgent, landmarksInstructions } from '../src/landmarks-tool-loop-agent.ts';
@@ -35,14 +36,16 @@ async function withFixture(work: (path: string) => Promise<void>) {
   process.env.DOOM_MEMORY_DB = path;
   try {
     // Reuse the repository schema initializer; only this throwaway file is writable.
+    const png = memoryFixturePng();
     const seed = { operation: 'create', source: 'Synthetic fixture source, not runtime evidence',
+      nextQuestion: 'Does the floor continue?', recognition: memoryFixtureRecognition(png),
       ...context.query, hypothesis: 'A possible corridor; traversability remains unverified.',
       isLandmark: true, isActiveExploration: true };
     const { mode, radius, limit, ...record } = seed;
-    const first = await recordMemory({ ...record, requestId: 'fixture-one' });
-    await recordMemory({ ...record, requestId: 'fixture-two', x: 12, angle: 1 });
-    await recordMemory({ ...record, requestId: 'foreign', mapNamespace: foreignIdentity.mapKey });
-    await recordMemory({ ...record, requestId: 'ordinary-note', x: 11, isLandmark: false, isActiveExploration: false });
+    const first = await recordMemory({ ...record, requestId: 'fixture-one' }, png);
+    await recordMemory({ ...record, requestId: 'fixture-two', x: 12, angle: 1 }, png);
+    await recordMemory({ ...record, requestId: 'foreign', mapNamespace: foreignIdentity.mapKey }, png);
+    await recordMemory({ ...record, requestId: 'ordinary-note', x: 11, isLandmark: false, isActiveExploration: false }, png);
     await recordMemory({ operation: 'append', noteId: first.noteId, expectedRevision: 1, requestId: 'assessment',
       source: 'Synthetic assessment source', assessment: 'This is still an unverified visual interpretation.' });
     await work(path);
@@ -70,7 +73,7 @@ function decode(value: unknown) {
 test('fixed fixture: existing findMemory ranking, namespace isolation and read-only retrieval', async () => {
   await withFixture(async path => {
     const before = readFileSync(path);
-    assert.deepEqual(verifySnapshot(path), { integrity: 'ok', readOnly: true, schemaVersion: 3 });
+    assert.deepEqual(verifySnapshot(path), { integrity: 'ok', readOnly: true, schemaVersion: 4 });
     const direct = await findMemory(context.query);
     const result = await lookupLandmarks(context, path);
     assert.equal(result.status, 'found');

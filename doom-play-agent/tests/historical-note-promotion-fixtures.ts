@@ -3,22 +3,30 @@ import { join } from "node:path";
 import type { TestContext } from "node:test";
 import type { OpenAIProvider } from "@ai-sdk/openai";
 import type { generateText } from "ai";
-import { recordMemory } from "../../app/doom-memory.mjs";
+import {
+	initializeMemoryDatabase,
+	recordMemory,
+} from "../../app/doom-memory.mjs";
+import {
+	memoryFixtureGeometry,
+	memoryFixtureRecognition,
+} from "../../app/tests/fixtures/doom-memory.ts";
 import {
 	authorHistoricalNote,
 	type SelectionProvenance,
 	selectHistoricalNoteEvidence,
 } from "../src/historical-note-authoring.ts";
-import { savedRun } from "./historical-note-fixtures.ts";
+import { savedRun, sha } from "./historical-note-fixtures.ts";
 
 export async function promotionFixture(
 	t: TestContext,
 	mode: "automatic" | "manual" | "unspecified" = "unspecified",
+	replacementAt22?: Buffer,
 ) {
-	const f = await savedRun(
-		t,
-		mode === "automatic" ? { firstOrdinal: 16, distinctFrames: true } : {},
-	);
+	const f = await savedRun(t, {
+		...(mode === "automatic" ? { firstOrdinal: 16, distinctFrames: true } : {}),
+		replacementAt22,
+	});
 	const database = join(await realpath(f.root), "memory.sqlite");
 	const previous = process.env.DOOM_MEMORY_DB;
 	process.env.DOOM_MEMORY_DB = database;
@@ -26,19 +34,7 @@ export async function promotionFixture(
 		if (previous === undefined) delete process.env.DOOM_MEMORY_DB;
 		else process.env.DOOM_MEMORY_DB = previous;
 	});
-	// Every storage operation uses this explicit throwaway path, including seeding.
-	await recordMemory({
-		operation: "create",
-		requestId: "foreign-fixture",
-		source: "Synthetic fixture only",
-		mapNamespace: `doom-map:v1:iwad-sha256:${"c".repeat(64)}:E1M1`,
-		x: 0,
-		y: 0,
-		angle: 0,
-		hypothesis: "Foreign IWAD fixture",
-		isLandmark: true,
-		isActiveExploration: true,
-	});
+	await initializeMemoryDatabase(database);
 	let input = f.input;
 	let provenance: SelectionProvenance | undefined;
 	if (mode === "automatic") {
@@ -65,7 +61,13 @@ export async function promotionFixture(
 		provider: { responses: () => ({}) } as unknown as OpenAIProvider,
 		generate: (async () => ({
 			finishReason: "stop",
-			output: f.proposal(),
+			output: {
+				...f.proposal(),
+				note: {
+					...f.proposal().note,
+					nextQuestion: "Does the dark floor continue?",
+				},
+			},
 			usage: {},
 			response: {},
 		})) as unknown as typeof generateText,
@@ -80,15 +82,73 @@ export async function promotionFixture(
 		...(provenance ? { selectionProvenance: provenance } : {}),
 	};
 	const draft = join(f.root, "draft.json");
+	const geometry = join(f.root, "geometry.json");
+	const anchor = artifact.note.observationAnchor;
+	const referencePng = f.png(anchor.ordinal);
+	const reference = f.records.find(
+		({ ordinal }) => ordinal === anchor.ordinal,
+	)?.reasoningObservation;
+	if (!reference) throw Error("Missing synthetic before frame");
+	const auditPath = join(f.root, "linedefs-audit.json");
+	const auditArtifact = {
+		mapKey: anchor.mapKey,
+		segments: memoryFixtureGeometry.segments,
+	};
+	const auditBytes = Buffer.from(JSON.stringify(auditArtifact));
+	await writeFile(auditPath, auditBytes);
+	const geometryArtifact = {
+		mapKey: anchor.mapKey,
+		observationId: anchor.observationId,
+		pngSha256: artifact.note.sourceEvidence[0].pngSha256,
+		auditFile: "linedefs-audit.json",
+		geometry: {
+			...memoryFixtureGeometry,
+			provenance: {
+				...memoryFixtureGeometry.provenance,
+				artifactSha256: sha(auditBytes),
+			},
+		},
+	};
 	const saveDraft = (value: unknown = artifact) =>
 		writeFile(draft, `${JSON.stringify(value, null, 2)}\n`);
+	const saveGeometry = (value: unknown = geometryArtifact) =>
+		writeFile(geometry, `${JSON.stringify(value, null, 2)}\n`);
 	await saveDraft();
+	await saveGeometry();
 	return {
 		...f,
 		database,
 		draft,
+		geometry,
+		geometryArtifact,
+		auditPath,
+		auditArtifact,
+		referencePng,
+		args: ["--draft", draft, "--geometry", geometry],
+		seed(overrides: Record<string, unknown> = {}) {
+			return recordMemory(
+				{
+					operation: "create",
+					requestId: "synthetic-fixture",
+					source: "Synthetic fixture only",
+					mapNamespace: anchor.mapKey,
+					x: anchor.rawX,
+					y: anchor.rawY,
+					angle: anchor.rawAngle,
+					hypothesis: "A separate synthetic lead",
+					nextQuestion: "Does a clearer view establish a boundary?",
+					recognition: memoryFixtureRecognition(
+						referencePng,
+						reference.frame.nativeSha256,
+					),
+					...overrides,
+				},
+				referencePng,
+			);
+		},
 		artifact,
 		saveDraft,
+		saveGeometry,
 		readDraft: async () => JSON.parse(await readFile(draft, "utf8")),
 	};
 }

@@ -29,7 +29,7 @@ const found: LandmarkResult = {
   candidates: [{ noteId, revision: 1, mapNamespace: mapIdentity.mapKey, anchor: { x: 10, y: 20, angle: 90 },
     source: 'Synthetic historical source', summary: 'An earlier observer asked about orientation.', summaryTruncated: false,
     status: 'unverified', createdAt: '2026-01-01', isLandmark: true, isActiveExploration: false,
-    distance: 0, angleDifference: 0, nextQuestion: null, latestAssessment: null }],
+    distance: 0, angleDifference: 0, nextQuestion: 'Can a clearer view establish orientation?', latestAssessment: null }],
 };
 
 function decode(value: unknown) {

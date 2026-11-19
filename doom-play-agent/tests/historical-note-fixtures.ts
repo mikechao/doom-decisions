@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
 import { createAgentMapIdentity } from "../../app/src/agent-observation.ts";
+import {
+	memoryFixtureFrameSha256,
+	memoryFixturePng,
+} from "../../app/tests/fixtures/doom-memory.ts";
 import type { HistoricalNoteDraft } from "../src/historical-note-authoring.ts";
 
 const id = (n: number) =>
@@ -17,6 +21,7 @@ export async function savedRun(
 		firstOrdinal?: number;
 		count?: number;
 		distinctFrames?: boolean;
+		replacementAt22?: Buffer;
 	} = {},
 ) {
 	t.mock.method(globalThis, "fetch", async () => {
@@ -27,20 +32,19 @@ export async function savedRun(
 	const runId = id(1);
 	const sessionId = id(2);
 	const mapIdentity = createAgentMapIdentity("a".repeat(64), 1, 1);
+	const frames = new Map<number, Buffer>();
 	const png = (n: number) => {
-		// Header-only synthetic PNG, like the existing protocol fixtures; no real Doom image.
-		const bytes = Buffer.alloc(33);
-		bytes.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
-		bytes.writeUInt32BE(640, 16);
-		bytes.writeUInt32BE(400, 20);
-		bytes[32] = n;
+		if (n === 22 && options.replacementAt22) return options.replacementAt22;
+		let bytes = frames.get(n);
+		if (!bytes) {
+			bytes = memoryFixturePng(options.distinctFrames ? n : 0, n);
+			frames.set(n, bytes);
+		}
 		return bytes;
 	};
 	const checkpoint = (n: number, observationId: string) => {
 		const tic = 97 + (n - 17) * 6;
-		const frameHash = options.distinctFrames
-			? sha(`frame-${n}`)
-			: "b".repeat(64);
+		const frameHash = memoryFixtureFrameSha256(options.distinctFrames ? n : 0);
 		return {
 			observationId,
 			sessionId,

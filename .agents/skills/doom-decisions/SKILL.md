@@ -300,12 +300,12 @@ Before any memory operation, require both optional native tools to have been
 available at startup and memory to remain enabled for this invocation; otherwise
 skip. Keep this in conversation context; never rediscover tools or re-enable memory
 during the invocation.
-Use raw observation values for both memory lookups and creates:
+Use raw observation values for nearby memory lookups:
 `x = telemetry.x`, `y = telemetry.y`, `angle = telemetry.angle`.
 Coordinates remain signed 16.16 integers and angle remains an unsigned 32-bit
 integer. Do not divide coordinates or convert angles to degrees. Stored anchors
 use the same raw representation. Radius and returned distance also use raw XY
-units: `8388608` is a radius of 128 map units. Memory requires schema v3;
+units: `8388608` is a radius of 128 map units. Memory requires schema v4;
 older databases are rejected without migration or modification.
 
 **Namespace first.** Before every memory lookup or record, use only the current
@@ -404,19 +404,15 @@ guesses, restatements, or implicitly seed history. If no eligible checkpoint
 remains, omit the checkpoint write; final accounting and all stop rules take precedence.
 Do not force a write just before the final decision.
 
-For the same specific hypothesis, prefer append using a `noteId` and latest note
+For the same specific hypothesis, append using a `noteId` and latest note
 `revision` from a successful find or its acknowledged append for the current
 verified namespace and session/ownership context (distinct from agent config revision):
 `doom_memory_record {operation: "append", requestId, noteId, expectedRevision,
 assessment, source, flags?}`. Optional `flags` must contain the complete boolean pair
 `{isLandmark, isActiveExploration}`; omission preserves both. During active play, if
-the retained revision may be stale, defer until a fresh lookup is due. For a
-genuinely different location or hypothesis, even nearby, use
-`{operation: "create", requestId, mapNamespace, x, y, angle, hypothesis,
-nextQuestion?, source, isLandmark?, isActiveExploration?}`. Create flags default false;
-active exploration requires a landmark, and impossible pairs are rejected.
-Anchor the observer's verified pose, never invented target/staircase coordinates.
-For an unfinished landmark include a falsifiable `nextQuestion` and set both flags true.
+the retained revision may be stale, defer until a fresh lookup is due. The tool
+supports appends only. A distinct hypothesis can be prepared separately for
+offline approval with its before-observation reference and reviewed geometry.
 Do not add status or verification fields: every note and entry stays
 advisory/unverified, including apparent crossing of an opening.
 
