@@ -307,9 +307,12 @@ npm --prefix doom-play-agent run author-note -- \
 
 When either list is supplied, both are required. Ordinals must be unique and
 positive and are sorted before use. Select 1–7 text records and 1–3 before images
-from those records. The model chooses
-one attached before checkpoint as its observer anchor or returns `no_note`;
-`nextQuestion: null` is valid. The text window may contain later action evidence,
+from those records. An Investigation Landmark proposal requires a distinctive
+historical viewpoint grounded in an attached before image and a nonblank
+`nextQuestion` of at most 400 characters after trimming. The question asks about
+one unresolved, locally testable fact with an observable confirming or
+disconfirming sign. If either part lacks evidence, the model returns `no_note`
+with a reason and `note: null`. The text window may contain later action evidence
 explicitly labeled as retrospective. Historical-note prose and gameplay prompts
 are excluded from the request.
 

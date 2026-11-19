@@ -177,7 +177,8 @@ export async function savedRun(
 			verifiedHistory: [],
 			uncertainInterpretation: "Connectivity is unclear.",
 			hypothesis: "A yard-side ledge meets a ribbed wall beside a dark floor.",
-			nextQuestion: null,
+			nextQuestion:
+				"Does the dark floor continue past the end of the ribbed wall, or terminate there?",
 			sourceEvidence: [
 				{ ordinal, observationId: o.observationId, pngSha256: o.pngSha256 },
 			],

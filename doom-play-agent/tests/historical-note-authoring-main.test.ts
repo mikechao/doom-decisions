@@ -388,3 +388,58 @@ test("CLI prints a safe error and writes nothing after a mocked model failure", 
 	assert.equal(getSession.mock.callCount(), 0);
 	assert.deepEqual(writes, []);
 });
+
+test("CLI reports a null-question proposal rejected by the SDK as a response error", async (t) => {
+	const f = await savedRun(t);
+	outputRoot = join(f.root, "drafts");
+	const proposal = f.proposal(17);
+	generate.mock.mockImplementation(async (options) => {
+		const { output: structuredOutput } = options as Parameters<
+			typeof generateText
+		>[0];
+		assert.ok(structuredOutput);
+		const finishReason = "stop";
+		const response = {
+			id: "synthetic-response",
+			timestamp: new Date(0),
+			modelId: "synthetic",
+		};
+		const usage = {
+			inputTokens: 0,
+			inputTokenDetails: {
+				noCacheTokens: 0,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+			},
+			outputTokens: 0,
+			outputTokenDetails: { textTokens: 0, reasoningTokens: 0 },
+			totalTokens: 0,
+		};
+		const parsed = await structuredOutput.parseCompleteOutput(
+			{
+				text: JSON.stringify({
+					...proposal,
+					note: { ...proposal.note, nextQuestion: null },
+				}),
+			},
+			{ finishReason, response, usage },
+		);
+		return { finishReason, output: parsed, response, usage };
+	});
+	const previous = process.exitCode;
+	t.after(() => {
+		process.exitCode = previous;
+	});
+	const stderr = t.mock.method(console, "error", () => {});
+	const { runCli } = await import("../src/historical-note-authoring-main.ts");
+	await runCli(["--run-dir", f.root, "--decisions", "17", "--images", "17"]);
+	assert.equal(process.exitCode, 1);
+	assert.match(
+		String(stderr.mock.calls[0].arguments[0]),
+		/failed \(response\)/,
+	);
+	assert.equal(generate.mock.callCount(), 1);
+	assert.equal(getSession.mock.callCount(), 0);
+	assert.deepEqual(writes, []);
+	await assert.rejects(fs.stat(outputRoot), { code: "ENOENT" });
+});

@@ -410,14 +410,17 @@ tics/hashes, run/admission scope and the action/movement fields sent are checked
 These checks validate retained reports, not fresh native execution or PNG decoding;
 unselected files and the complete persistence schema are deliberately not verified.
 
-Instructions and packet projection adapt the successful manual D17–D23 experiment,
-with D17/D20/D22 before images. Image count and last-decision labels are derived
-from explicit inputs; anchors are restricted to attached before checkpoints. The
-model may choose any attached anchor or abstain. Host post-validation enforces
-proposal/abstention relationships, meaningful bounded strings, nonempty visible
-features/evidence, exact anchor identity/pose and matching source hashes, including
-the anchor itself. `nextQuestion: null` remains valid. Evidence/model/response
-failures throw sanitized errors and never become abstention or automatic retry.
+Packet projection adapts the manual D17–D23 experiment with D17/D20/D22 before
+images. Image count and last-decision labels are derived from explicit inputs.
+The instructions require each Investigation Landmark to pair a distinctive
+viewpoint anchored to an attached before checkpoint with one evidence-grounded
+unresolved question that can be tested locally by an observable confirming or
+disconfirming sign. When either part lacks support, the model returns `no_note`
+with a reason and `note: null`. Host validation requires a trimmed, nonblank
+`nextQuestion` of at most 400 characters for proposals, along with the exact
+anchor identity and pose and matching attached source hashes, including the
+anchor itself. Evidence, generation and response failures throw sanitized errors
+and never become abstention or automatic retry.
 
 The separate `author-note` CLI validates arguments before constructing the existing
 OAuth provider. With only `--run-dir`, it first calls the offline selector below.

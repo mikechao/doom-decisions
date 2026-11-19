@@ -43,7 +43,14 @@ function model(t: Parameters<typeof savedRun>[0], output: unknown) {
 
 test("projects D17–D23, attaches sorted D17/D20/D22 before Buffers, and anchors D22 exactly", async (t) => {
 	const f = await savedRun(t);
-	const m = model(t, f.proposal());
+	const proposal = f.proposal();
+	const m = model(t, {
+		...proposal,
+		note: {
+			...proposal.note,
+			nextQuestion: `  ${proposal.note.nextQuestion}\t`,
+		},
+	});
 	const result = await authorHistoricalNote(
 		{
 			...f.input,
@@ -55,8 +62,7 @@ test("projects D17–D23, attaches sorted D17/D20/D22 before Buffers, and anchor
 	assert.equal(m.auth.mock.callCount(), 0);
 	assert.equal(m.generate.mock.callCount(), 1);
 	assert.equal(result.decision, "propose");
-	assert.deepEqual(result.note, f.proposal().note);
-	assert.equal(result.note?.nextQuestion, null);
+	assert.deepEqual(result.note, proposal.note);
 	assert.equal(result.note?.observationAnchor.tic, 127);
 	assert.equal(result.note?.observationAnchor.rawX, 84595626);
 	assert.notEqual(
@@ -80,7 +86,17 @@ test("projects D17–D23, attaches sorted D17/D20/D22 before Buffers, and anchor
 		openai: { store: false, reasoningEffort: "xhigh" },
 	});
 	assert.match(request.instructions, /after D23/);
-	assert.match(request.instructions, /Otherwise|null/i);
+	assert.match(request.instructions, /Investigation Landmark/);
+	assert.match(request.instructions, /nonblank nextQuestion/);
+	assert.match(request.instructions, /unresolved, locally testable fact/);
+	assert.match(
+		request.instructions,
+		/observable sign would confirm or disconfirm/,
+	);
+	assert.match(
+		request.instructions,
+		/If either part lacks support, return no_note/,
+	);
 	assert.doesNotMatch(JSON.stringify(request), /EXCLUDED_SECRET/);
 	const content = request.messages[0].content;
 	assert.ok(Array.isArray(content));
@@ -144,17 +160,19 @@ test("allows another attached anchor without forcing D22", async (t) => {
 
 test("valid abstention contains no note", async (t) => {
 	const f = await savedRun(t);
+	const reason =
+		"The evidence leaves no locally testable question at this viewpoint.";
 	const result = await authorHistoricalNote(
 		f.input,
 		model(t, {
 			decision: "no_note",
-			reason: "The view is not distinctive enough.",
+			reason,
 			note: null,
 		}).dependencies,
 	);
 	assert.equal(result.decision, "no_note");
 	assert.equal(result.note, null);
-	assert.equal(result.reason, "The view is not distinctive enough.");
+	assert.equal(result.reason, reason);
 });
 
 const failures: [
@@ -405,6 +423,27 @@ for (const name of [
 				break;
 		}
 		const m = model(t, output);
+		await assert.rejects(authorHistoricalNote(f.input, m.dependencies), {
+			code: "response",
+		});
+		assert.equal(m.generate.mock.callCount(), 1);
+	});
+}
+
+for (const [name, questionField] of [
+	["omitted", {}],
+	["null", { nextQuestion: null }],
+	["empty", { nextQuestion: "" }],
+	["whitespace-only", { nextQuestion: " \t\n " }],
+	["overlong", { nextQuestion: "x".repeat(401) }],
+] as const) {
+	test(`rejects a proposal with a question that is ${name} as a response error`, async (t) => {
+		const f = await savedRun(t);
+		const {
+			note: { nextQuestion: _question, ...note },
+			...proposal
+		} = f.proposal();
+		const m = model(t, { ...proposal, note: { ...note, ...questionField } });
 		await assert.rejects(authorHistoricalNote(f.input, m.dependencies), {
 			code: "response",
 		});
